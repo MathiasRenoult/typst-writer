@@ -9,8 +9,6 @@ pub fn view() -> iced::Element<'static, Message> {
         button("Sauvegarder").on_press(Message::SaveFile),
         button("Enregistrer sous").on_press(Message::SaveAs),
         button("Exporter en PDF").on_press(Message::ExportPdf),
-        button("Fermer").on_press(Message::CloseFile),
-        button("Insérer").on_press(Message::InsertReference),
         Space::new().width(iced::Fill),
         button("⚙ Settings").on_press(Message::OpenSettings),
     ]

@@ -9,19 +9,8 @@ pub struct EditorState {
 
 impl Default for EditorState {
     fn default() -> Self {
-        let content = r#"#set page(
-  margin: 2cm,
-)
-
-= Introduction
-
-Bienvenue dans Typst Writer.
-
-Ceci est notre premier document Typst.
-"#;
-
         Self {
-            editor: CodeEditor::new(content, "typst"),
+            editor: CodeEditor::new(crate::project::DOCUMENT_TEMPLATE, "typst"),
             path: None,
         }
     }
@@ -53,5 +42,36 @@ impl EditorState {
 
     pub fn is_modified(&self) -> bool {
         self.editor.is_modified()
+    }
+
+    /// Insère du texte à la position du curseur.
+    ///
+    /// Le mécanisme est le message `Paste` de l'éditeur — c'est son insertion
+    /// documentée au curseur (utilisée par la palette de commandes), pas un
+    /// accès au presse-papiers système.
+    pub fn insert_at_cursor(&mut self, text: &str) -> Task<EditorMessage> {
+        self.editor.update(&EditorMessage::Paste(text.to_string()))
+    }
+
+    /// Écrit le contenu courant sur le disque.
+    ///
+    /// Renvoie `Ok(())` si l'écriture a réussi, l'erreur sinon.
+    pub fn save(&mut self) -> std::io::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "aucun chemin de fichier",
+            ));
+        };
+
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        std::fs::write(&path, self.content())?;
+
+        self.editor.mark_saved();
+
+        Ok(())
     }
 }

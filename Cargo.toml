@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14.0", features = ["smol", "svg"] }
+iced = { version = "0.14.0", features = ["smol", "image"] }
 iced-code-editor = "0.5.2"
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -14,5 +14,6 @@ typst = "0.15.1"
 typst-assets = { version = "0.15.1", features = ["fonts"] }
 typst-layout = "0.15.1"
 typst-pdf = "0.15.1"
-typst-svg = "0.15.1"
+typst-render = "0.15.1"
 typst-syntax = "0.15.1"
+typst-utils = "0.15.1"

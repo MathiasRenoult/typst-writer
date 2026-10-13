@@ -1,13 +1,21 @@
-//! Rendu fidèle : compilation par le compilateur Typst en bibliothèque et
-//! export SVG vectoriel de chaque page.
+//! Compilation Typst en bibliothèque et rendu raster des pages.
 //!
-//! Contrairement au rendu natif par widgets (sous-ensemble de la syntaxe) ou
-//! au binaire CLI, la compilation en bibliothèque évalue le document avec le
-//! moteur Typst complet — mêmes polices, même layout, mêmes erreurs que
-//! l'export — et produit des pages SVG nettes à tout zoom, en process
-//! (aucun spawn de binaire à chaque frappe).
+//! Deux temps, volontairement séparés :
+//!
+//! 1. **Compilation** (`compile`) : le document est compilé par le moteur
+//!    Typst complet (polices embarquées, layout identique à `typst compile`).
+//!    C'est rapide (~50 ms même pour un gros document) et ne produit aucun
+//!    bitmap. Les diagnostics (erreurs, avertissements) en sortent aussi.
+//!
+//! 2. **Rendu raster** (`render_page`) : une seule page à la fois est
+//!    rasterisée en PNG par `typst-render` (le moteur d'export PNG du CLI,
+//!    qui dessine les glyphes directement — pas de SVG, donc pas de bug
+//!    d'exposant). Seules les pages visibles à l'écran sont rendues, ce qui
+//!    rend l'aperçu d'un document de 5500 mots aussi léger que celui d'une
+//!    page.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use typst::diag::{FileError, FileResult, SourceDiagnostic, Warned};
 use typst::foundations::{Bytes, Duration};
@@ -15,8 +23,13 @@ use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
 use typst_layout::PagedDocument;
-use typst_svg::{SvgOptions, svg as page_svg};
 use typst_syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
+
+/// Densité de rendu des pages (pixels par point).
+///
+/// 2.0 correspond à un écran HiDPI raisonnable : net, et ~4× moins de pixels
+/// qu'une export à 4.0. Le coût de rasterisation reste sous les 30 ms/page.
+const PIXEL_PER_PT: f64 = 2.0;
 
 /// Un diagnostic (erreur ou avertissement) positionné dans le document.
 #[derive(Debug, Clone)]
@@ -30,24 +43,28 @@ pub struct Diagnostic {
     pub column: Option<usize>,
 }
 
-/// Résultat du rendu d'un document.
+/// Résultat de la compilation d'un document.
 #[derive(Debug, Clone, Default)]
-pub struct RenderOutcome {
-    /// Contenu rendu : permet de ne relancer que si le document a changé.
+pub struct CompileOutcome {
+    /// Contenu compilé : permet de ne relancer que si le document a changé.
     pub content: String,
 
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
 
-    /// Une chaîne SVG par page, vide si la compilation a échoué.
-    pub pages: Vec<String>,
+    /// Document compilé, `None` si la compilation a échoué.
+    ///
+    /// Les pages sont gardées en mémoire (`Arc`) : rasteriser une page est
+    /// alors instantané à déclencher, et le document peut être réexporté en
+    /// PDF sans recompiler.
+    pub document: Option<Arc<PagedDocument>>,
 }
 
-/// Compile le document et rend chaque page en SVG.
+/// Compile le document (sans rasteriser).
 ///
 /// `root` est le dossier du document actif : les imports et images relatifs
 /// s'y résolvent exactement comme à l'export.
-pub fn render(root: &Path, content: &str) -> RenderOutcome {
+pub fn compile(root: &Path, content: &str) -> CompileOutcome {
     let world = PreviewWorld::new(root, content);
     let main = world.main_source().clone();
 
@@ -64,31 +81,50 @@ pub fn render(root: &Path, content: &str) -> RenderOutcome {
     );
     let warnings = convert_diagnostics(&warnings, &world, &main);
 
-    let pages = match output {
-        Ok(document) => {
-            let options = SvgOptions::default();
-
-            document
-                .pages()
-                .iter()
-                .map(|page| page_svg(page, &options))
-                .collect()
-        }
-        Err(_) => Vec::new(),
-    };
-
-    RenderOutcome {
+    CompileOutcome {
         content: content.to_string(),
         errors,
         warnings,
-        pages,
+        document: output.ok().map(Arc::new),
     }
+}
+
+/// Rasterise une page du document en PNG.
+///
+/// Renvoie les octets PNG (à donner à `image::Handle::from_memory`), ou
+/// `None` si l'index dépasse le nombre de pages.
+pub fn render_page(document: &PagedDocument, index: usize) -> Option<Vec<u8>> {
+    let page = document.pages().get(index)?;
+
+    let options = typst_render::RenderOptions {
+        pixel_per_pt: typst_utils::Scalar::new(PIXEL_PER_PT),
+        render_bleed: false,
+    };
+
+    let pixmap = typst_render::render(page, &options);
+
+    pixmap.encode_png().ok()
+}
+
+/// Dimensions d'une page en pixels (largeur, hauteur) à la densité de rendu.
+pub fn page_size(document: &PagedDocument, index: usize) -> Option<(f64, f64)> {
+    let page = document.pages().get(index)?;
+    let size = page.frame.size();
+
+    let scale = PIXEL_PER_PT;
+
+    Some((size.x.to_pt() * scale, size.y.to_pt() * scale))
+}
+
+/// Nombre de pages du document.
+pub fn page_count(document: &PagedDocument) -> usize {
+    document.pages().len()
 }
 
 /// Exporte le document compilé en PDF (octets bruts).
 ///
 /// Renvoie `None` si le document ne compile pas (les erreurs sont alors
-/// disponibles via [`render`]).
+/// disponibles via [`compile`]).
 pub fn render_pdf(root: &Path, content: &str) -> Option<Vec<u8>> {
     let world = PreviewWorld::new(root, content);
 
@@ -226,27 +262,135 @@ impl World for PreviewWorld {
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::Instant;
 
+    /// Génère un document de la taille demandée (mots) pour les mesures.
+    fn generate_content(words: usize) -> String {
+        let vocabulary = [
+            "lorem",
+            "ipsum",
+            "dolor",
+            "sit",
+            "amet",
+            "consectetur",
+            "adipiscing",
+            "elit",
+            "sed",
+            "do",
+            "eiusmod",
+            "tempor",
+            "incididunt",
+            "ut",
+            "labore",
+            "et",
+            "dolore",
+            "magna",
+            "aliqua",
+        ];
+
+        let mut content = String::from("#set page(margin: 2cm)\n\n");
+
+        // ~70 mots par paragraphe.
+        let paragraphs = words / 70;
+
+        for index in 1..=paragraphs {
+            if index % 8 == 1 {
+                content.push_str(&format!("= Section {}\n\n", index / 8 + 1));
+            }
+
+            for word_index in 0..70 {
+                let word = vocabulary[(index * 7 + word_index * 3) % vocabulary.len()];
+                content.push_str(word);
+                content.push(' ');
+            }
+
+            content.push_str("\n\n");
+        }
+
+        content
+    }
+
+    /// Banc de mesure : compilation, rasterisation, incrémentalité.
+    ///
+    /// Ignoré par défaut (quelques secondes) :
+    /// `cargo test --release -- --ignored bench_full_document`
     #[test]
-    fn renders_valid_document_to_svg_pages() {
-        let dir = std::env::temp_dir().join("typst-writer-render-test");
+    #[ignore = "banc de mesure manuel"]
+    fn bench_full_document() {
+        let dir = std::env::temp_dir().join("typst-writer-bench");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = render(&dir, "= Titre\n\nDu texte avec du *gras*.\n");
+        let content = generate_content(5500);
+
+        println!();
+        println!("Document : {} caractères", content.len());
+
+        // 1. Compilation complète.
+        let start = Instant::now();
+        let outcome = compile(&dir, &content);
+        let compile_time = start.elapsed();
+
+        let document = outcome.document.expect("document compilé");
+
+        println!(
+            "Compilation        : {compile_time:>10.2?}  ({} page(s))",
+            page_count(&document)
+        );
+
+        // 2. Rasterisation des deux pages visibles.
+        let start = Instant::now();
+        let mut rendered = 0;
+
+        for index in 0..2.min(page_count(&document)) {
+            if render_page(&document, index).is_some() {
+                rendered += 1;
+            }
+        }
+
+        let raster_time = start.elapsed();
+
+        println!(
+            "Rendu {rendered} page(s)     : {raster_time:>10.2?}  ({:.2?}/page)",
+            raster_time / rendered.max(1) as u32
+        );
+
+        // 3. Taille d'une page.
+        if let Some((width, height)) = page_size(&document, 0) {
+            println!("Taille d'une page  : {width:.0} × {height:.0} px");
+        }
+
+        // 4. Compilation incrémentale : une frappe en fin de document.
+        let mut edited = content.clone();
+        edited.push_str("\nUn mot de plus.\n");
+
+        let start = Instant::now();
+        let second = compile(&dir, &edited);
+        let incremental_time = start.elapsed();
+
+        println!("Compilation incré. : {incremental_time:>10.2?}");
+
+        // 5. Coût d'une frame : la compilation est le temps dominant, la
+        //    rasterisation ne concerne que les pages visibles.
+        println!();
+        println!(
+            "Budget frame 60 Hz : 16.00 ms  —  compilation = {:.0}% du budget",
+            compile_time.as_secs_f64() / 0.016 * 100.0
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compiles_valid_document() {
+        let dir = std::env::temp_dir().join("typst-writer-compile-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let outcome = compile(&dir, "= Titre\n\nDu texte avec du *gras*.\n");
 
         assert!(outcome.errors.is_empty(), "aucune erreur attendue");
-        assert_eq!(outcome.pages.len(), 1, "une page SVG attendue");
-
-        let page = &outcome.pages[0];
-        assert!(page.contains("<svg"), "le rendu doit être un SVG");
-        // Typst encode les glyphes en chemins vectoriels (comme le PDF) :
-        // aucune police système n'intervient, le rendu est fidèle.
-        assert!(
-            page.contains("<path"),
-            "les glyphes doivent être vectorisés"
-        );
-        assert!(page.contains("<symbol"), "les glyphes doivent être définis");
+        assert_eq!(page_count(outcome.document.as_ref().unwrap()), 1);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -254,24 +398,27 @@ mod tests {
     /// Le vrai compilateur détecte les erreurs sémantiques, avec position.
     #[test]
     fn reports_semantic_errors_with_position() {
-        let dir = std::env::temp_dir().join("typst-writer-render-err");
+        let dir = std::env::temp_dir().join("typst-writer-compile-err");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = render(&dir, "= Titre\n\n#foo()\n");
+        let outcome = compile(&dir, "= Titre\n\n#foo()\n");
 
         assert_eq!(outcome.errors.len(), 1, "une erreur attendue");
         assert_eq!(outcome.errors[0].message, "unknown variable: foo");
         assert_eq!(outcome.errors[0].line, Some(3));
-        assert!(outcome.pages.is_empty(), "pas de page en cas d'erreur");
+        assert!(
+            outcome.document.is_none(),
+            "pas de document en cas d'erreur"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Un document de plusieurs pages produit un SVG par page.
+    /// Un document de plusieurs pages est compilé page par page.
     #[test]
-    fn renders_multiple_pages() {
-        let dir = std::env::temp_dir().join("typst-writer-render-pages");
+    fn compiles_multiple_pages() {
+        let dir = std::env::temp_dir().join("typst-writer-compile-pages");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -283,10 +430,61 @@ mod tests {
             content.push_str(&format!("= Page {i}\n"));
         }
 
-        let outcome = render(&dir, &content);
+        let outcome = compile(&dir, &content);
 
         assert!(outcome.errors.is_empty());
-        assert_eq!(outcome.pages.len(), 3, "trois pages SVG attendues");
+        assert_eq!(page_count(outcome.document.as_ref().unwrap()), 3);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// La rasterisation produit un PNG valide, à la bonne taille.
+    #[test]
+    fn renders_page_to_png() {
+        let dir = std::env::temp_dir().join("typst-writer-raster");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let outcome = compile(&dir, "= Titre\n\nDu contenu.\n");
+        let document = outcome.document.expect("document compilé");
+
+        let png = render_page(&document, 0).expect("rendu de la page");
+
+        assert!(png.starts_with(b"\x89PNG"), "le rendu doit être un PNG");
+
+        // A4 à 2 px/pt : ~1191 × 1684 px.
+        let (width, height) = page_size(&document, 0).expect("taille de page");
+        assert!(
+            (width - 1191.0).abs() < 5.0,
+            "largeur A4 attendue, eu {width}"
+        );
+        assert!(
+            (height - 1684.0).abs() < 5.0,
+            "hauteur A4 attendue, eu {height}"
+        );
+
+        // Index hors bornes : pas de page.
+        assert!(render_page(&document, 99).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Les maths s'affichent sans artefact d'exposant : le rendu passe par le
+    /// moteur (pas par un encodage SVG).
+    #[test]
+    fn renders_math_without_svg_artifacts() {
+        let dir = std::env::temp_dir().join("typst-writer-math");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let outcome = compile(&dir, "Inline $x_1^2$ et display $ sum_(i=1)^n i $");
+
+        assert!(outcome.errors.is_empty(), "maths valides attendues");
+
+        let document = outcome.document.expect("document compilé");
+        let png = render_page(&document, 0).expect("rendu");
+
+        assert!(png.starts_with(b"\x89PNG"));
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -294,7 +492,7 @@ mod tests {
     /// L'export PDF produit un PDF valide.
     #[test]
     fn exports_valid_pdf() {
-        let dir = std::env::temp_dir().join("typst-writer-render-pdf");
+        let dir = std::env::temp_dir().join("typst-writer-pdf");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 

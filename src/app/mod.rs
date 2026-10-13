@@ -4,29 +4,141 @@ pub mod state;
 pub use message::Message;
 pub use state::State;
 
-use iced::Subscription;
-use iced::time;
-use iced_code_editor::Message as EditorMessage;
+use iced::event::{Event, Status};
+use iced::keyboard;
+use iced::{Subscription, Task, time};
 
-use std::fs;
 use std::path::PathBuf;
 
 /// Intervalle de recompilation automatique après la dernière frappe.
 const RENDER_INTERVAL_MS: u64 = 300;
 
-pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
+impl State {
+    /// État initial : le dernier document de la session est rouvert, ou le
+    /// plus récent de la bibliothèque, ou un premier document est créé.
+    pub fn new() -> Self {
+        let mut state = Self {
+            editor: crate::editor::EditorState::default(),
+            export_status: None,
+            library: Vec::new(),
+            bibliography: Vec::new(),
+            render: Default::default(),
+        };
+
+        // 1. Le document de la session précédente, s'il existe toujours.
+        let session = crate::project::load_session();
+
+        let restored = session
+            .last_document
+            .clone()
+            .filter(|path| path.is_file())
+            .and_then(|path| {
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .map(|content| (path, content))
+            });
+
+        // 2. Sinon le document le plus récent de la bibliothèque.
+        let restored = restored.or_else(|| {
+            crate::project::list_documents()
+                .into_iter()
+                .find_map(|document| {
+                    std::fs::read_to_string(&document.path)
+                        .ok()
+                        .map(|content| (document.path, content))
+                })
+        });
+
+        // 3. Sinon un premier document, créé sur place.
+        match restored {
+            Some((path, content)) => {
+                state.editor = crate::editor::EditorState::new_file(path, content);
+            }
+            None => {
+                let content = crate::project::DOCUMENT_TEMPLATE.to_string();
+
+                match crate::project::create_document(&content) {
+                    Ok(path) => {
+                        state.editor = crate::editor::EditorState::new_file(path, content);
+                    }
+                    Err(error) => eprintln!("Création du premier document : {error}"),
+                }
+            }
+        }
+
+        state.refresh_context();
+
+        // La session est enregistrée dès le démarrage : le document ouvert
+        // (restauré ou créé) sera celui de la prochaine session.
+        if let Some(path) = state.editor.path.clone() {
+            crate::project::save_session(&crate::project::Session {
+                last_document: Some(path),
+            });
+        }
+
+        state
+    }
+
+    /// Rescanne la bibliothèque et recharge la bibliographie du document
+    /// actif.
+    fn refresh_context(&mut self) {
+        self.library = crate::project::list_documents();
+
+        self.bibliography = self
+            .editor
+            .path
+            .as_ref()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+            .and_then(|dir| crate::project::find_bibliography(&dir))
+            .map(|bib| crate::project::parse_bibliography(&bib))
+            .unwrap_or_default();
+    }
+
+    /// Dossier du document actif (base des imports relatifs).
+    fn document_dir(&self) -> PathBuf {
+        self.editor
+            .path
+            .as_ref()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+            .unwrap_or_else(crate::project::work_dir)
+    }
+
+    /// Écrit le contenu courant et enregistre la session.
+    fn persist(&mut self) {
+        if let Some(path) = self.editor.path.clone() {
+            if let Err(error) = self.editor.save() {
+                eprintln!("Sauvegarde de {path:?} : {error}");
+            }
+
+            crate::project::save_session(&crate::project::Session {
+                last_document: Some(path),
+            });
+        }
+    }
+}
+
+pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::Editor(message) => state.editor.update(message).map(Message::Editor),
 
         Message::NewFile => {
-            let (path, content) = create_new_document();
-            state.editor = crate::editor::EditorState::new_file(path, content);
-            state.export_status = None;
+            let content = crate::project::DOCUMENT_TEMPLATE.to_string();
 
-            iced::Task::none()
+            match crate::project::create_document(&content) {
+                Ok(path) => {
+                    state.editor = crate::editor::EditorState::new_file(path, content);
+                    state.export_status = None;
+                    state.refresh_context();
+                }
+                Err(error) => {
+                    state.export_status = Some(format!("Création du document : {error}"));
+                }
+            }
+
+            Task::none()
         }
 
-        Message::OpenFile => iced::Task::perform(
+        Message::OpenFile => Task::perform(
             async {
                 rfd::AsyncFileDialog::new()
                     .add_filter("Typst", &["typ"])
@@ -35,7 +147,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
                     .and_then(|file| {
                         let path = file.path().to_path_buf();
 
-                        fs::read_to_string(&path)
+                        std::fs::read_to_string(&path)
                             .ok()
                             .map(|content| (path, content))
                     })
@@ -47,31 +159,60 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
             if let Some((path, content)) = result {
                 state.editor = crate::editor::EditorState::new_file(path, content);
                 state.export_status = None;
+                state.refresh_context();
             }
 
-            iced::Task::none()
+            Task::none()
         }
 
-        Message::SaveFile => {
-            let content = state.editor.content();
-            let path = state
-                .editor
-                .path
-                .clone()
-                .unwrap_or_else(|| work_dir().join("document-1.typ"));
+        Message::OpenLibraryDocument(path) => Task::perform(
+            async move {
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .map(|content| (path, content))
+            },
+            |result| match result {
+                Some((path, content)) => Message::LibraryDocumentOpened(path, content),
+                None => Message::RefreshLibrary,
+            },
+        ),
 
-            iced::Task::perform(
-                async move {
-                    match fs::write(&path, content) {
-                        Ok(_) => Some(path),
-                        Err(error) => {
-                            eprintln!("Erreur lors de la sauvegarde : {error}");
-                            None
-                        }
-                    }
-                },
-                Message::FileSaved,
-            )
+        Message::LibraryDocumentOpened(path, content) => {
+            state.editor = crate::editor::EditorState::new_file(path, content);
+            state.export_status = None;
+            state.refresh_context();
+
+            crate::project::save_session(&crate::project::Session {
+                last_document: state.editor.path.clone(),
+            });
+
+            Task::none()
+        }
+
+        Message::RefreshLibrary => {
+            state.refresh_context();
+
+            Task::none()
+        }
+
+        Message::DeleteDocument(path) => {
+            let _ = crate::project::delete_document(&path);
+
+            state.refresh_context();
+
+            Task::none()
+        }
+
+        Message::InsertCitation(key) => state
+            .editor
+            .insert_at_cursor(&format!("@{key}"))
+            .map(Message::Editor),
+
+        Message::SaveFile => {
+            state.persist();
+            state.refresh_context();
+
+            Task::none()
         }
 
         Message::SaveAs => save_as_task(state),
@@ -82,30 +223,16 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
                 state.editor.editor.mark_saved();
             }
 
-            iced::Task::none()
-        }
+            state.refresh_context();
 
-        Message::CloseFile => {
-            state.editor = crate::editor::EditorState::default();
-            state.export_status = None;
-
-            iced::Task::none()
+            Task::none()
         }
 
         Message::ExportPdf => {
             let content = state.editor.content();
+            let dir = state.document_dir();
 
-            // Le dossier du document actif : les imports relatifs s'y
-            // résolvent comme dans l'aperçu.
-            let dir = state
-                .editor
-                .path
-                .as_ref()
-                .and_then(|path| path.parent())
-                .map(|parent| parent.to_path_buf())
-                .unwrap_or_else(work_dir);
-
-            iced::Task::perform(
+            Task::perform(
                 async move {
                     let Some(bytes) = crate::typst::render::render_pdf(&dir, &content) else {
                         return Err(
@@ -125,7 +252,7 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
 
                     let path = file.path().to_path_buf();
 
-                    fs::write(&path, &bytes)
+                    std::fs::write(&path, &bytes)
                         .map(|_| path.display().to_string())
                         .map_err(|error| format!("Écriture du PDF : {error}"))
                 },
@@ -139,89 +266,199 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
                 Err(error) => error,
             });
 
-            iced::Task::none()
+            Task::none()
         }
 
         Message::RenderTick => {
             if state.render.pending {
-                // Un seul rendu à la fois ; si le contenu a changé pendant
-                // ce temps, le tick suivant relancera.
-                return iced::Task::none();
+                // Une seule compilation à la fois ; si le contenu a changé
+                // pendant ce temps, le tick suivant relancera.
+                return Task::none();
             }
 
             let content = state.editor.content();
 
             if state.render.content == content {
-                return iced::Task::none();
+                return Task::none();
             }
 
             state.render.pending = true;
 
-            render_task(state, content)
+            compile_task(state, content)
         }
 
         Message::RenderDone(outcome) => {
             state.render.pending = false;
             state.render.done = true;
+            let compiled_ok = outcome.errors.is_empty();
+
             state.render.content = outcome.content;
             state.render.errors = outcome.errors;
             state.render.warnings = outcome.warnings;
-            state.render.pages = outcome.pages;
+            state.render.document = outcome.document;
 
-            iced::Task::none()
+            // Le cache de pages est conservé : c'est le double tampon. Les
+            // images déjà affichées restent en place jusqu'à ce que leur
+            // nouveau rendu arrive — l'aperçu ne montre jamais de cadre gris
+            // ni de flash. Seules les entrées de pages disparues sont
+            // retirées, pour ne pas garder des images inutilisées.
+            if let Some(document) = state.render.document.as_deref() {
+                let total = crate::typst::render::page_count(document);
+
+                state.render.page_cache.retain(|index, _| *index < total);
+            }
+
+            // Sauvegarde automatique : le document actif est un fichier
+            // local de l'app, toujours à jour sur le disque dès que la
+            // compilation réussit. Un document invalide n'est pas écrit
+            // (le statut « modifié » le signale).
+            if compiled_ok && state.editor.is_modified() {
+                state.persist();
+            }
+
+            // Rendre immédiatement les pages actuellement visibles.
+            rasterize_visible(state)
+        }
+
+        Message::PageRendered(index, png) => {
+            state.render.rendering.remove(&index);
+
+            if let Some(png) = png {
+                // Remplacement en place : l'affichage bascule de l'ancienne
+                // image à la nouvelle sans jamais passer par le vide.
+                state.render.page_cache.insert(index, png);
+            }
+
+            Task::none()
+        }
+
+        Message::ViewportChanged(first, last) => {
+            state.render.visible = Some((first, last));
+
+            rasterize_visible(state)
         }
 
         Message::GotoError(line, column) => {
             // Les positions de typst sont 1-based ; l'éditeur attend du
             // 0-based.
-            let _ = state.editor.update(EditorMessage::GotoPosition(
+            let _ = state.editor.update(iced_code_editor::Message::GotoPosition(
                 line.saturating_sub(1),
                 column.saturating_sub(1),
             ));
 
-            iced::Task::none()
+            Task::none()
         }
 
-        Message::InsertReference => {
-            println!("Insert reference");
-            iced::Task::none()
-        }
+        Message::RawKey(key, modifiers) => handle_shortcut(state, key, modifiers),
 
         Message::OpenSettings => {
             println!("Open settings");
-            iced::Task::none()
+            Task::none()
         }
     }
 }
 
-/// Lance le rendu fidèle du contenu (compilation Typst en bibliothèque).
-fn render_task(state: &State, content: String) -> iced::Task<Message> {
-    // Le dossier du document actif : les imports relatifs s'y résolvent
-    // comme à l'export.
-    let dir = state
-        .editor
-        .path
-        .as_ref()
-        .and_then(|path| path.parent())
-        .map(|parent| parent.to_path_buf())
-        .unwrap_or_else(work_dir);
+/// Raccourcis globaux : Ctrl+S/N/O/E.
+///
+/// Ils n'agissent que sur des événements qu'aucun widget n'a consommés, donc
+/// jamais en conflit avec les raccourcis propres de l'éditeur.
+fn handle_shortcut(
+    state: &mut State,
+    key: iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Task<Message> {
+    if !modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return Task::none();
+    }
 
-    iced::Task::perform(
-        async move { crate::typst::render::render(&dir, &content) },
+    let iced::keyboard::Key::Character(character) = &key else {
+        return Task::none();
+    };
+
+    match character.to_lowercase().as_str() {
+        "s" => {
+            state.persist();
+            state.refresh_context();
+
+            Task::none()
+        }
+        "n" => update(state, Message::NewFile),
+        "o" => update(state, Message::OpenFile),
+        "e" => update(state, Message::ExportPdf),
+        _ => Task::none(),
+    }
+}
+
+/// Lance les rasterisations des pages visibles non encore en cours.
+///
+/// C'est le cœur de l'optimisation : un document de 5500 mots ne coûte
+/// qu'une compilation (~15 ms) + la rasterisation des 1-2 pages affichées
+/// (~35 ms chacune). Les pages déjà rendues restent affichées (double
+/// tampon) : elles sont remplacées en place quand leur nouveau rendu arrive.
+fn rasterize_visible(state: &State) -> Task<Message> {
+    let Some(document) = state.render.document.clone() else {
+        return Task::none();
+    };
+
+    let (first, last) = state.render.visible.unwrap_or((0, 0));
+    let total = crate::typst::render::page_count(&document);
+
+    let tasks: Vec<Task<Message>> = (first..=last.min(total.saturating_sub(1)))
+        .filter(|index| !state.render.rendering.contains(index))
+        .map(|index| {
+            let document = document.clone();
+
+            Task::perform(
+                async move { crate::typst::render::render_page(&document, index) },
+                move |png| Message::PageRendered(index, png),
+            )
+        })
+        .collect();
+
+    Task::batch(tasks)
+}
+
+/// Lance la compilation du contenu (moteur Typst en bibliothèque).
+fn compile_task(state: &State, content: String) -> Task<Message> {
+    let dir = state.document_dir();
+
+    Task::perform(
+        async move { crate::typst::render::compile(&dir, &content) },
         Message::RenderDone,
     )
 }
 
 /// Recompile le document périodiquement : le moteur n'est relancé que si le
-/// contenu a changé depuis le dernier rendu (debounce par inactivité).
-pub fn subscription(_state: &State) -> Subscription<Message> {
+/// contenu a changé depuis la dernière compilation (debounce par inactivité).
+fn subscription_timer() -> Subscription<Message> {
     time::every(time::milliseconds(RENDER_INTERVAL_MS)).map(|_| Message::RenderTick)
 }
 
-fn save_as_task(state: &State) -> iced::Task<Message> {
+/// Écoute des événements clavier au niveau application.
+///
+/// Les raccourcis globaux (Ctrl+S, Ctrl+N, Ctrl+O, Ctrl+E) n'agissent que
+/// lorsque l'événement n'a pas été consommé par un widget — l'éditeur garde
+/// donc la priorité sur ses propres raccourcis.
+fn subscription_keys() -> Subscription<Message> {
+    iced::event::listen_with(|event, status, _window| match status {
+        Status::Ignored => match event {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                Some(Message::RawKey(key, modifiers))
+            }
+            _ => None,
+        },
+        Status::Captured => None,
+    })
+}
+
+pub fn subscription(_state: &State) -> Subscription<Message> {
+    Subscription::batch(vec![subscription_timer(), subscription_keys()])
+}
+
+fn save_as_task(state: &State) -> Task<Message> {
     let content = state.editor.content().to_owned();
 
-    iced::Task::perform(
+    Task::perform(
         async move {
             let file = rfd::AsyncFileDialog::new()
                 .add_filter("Typst", &["typ"])
@@ -242,45 +479,3 @@ fn save_as_task(state: &State) -> iced::Task<Message> {
         Message::FileSaved,
     )
 }
-
-fn work_dir() -> PathBuf {
-    let dir = std::env::var("HOME")
-        .map(PathBuf::from)
-        .map(|mut path| {
-            path.push(".typst-writer");
-            path
-        })
-        .unwrap_or_else(|_| PathBuf::from(".typst-writer"));
-
-    let _ = fs::create_dir_all(&dir);
-
-    dir
-}
-
-fn create_new_document() -> (PathBuf, String) {
-    let work_dir = work_dir();
-    let _ = fs::create_dir_all(&work_dir);
-
-    let path = find_free_document_path(&work_dir);
-    let content = DOCUMENT_TEMPLATE.to_string();
-
-    let _ = fs::write(&path, &content);
-
-    (path, content)
-}
-
-fn find_free_document_path(work_dir: &PathBuf) -> PathBuf {
-    (1..=1000)
-        .map(|n| work_dir.join(format!("document-{n}.typ")))
-        .find(|path| !path.exists())
-        .unwrap_or_else(|| work_dir.join("document.typ"))
-}
-
-const DOCUMENT_TEMPLATE: &str = r#"#set page(margin: 2cm)
-
-= Introduction
-
-Bienvenue dans Typst Writer.
-
-Ceci est notre premier document Typst.
-"#;
