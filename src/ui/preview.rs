@@ -1,7 +1,8 @@
 use crate::app::{Message, State};
+use crate::typst::check::CheckError;
 use crate::typst::renderer::{Block, Inline, Marker};
 use iced::widget::text::{Rich, Span, Wrapping};
-use iced::widget::{column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Font, Padding, color, font};
 
 /// Taille du texte courant.
@@ -19,6 +20,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(text(status).size(13).color(color!(0x8a8a8a)));
     }
 
+    // Diagnostics du vrai compilateur, en tête du panneau.
+    if !state.check.errors.is_empty() {
+        content = content.push(diagnostics_panel(&state.check.errors, true));
+    }
+
+    if !state.check.warnings.is_empty() {
+        content = content.push(diagnostics_panel(&state.check.warnings, false));
+    }
+
     for block in &doc.blocks {
         content = content.push(render_block(block, 0));
     }
@@ -31,6 +41,79 @@ pub fn view(state: &State) -> Element<'_, Message> {
     }
 
     scrollable(content).width(Fill).height(Fill).into()
+}
+
+/// Bandeau listant les erreurs (ou avertissements) du compilateur, cliquables
+/// pour sauter à la ligne concernée.
+fn diagnostics_panel<'a>(diagnostics: &'a [CheckError], is_error: bool) -> Element<'a, Message> {
+    let title = if is_error {
+        format!(
+            "⚠ {} erreur(s) — le document ne compilera pas en PDF",
+            diagnostics.len()
+        )
+    } else {
+        format!("⚠ {} avertissement(s)", diagnostics.len())
+    };
+
+    let accent = if is_error {
+        color!(0xff8a8a)
+    } else {
+        color!(0xe8c07a)
+    };
+
+    let mut list = column![text(title).size(13).color(accent)].spacing(4);
+
+    for diagnostic in diagnostics {
+        let location = match (diagnostic.line, diagnostic.column) {
+            (Some(line), Some(column)) => format!("ligne {line}, colonne {column}"),
+            (Some(line), None) => format!("ligne {line}"),
+            _ => String::new(),
+        };
+
+        let label = if location.is_empty() {
+            diagnostic.message.clone()
+        } else {
+            format!("{location} — {}", diagnostic.message)
+        };
+
+        let jump = diagnostic
+            .line
+            .zip(diagnostic.column)
+            .map(|(line, column)| Message::GotoError(line, column));
+
+        list = list.push(
+            button(text(label).size(13).wrapping(Wrapping::Word).width(Fill))
+                .on_press_maybe(jump)
+                .padding([6, 10])
+                .width(Fill)
+                .style(button::text),
+        );
+    }
+
+    container(list)
+        .padding(10)
+        .width(Fill)
+        .style(panel_style(is_error))
+        .into()
+}
+
+/// Fond et bordure du bandeau de diagnostics.
+fn panel_style(is_error: bool) -> impl Fn(&iced::Theme) -> container::Style {
+    let (background, border) = if is_error {
+        (color!(0x3b2026), color!(0x9c4444))
+    } else {
+        (color!(0x332b1e), color!(0x8a7233))
+    };
+
+    move |_theme| container::Style {
+        background: Some(background.into()),
+        border: iced::Border {
+            color: border,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    }
 }
 
 /// Rend un bloc à la profondeur d'indentation donnée.

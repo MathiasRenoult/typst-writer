@@ -4,8 +4,15 @@ pub mod state;
 pub use message::Message;
 pub use state::State;
 
+use iced::Subscription;
+use iced::time;
+use iced_code_editor::Message as EditorMessage;
+
 use std::fs;
 use std::path::PathBuf;
+
+/// Intervalle de vérification automatique après la dernière frappe.
+const CHECK_INTERVAL_MS: u64 = 800;
 
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     match message {
@@ -151,6 +158,45 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
             iced::Task::none()
         }
 
+        Message::CheckTick => {
+            if state.check.pending {
+                // Un seul check à la fois ; si le contenu a changé pendant
+                // ce temps, le tick suivant relancera.
+                return iced::Task::none();
+            }
+
+            let content = state.editor.content();
+
+            if state.check.checked_content == content {
+                return iced::Task::none();
+            }
+
+            state.check.pending = true;
+
+            check_task(state, content)
+        }
+
+        Message::CheckDone(outcome) => {
+            state.check.pending = false;
+            state.check.done = true;
+            state.check.checked_content = outcome.content;
+            state.check.errors = outcome.errors;
+            state.check.warnings = outcome.warnings;
+
+            iced::Task::none()
+        }
+
+        Message::GotoError(line, column) => {
+            // Les positions de typst sont 1-based ; l'éditeur attend du
+            // 0-based.
+            let _ = state.editor.update(EditorMessage::GotoPosition(
+                line.saturating_sub(1),
+                column.saturating_sub(1),
+            ));
+
+            iced::Task::none()
+        }
+
         Message::InsertReference => {
             println!("Insert reference");
             iced::Task::none()
@@ -161,6 +207,30 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
             iced::Task::none()
         }
     }
+}
+
+/// Lance la vérification du contenu par le compilateur Typst.
+fn check_task(state: &State, content: String) -> iced::Task<Message> {
+    // Le fichier de vérification est écrit dans le dossier du document actif
+    // pour que les imports relatifs s'y résolvent comme à l'export.
+    let dir = state
+        .editor
+        .path
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(|parent| parent.to_path_buf())
+        .unwrap_or_else(work_dir);
+
+    iced::Task::perform(
+        async move { crate::typst::check::check(&dir, &content) },
+        Message::CheckDone,
+    )
+}
+
+/// Vérifie le document périodiquement : le compilateur n'est relancé que si
+/// le contenu a changé depuis le dernier check (debounce par inactivité).
+pub fn subscription(_state: &State) -> Subscription<Message> {
+    time::every(time::milliseconds(CHECK_INTERVAL_MS)).map(|_| Message::CheckTick)
 }
 
 fn save_as_task(state: &State) -> iced::Task<Message> {
@@ -189,13 +259,17 @@ fn save_as_task(state: &State) -> iced::Task<Message> {
 }
 
 fn work_dir() -> PathBuf {
-    std::env::var("HOME")
+    let dir = std::env::var("HOME")
         .map(PathBuf::from)
         .map(|mut path| {
             path.push(".typst-writer");
             path
         })
-        .unwrap_or_else(|_| PathBuf::from(".typst-writer"))
+        .unwrap_or_else(|_| PathBuf::from(".typst-writer"));
+
+    let _ = fs::create_dir_all(&dir);
+
+    dir
 }
 
 fn create_new_document() -> (PathBuf, String) {
