@@ -16,7 +16,18 @@ pub enum Message {
 
     CloseFile,
 
-    OpenProject,
+    Refresh,
+
+    PreviewOutcome(PreviewOutcome),
+
+    OpenPreview,
+
     InsertReference,
     OpenSettings,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviewOutcome {
+    pub pdf: Option<PathBuf>,
+    pub status: String,
 }

@@ -4,7 +4,7 @@ use iced::widget::{column, row};
 use super::{editor, preview, sidebar, status_bar, toolbar};
 
 pub fn view(state: &State) -> iced::Element<'_, Message> {
-    let content = row![sidebar::view(), editor::view(state), preview::view(),]
+    let content = row![sidebar::view(), editor::view(state), preview::view(state),]
         .spacing(1)
         .height(iced::Fill);
 

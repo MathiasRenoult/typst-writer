@@ -8,6 +8,7 @@ pub fn view() -> iced::Element<'static, Message> {
         button("Ouvrir").on_press(Message::OpenFile),
         button("Sauvegarder").on_press(Message::SaveFile),
         button("Enregistrer sous").on_press(Message::SaveAs),
+        button("Actualiser").on_press(Message::Refresh),
         button("Fermer").on_press(Message::CloseFile),
         button("Insérer").on_press(Message::InsertReference),
         Space::new().width(iced::Fill),
