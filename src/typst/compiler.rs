@@ -3,10 +3,7 @@ use std::process::Command;
 
 pub fn compile(input: &PathBuf) -> Result<PathBuf, String> {
     if !input.exists() {
-        return Err(format!(
-            "Le fichier n'existe pas : {}",
-            input.display()
-        ));
+        return Err(format!("Le fichier n'existe pas : {}", input.display()));
     }
 
     let output = Command::new("typst")
@@ -33,5 +30,7 @@ pub fn compile(input: &PathBuf) -> Result<PathBuf, String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    Err(format!("Erreur Typst :\nstderr: {stderr}\nstdout: {stdout}"))
+    Err(format!(
+        "Erreur Typst :\nstderr: {stderr}\nstdout: {stdout}"
+    ))
 }
