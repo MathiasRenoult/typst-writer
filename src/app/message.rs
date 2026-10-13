@@ -16,36 +16,15 @@ pub enum Message {
 
     CloseFile,
 
-    /// Tic périodique déclenchant la recompilation automatique.
-    Tick,
+    /// Exporte le document courant en PDF (dialogue de destination).
+    ExportPdf,
 
-    /// Résultat d'une compilation (réussie ou échouée).
-    PreviewOutcome(PreviewOutcome),
+    /// Résultat de l'export PDF : chemin du fichier ou message d'erreur.
+    PdfExported(Result<String, String>),
 
-    /// Page précédente du PDF prévisualisé.
-    PreviewPagePrev,
-
-    /// Page suivante du PDF prévisualisé.
-    PreviewPageNext,
-
-    OpenPreview,
-    Refresh,
+    /// Ouvre un lien dans le navigateur.
+    OpenLink(String),
 
     InsertReference,
     OpenSettings,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreviewOutcome {
-    /// Contenu compilé : sert à ne recompiler que lorsque le document change.
-    pub content: String,
-
-    /// Chemin du PDF produit, `None` si la compilation a échoué.
-    pub pdf: Option<PathBuf>,
-
-    /// Images PNG des pages du PDF, dans l'ordre.
-    pub pages: Vec<PathBuf>,
-
-    /// Message d'état affiché dans le panneau de prévisualisation.
-    pub status: String,
 }

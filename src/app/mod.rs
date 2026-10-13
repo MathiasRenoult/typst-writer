@@ -1,27 +1,29 @@
 pub mod message;
 pub mod state;
 
-pub use message::{Message, PreviewOutcome};
-pub use state::{Preview, State};
-
-use iced::Subscription;
-use iced::time;
+pub use message::Message;
+pub use state::State;
 
 use std::fs;
 use std::path::PathBuf;
 
-/// Délai d'inactivité avant recompilation automatique (debounce).
-const PREVIEW_INTERVAL_MS: u64 = 1000;
-
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     match message {
-        Message::Editor(message) => state.editor.update(message).map(Message::Editor),
+        Message::Editor(message) => {
+            let task = state.editor.update(message);
+
+            // Le rendu live est recalculé à chaque frappe : le parse est
+            // quasi instantané, aucun délai n'est nécessaire.
+            state.doc = crate::typst::renderer::parse(&state.editor.content());
+
+            task.map(Message::Editor)
+        }
 
         Message::NewFile => {
             let (path, content) = create_new_document();
             state.editor = crate::editor::EditorState::new_file(path, content);
-            state.preview = None;
-            state.last_compiled_content = None;
+            state.doc = crate::typst::renderer::parse(&state.editor.content());
+            state.export_status = None;
 
             iced::Task::none()
         }
@@ -46,8 +48,8 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
         Message::FileOpened(result) => {
             if let Some((path, content)) = result {
                 state.editor = crate::editor::EditorState::new_file(path, content);
-                state.preview = None;
-                state.last_compiled_content = None;
+                state.doc = crate::typst::renderer::parse(&state.editor.content());
+                state.export_status = None;
             }
 
             iced::Task::none()
@@ -61,143 +63,90 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
                 .clone()
                 .unwrap_or_else(|| work_dir().join("document-1.typ"));
 
-            save_and_compile_task(path, content, state.preview_counter)
+            iced::Task::perform(
+                async move {
+                    match fs::write(&path, content) {
+                        Ok(_) => Some(path),
+                        Err(error) => {
+                            eprintln!("Erreur lors de la sauvegarde : {error}");
+                            None
+                        }
+                    }
+                },
+                Message::FileSaved,
+            )
         }
 
         Message::SaveAs => save_as_task(state),
 
         Message::FileSaved(path) => {
             if let Some(path) = path {
-                state.editor.path = Some(path.clone());
+                state.editor.path = Some(path);
                 state.editor.editor.mark_saved();
-
-                let content = state.editor.content();
-                let counter = state.preview_counter;
-                state.last_compiled_content = Some(content.clone());
-
-                iced::Task::perform(
-                    async move { compile_and_render(&path, counter, content) },
-                    Message::PreviewOutcome,
-                )
-            } else {
-                iced::Task::none()
             }
+
+            iced::Task::none()
         }
 
         Message::CloseFile => {
             state.editor = crate::editor::EditorState::default();
-            state.preview = None;
-            state.last_compiled_content = None;
+            state.doc = crate::typst::renderer::parse(&state.editor.content());
+            state.export_status = None;
 
             iced::Task::none()
         }
 
-        Message::Tick => {
+        Message::ExportPdf => {
             let content = state.editor.content();
-            let compiled = state.last_compiled_content.as_deref().unwrap_or("");
+            let source = state
+                .editor
+                .path
+                .clone()
+                .unwrap_or_else(|| work_dir().join("document-1.typ"));
 
-            if content == compiled {
-                // Le document n'a pas changé : rien à recompiler.
-                return iced::Task::none();
-            }
-
-            // Le document actif est toujours un fichier local de
-            // l'application : on en crée un si besoin, puis on y écrit le
-            // contenu courant avant de compiler.
-            if state.editor.path.is_none() {
-                let (path, _) = create_new_document();
-                state.editor.path = Some(path);
-            }
-
-            let path = state.editor.path.clone().unwrap();
-            let counter = state.preview_counter;
-
-            save_and_compile_task(path, content, counter)
-        }
-
-        Message::Refresh => {
-            if state.editor.path.is_none() {
-                let (path, _) = create_new_document();
-                state.editor.path = Some(path);
-            }
-
-            let path = state.editor.path.clone().unwrap();
-            let content = state.editor.content();
-
-            save_and_compile_task(path, content, state.preview_counter)
-        }
-
-        Message::PreviewPagePrev => {
-            if let Some(preview) = state.preview.as_mut() {
-                preview.current = preview.current.saturating_sub(1);
-            }
-
-            iced::Task::none()
-        }
-
-        Message::PreviewPageNext => {
-            if let Some(preview) = state.preview.as_mut() {
-                if preview.current + 1 < preview.pages.len() {
-                    preview.current += 1;
-                }
-            }
-
-            iced::Task::none()
-        }
-
-        Message::OpenPreview => {
-            if let Some(preview) = state.preview.as_ref() {
-                if let Some(path) = preview.pdf.to_str() {
-                    if cfg!(target_os = "windows") {
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/C", "start", "", path])
-                            .spawn();
-                    } else {
-                        let _ = std::process::Command::new(if cfg!(target_os = "macos") {
-                            "open"
-                        } else {
-                            "xdg-open"
-                        })
-                        .arg(path)
-                        .spawn();
+            iced::Task::perform(
+                async move {
+                    // Le fichier local est toujours à jour avant compilation.
+                    if let Err(error) = fs::write(&source, &content) {
+                        return Err(format!("Erreur d'écriture du fichier local : {error}"));
                     }
-                }
-            }
+
+                    let Some(file) = rfd::AsyncFileDialog::new()
+                        .add_filter("PDF", &["pdf"])
+                        .set_file_name("export.pdf")
+                        .save_file()
+                        .await
+                    else {
+                        return Err("Export annulé".to_string());
+                    };
+
+                    crate::typst::compiler::compile_to(&source, file.path())
+                        .map(|pdf| pdf.display().to_string())
+                        .map_err(|error| format!("Erreur de compilation : {error}"))
+                },
+                Message::PdfExported,
+            )
+        }
+
+        Message::PdfExported(result) => {
+            state.export_status = Some(match result {
+                Ok(path) => format!("PDF exporté : {path}"),
+                Err(error) => error,
+            });
 
             iced::Task::none()
         }
 
-        Message::PreviewOutcome(outcome) => {
-            state.last_compiled_content = Some(outcome.content);
-
-            match outcome.pdf {
-                Some(pdf) => {
-                    state.preview_counter = state.preview_counter.wrapping_add(1);
-                    state.editor.editor.mark_saved();
-
-                    state.preview = Some(Preview {
-                        pdf,
-                        pages: outcome.pages,
-                        status: outcome.status,
-                        current: 0,
-                    });
-                }
-                None => {
-                    // Échec : on conserve la dernière bonne prévisualisation
-                    // et on se contente d'afficher l'erreur.
-                    match state.preview.as_mut() {
-                        Some(preview) => preview.status = outcome.status,
-                        None => {
-                            state.preview = Some(Preview {
-                                pdf: PathBuf::new(),
-                                pages: Vec::new(),
-                                status: outcome.status,
-                                current: 0,
-                            })
-                        }
-                    }
-                }
-            }
+        Message::OpenLink(url) => {
+            let _ = std::process::Command::new(if cfg!(target_os = "macos") {
+                "open"
+            } else if cfg!(target_os = "windows") {
+                "cmd"
+            } else {
+                "xdg-open"
+            })
+            .arg(&url)
+            .spawn();
 
             iced::Task::none()
         }
@@ -211,63 +160,6 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
             println!("Open settings");
             iced::Task::none()
         }
-    }
-}
-
-pub fn subscription(_state: &State) -> Subscription<Message> {
-    time::every(time::milliseconds(PREVIEW_INTERVAL_MS)).map(|_| Message::Tick)
-}
-
-/// Écrit le contenu dans le fichier local, compile, puis rend le PDF en images.
-fn save_and_compile_task(path: PathBuf, content: String, counter: usize) -> iced::Task<Message> {
-    iced::Task::perform(
-        async move {
-            if let Err(error) = fs::write(&path, &content) {
-                return PreviewOutcome {
-                    content,
-                    pdf: None,
-                    pages: Vec::new(),
-                    status: format!("Erreur d'écriture du fichier : {error}"),
-                };
-            }
-
-            compile_and_render(&path, counter, content)
-        },
-        Message::PreviewOutcome,
-    )
-}
-
-/// Compile le document et rend chaque page du PDF en image PNG.
-fn compile_and_render(path: &PathBuf, counter: usize, content: String) -> PreviewOutcome {
-    match crate::typst::compiler::compile(path) {
-        Ok(pdf) => match crate::typst::preview::render_pdf_to_png(&pdf, counter) {
-            Ok(pages) => {
-                let status = format!(
-                    "Compilé — {} page{}",
-                    pages.len(),
-                    if pages.len() > 1 { "s" } else { "" }
-                );
-
-                PreviewOutcome {
-                    content,
-                    pdf: Some(pdf),
-                    pages,
-                    status,
-                }
-            }
-            Err(error) => PreviewOutcome {
-                content,
-                pdf: Some(pdf),
-                pages: Vec::new(),
-                status: format!("Compilé, mais le rendu a échoué : {error}"),
-            },
-        },
-        Err(error) => PreviewOutcome {
-            content,
-            pdf: None,
-            pages: Vec::new(),
-            status: format!("Erreur de compilation :\n{error}"),
-        },
     }
 }
 
