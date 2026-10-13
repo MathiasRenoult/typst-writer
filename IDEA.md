@@ -1,0 +1,1 @@
+Une application qui me permettra de rédiger effectivement des devoirs pour mes études de théologie. Utilise typst comme compilateur et moteur de rendu. Simplife la syntaxe de typst en ayant une couche d'abstraction. Utilisation complète et intuitive de la bibliographie et des références. Gestion d'une bibliothèque virtuelle pour les devoirs, classés par étagère.

@@ -1,0 +1,13 @@
+[package]
+name = "typst-writer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = "0.14.0"
+iced-code-editor = "0.5.2"
+rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
+tower-lsp = "0.20.0"
