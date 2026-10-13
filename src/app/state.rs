@@ -1,36 +1,35 @@
 use crate::editor::EditorState;
-use crate::typst::check::CheckError;
-use crate::typst::renderer::Doc;
+use crate::typst::render::Diagnostic;
 
 #[derive(Default)]
 pub struct State {
     pub editor: EditorState,
 
-    /// Modèle de rendu du document courant, mis à jour à chaque frappe.
-    pub doc: Doc,
-
     /// Statut du dernier export PDF (`None` tant qu'aucun export n'a eu lieu).
     pub export_status: Option<String>,
 
-    /// Résultat de la vérification par le compilateur Typst.
-    pub check: CheckState,
+    /// Résultat du rendu fidèle (compilation Typst en bibliothèque).
+    pub render: RenderState,
 }
 
-/// État de la vérification par le vrai compilateur.
+/// État du rendu fidèle : compilation par le moteur Typst complet.
 #[derive(Default)]
-pub struct CheckState {
-    /// Contenu du dernier check terminé.
-    pub checked_content: String,
+pub struct RenderState {
+    /// Contenu du dernier rendu terminé.
+    pub content: String,
 
-    /// Un check est en cours (un seul à la fois).
+    /// Un rendu est en cours (un seul à la fois).
     pub pending: bool,
 
-    /// Au moins un check a été effectué.
+    /// Au moins un rendu a été effectué.
     pub done: bool,
 
     /// Erreurs remontées par le compilateur.
-    pub errors: Vec<CheckError>,
+    pub errors: Vec<Diagnostic>,
 
     /// Avertissements remontés par le compilateur.
-    pub warnings: Vec<CheckError>,
+    pub warnings: Vec<Diagnostic>,
+
+    /// Une chaîne SVG par page, vide si la compilation a échoué.
+    pub pages: Vec<String>,
 }

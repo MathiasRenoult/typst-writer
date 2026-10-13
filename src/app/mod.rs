@@ -11,25 +11,16 @@ use iced_code_editor::Message as EditorMessage;
 use std::fs;
 use std::path::PathBuf;
 
-/// Intervalle de vérification automatique après la dernière frappe.
-const CHECK_INTERVAL_MS: u64 = 800;
+/// Intervalle de recompilation automatique après la dernière frappe.
+const RENDER_INTERVAL_MS: u64 = 300;
 
 pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     match message {
-        Message::Editor(message) => {
-            let task = state.editor.update(message);
-
-            // Le rendu live est recalculé à chaque frappe : le parse est
-            // quasi instantané, aucun délai n'est nécessaire.
-            state.doc = crate::typst::renderer::parse(&state.editor.content());
-
-            task.map(Message::Editor)
-        }
+        Message::Editor(message) => state.editor.update(message).map(Message::Editor),
 
         Message::NewFile => {
             let (path, content) = create_new_document();
             state.editor = crate::editor::EditorState::new_file(path, content);
-            state.doc = crate::typst::renderer::parse(&state.editor.content());
             state.export_status = None;
 
             iced::Task::none()
@@ -55,7 +46,6 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
         Message::FileOpened(result) => {
             if let Some((path, content)) = result {
                 state.editor = crate::editor::EditorState::new_file(path, content);
-                state.doc = crate::typst::renderer::parse(&state.editor.content());
                 state.export_status = None;
             }
 
@@ -97,7 +87,6 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
 
         Message::CloseFile => {
             state.editor = crate::editor::EditorState::default();
-            state.doc = crate::typst::renderer::parse(&state.editor.content());
             state.export_status = None;
 
             iced::Task::none()
@@ -105,18 +94,25 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
 
         Message::ExportPdf => {
             let content = state.editor.content();
-            let source = state
+
+            // Le dossier du document actif : les imports relatifs s'y
+            // résolvent comme dans l'aperçu.
+            let dir = state
                 .editor
                 .path
-                .clone()
-                .unwrap_or_else(|| work_dir().join("document-1.typ"));
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(|parent| parent.to_path_buf())
+                .unwrap_or_else(work_dir);
 
             iced::Task::perform(
                 async move {
-                    // Le fichier local est toujours à jour avant compilation.
-                    if let Err(error) = fs::write(&source, &content) {
-                        return Err(format!("Erreur d'écriture du fichier local : {error}"));
-                    }
+                    let Some(bytes) = crate::typst::render::render_pdf(&dir, &content) else {
+                        return Err(
+                            "La compilation a échoué : corrigez les erreurs signalées dans le panneau."
+                                .to_string(),
+                        );
+                    };
 
                     let Some(file) = rfd::AsyncFileDialog::new()
                         .add_filter("PDF", &["pdf"])
@@ -127,9 +123,11 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
                         return Err("Export annulé".to_string());
                     };
 
-                    crate::typst::compiler::compile_to(&source, file.path())
-                        .map(|pdf| pdf.display().to_string())
-                        .map_err(|error| format!("Erreur de compilation : {error}"))
+                    let path = file.path().to_path_buf();
+
+                    fs::write(&path, &bytes)
+                        .map(|_| path.display().to_string())
+                        .map_err(|error| format!("Écriture du PDF : {error}"))
                 },
                 Message::PdfExported,
             )
@@ -144,44 +142,31 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
             iced::Task::none()
         }
 
-        Message::OpenLink(url) => {
-            let _ = std::process::Command::new(if cfg!(target_os = "macos") {
-                "open"
-            } else if cfg!(target_os = "windows") {
-                "cmd"
-            } else {
-                "xdg-open"
-            })
-            .arg(&url)
-            .spawn();
-
-            iced::Task::none()
-        }
-
-        Message::CheckTick => {
-            if state.check.pending {
-                // Un seul check à la fois ; si le contenu a changé pendant
+        Message::RenderTick => {
+            if state.render.pending {
+                // Un seul rendu à la fois ; si le contenu a changé pendant
                 // ce temps, le tick suivant relancera.
                 return iced::Task::none();
             }
 
             let content = state.editor.content();
 
-            if state.check.checked_content == content {
+            if state.render.content == content {
                 return iced::Task::none();
             }
 
-            state.check.pending = true;
+            state.render.pending = true;
 
-            check_task(state, content)
+            render_task(state, content)
         }
 
-        Message::CheckDone(outcome) => {
-            state.check.pending = false;
-            state.check.done = true;
-            state.check.checked_content = outcome.content;
-            state.check.errors = outcome.errors;
-            state.check.warnings = outcome.warnings;
+        Message::RenderDone(outcome) => {
+            state.render.pending = false;
+            state.render.done = true;
+            state.render.content = outcome.content;
+            state.render.errors = outcome.errors;
+            state.render.warnings = outcome.warnings;
+            state.render.pages = outcome.pages;
 
             iced::Task::none()
         }
@@ -209,10 +194,10 @@ pub fn update(state: &mut State, message: Message) -> iced::Task<Message> {
     }
 }
 
-/// Lance la vérification du contenu par le compilateur Typst.
-fn check_task(state: &State, content: String) -> iced::Task<Message> {
-    // Le fichier de vérification est écrit dans le dossier du document actif
-    // pour que les imports relatifs s'y résolvent comme à l'export.
+/// Lance le rendu fidèle du contenu (compilation Typst en bibliothèque).
+fn render_task(state: &State, content: String) -> iced::Task<Message> {
+    // Le dossier du document actif : les imports relatifs s'y résolvent
+    // comme à l'export.
     let dir = state
         .editor
         .path
@@ -222,15 +207,15 @@ fn check_task(state: &State, content: String) -> iced::Task<Message> {
         .unwrap_or_else(work_dir);
 
     iced::Task::perform(
-        async move { crate::typst::check::check(&dir, &content) },
-        Message::CheckDone,
+        async move { crate::typst::render::render(&dir, &content) },
+        Message::RenderDone,
     )
 }
 
-/// Vérifie le document périodiquement : le compilateur n'est relancé que si
-/// le contenu a changé depuis le dernier check (debounce par inactivité).
+/// Recompile le document périodiquement : le moteur n'est relancé que si le
+/// contenu a changé depuis le dernier rendu (debounce par inactivité).
 pub fn subscription(_state: &State) -> Subscription<Message> {
-    time::every(time::milliseconds(CHECK_INTERVAL_MS)).map(|_| Message::CheckTick)
+    time::every(time::milliseconds(RENDER_INTERVAL_MS)).map(|_| Message::RenderTick)
 }
 
 fn save_as_task(state: &State) -> iced::Task<Message> {
