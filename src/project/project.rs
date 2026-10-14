@@ -82,6 +82,21 @@ impl Project {
     pub fn orphan_chapters(&self) -> impl Iterator<Item = &Chapter> {
         self.chapters.iter().filter(|chapter| !chapter.included)
     }
+
+    /// Ce chemin appartient-il au projet ?
+    ///
+    /// Un fichier extérieur au projet n'est pas un chapitre : l'afficher dans
+    /// l'éditeur le laisserait dehors — ni compté, ni inclus, donc jamais
+    /// rendu. C'est la même distinction que celle de [`import_chapter`], vue
+    /// depuis l'autre bout : lui décide ce qui entre, celle-ci vérifie ce qui
+    /// est dedans.
+    pub fn owns(&self, path: &Path) -> bool {
+        same_file(path, &self.main)
+            || self
+                .chapters
+                .iter()
+                .any(|chapter| same_file(&chapter.path, path))
+    }
 }
 
 /// Le dossier racine des projets.
@@ -295,7 +310,10 @@ fn chapter_of(path: &Path, included: &[PathBuf]) -> Option<Chapter> {
 /// l'analyse produit des chemins absolus. On compare donc les deux derniers
 /// composants, ce qui suffit ici et évite de canoniser (qui échoue sur un
 /// chemin inexistant).
-fn same_file(a: &Path, b: &Path) -> bool {
+///
+/// La comparaison porte sur le nom du dossier parent **et** sur celui du
+/// fichier : deux projets distincts gardent ainsi leurs `main.typ` séparés.
+pub fn same_file(a: &Path, b: &Path) -> bool {
     fn tail(path: &Path) -> (Option<std::ffi::OsString>, std::ffi::OsString) {
         let mut components = path.components().rev();
 
@@ -440,6 +458,100 @@ fn replace_include(main: &Path, from: &Path, to: &Path) -> std::io::Result<()> {
 /// dans un assemblage sans passer par la création d'un chapitre.
 pub fn add_chapter_to_assembly(main: &Path, chapter: &Path) -> std::io::Result<()> {
     add_include(main, chapter)
+}
+
+/// Ajoute un fichier existant au projet, comme chapitre à part entière.
+///
+/// Renvoie le chemin du chapitre **dans** le projet — qui n'est pas forcément
+/// celui qu'on a donné.
+///
+/// Un fichier venu d'ailleurs est **copié** dans `chapitres/`, jamais
+/// référencé tel quel : un `#include` ne sort pas du dossier du projet, et le
+/// fichier d'origine de l'utilisateur doit rester intact. Un fichier déjà
+/// installé dans `chapitres/` n'est pas recopié — on le prend où il est.
+///
+/// Dans les deux cas l'assemblage est mis à jour : sans cela, le chapitre
+/// s'afficherait dans l'éditeur sans jamais être rendu.
+///
+/// Importer deux fois le même fichier crée bien deux chapitres. Rapprocher les
+/// deux demanderait de comparer les contenus, et deux chapitres peuvent
+/// légitimement être identiques — un fichier vide, par exemple. Mieux vaut un
+/// doublon visible, qu'on supprime, qu'un ajout silencieusement ignoré, qui
+/// laisserait croire à une panne.
+pub fn import_chapter(project: &Project, source: &Path) -> std::io::Result<PathBuf> {
+    let chapters_dir = project.dir.join("chapitres");
+
+    std::fs::create_dir_all(&chapters_dir)?;
+
+    // Déjà un chapitre de ce projet : rien à copier. Le rendre atteignable,
+    // en revanche, est le but même de l'opération.
+    if source
+        .parent()
+        .map(|parent| same_file(parent, &chapters_dir))
+        .unwrap_or(false)
+    {
+        add_include(&project.main, source)?;
+
+        return Ok(source.to_path_buf());
+    }
+
+    let content = std::fs::read_to_string(source)?;
+    let title = imported_title(source, &content);
+
+    let existing = list_chapters(&project.dir, &read_includes(&project.main));
+    let order = next_order(&existing);
+
+    let destination = free_chapter_path(&chapters_dir, order, &slug(&title));
+
+    std::fs::copy(source, &destination)?;
+
+    add_include(&project.main, &destination)?;
+
+    Ok(destination)
+}
+
+/// Le titre à donner à un fichier importé.
+///
+/// Le titre du document — sa première ligne de niveau 1 — passe avant le nom
+/// du fichier : un texte venu d'ailleurs porte son propre titre, et le panneau
+/// doit annoncer ce que le texte annonce. Le préfixe numérique du nom de
+/// fichier n'est pas un titre, et le reprendre tel quel donnerait « 03-mon
+/// article » dans le panneau.
+fn imported_title(source: &Path, content: &str) -> String {
+    let heading = content.lines().find_map(|line| {
+        // Un titre de niveau 1 seulement : `==` est un sous-titre, et
+        // l'entête du document n'est pas toujours sur la première ligne.
+        let title = line.trim().strip_prefix("= ")?.trim();
+
+        (!title.is_empty()).then(|| title.to_string())
+    });
+
+    heading.unwrap_or_else(|| {
+        source
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("chapitre")
+            .to_string()
+    })
+}
+
+/// Un chemin de chapitre libre, pour ce numéro et ce titre.
+///
+/// Le numéro est déjà le premier libre, donc une collision suppose un fichier
+/// que l'analyse n'a pas su lire comme un chapitre. On ne veut pas pour autant
+/// écraser un fichier existant parce qu'il porte le même nom.
+fn free_chapter_path(dir: &Path, order: u32, slug: &str) -> PathBuf {
+    let mut path = dir.join(format!("{order:02}-{slug}.typ"));
+
+    let mut suffix = 2;
+
+    while path.exists() {
+        path = dir.join(format!("{order:02}-{slug}-{suffix}.typ"));
+
+        suffix += 1;
+    }
+
+    path
 }
 
 /// Ajoute un `#include` à l'assemblage s'il n'y est pas déjà.
@@ -916,6 +1028,240 @@ mod tests {
             "numéro attendu 08, obtenu {}",
             path.display()
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// Un fichier venu d'ailleurs est copié dans le projet et rendu atteignable.
+    ///
+    /// C'est le défaut signalé : le charger ne faisait que l'afficher dans
+    /// l'éditeur, sans l'ajouter au projet — donc sans jamais le compter, ni
+    /// l'inclure, ni le rendre.
+    #[test]
+    fn an_outside_file_is_copied_into_the_project() {
+        let elsewhere = scratch("import-ailleurs");
+        let source = elsewhere.join("mon-article.typ");
+
+        std::fs::write(&source, "= Les réseaux\n\nDu texte.\n").unwrap();
+
+        let dir = scratch("import-projet");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), "").unwrap();
+
+        let project = load(&dir);
+        let chapter = import_chapter(&project, &source).unwrap();
+
+        // La copie vit dans `chapitres/`, sous un nom tiré du titre du document.
+        assert!(
+            chapter
+                .to_string_lossy()
+                .ends_with("chapitres/01-les-reseaux.typ"),
+            "chemin obtenu : {}",
+            chapter.display()
+        );
+
+        assert_eq!(
+            std::fs::read_to_string(&chapter).unwrap(),
+            "= Les réseaux\n\nDu texte.\n",
+            "la copie doit être fidèle"
+        );
+
+        // Le fichier d'origine n'est pas touché : importer ne déplace rien.
+        assert!(source.exists(), "le fichier d'origine doit rester en place");
+
+        // Et le chapitre est bien inclus dans l'assemblage.
+        let reloaded = load(&dir);
+
+        assert_eq!(reloaded.chapters.len(), 1);
+        assert_eq!(reloaded.chapters[0].title, "les reseaux");
+        assert!(
+            reloaded.chapters[0].included,
+            "sans inclusion, le chapitre ne serait jamais rendu"
+        );
+        // Le compte de mots inclut le marqueur `=` du titre : « Les réseaux Du
+        // texte. » plus l'annonce du titre. C'est le comportement d'origine de
+        // `count_words`, appliqué de la même façon à tous les chapitres.
+        assert_eq!(reloaded.words(), 5);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+
+    /// Un chapitre déjà installé est inclus, jamais recopié.
+    #[test]
+    fn an_existing_chapter_is_included_without_being_copied() {
+        let dir = scratch("import-deja-la");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        // L'assemblage ne mentionne pas le chapitre : il existe sans être rendu.
+        std::fs::write(dir.join("main.typ"), "").unwrap();
+        std::fs::write(dir.join("chapitres/01-un.typ"), "= Un\n\nTexte.\n").unwrap();
+
+        let project = load(&dir);
+
+        assert!(
+            !project.chapters[0].included,
+            "le chapitre doit d'abord être orphelin"
+        );
+
+        let path = project.chapters[0].path.clone();
+        let returned = import_chapter(&project, &path).unwrap();
+
+        assert_eq!(returned, path, "le chapitre ne doit pas être déplacé");
+
+        let reloaded = load(&dir);
+
+        assert_eq!(
+            reloaded.chapters.len(),
+            1,
+            "aucune copie ne doit apparaître"
+        );
+        assert!(
+            reloaded.chapters[0].included,
+            "le charger doit le rendre atteignable"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Le titre vient du document lui-même, à défaut du nom de fichier.
+    #[test]
+    fn an_imported_file_takes_its_title_from_its_own_heading() {
+        let elsewhere = scratch("import-titres");
+
+        let dir = scratch("import-titres-projet");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), "").unwrap();
+
+        let project = load(&dir);
+
+        // Un titre de niveau 1 est le titre du document, même après une entête.
+        let with_heading = elsewhere.join("brut.typ");
+
+        std::fs::write(
+            &with_heading,
+            "#set page(margin: 2cm)\n\n= Le rôle de l'État\n\nTexte.\n",
+        )
+        .unwrap();
+
+        let chapter = import_chapter(&project, &with_heading).unwrap();
+
+        assert!(
+            chapter
+                .to_string_lossy()
+                .ends_with("01-le-role-de-l-etat.typ"),
+            "chemin obtenu : {}",
+            chapter.display()
+        );
+
+        // Un sous-titre ne fait pas un titre de document : le nom du fichier
+        // prend alors le relais.
+        let project = load(&dir);
+        let only_subheading = elsewhere.join("notes-diverses.typ");
+
+        std::fs::write(&only_subheading, "== Une section\n\nTexte.\n").unwrap();
+
+        let chapter = import_chapter(&project, &only_subheading).unwrap();
+
+        assert!(
+            chapter.to_string_lossy().ends_with("02-notes-diverses.typ"),
+            "chemin obtenu : {}",
+            chapter.display()
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+
+    /// L'import se place après les chapitres existants.
+    #[test]
+    fn an_import_is_numbered_after_the_existing_chapters() {
+        let elsewhere = scratch("import-numero-source");
+        let source = elsewhere.join("suite.typ");
+
+        std::fs::write(&source, "= Suite\n\nTexte.\n").unwrap();
+
+        let dir = scratch("import-numero");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), "").unwrap();
+        std::fs::write(dir.join("chapitres/07-deja-la.typ"), "x\n").unwrap();
+
+        let project = load(&dir);
+        let chapter = import_chapter(&project, &source).unwrap();
+
+        assert!(
+            chapter.to_string_lossy().ends_with("08-suite.typ"),
+            "numéro attendu 08, obtenu {}",
+            chapter.display()
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+
+    /// Deux imports du même fichier donnent deux chapitres.
+    ///
+    /// Rapprocher les deux demanderait de comparer les contenus, et deux
+    /// chapitres peuvent légitimement être identiques — un fichier vide, par
+    /// exemple. Un doublon visible se supprime ; un ajout silencieusement
+    /// ignoré ferait croire à une panne, ce qui est précisément le défaut qu'on
+    /// répare ici.
+    #[test]
+    fn importing_the_same_file_twice_creates_two_chapters() {
+        let elsewhere = scratch("import-double-source");
+        let source = elsewhere.join("texte.typ");
+
+        std::fs::write(&source, "= Texte\n\nDu contenu.\n").unwrap();
+
+        let dir = scratch("import-double");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), "").unwrap();
+
+        let first = import_chapter(&load(&dir), &source).unwrap();
+        let second = import_chapter(&load(&dir), &source).unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(load(&dir).chapters.len(), 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+    /// Un document extérieur au projet n'est pas un chapitre.
+    ///
+    /// C'est ce que vérifie le démarrage avant de rouvrir le document de la
+    /// session : sans ce contrôle, un chemin venu d'ailleurs — retenu avant
+    /// d'être un chapitre, ou déplacé depuis — rouvrirait un fichier fantôme,
+    /// affiché sans jamais être rendu.
+    #[test]
+    fn the_project_owns_its_assembly_and_its_chapters_only() {
+        let dir = scratch("owns");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), "#include \"chapitres/01-un.typ\"\n").unwrap();
+        std::fs::write(dir.join("chapitres/01-un.typ"), "= Un\n\nTexte.\n").unwrap();
+
+        let project = load(&dir);
+
+        assert!(
+            project.owns(&project.main),
+            "l'assemblage appartient au projet"
+        );
+        assert!(project.owns(&dir.join("chapitres/01-un.typ")));
+        assert_eq!(project.chapters.len(), 1);
+
+        // Un fichier posé dans le dossier du projet mais hors de `chapitres/`
+        // n'est pas un chapitre non plus : l'analyse ne le voit pas.
+        assert!(!project.owns(&dir.join("notes.typ")));
+
+        // Ni un fichier d'un autre dossier.
+        assert!(!project.owns(std::path::Path::new("/tmp/ailleurs/texte.typ")));
+
+        // Ni l'assemblage d'un autre projet.
+        assert!(!project.owns(std::path::Path::new("/tmp/autre-projet/main.typ")));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

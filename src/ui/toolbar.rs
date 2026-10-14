@@ -104,7 +104,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_folder_open::<Theme>(),
-        "Ouvrir un document",
+        // Le libellé dit ce que fait l'action : le fichier est ajouté au projet,
+        // il n'est pas seulement affiché.
+        "Charger un document dans le projet",
         Message::OpenFile,
         palette,
         false,

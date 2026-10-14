@@ -1059,4 +1059,93 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+    /// Le texte réellement composé sur les pages d'un document.
+    ///
+    /// Descend dans les groupes : le texte d'une page est rangé dans des
+    /// sous-cadres, et s'arrêter au premier niveau ne lirait rien.
+    fn composed_text(document: &PagedDocument) -> String {
+        fn frame_text(frame: &typst::layout::Frame, out: &mut String) {
+            for (_, item) in frame.items() {
+                match item {
+                    typst::layout::FrameItem::Text(text) => out.push_str(&text.text),
+                    typst::layout::FrameItem::Group(group) => {
+                        frame_text(&group.frame, out);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut text = String::new();
+
+        for page in document.pages() {
+            frame_text(&page.frame, &mut text);
+        }
+
+        text
+    }
+
+    /// Un fichier chargé dans le projet doit finir **sur la page**.
+    ///
+    /// C'est le défaut signalé, vu de bout en bout : le fichier s'affichait
+    /// dans l'éditeur sans jamais être rendu. Le test ne se contente donc pas
+    /// de vérifier que l'assemblage mentionne un `#include` — il lit le texte
+    /// réellement composé sur les pages.
+    #[test]
+    fn a_loaded_file_ends_up_on_the_page() {
+        let elsewhere = std::env::temp_dir().join("typst-writer-charge-source");
+        let _ = fs::remove_dir_all(&elsewhere);
+        fs::create_dir_all(&elsewhere).unwrap();
+
+        let source = elsewhere.join("mon-texte.typ");
+
+        fs::write(&source, "= Chapitre Chargé\n\nBILLET DOUZE.\n").unwrap();
+
+        let dir = std::env::temp_dir().join("typst-writer-charge-projet");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        // Un projet vide : l'assemblage n'inclut encore rien.
+        fs::write(dir.join("main.typ"), "#set page(margin: 2cm)\n").unwrap();
+
+        let project = crate::project::load(&dir);
+        let chapter = crate::project::import_chapter(&project, &source).expect("import du fichier");
+
+        assert!(
+            chapter.exists(),
+            "le chapitre importé doit exister : {}",
+            chapter.display()
+        );
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+
+        assert!(
+            assembly.contains("#include \"chapitres/01-chapitre-charge.typ\""),
+            "l'assemblage doit inclure le chapitre chargé, or il contient :\n{assembly}"
+        );
+
+        // Compilation de l'assemblage, exactement comme le fait l'aperçu.
+        let outcome = compile(&dir, &assembly, &[]);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "erreurs de compilation : {:?}",
+            outcome
+                .errors
+                .iter()
+                .map(|diagnostic| &diagnostic.message)
+                .collect::<Vec<_>>()
+        );
+
+        let document = outcome.document.expect("document compilé");
+        let text = composed_text(&document);
+
+        assert!(
+            text.contains("BILLET DOUZE"),
+            "le texte du fichier chargé doit être composé sur la page, or on lit : {text:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&elsewhere);
+    }
 }

@@ -61,10 +61,17 @@ impl State {
             system_theme: None,
         };
 
-        // Le chapitre de la session, s'il appartient encore à ce projet ;
-        // sinon le premier chapitre, sinon rien — le panneau proposera d'en
-        // créer un.
-        let wanted = session.last_document.filter(|path| path.is_file());
+        // Le chapitre de la session, s'il appartient encore au projet ; sinon
+        // le premier chapitre, sinon rien — le panneau proposera d'en créer un.
+        //
+        // L'appartenance doit être vérifiée, et non supposée : un document
+        // retenu avant d'être un chapitre — ou dont le fichier a été déplacé
+        // dans un autre projet — s'ouvrirait sinon dans l'éditeur sans jamais
+        // être rendu, exactement le défaut que l'import répare.
+        let wanted = session
+            .last_document
+            .filter(|path| path.is_file())
+            .filter(|path| state.project.owns(path));
 
         let chapter = wanted.or_else(|| {
             state
@@ -221,8 +228,71 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         ),
 
         Message::FileOpened(result) => {
-            if let Some((path, content)) = result {
+            let Some((path, content)) = result else {
+                return Task::none();
+            };
+
+            // L'assemblage est le fichier du projet qui n'est pas un chapitre :
+            // l'ouvrir doit le laisser où il est, et n'ajouter aucun chapitre.
+            if crate::project::same_file(&path, &state.project.main) {
                 state.open_document(path, content);
+
+                return Task::none();
+            }
+
+            // Charger un fichier, c'est l'**ajouter au projet** : un fichier
+            // simplement affiché ne serait ni compté, ni inclus dans
+            // l'assemblage, donc jamais rendu — il n'existerait que dans
+            // l'éditeur.
+            let chapter = match crate::project::import_chapter(&state.project, &path) {
+                Ok(chapter) => chapter,
+                Err(error) => {
+                    state.export_status = Some(format!("Ajout au projet : {error}"));
+
+                    return Task::none();
+                }
+            };
+
+            // Un chapitre déjà installé dans le projet se charge avec ce qu'on
+            // vient de lire ; une copie doit se lire à sa nouvelle adresse.
+            let imported = !crate::project::same_file(&chapter, &path);
+
+            let content = if imported {
+                match std::fs::read_to_string(&chapter) {
+                    Ok(content) => content,
+                    Err(error) => {
+                        state.export_status = Some(format!("Ouverture du chapitre : {error}"));
+
+                        return Task::none();
+                    }
+                }
+            } else {
+                content
+            };
+
+            state.open_document(chapter.clone(), content);
+
+            // Le message se pose après `open_document`, qui efface le statut et
+            // relit le projet : c'est le seul moment où le titre du chapitre
+            // fraîchement importé est connu. Copier un fichier est un effet de
+            // bord qu'il faut dire, sans quoi le chapitre apparaîtrait dans le
+            // panneau sans qu'on sache pourquoi.
+            if imported {
+                let title = state
+                    .project
+                    .chapters
+                    .iter()
+                    .find(|entry| crate::project::same_file(&entry.path, &chapter))
+                    .map(|entry| entry.title.clone())
+                    .unwrap_or_else(|| {
+                        chapter
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("chapitre")
+                            .to_string()
+                    });
+
+                state.export_status = Some(format!("« {title} » ajouté au projet."));
             }
 
             Task::none()
