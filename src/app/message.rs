@@ -132,6 +132,4 @@ pub enum Message {
 
     /// Événement clavier non consommé par les widgets (raccourcis globaux).
     RawKey(iced::keyboard::Key, iced::keyboard::Modifiers),
-
-
 }

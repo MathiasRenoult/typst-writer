@@ -109,6 +109,15 @@ pub struct PageImage {
 
     /// Pixels RGBA, `width * height * 4` octets.
     pub pixels: Vec<u8>,
+
+    /// Empreinte des pixels.
+    ///
+    /// Calculée ici, sur le fil de travail, et non à l'affichage : elle sert à
+    /// reconnaître une page **identique** et à ne pas la remplacer, ce qui
+    /// évite autant de textures neuves — et donc de travail pour le
+    /// compositeur. Hacher huit mégaoctets prend une à deux millisecondes, ce
+    /// qui n'a rien à faire sur le fil de l'interface.
+    pub hash: u64,
 }
 
 /// Compile un document (sans rasteriser).
@@ -250,13 +259,36 @@ pub fn render_page(document: &PagedDocument, index: usize) -> Option<PageImage> 
 
     let pixmap = typst_render::render(page, &options);
 
+    // Les dimensions se lisent **avant** `take`, qui vide le tampon.
+    let (width, height) = (pixmap.width(), pixmap.height());
+
+    // `take` cède le tampon sans le recopier : les pixels partent tels quels
+    // vers le Handle, sans repasser par un PNG.
+    let pixels = pixmap.take();
+
+    let hash = pixels_hash(&pixels);
+
     Some(PageImage {
-        width: pixmap.width(),
-        height: pixmap.height(),
-        // `take` cède le tampon sans le recopier : les pixels partent tels
-        // quels vers le Handle, sans repasser par un PNG.
-        pixels: pixmap.take(),
+        width,
+        height,
+        pixels,
+        hash,
     })
+}
+
+/// Empreinte d'un tampon de pixels.
+///
+/// Sert à reconnaître deux rendus **identiques** de la même page. Ce n'est pas
+/// une empreinte cryptographique : on ne cherche pas à résister à une collision
+/// fabriquée, seulement à constater qu'une page n'a pas changé.
+fn pixels_hash(pixels: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    pixels.hash(&mut hasher);
+
+    hasher.finish()
 }
 
 /// Dimensions d'une page en pixels (largeur, hauteur) à la densité de rendu.
@@ -1147,5 +1179,213 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&elsewhere);
+    }
+    /// DIAGNOSTIC : les tailles de texte réellement composées.
+    ///
+    /// Ignoré par défaut : il compile un projet réel de la machine, pas une
+    /// fixture. Sert à distinguer ce qu'on **croit** écrit de ce qui est
+    /// vraiment composé — un chiffre en exposant, par exemple, se voit ici
+    /// comme un texte de taille réduite, et nulle part ailleurs.
+    ///
+    ///     cargo test -- --ignored diagnose_the_real_project --nocapture
+    #[test]
+    #[ignore]
+    fn diagnose_the_real_project() {
+        let home = std::env::var("HOME").expect("HOME");
+        let name = std::env::var("PROJET").unwrap_or_else(|_| "projet".to_string());
+        let dir = PathBuf::from(home).join(format!(".typst-writer/projets/{name}"));
+
+        let Ok(assembly) = fs::read_to_string(dir.join("main.typ")) else {
+            println!("pas de projet à {}", dir.display());
+            return;
+        };
+
+        let outcome = compile(&dir, &assembly, &[]);
+
+        println!(
+            "erreurs = {:?}",
+            outcome
+                .errors
+                .iter()
+                .map(|diagnostic| &diagnostic.message)
+                .collect::<Vec<_>>()
+        );
+
+        let Some(document) = outcome.document else {
+            return;
+        };
+
+        println!("pages = {}", page_count(&document));
+
+        let mut runs: Vec<(f32, String)> = Vec::new();
+
+        for page in document.pages() {
+            collect_runs(&page.frame, &mut runs);
+        }
+
+        // Les tailles distinctes, avec un exemple de texte pour chacune : c'est
+        // ce qui dit si quelque chose est composé plus petit que le corps.
+        let mut sizes: Vec<(u32, Vec<(f32, String)>)> = Vec::new();
+
+        for (size, text) in runs {
+            if !text.trim().is_empty() {
+                let key = (size * 100.0).round() as u32;
+
+                match sizes.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, group)) => {
+                        if group.len() < 6 {
+                            group.push((size, text));
+                        }
+                    }
+                    None => sizes.push((key, vec![(size, text)])),
+                }
+            }
+        }
+
+        sizes.sort_by_key(|(key, _)| *key);
+
+        for (_, group) in &sizes {
+            let size = group[0].0;
+
+            println!("\n=== taille {size:.2} pt ({} exemples)", group.len());
+
+            for (_, text) in group {
+                let text: String = text.chars().take(60).collect();
+
+                println!("    {text:?}");
+            }
+        }
+    }
+
+    /// Rassemble les textes composés, avec leur taille.
+    fn collect_runs(frame: &typst::layout::Frame, out: &mut Vec<(f32, String)>) {
+        for (_, item) in frame.items() {
+            match item {
+                typst::layout::FrameItem::Text(text) => {
+                    out.push((text.size.to_pt() as f32, text.text.to_string()));
+                }
+                typst::layout::FrameItem::Group(group) => collect_runs(&group.frame, out),
+                _ => {}
+            }
+        }
+    }
+    /// DIAGNOSTIC : d'où viennent les chiffres en exposant ?
+    ///
+    /// Ignoré par défaut. Compare des documents minimaux pour isoler la cause :
+    /// chacun n'ajoute qu'une chose au précédent.
+    #[test]
+    #[ignore]
+    fn diagnose_superscripts() {
+        let variants: &[(&str, &str)] = &[
+            ("texte nu", "Texte ordinaire, page 1.\n"),
+            (
+                "avec numbering de page",
+                "#set page(numbering: \"1/1\")\n\nTexte ordinaire, page 1.\n",
+            ),
+            (
+                "numbering + set super",
+                "#set super(baseline: -0.5em, size: 0.5em, typographic: false)\n#set page(numbering: \"1/1\")\n\nTexte ordinaire, page 1.\n",
+            ),
+            (
+                "set super seul",
+                "#set super(baseline: -0.5em, size: 0.5em, typographic: false)\n\nTexte ordinaire, page 1.\n",
+            ),
+            (
+                "une note de bas de page",
+                "Texte avec une note#footnote[Le contenu de la note.] suite.\n",
+            ),
+        ];
+
+        for (name, content) in variants {
+            let dir = std::env::temp_dir().join("typst-writer-diag-exposant");
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+
+            let outcome = compile(&dir, content, &[]);
+
+            println!("\n=== {name} (erreurs: {:?})", outcome.errors.len());
+
+            let Some(document) = outcome.document else {
+                println!("    pas de document");
+                continue;
+            };
+
+            let mut runs: Vec<(f32, String)> = Vec::new();
+
+            for page in document.pages() {
+                collect_runs(&page.frame, &mut runs);
+            }
+
+            let mut sizes: Vec<(u32, f32, String)> = Vec::new();
+
+            for (size, text) in runs {
+                if text.trim().is_empty() {
+                    continue;
+                }
+
+                let key = (size * 100.0).round() as u32;
+
+                if !sizes.iter().any(|(k, _, _)| *k == key) {
+                    sizes.push((key, size, text.chars().take(28).collect()));
+                }
+            }
+
+            sizes.sort_by_key(|(key, _, _)| *key);
+
+            for (_, size, sample) in sizes {
+                println!("    {size:>6.2} pt  {sample:?}");
+            }
+
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// DIAGNOSTIC : les textes d'une page, dans l'ordre, avec leur taille.
+    ///
+    /// Ignoré par défaut. Sert à voir **où** tombe un texte anormal : un
+    /// chiffre en exposant au milieu d'une phrase n'est pas la même chose qu'un
+    /// numéro de page en pied de page.
+    #[test]
+    #[ignore]
+    fn diagnose_one_page_in_order() {
+        let home = std::env::var("HOME").expect("HOME");
+        let name = std::env::var("PROJET").unwrap_or_else(|_| "mon-travail".to_string());
+        let page_wanted: usize = std::env::var("PAGE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+
+        let dir = PathBuf::from(home).join(format!(".typst-writer/projets/{name}"));
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+        let outcome = compile(&dir, &assembly, &[]);
+
+        let Some(document) = outcome.document else {
+            println!("pas de document");
+            return;
+        };
+
+        let Some(page) = document.pages().get(page_wanted) else {
+            println!("pas de page {page_wanted}");
+            return;
+        };
+
+        let mut runs: Vec<(f32, String)> = Vec::new();
+
+        collect_runs(&page.frame, &mut runs);
+
+        for (size, text) in runs {
+            if text.trim().is_empty() {
+                continue;
+            }
+
+            let text: String = text.chars().take(48).collect();
+
+            // Les tailles anormalement petites sont mises en évidence : c'est
+            // là que se cachent les exposants.
+            let mark = if size < 9.0 { "  <-- PETIT" } else { "" };
+
+            println!("{size:>6.2}  {text:?}{mark}");
+        }
     }
 }

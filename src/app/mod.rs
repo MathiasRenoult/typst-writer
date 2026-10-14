@@ -512,11 +512,12 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // seul chapitre rendrait l'aperçu sourd à toute frappe, puisque
             // l'assemblage ne change pas quand on écrit dans un chapitre.
             let fingerprint = state.compilation_fingerprint();
+            let paragraph_end = paragraph_was_just_finished(&state.editor.content());
 
-            // Rien n'a changé : aucune compilation, donc aucun rendu, donc
-            // aucune image retravaillée. C'est la condition qui rend l'aperçu
-            // inerte — et gratuit — tant que l'on ne tape pas.
-            if state.render.content == fingerprint {
+            if !state
+                .render
+                .compile_due(&fingerprint, paragraph_end, std::time::Instant::now())
+            {
                 return Task::none();
             }
 
@@ -596,6 +597,18 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.render.stale.remove(&index);
 
             if let Some(image) = image {
+                // Pixels identiques à ceux déjà en place : la page n'a pas
+                // changé. On garde le **même** `Handle`, donc la même texture,
+                // et le compositeur n'a rien à refaire. Remplacer l'image
+                // faisait naître une texture par compilation et par page ; à
+                // plusieurs compilations par seconde, c'est ce qui se voyait
+                // comme un clignotement.
+                if state.render.image_hashes.get(&index) == Some(&image.hash) {
+                    return Task::none();
+                }
+
+                state.render.image_hashes.insert(index, image.hash);
+
                 // Un seul `Handle` par page, créé ici et réutilisé tel quel
                 // par `view()` : le backend retrouve sa texture et ne la
                 // retéléverse pas. L'ancienne image reste en place jusqu'à
@@ -994,7 +1007,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::RawKey(key, modifiers) => handle_shortcut(state, key, modifiers),
-
     }
 }
 
@@ -1262,6 +1274,18 @@ fn retheme(state: &mut State) {
     state.editor.retheme(&state.resolved);
 }
 
+/// Le texte vient-il de terminer un paragraphe ?
+///
+/// Une ligne vide après du texte : c'est la frontière qu'un rédacteur franchit
+/// en s'arrêtant pour respirer, et le moment naturel de montrer le résultat.
+/// La condition ne peut pas être vraie en pleine phrase — il faut deux sauts de
+/// ligne — ce qui la rend sûre comme second déclencheur.
+fn paragraph_was_just_finished(content: &str) -> bool {
+    let trimmed = content.trim_end_matches([' ', '\t']);
+
+    trimmed.ends_with("\n\n") && !trimmed.trim().is_empty()
+}
+
 /// Ouvre un dossier dans le gestionnaire de fichiers du système.
 ///
 /// Sous Linux seulement : c'est la seule plateforme où l'application est
@@ -1324,4 +1348,36 @@ fn save_as_task(state: &State) -> Task<Message> {
         },
         Message::FileSaved,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Une ligne vide après du texte : c'est une fin de paragraphe.
+    ///
+    /// Ce détecteur est ce qui permet à l'aperçu de se montrer **sans attendre**
+    /// le délai de repos, au moment où l'on s'arrête. Il ne doit donc être vrai
+    /// qu'à cette frontière, et jamais en pleine phrase — sinon il compilerait
+    /// au milieu d'un mot.
+    #[test]
+    fn a_paragraph_end_is_recognised_and_nothing_else_is() {
+        // La frontière.
+        assert!(paragraph_was_just_finished("Un paragraphe.\n\n"));
+
+        // Une espace ou une tabulation après la ligne vide ne change rien :
+        // les éditeurs en laissent.
+        assert!(paragraph_was_just_finished("Un paragraphe.\n\n  "));
+
+        // Un seul saut de ligne : on continue le même paragraphe.
+        assert!(!paragraph_was_just_finished("Un paragraphe.\n"));
+
+        // Une phrase en cours, même avec des espaces.
+        assert!(!paragraph_was_just_finished("Un paragraphe en cou"));
+
+        // Un texte vide, ou fait de blancs seulement : rien à montrer.
+        assert!(!paragraph_was_just_finished(""));
+        assert!(!paragraph_was_just_finished("\n\n"));
+        assert!(!paragraph_was_just_finished("   \n\n"));
+    }
 }

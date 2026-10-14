@@ -4,6 +4,13 @@ use crate::typst::render::Diagnostic;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// Délai de repos avant que l'aperçu ne se mette à jour.
+///
+/// C'est le réglage qui gouverne tout le coût du rendu : un temps d'arrêt dans
+/// l'écriture déclenche la compilation, la frappe ne la déclenche jamais.
+pub const IDLE_DELAY_MS: u64 = 700;
 
 use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
@@ -348,6 +355,24 @@ pub struct RenderState {
     /// chapitre.
     pub followed_chapter: Option<PathBuf>,
 
+    /// Empreinte observée au tick précédent.
+    ///
+    /// Distincte de `content`, qui est l'empreinte **compilée** : celle-ci est
+    /// celle qu'on vient de lire, et qui n'a pas encore été compilée. Ensemble
+    /// avec `changed_at`, elle dit depuis quand le texte ne bouge plus.
+    pub seen: String,
+
+    /// Instant du dernier changement observé. `None` : rien en attente.
+    pub changed_at: Option<Instant>,
+
+    /// Empreinte des pixels de chaque page en cache.
+    ///
+    /// Sert à ne pas remplacer une page par une image **identique** : chaque
+    /// nouveau `Handle` est une nouvelle texture, et remplacer une page qui n'a
+    /// pas changé fait travailler le compositeur pour rien. C'est ce qui se
+    /// voyait comme un clignotement.
+    pub image_hashes: HashMap<usize, u64>,
+
     /// Le contenu a changé depuis la dernière écriture sur le disque.
     pub save_pending: bool,
 }
@@ -357,6 +382,51 @@ impl RenderState {
     ///
     /// Les `Handle` mis en cache sont relâchés : le backend libère alors les
     /// textures du document précédent à son prochain nettoyage.
+    /// L'heure est-elle venue de compiler ?
+    ///
+    /// Appelée à chaque tick, cette règle décide de tout le coût de l'aperçu —
+    /// c'est pourquoi elle est ici, isolée et vérifiable, plutôt que dissoute
+    /// dans un gestionnaire de messages.
+    ///
+    /// Deux déclencheurs, et deux seulement :
+    ///
+    /// - **le texte n'a plus bougé depuis [`IDLE_DELAY_MS`]** : c'est la fin
+    ///   d'un moment d'écriture, et le moment naturel de montrer le résultat ;
+    /// - **un paragraphe vient d'être terminé** — le texte se termine par une
+    ///   ligne vide — parce qu'on s'arrête volontiers à cette frontière, et
+    ///   qu'elle ne peut pas être atteinte en pleine frappe.
+    ///
+    /// Jamais de compilation sans changement : la première condition est un
+    /// retour immédiat.
+    ///
+    /// Compiler à chaque frappe était le défaut de fond : chaque caractère
+    /// coûtait une compilation *et* la reprise de toutes les pages visibles,
+    /// avec une texture neuve par page. À dix frappes par seconde, cela faisait
+    /// plusieurs cycles par seconde, et l'œil n'y voyait qu'un clignotement.
+    pub fn compile_due(&mut self, fingerprint: &str, paragraph_end: bool, now: Instant) -> bool {
+        // Déjà compilé : rien à faire, et surtout pas recompiler.
+        if fingerprint == self.content {
+            self.seen.clear();
+            self.changed_at = None;
+
+            return false;
+        }
+
+        // Nouveau changement : l'horloge du repos repart.
+        if fingerprint != self.seen {
+            self.seen = fingerprint.to_string();
+            self.changed_at = Some(now);
+        }
+
+        let Some(changed_at) = self.changed_at else {
+            return false;
+        };
+
+        let idle = now.duration_since(changed_at) >= Duration::from_millis(IDLE_DELAY_MS);
+
+        idle || paragraph_end
+    }
+
     /// Faut-il amener l'aperçu sur le chapitre ouvert ?
     ///
     /// La réponse est oui **une fois par chapitre**, et non à chaque
@@ -381,6 +451,9 @@ impl RenderState {
         self.errors.clear();
         self.warnings.clear();
         self.document = None;
+        self.seen.clear();
+        self.changed_at = None;
+        self.image_hashes.clear();
         self.page_cache.clear();
         self.rendering.clear();
         self.stale.clear();
@@ -729,5 +802,133 @@ mod tests {
         ] {
             assert!(!position.label().is_empty());
         }
+    }
+
+    /// Jamais de compilation sans changement, même au bout de cent ticks.
+    ///
+    /// C'est la condition qui rend l'aperçu gratuit au repos : le tick tourne
+    /// trois fois par seconde, et ne doit rien coûter.
+    #[test]
+    fn nothing_is_compiled_when_nothing_changed() {
+        let mut render = RenderState::default();
+
+        render.content = "le texte déjà compilé".to_string();
+
+        let start = Instant::now();
+
+        for tick in 0..100u64 {
+            let now = start + Duration::from_millis(tick * 300);
+
+            assert!(
+                !render.compile_due("le texte déjà compilé", false, now),
+                "tick {tick} : rien n'a changé, rien ne doit être compilé"
+            );
+        }
+    }
+
+    /// Tant qu'on tape, rien ne compile.
+    ///
+    /// Dix frappes par seconde pendant trois secondes : c'est exactement la
+    /// situation qui produisait « plusieurs clignotements par seconde ».
+    #[test]
+    fn typing_never_triggers_a_compile() {
+        let mut render = RenderState::default();
+
+        let start = Instant::now();
+
+        for keystroke in 0..30u64 {
+            // Le tick de 300 ms voit plusieurs frappes : l'empreinte change
+            // donc à chaque tick.
+            let now = start + Duration::from_millis(keystroke * 100);
+            let fingerprint = format!("texte au caractère {keystroke}");
+
+            assert!(
+                !render.compile_due(&fingerprint, false, now),
+                "frappe {keystroke} : la frappe ne doit jamais déclencher le rendu"
+            );
+        }
+    }
+
+    /// Le repos déclenche la compilation, une fois, et une seule.
+    #[test]
+    fn a_pause_triggers_exactly_one_compile() {
+        let mut render = RenderState::default();
+
+        let start = Instant::now();
+
+        assert!(!render.compile_due("un paragraphe écrit", false, start));
+
+        // Juste avant le délai : rien encore.
+        assert!(!render.compile_due(
+            "un paragraphe écrit",
+            false,
+            start + Duration::from_millis(IDLE_DELAY_MS - 1)
+        ));
+
+        // Le délai atteint : on compile.
+        assert!(render.compile_due(
+            "un paragraphe écrit",
+            false,
+            start + Duration::from_millis(IDLE_DELAY_MS)
+        ));
+
+        // Une fois compilé, plus rien, même longtemps après.
+        render.content = "un paragraphe écrit".to_string();
+
+        for tick in 0..20u64 {
+            let now = start + Duration::from_millis(IDLE_DELAY_MS + tick * 300);
+
+            assert!(
+                !render.compile_due("un paragraphe écrit", false, now),
+                "tick {tick} après la compilation"
+            );
+        }
+    }
+
+    /// Une fin de paragraphe montre le résultat sans attendre le repos.
+    #[test]
+    fn a_finished_paragraph_shows_the_result_early() {
+        let mut render = RenderState::default();
+
+        let start = Instant::now();
+        let content = "premier paragraphe écrit.\n\n";
+
+        // Le texte vient de changer : l'horloge du repos repart de zéro.
+        assert!(!render.compile_due(content, false, start));
+
+        // Deux cents millisecondes plus tard, bien avant le délai de repos,
+        // mais le paragraphe est terminé : on montre.
+        assert!(
+            render.compile_due(content, true, start + Duration::from_millis(200)),
+            "une fin de paragraphe doit montrer le résultat sans attendre le repos"
+        );
+    }
+
+    /// Un nouveau changement relance l'horloge du repos.
+    ///
+    /// Sans cela, une seconde de frappe continue finirait par déclencher une
+    /// compilation en plein milieu d'une phrase.
+    #[test]
+    fn a_new_change_restarts_the_idle_clock() {
+        let mut render = RenderState::default();
+
+        let start = Instant::now();
+
+        assert!(!render.compile_due("a", false, start));
+
+        // Presque le délai s'écoule, puis on tape encore.
+        let almost = start + Duration::from_millis(IDLE_DELAY_MS - 10);
+
+        assert!(!render.compile_due("ab", false, almost));
+
+        // Dix millisecondes plus tard, le délai total est écoulé depuis le
+        // début, mais seulement dix depuis la dernière frappe : rien.
+        assert!(
+            !render.compile_due("ab", false, almost + Duration::from_millis(10)),
+            "le repos se compte depuis la dernière frappe, pas depuis la première"
+        );
+
+        // Le repos complet depuis la dernière frappe : on compile.
+        assert!(render.compile_due("ab", false, almost + Duration::from_millis(IDLE_DELAY_MS)));
     }
 }
