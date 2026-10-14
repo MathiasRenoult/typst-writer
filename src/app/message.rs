@@ -89,6 +89,18 @@ pub enum Message {
     /// Un événement du serveur de langage.
     Lsp(crate::lsp::client::Event),
 
+    /// La liste de complétion : on la parcourt.
+    CompletionMove(isize),
+
+    /// On accepte l'élément sélectionné.
+    CompletionAccept,
+
+    /// On accepte l'élément désigné par la souris.
+    CompletionPick(usize),
+
+    /// On ferme la liste sans rien accepter.
+    CompletionDismiss,
+
     /// Le facteur d'échelle de l'écran, demandé à l'ouverture de la fenêtre.
     ///
     /// La densité du rendu en découle : rendue constante, elle rasterise plus

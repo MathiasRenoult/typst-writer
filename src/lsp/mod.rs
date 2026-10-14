@@ -33,5 +33,6 @@
 // cela n'est encore appelé.
 #[allow(dead_code)]
 pub mod client;
+pub mod completion;
 #[allow(dead_code)]
 pub mod messages;

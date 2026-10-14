@@ -124,6 +124,50 @@ impl EditorState {
         self.editor.update(&EditorMessage::Paste(text.to_string()))
     }
 
+    /// Remplace ce qui précède le curseur, puis écrit à sa place.
+    ///
+    /// Le crate n'expose pas de « remplace cette plage » : on le fait donc comme
+    /// le ferait une main — autant de retours arrière que de caractères à
+    /// effacer, puis l'insertion. C'est la seule voie qui n'ajoute pas de
+    /// dépendance à l'intérieur du crate, et elle se comporte exactement comme
+    /// la frappe (le curseur suit, l'historique enregistre une seule action).
+    pub fn replace_before(&mut self, characters: usize, text: &str) -> Task<EditorMessage> {
+        let mut tasks = Vec::with_capacity(characters + 1);
+
+        for _ in 0..characters {
+            tasks.push(self.editor.update(&EditorMessage::Backspace));
+        }
+
+        tasks.push(self.editor.update(&EditorMessage::Paste(text.to_string())));
+
+        Task::batch(tasks)
+    }
+
+    /// La position du curseur, et où il tombe dans le texte.
+    ///
+    /// La colonne du crate se compte en **caractères** ; tout le reste de
+    /// l'application compte en **octets**. C'est ici que les deux se rejoignent.
+    pub fn cursor_offset(&self) -> usize {
+        let (line, column) = self.editor.cursor_position();
+        let content = self.editor.content();
+
+        let mut offset = 0usize;
+
+        for (index, text_line) in content.split('\n').enumerate() {
+            if index == line {
+                return offset
+                    + text_line
+                        .char_indices()
+                        .nth(column)
+                        .map_or(text_line.len(), |(index, _)| index);
+            }
+
+            offset += text_line.len() + 1;
+        }
+
+        content.len()
+    }
+
     /// Écrit le contenu courant sur le disque.
     ///
     /// Renvoie `Ok(())` si l'écriture a réussi, l'erreur sinon.

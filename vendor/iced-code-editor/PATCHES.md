@@ -66,7 +66,24 @@ dans le `PATH`) :
 - `LSP_SERVER_CONFIGS` : commande `tinymist lsp`, variables `TINYMIST` /
   `TINYMIST_PATH` pour désigner un binaire ailleurs que dans le `PATH`.
 
-### 3. Palette de coloration syntaxique fournie par l'application
+### 4. Touches réservées à l'hôte (`reserved_keys`)
+
+**Pourquoi.** Une liste de complétion a besoin des flèches, d'Entrée, de
+Tabulation et d'Échap. L'éditeur les consomme, donc l'hôte ne les voit jamais —
+et les flèches déplaceraient le curseur *en plus* de la sélection.
+
+**Quoi.** Un champ `reserved_keys`, une méthode `set_reserved_keys`, et huit
+lignes dans `handle_keyboard_event` : une touche réservée est *déclinée* plutôt
+que traitée. Un événement qu'un widget décline continue son chemin, et l'hôte le
+reçoit.
+
+**Ce qui continue de marcher.** Tout le reste : on continue de taper, la liste
+peut donc se filtrer à la frappe, et un retour arrière reste un retour arrière.
+
+**Ce qui disparaît si l'on revient à l'amont.** La liste de complétion ne peut
+plus être pilotée au clavier ; il ne reste que la souris.
+
+## 3. Palette de coloration syntaxique fournie par l'application
 
 `src/canvas_editor/render/highlighting.rs` et `src/canvas_editor/mod.rs`.
 

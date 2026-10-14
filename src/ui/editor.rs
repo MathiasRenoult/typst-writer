@@ -1,7 +1,10 @@
 use crate::app::{Message, State};
 
-use iced::widget::container;
-use iced::{Element, Fill, Padding, alignment};
+use crate::app::state::Completion;
+use crate::ui::theme::Palette;
+
+use iced::widget::{button, column, container, row, space};
+use iced::{Element, Fill, Length, Padding, alignment};
 
 /// Mesure de lecture : la largeur maximale du texte, en pixels.
 ///
@@ -20,6 +23,12 @@ const SIDE_MARGIN: f32 = 40.0;
 /// Marge en haut du texte : respirer avant la première ligne.
 const TOP_MARGIN: f32 = 28.0;
 
+/// Largeur de la liste de complétion.
+const COMPLETION_WIDTH: f32 = 320.0;
+
+/// Combien d'éléments la liste montre d'un coup.
+const COMPLETION_VISIBLE: usize = 8;
+
 /// Marge en bas : de quoi voir venir la suite sans que le texte touche le bord.
 const BOTTOM_MARGIN: f32 = 64.0;
 
@@ -34,10 +43,33 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // La largeur demandée est fixe, mais iced la borne à l'espace disponible :
     // sur une fenêtre étroite le texte se réduit au lieu de déborder, et les
     // marges latérales prennent le relais.
-    let page = container(state.editor.editor.view().map(Message::Editor))
-        .width(Fill)
-        .height(Fill)
-        .max_width(MEASURE);
+    let editor = state.editor.editor.view().map(Message::Editor);
+
+    let page = match state.lsp.completion.as_ref() {
+        // La liste se dessine **par-dessus** le texte, à l'endroit du curseur :
+        // c'est là que le regard est déjà, et l'on choisit sans quitter la ligne
+        // qu'on écrit.
+        Some(open) if !open.shown.is_empty() => {
+            let popup = container(completion_popup(open, palette))
+                .width(Fill)
+                .height(Fill)
+                .align_x(alignment::Horizontal::Left)
+                .align_y(alignment::Vertical::Top)
+                // Le décalage se donne par une marge intérieure : c'est ainsi
+                // qu'un élément de pile se pose ailleurs qu'au coin.
+                .padding(Padding {
+                    top: open.anchor.y + 20.0,
+                    left: open.anchor.x,
+                    ..Padding::default()
+                });
+
+            container(iced::widget::stack![editor, popup])
+        }
+        _ => container(editor),
+    }
+    .width(Fill)
+    .height(Fill)
+    .max_width(MEASURE);
 
     // La zone de rédaction se détache sur le fond de l'application : sans
     // cette différence de teinte, la marge existe en géométrie mais reste
@@ -56,6 +88,88 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // différence est ce qui rend la marge visible.
         .style(move |_| container::Style {
             background: Some(palette.background.into()),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// La liste de complétion, posée à l'endroit du curseur.
+fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, Message> {
+    let total = open.shown.len();
+
+    // La fenêtre suit la sélection : on doit pouvoir choisir au clavier plus bas
+    // que ce qui tient à l'écran.
+    let first = open
+        .selected
+        .saturating_sub(COMPLETION_VISIBLE.saturating_sub(1))
+        .min(total.saturating_sub(COMPLETION_VISIBLE));
+
+    let mut list = column![]
+        .spacing(0.0)
+        .width(Length::Fixed(COMPLETION_WIDTH));
+
+    for (position, index) in open
+        .shown
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(COMPLETION_VISIBLE)
+    {
+        let Some(item) = open.items.get(*index) else {
+            continue;
+        };
+
+        let selected = position == open.selected;
+
+        let mut line = row![]
+            .width(Fill)
+            .padding([5, 8])
+            .spacing(8)
+            .align_y(alignment::Vertical::Center);
+
+        line = line.push(palette.label(&item.label).size(13).color(if selected {
+            palette.background
+        } else {
+            palette.text
+        }));
+
+        if let Some(kind) = item.kind
+            && !kind.label().is_empty()
+        {
+            line = line.push(space::horizontal().width(Length::Fill));
+            line = line.push(palette.label(kind.label()).size(11).color(if selected {
+                palette.background
+            } else {
+                palette.text_muted
+            }));
+        }
+
+        list = list.push(
+            button(line)
+                .width(Fill)
+                .padding(0)
+                .style(move |_, _| button::Style {
+                    background: selected.then(|| palette.accent.into()),
+                    text_color: if selected {
+                        palette.background
+                    } else {
+                        palette.text
+                    },
+                    ..Default::default()
+                })
+                .on_press(Message::CompletionPick(position)),
+        );
+    }
+
+    container(list)
+        .width(Length::Fixed(COMPLETION_WIDTH))
+        .style(move |_| container::Style {
+            background: Some(palette.surface.into()),
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
             ..Default::default()
         })
         .into()

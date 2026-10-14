@@ -100,6 +100,9 @@ pub enum Event {
         locations: Vec<Location>,
     },
 
+    /// Une commande du serveur est passée, ou a échoué.
+    CommandFinished { token: u64, error: Option<String> },
+
     /// Le serveur s'est arrêté, ou sa sortie est devenue illisible.
     ///
     /// L'application n'a rien à en faire d'autre que de continuer sans lui :
@@ -117,6 +120,7 @@ enum Pending {
     Completion(u64),
     Hover(u64),
     Definition(u64),
+    Command(u64),
 }
 
 /// Ce qui déclenche une demande de complétion.
@@ -311,6 +315,20 @@ impl Session {
         self.version = 1;
 
         self.did_open(text);
+    }
+
+    /// Demande au serveur d'exécuter une de ses commandes.
+    ///
+    /// C'est le canal par lequel tinymist expose ce qui n'est pas du protocole
+    /// ordinaire : épingler le fichier principal d'un projet, exporter une page,
+    /// demander les mesures d'un document. Les noms sont les siens ; il refuse
+    /// ceux qu'il ne connaît pas, et le dit.
+    pub fn execute_command(&mut self, command: &str, arguments: Value, token: u64) {
+        self.request(
+            "workspace/executeCommand",
+            json!({ "command": command, "arguments": arguments }),
+            Pending::Command(token),
+        );
     }
 
     /// Signale que le document a changé.
@@ -637,6 +655,20 @@ fn dispatch(
                 return true;
             };
 
+            // Une réponse porte soit un résultat, soit une erreur. Traiter
+            // l'erreur comme un résultat vide ferait passer un échec pour une
+            // réponse : c'est exactement ainsi qu'une fonctionnalité semble
+            // branchée sans l'être.
+            let failure = message
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+
+            if let Some(reason) = &failure {
+                eprintln!("Le serveur a refusé une demande : {reason}");
+            }
+
             let result = message.get("result").cloned().unwrap_or(Value::Null);
 
             match expectation {
@@ -662,6 +694,13 @@ fn dispatch(
                     let locations = definition_locations(&result);
 
                     let _ = events.send(Event::Definitions { token, locations });
+                }
+
+                Pending::Command(token) => {
+                    let _ = events.send(Event::CommandFinished {
+                        token,
+                        error: failure,
+                    });
                 }
             }
 
@@ -961,6 +1000,26 @@ mod tests {
             }
             _ => println!("complétion après `#fig` : AUCUNE"),
         }
+
+        // 3 bis. Le fichier principal du projet est épinglé sur l'assemblage :
+        // c'est ce qui doit donner au serveur la vue du **projet**, et non d'un
+        // fichier isolé — donc l'en-tête, et la bibliographie.
+        session.execute_command("tinymist.pinMainToCurrent", serde_json::json!([]), 10);
+
+        match wait_for(
+            &session,
+            |e| matches!(e, Event::CommandFinished { token, .. } if *token == 10),
+            Duration::from_secs(30),
+        ) {
+            Some(Event::CommandFinished { error, .. }) => {
+                println!("épinglage : {}", error.as_deref().unwrap_or("accepté"))
+            }
+            _ => println!("épinglage : AUCUNE RÉPONSE"),
+        }
+
+        // Le serveur a besoin d'un instant pour reprendre la compilation sous
+        // sa nouvelle entrée ; on lui laisse le temps de publier.
+        std::thread::sleep(Duration::from_secs(3));
 
         // 4. Une citation, juste après `@c`, **déclarée comme telle**.
         let offset = text.find("@clef").expect("le chapitre cite") + 2;

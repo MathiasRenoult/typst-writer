@@ -22,6 +22,14 @@ impl CodeEditor {
     /// # Returns
     ///
     /// `true` if the editor has both Iced focus and internal canvas focus and is not focus-locked; `false` otherwise
+    /// Reserves keys for the host: the editor will not consume them.
+    ///
+    /// See [`CodeEditor::reserved_keys`]. Called with an empty list, the editor
+    /// behaves as upstream.
+    pub fn set_reserved_keys(&mut self, keys: Vec<iced::keyboard::Key>) {
+        self.reserved_keys = keys;
+    }
+
     pub(crate) fn has_focus(&self) -> bool {
         // Check if this editor has Iced focus
         let focused_id =
@@ -63,6 +71,12 @@ impl CodeEditor {
         // This prevents focus stealing where characters typed in other input fields
         // appear in the editor
         if !self.has_focus() {
+            return None;
+        }
+
+        // Keys the host has reserved (patch 4): declined, and therefore left to
+        // travel to whoever else is listening.
+        if self.reserved_keys.contains(key) {
             return None;
         }
 

@@ -1,7 +1,7 @@
 pub mod message;
 pub mod state;
 
-use crate::app::state::{ChapterRename, Drag, LayoutState, PreviewPosition, Splitter};
+use crate::app::state::{ChapterRename, Completion, Drag, LayoutState, PreviewPosition, Splitter};
 pub use message::Message;
 pub use state::State;
 
@@ -329,7 +329,38 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // prochain tic, et non à chaque image.
             state.render.words = None;
 
-            state.editor.update(message).map(Message::Editor)
+            let task = state.editor.update(message).map(Message::Editor);
+
+            // C'est la frappe qui décide de la liste, et elle seule : après
+            // chaque message de l'éditeur, on regarde si le texte demande une
+            // complétion à l'endroit du curseur.
+            Task::batch(vec![task, request_completion(state)])
+        }
+
+        Message::CompletionMove(delta) => {
+            if let Some(open) = state.lsp.completion.as_mut() {
+                open.move_selection(delta);
+            }
+
+            Task::none()
+        }
+
+        Message::CompletionAccept => accept_completion(state),
+
+        Message::CompletionPick(index) => {
+            if let Some(open) = state.lsp.completion.as_mut() {
+                if index < open.shown.len() {
+                    open.selected = index;
+                }
+            }
+
+            accept_completion(state)
+        }
+
+        Message::CompletionDismiss => {
+            close_completion(state);
+
+            Task::none()
         }
 
         Message::NewFile => {
@@ -1278,6 +1309,55 @@ fn handle_shortcut(
     key: iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Task<Message> {
+    // La liste de complétion, quand elle est ouverte, prend les touches dont
+    // elle a besoin. L'éditeur les a **déclinées** (patch 4 du crate) : elles
+    // arrivent donc jusqu'ici, et c'est ici qu'on décide de ce qu'elles font.
+    if let Some(task) = completion_shortcut(state, &key, modifiers) {
+        return task;
+    }
+
+    handle_shortcut_inner(state, key, modifiers)
+}
+
+/// Les touches de la liste de complétion, quand elle est ouverte.
+///
+/// `None` quand la liste est fermée, ou quand la touche ne la concerne pas : la
+/// frappe continue alors son chemin, et la liste se filtrera à la réponse du
+/// serveur — c'est ce qui permet d'écrire `figure` en voyant la liste se
+/// réduire.
+fn completion_shortcut(
+    state: &mut State,
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Task<Message>> {
+    use iced::keyboard::{Key, key::Named};
+
+    if state.lsp.completion.is_none() {
+        return None;
+    }
+
+    // Ctrl+Espace accepte : c'est le geste qu'on a dans les doigts quand la
+    // liste est ouverte, et il ne sert à rien d'autre ici.
+    if modifiers.control() && matches!(key, Key::Character(text) if text.as_str() == " ") {
+        return Some(update(state, Message::CompletionAccept));
+    }
+
+    match key {
+        Key::Named(Named::ArrowUp) => Some(update(state, Message::CompletionMove(-1))),
+        Key::Named(Named::ArrowDown) => Some(update(state, Message::CompletionMove(1))),
+        Key::Named(Named::Enter) | Key::Named(Named::Tab) => {
+            Some(update(state, Message::CompletionAccept))
+        }
+        Key::Named(Named::Escape) => Some(update(state, Message::CompletionDismiss)),
+        _ => None,
+    }
+}
+
+fn handle_shortcut_inner(
+    state: &mut State,
+    key: iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Task<Message> {
     // F11 bascule le mode focus sans modificateur : c'est la touche consacrée
     // au plein écran, et le geste doit rester d'une seule main.
     if let iced::keyboard::Key::Named(iced::keyboard::key::Named::F11) = key {
@@ -1539,6 +1619,141 @@ fn subscription_lsp(state: &State) -> Subscription<Message> {
     time::every(std::time::Duration::from_millis(interval)).map(|_| Message::LspPoll)
 }
 
+/// Les touches que la liste de complétion réserve pour elle.
+///
+/// Pendant qu'elle est ouverte, l'éditeur les **décline** au lieu de les traiter
+/// (patch 4 du crate) : elles continuent donc leur chemin jusqu'ici, et les
+/// flèches ne déplacent pas le curseur en plus de la sélection.
+fn reserved_keys() -> Vec<iced::keyboard::Key> {
+    use iced::keyboard::{Key, key::Named};
+
+    vec![
+        Key::Named(Named::ArrowUp),
+        Key::Named(Named::ArrowDown),
+        Key::Named(Named::Enter),
+        Key::Named(Named::Tab),
+        Key::Named(Named::Escape),
+    ]
+}
+
+/// Demande la liste au serveur, si le texte la demande à l'endroit du curseur.
+///
+/// C'est la **frappe** qui décide, et rien d'autre : après chaque message de
+/// l'éditeur, on regarde le mot en cours. Le serveur répond plus tard, et la
+/// liste s'ouvre à ce moment-là — une réponse est un événement comme un autre.
+fn request_completion(state: &mut State) -> Task<Message> {
+    let Some(session) = state.lsp.session.as_mut() else {
+        return Task::none();
+    };
+
+    let content = state.editor.content();
+    let offset = state.editor.cursor_offset();
+
+    let Some(context) = crate::lsp::completion::context(&content, offset) else {
+        // Plus de déclencheur sous le curseur : la liste n'a plus lieu d'être.
+        close_completion(state);
+
+        return Task::none();
+    };
+
+    // Rien de neuf à demander : même déclencheur, même mot déjà tapé.
+    if let Some(open) = state.lsp.completion.as_ref()
+        && open.trigger == context.trigger
+        && open.typed == context.typed
+    {
+        return Task::none();
+    }
+
+    state.lsp.tokens += 1;
+
+    let token = state.lsp.tokens;
+    let position = crate::lsp::messages::position_of(&content, offset);
+    let anchor = state
+        .editor
+        .editor
+        .cursor_screen_position()
+        .unwrap_or(iced::Point::ORIGIN);
+
+    session.completion(
+        position,
+        token,
+        crate::lsp::client::Trigger::Character(context.trigger),
+    );
+
+    state.lsp.awaiting = true;
+
+    // La liste précédente n'a plus lieu d'être, mais on la garde à l'écran
+    // jusqu'à la réponse : la faire disparaître à chaque lettre ferait
+    // clignoter le texte.
+    match state.lsp.completion.as_mut() {
+        Some(open) => {
+            open.typed = context.typed;
+            open.trigger = context.trigger;
+            open.start = context.start;
+            open.anchor = anchor;
+        }
+        None => {
+            state.lsp.completion = Some(Completion {
+                items: Vec::new(),
+                shown: Vec::new(),
+                selected: 0,
+                typed: context.typed,
+                trigger: context.trigger,
+                start: context.start,
+                anchor,
+            });
+
+            state.editor.editor.set_reserved_keys(reserved_keys());
+        }
+    }
+
+    Task::none()
+}
+
+/// Ferme la liste, et rend les touches à l'éditeur.
+fn close_completion(state: &mut State) {
+    if state.lsp.completion.take().is_some() {
+        state.editor.editor.set_reserved_keys(Vec::new());
+    }
+}
+
+/// Accepte l'élément sélectionné : il **remplace** ce qui a été tapé.
+///
+/// Remplacer, et non ajouter : `#fig` doit devenir `#figure(…)`, jamais
+/// `#figfigure(…)`. La plage vient du serveur quand il la donne — c'est
+/// précisément ce qu'une étiquette seule ne pouvait pas dire.
+fn accept_completion(state: &mut State) -> Task<Message> {
+    let Some(open) = state.lsp.completion.as_ref() else {
+        return Task::none();
+    };
+
+    let Some(item) = open.selected_item() else {
+        close_completion(state);
+
+        return Task::none();
+    };
+
+    let content = state.editor.content();
+
+    // La plage du serveur est en unités UTF-16, et se compte depuis le début du
+    // document ; ce qu'il faut effacer, c'est ce qui précède le curseur.
+    let replacement = item.replacement().map(|range| {
+        let start = crate::lsp::messages::offset_of(&content, range.start);
+        let end = crate::lsp::messages::offset_of(&content, range.end);
+
+        content[start..end].chars().count()
+    });
+
+    let insertion = crate::lsp::completion::insertion(item, &open.typed, replacement);
+
+    close_completion(state);
+
+    state
+        .editor
+        .replace_before(insertion.backspaces, &insertion.text)
+        .map(Message::Editor)
+}
+
 /// Applique un événement du serveur de langage.
 ///
 /// Le serveur est une source de vérité **en plus**, jamais *à la place* : ses
@@ -1580,9 +1795,54 @@ fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> Task<Messag
             Task::none()
         }
 
-        // Les réponses aux questions qu'on n'a pas encore posées : la liste de
-        // complétion et la navigation viennent à l'étape suivante.
-        Event::Completions { .. } | Event::Hover { .. } | Event::Definitions { .. } => Task::none(),
+        Event::Completions { token, items } => {
+            state.lsp.awaiting = false;
+
+            // Une réponse à une demande périmée : la frappe a continué depuis, et
+            // afficher cette liste-là montrerait ce qui n'est plus écrit.
+            if token != state.lsp.tokens {
+                return Task::none();
+            }
+
+            let typed = state
+                .lsp
+                .completion
+                .as_ref()
+                .map(|open| open.typed.clone())
+                .unwrap_or_default();
+
+            let shown = crate::lsp::completion::matching(&items, &typed);
+
+            // Rien à proposer : la liste se ferme. La garder ouverte
+            // réserverait les touches pour une liste vide, et les flèches ne
+            // feraient plus rien dans le texte — un défaut visible, et pour
+            // aucune raison.
+            if shown.is_empty() {
+                close_completion(state);
+
+                return Task::none();
+            }
+
+            if let Some(open) = state.lsp.completion.as_mut() {
+                open.items = items;
+                open.shown = shown;
+                open.selected = 0;
+            }
+
+            Task::none()
+        }
+
+        Event::CommandFinished { error, .. } => {
+            if let Some(reason) = error {
+                eprintln!("Le serveur n'a pas pu exécuter la commande demandée : {reason}");
+            }
+
+            Task::none()
+        }
+
+        // Les réponses aux questions qu'on n'a pas encore posées : la
+        // navigation viendra après la liste.
+        Event::Hover { .. } | Event::Definitions { .. } => Task::none(),
     }
 }
 

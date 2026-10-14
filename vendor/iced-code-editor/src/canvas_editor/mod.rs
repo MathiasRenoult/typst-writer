@@ -97,6 +97,17 @@ pub(crate) struct LspEditSnapshot {
 /// assert!(editor.is_modified());
 /// ```
 pub struct CodeEditor {
+    /// Keys the host has reserved for itself.
+    ///
+    /// While a completion list is open, the host needs the arrow keys, Enter,
+    /// Tab and Escape for the list itself. The editor must therefore *not*
+    /// consume them: an event a widget declines keeps travelling, and the host
+    /// receives it. Everything else — typing, backspace — keeps working, which
+    /// is what lets a list filter itself as you go on typing.
+    ///
+    /// Added by Typst Writer (patch 4); empty by default, and then the editor
+    /// behaves exactly as upstream.
+    pub(crate) reserved_keys: Vec<iced::keyboard::Key>,
     /// Unique ID for this editor instance (for focus management)
     pub(crate) editor_id: u64,
     /// Text buffer
@@ -703,6 +714,7 @@ impl CodeEditor {
             lsp_auto_flush: true,
             has_canvas_focus: false,
             focus_locked: false,
+            reserved_keys: Vec::new(),
             show_cursor: false,
             modifiers: Cell::new(iced::keyboard::Modifiers::default()),
             last_click: Cell::new(None),

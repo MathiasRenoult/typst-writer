@@ -322,6 +322,62 @@ pub struct LspState {
 
     /// Une réponse est attendue : le battement d'écoute se resserre.
     pub awaiting: bool,
+
+    /// La liste de complétion ouverte, s'il y en a une.
+    pub completion: Option<Completion>,
+
+    /// Numéro de la dernière demande de complétion.
+    ///
+    /// Une réponse qui porte un numéro périmé est celle d'une frappe
+    /// précédente : la garder ferait apparaître une liste qui ne correspond plus
+    /// à ce qui est écrit.
+    pub tokens: u64,
+}
+
+/// La liste de complétion, telle qu'elle s'affiche.
+pub struct Completion {
+    /// Ce que le serveur a proposé.
+    pub items: Vec<crate::lsp::messages::CompletionItem>,
+
+    /// Les indices des éléments qui correspondent à ce qui est tapé, dans
+    /// l'ordre voulu par le serveur.
+    pub shown: Vec<usize>,
+
+    /// La sélection, dans [`Self::shown`].
+    pub selected: usize,
+
+    /// Ce qui a été tapé après le déclencheur.
+    pub typed: String,
+
+    /// Le caractère qui a ouvert la liste.
+    pub trigger: char,
+
+    /// Le décalage, en octets, du début de ce qui serait remplacé.
+    pub start: usize,
+
+    /// Où la liste s'accroche, dans le repère de l'éditeur.
+    pub anchor: iced::Point,
+}
+
+impl Completion {
+    /// L'élément sélectionné, s'il y en a un.
+    pub fn selected_item(&self) -> Option<&crate::lsp::messages::CompletionItem> {
+        self.shown
+            .get(self.selected)
+            .and_then(|index| self.items.get(*index))
+    }
+
+    /// Déplace la sélection, en boucle : on ne bute pas sur les extrémités.
+    pub fn move_selection(&mut self, delta: isize) {
+        if self.shown.is_empty() {
+            return;
+        }
+
+        let count = self.shown.len() as isize;
+        let wanted = (self.selected as isize + delta).rem_euclid(count);
+
+        self.selected = wanted as usize;
+    }
 }
 
 /// État du rendu fidèle : compilation Typst + rasterisation à la demande.
