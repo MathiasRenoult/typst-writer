@@ -405,6 +405,7 @@ fn rasterize_visible(state: &State) -> Task<Message> {
 
     let tasks: Vec<Task<Message>> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| !state.render.rendering.contains(index))
+        .filter(|index| !state.render.page_cache.contains_key(index))
         .map(|index| {
             let document = document.clone();
 
