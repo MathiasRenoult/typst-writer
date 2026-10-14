@@ -25,6 +25,20 @@ pub const BODY_SIZE: f32 = 17.0;
 /// ne contient pas Typst.
 pub const SYNTAX: &str = "typ";
 
+/// Coloration de l'éditeur, déduite du thème de l'application.
+///
+/// Le fond est délibérément **plus clair que le fond de l'application** (ou plus
+/// sombre en thème clair) : c'est ce qui fait apparaître la zone de rédaction
+/// comme une page, et donc ses marges. Sur un fond uniforme, une marge existe
+/// en géométrie mais ne se voit pas.
+fn page_style(theme: &iced::Theme) -> iced_code_editor::Style {
+    let mut style = iced_code_editor::from_iced_theme(theme);
+
+    style.background = crate::ui::theme::Palette::from_theme(theme).surface;
+
+    style
+}
+
 /// Interligne, en multiple de la taille du texte.
 ///
 /// 1,6 est l'intervalle où un paragraphe reste lisible sans que l'œil perde la
@@ -149,15 +163,12 @@ impl EditorState {
         editor.set_font_size(BODY_SIZE, false);
         editor.set_line_height(BODY_SIZE * LINE_HEIGHT);
 
-        // Couleurs déduites du thème de l'application : l'éditeur suit donc le
-        // clair et le sombre sans réglage supplémentaire.
-        editor.set_theme(iced_code_editor::from_iced_theme(theme));
+        editor.set_theme(page_style(theme));
     }
 
     /// Réapplique les couleurs après un changement de thème.
     pub fn retheme(&mut self, theme: &iced::Theme) {
-        self.editor
-            .set_theme(iced_code_editor::from_iced_theme(theme));
+        self.editor.set_theme(page_style(theme));
     }
 }
 

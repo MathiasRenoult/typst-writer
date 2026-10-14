@@ -16,6 +16,16 @@ use iced::{Element, Length};
 /// appartient à la disposition des panneaux, qui gère seule ce qui est
 /// redimensionnable.
 pub fn view(state: &State) -> Element<'_, Message> {
+    // En mode focus, la barre d'outils disparaît : elle n'a plus d'objet, les
+    // panneaux étant masqués et les commandes de fichier n'étant pas ce qu'on
+    // vient chercher en écrivant. On en sort par F11 ou Échap.
+    if state.layout.focus_mode {
+        return column![layout::view(state), status_bar::view(state)]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
+
     column![
         toolbar::view(state),
         layout::view(state),

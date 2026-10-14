@@ -64,6 +64,12 @@ pub fn resolve(mode: ThemeMode, system: SystemMode) -> Theme {
 /// de gris — et garantit qu'un changement de thème se propage partout.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
+    /// Fond de l'application.
+    ///
+    /// Distinct du fond de panneau : c'est ce qui rend visibles les marges de
+    /// la zone de rédaction, qui flotte sur le fond de l'application.
+    pub background: Color,
+
     /// Fond d'un panneau (barre latérale, bandeaux).
     pub surface: Color,
 
@@ -106,6 +112,7 @@ impl Palette {
         let text_muted = extended.background.weak.text;
 
         Self {
+            background: extended.background.base.color,
             surface,
             surface_hover: extended.background.strong.color,
             surface_active: extended.primary.weak.color,
@@ -189,6 +196,24 @@ mod tests {
             assert_eq!(palette.text, theme.palette().text);
             assert_eq!(palette.accent, theme.palette().primary);
             assert_eq!(palette.danger, theme.palette().danger);
+        }
+    }
+
+    /// Le fond de l'application et le fond de panneau doivent différer.
+    ///
+    /// C'est cette différence qui fait apparaître la zone de rédaction comme une
+    /// page — et donc ses marges. Sur deux teintes identiques, la marge existe
+    /// en géométrie mais reste invisible ; c'est précisément ce qui la rendait
+    /// imperceptible.
+    #[test]
+    fn background_and_surface_differ() {
+        for theme in [Theme::Light, Theme::Dark] {
+            let palette = Palette::from_theme(&theme);
+
+            assert_ne!(
+                palette.background, palette.surface,
+                "la page ne se détacherait pas du fond en thème {theme:?}"
+            );
         }
     }
 

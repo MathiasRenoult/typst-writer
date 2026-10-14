@@ -15,13 +15,13 @@ const MEASURE: f32 = 760.0;
 ///
 /// Elle n'a d'effet que si le panneau est plus étroit que la mesure ; sinon
 /// c'est la mesure elle-même qui laisse du blanc de chaque côté.
-const SIDE_MARGIN: f32 = 28.0;
+const SIDE_MARGIN: f32 = 40.0;
 
 /// Marge en haut du texte : respirer avant la première ligne.
-const TOP_MARGIN: f32 = 20.0;
+const TOP_MARGIN: f32 = 28.0;
 
 /// Marge en bas : de quoi voir venir la suite sans que le texte touche le bord.
-const BOTTOM_MARGIN: f32 = 48.0;
+const BOTTOM_MARGIN: f32 = 64.0;
 
 /// La zone de rédaction.
 ///
@@ -39,6 +39,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .height(Fill)
         .max_width(MEASURE);
 
+    // La zone de rédaction se détache sur le fond de l'application : sans
+    // cette différence de teinte, la marge existe en géométrie mais reste
+    // invisible — on ne voit pas de marge sur un fond uniforme.
     container(page)
         .width(Fill)
         .height(Fill)
@@ -49,8 +52,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
             bottom: BOTTOM_MARGIN,
             left: SIDE_MARGIN,
         })
+        // Le tour est au fond de l'application, la page au ton du panneau : la
+        // différence est ce qui rend la marge visible.
         .style(move |_| container::Style {
-            background: Some(palette.surface.into()),
+            background: Some(palette.background.into()),
             ..Default::default()
         })
         .into()

@@ -32,6 +32,14 @@ pub struct State {
     /// Disposition des panneaux : visibilité, largeurs, position de l'aperçu.
     pub layout: LayoutState,
 
+    /// Fenêtre de l'application, retenue dès son ouverture.
+    ///
+    /// Elle est nécessaire pour passer en plein écran en mode focus : le
+    /// gestionnaire de messages ne reçoit pas l'identifiant de la fenêtre, et
+    /// le demander par une tâche à chaque bascule serait un détour pour une
+    /// donnée qui ne change pas.
+    pub window: Option<iced::window::Id>,
+
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 

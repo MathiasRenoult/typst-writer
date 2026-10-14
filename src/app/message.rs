@@ -100,8 +100,11 @@ pub enum Message {
     /// Le séparateur est relâché.
     SplitterReleased,
 
-    /// Bascule le mode focus : seul le texte source reste visible.
+    /// Bascule le mode focus : plein écran, le texte seul.
     ToggleFocusMode,
+
+    /// Une fenêtre s'est ouverte : on retient son identifiant.
+    WindowOpened(iced::window::Id),
 
     /// Fait cycler le thème : système → clair → sombre → système.
     CycleTheme,

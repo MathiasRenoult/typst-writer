@@ -53,6 +53,7 @@ impl State {
             bibliography: Vec::new(),
             project,
             projects,
+            window: None,
             renaming: None,
             render: Default::default(),
             layout: Default::default(),
@@ -639,10 +640,31 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::WindowOpened(id) => {
+            state.window = Some(id);
+
+            Task::none()
+        }
+
         Message::ToggleFocusMode => {
             state.layout.focus_mode = !state.layout.focus_mode;
 
-            Task::none()
+            // Le mode focus est un plein écran : masquer les panneaux ne suffit
+            // pas, la barre de titre et le reste du bureau resteraient dans le
+            // champ de vision.
+            let mode = if state.layout.focus_mode {
+                iced::window::Mode::Fullscreen
+            } else {
+                iced::window::Mode::Windowed
+            };
+
+            match state.window {
+                Some(id) => iced::window::set_mode(id, mode),
+                // La fenêtre n'est pas encore connue : on la demande, puis on
+                // appliquera le mode. Sans cela, la première bascule au tout
+                // début du démarrage resterait sans effet.
+                None => iced::window::latest().and_then(move |id| iced::window::set_mode(id, mode)),
+            }
         }
 
         Message::StartRename(path) => {
@@ -778,6 +800,16 @@ fn handle_shortcut(
         return update(state, Message::ToggleFocusMode);
     }
 
+    // Échap en sort : en mode focus il n'y a plus de barre d'outils, donc plus
+    // de bouton à cliquer — sans cette sortie, l'utilisateur serait enfermé.
+    if let iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) = key {
+        if state.layout.focus_mode {
+            return update(state, Message::ToggleFocusMode);
+        }
+
+        return Task::none();
+    }
+
     if !modifiers.control() || modifiers.alt() || modifiers.logo() {
         return Task::none();
     }
@@ -894,6 +926,11 @@ fn subscription_drag() -> Subscription<Message> {
 /// Les raccourcis globaux (Ctrl+S, Ctrl+N, Ctrl+O, Ctrl+E) n'agissent que
 /// lorsque l'événement n'a pas été consommé par un widget — l'éditeur garde
 /// donc la priorité sur ses propres raccourcis.
+/// Retient l'identifiant de la fenêtre dès son ouverture.
+fn subscription_window() -> Subscription<Message> {
+    iced::window::open_events().map(Message::WindowOpened)
+}
+
 fn subscription_keys() -> Subscription<Message> {
     iced::event::listen_with(|event, status, _window| match status {
         Status::Ignored => match event {
@@ -911,6 +948,7 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
         subscription_timer(),
         subscription_save(),
         subscription_system_theme(),
+        subscription_window(),
         subscription_drag(),
         subscription_keys(),
     ])
