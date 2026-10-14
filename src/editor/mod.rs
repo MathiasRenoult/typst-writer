@@ -13,6 +13,18 @@ pub struct EditorState {
 /// des identifiants.
 pub const BODY_SIZE: f32 = 17.0;
 
+/// Nom de syntaxe passé à l'éditeur.
+///
+/// C'est **une extension de fichier**, pas un nom de langage : la résolution du
+/// widget cherche dans les extensions déclarées par les définitions de syntaxe,
+/// et Typst y répond à `typ`. Passer `"typst"` ne trouverait rien et
+/// l'éditeur resterait en texte brut.
+///
+/// La définition vient du jeu embarqué par `two-face` (celui de `bat`), d'où la
+/// feature du même nom sur la dépendance : le jeu par défaut de `syntect`, lui,
+/// ne contient pas Typst.
+pub const SYNTAX: &str = "typ";
+
 /// Interligne, en multiple de la taille du texte.
 ///
 /// 1,6 est l'intervalle où un paragraphe reste lisible sans que l'œil perde la
@@ -22,7 +34,7 @@ const LINE_HEIGHT: f32 = 1.6;
 impl Default for EditorState {
     fn default() -> Self {
         let mut state = Self {
-            editor: CodeEditor::new("", "typst"),
+            editor: CodeEditor::new("", SYNTAX),
             path: None,
         };
 
@@ -35,7 +47,7 @@ impl Default for EditorState {
 impl EditorState {
     pub fn new_file(path: PathBuf, content: String) -> Self {
         let mut state = Self {
-            editor: CodeEditor::new(&content, "typst"),
+            editor: CodeEditor::new(&content, SYNTAX),
             path: Some(path),
         };
 
@@ -203,6 +215,40 @@ mod tests {
         assert!(
             editor.editor.wrap_enabled(),
             "le retour à la ligne est requis"
+        );
+    }
+
+    /// La coloration Typst est réellement active.
+    ///
+    /// `syntax_name` renvoie le nom de la définition effectivement résolue :
+    /// « Typst » si la syntaxe a été trouvée, « Plain Text » sinon. C'est ce
+    /// qui distingue une coloration qui marche d'un repli silencieux sur du
+    /// texte brut — les deux ayant exactement la même allure de code.
+    #[test]
+    fn typst_highlighting_is_actually_resolved() {
+        let editor = EditorState::default();
+
+        let resolved = editor.editor.syntax_name();
+
+        assert_eq!(
+            resolved, "Typst",
+            "la syntaxe Typst doit être résolue, pas remplacée par du texte brut"
+        );
+    }
+
+    /// Le nom de syntaxe doit être une extension connue des définitions.
+    ///
+    /// L'éditeur résout par extension de fichier : « typst » ne trouverait
+    /// rien et retomberait sur du texte brut sans le dire.
+    #[test]
+    fn the_syntax_name_matches_a_declared_extension() {
+        let editor = EditorState::default();
+
+        assert_eq!(editor.editor.syntax(), SYNTAX);
+        assert_ne!(
+            editor.editor.syntax_name(),
+            "Plain Text",
+            "« {SYNTAX} » doit correspondre à une définition, pas au repli brut"
         );
     }
 
