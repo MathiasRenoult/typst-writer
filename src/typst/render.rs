@@ -4,15 +4,19 @@
 //!
 //! 1. **Compilation** (`compile`) : le document est compilé par le moteur
 //!    Typst complet (polices embarquées, layout identique à `typst compile`).
-//!    C'est rapide (~50 ms même pour un gros document) et ne produit aucun
+//!    C'est rapide (~15 ms même pour un gros document) et ne produit aucun
 //!    bitmap. Les diagnostics (erreurs, avertissements) en sortent aussi.
 //!
 //! 2. **Rendu raster** (`render_page`) : une seule page à la fois est
-//!    rasterisée en PNG par `typst-render` (le moteur d'export PNG du CLI,
+//!    rasterisée en pixels RGBA par `typst-render` (le moteur d'export du CLI,
 //!    qui dessine les glyphes directement — pas de SVG, donc pas de bug
 //!    d'exposant). Seules les pages visibles à l'écran sont rendues, ce qui
 //!    rend l'aperçu d'un document de 5500 mots aussi léger que celui d'une
 //!    page.
+//!
+//!    Les pixels partent bruts vers `Handle::from_rgba`, sans passage par un
+//!    PNG : l'encodage puis le décodage coûtaient la moitié du temps de rendu
+//!    pour rien, et le backend rechargeait une texture à chaque fois.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -60,6 +64,24 @@ pub struct CompileOutcome {
     pub document: Option<Arc<PagedDocument>>,
 }
 
+/// Une page rasterisée : pixels RGBA bruts, tels que le moteur les produit.
+///
+/// Aucun encodage intermédiaire : ces octets sont donnés directement à
+/// [`iced::widget::image::Handle::from_rgba`]. Passer par un PNG (encodage
+/// puis décodage par le backend) coûtait la moitié du temps de rendu et
+/// faisait travailler un thread de décodage pour rien.
+#[derive(Debug, Clone)]
+pub struct PageImage {
+    /// Largeur en pixels (à la densité de rendu).
+    pub width: u32,
+
+    /// Hauteur en pixels (à la densité de rendu).
+    pub height: u32,
+
+    /// Pixels RGBA, `width * height * 4` octets.
+    pub pixels: Vec<u8>,
+}
+
 /// Compile le document (sans rasteriser).
 ///
 /// `root` est le dossier du document actif : les imports et images relatifs
@@ -89,11 +111,14 @@ pub fn compile(root: &Path, content: &str) -> CompileOutcome {
     }
 }
 
-/// Rasterise une page du document en PNG.
+/// Rasterise une page du document en pixels RGBA bruts.
 ///
-/// Renvoie les octets PNG (à donner à `image::Handle::from_memory`), ou
-/// `None` si l'index dépasse le nombre de pages.
-pub fn render_page(document: &PagedDocument, index: usize) -> Option<Vec<u8>> {
+/// Renvoie `None` si l'index dépasse le nombre de pages.
+///
+/// C'est la seule opération coûteuse de l'aperçu (~30 ms pour une page A4) :
+/// elle ne doit donc être déclenchée que pour les pages réellement
+/// nécessaires, et jamais depuis le thread d'affichage.
+pub fn render_page(document: &PagedDocument, index: usize) -> Option<PageImage> {
     let page = document.pages().get(index)?;
 
     let options = typst_render::RenderOptions {
@@ -103,7 +128,13 @@ pub fn render_page(document: &PagedDocument, index: usize) -> Option<Vec<u8>> {
 
     let pixmap = typst_render::render(page, &options);
 
-    pixmap.encode_png().ok()
+    Some(PageImage {
+        width: pixmap.width(),
+        height: pixmap.height(),
+        // `take` cède le tampon sans le recopier : les pixels partent tels
+        // quels vers le Handle, sans repasser par un PNG.
+        pixels: pixmap.take(),
+    })
 }
 
 /// Dimensions d'une page en pixels (largeur, hauteur) à la densité de rendu.
@@ -365,7 +396,7 @@ mod tests {
         edited.push_str("\nUn mot de plus.\n");
 
         let start = Instant::now();
-        let second = compile(&dir, &edited);
+        let _second = compile(&dir, &edited);
         let incremental_time = start.elapsed();
 
         println!("Compilation incré. : {incremental_time:>10.2?}");
@@ -438,9 +469,10 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// La rasterisation produit un PNG valide, à la bonne taille.
+    /// La rasterisation produit des pixels RGBA cohérents avec la géométrie
+    /// de la page.
     #[test]
-    fn renders_page_to_png() {
+    fn renders_page_to_rgba() {
         let dir = std::env::temp_dir().join("typst-writer-raster");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -448,19 +480,44 @@ mod tests {
         let outcome = compile(&dir, "= Titre\n\nDu contenu.\n");
         let document = outcome.document.expect("document compilé");
 
-        let png = render_page(&document, 0).expect("rendu de la page");
-
-        assert!(png.starts_with(b"\x89PNG"), "le rendu doit être un PNG");
+        let page = render_page(&document, 0).expect("rendu de la page");
 
         // A4 à 2 px/pt : ~1191 × 1684 px.
-        let (width, height) = page_size(&document, 0).expect("taille de page");
         assert!(
-            (width - 1191.0).abs() < 5.0,
-            "largeur A4 attendue, eu {width}"
+            (page.width as f64 - 1191.0).abs() < 5.0,
+            "largeur A4 attendue, eu {}",
+            page.width
         );
         assert!(
-            (height - 1684.0).abs() < 5.0,
-            "hauteur A4 attendue, eu {height}"
+            (page.height as f64 - 1684.0).abs() < 5.0,
+            "hauteur A4 attendue, eu {}",
+            page.height
+        );
+
+        // Le tampon doit être exactement un RGBA par pixel : `from_rgba`
+        // l'exige, et un écart ferait planter le backend graphique.
+        assert_eq!(
+            page.pixels.len(),
+            page.width as usize * page.height as usize * 4,
+            "tampon RGBA de taille width * height * 4 attendu"
+        );
+
+        // La géométrie annoncée par `page_size` doit correspondre aux pixels
+        // produits : c'est ce rapport qui règle la taille d'affichage. Les
+        // deux voies de calcul ne s'arrondissent pas de la même façon, d'où
+        // la tolérance d'un pixel — sans effet visible puisque l'image est
+        // affichée en `ContentFit::Contain`.
+        let (width, height) = page_size(&document, 0).expect("taille de page");
+
+        assert!(
+            (width - page.width as f64).abs() <= 1.0,
+            "largeur cohérente entre la géométrie et le rendu : {width} vs {}",
+            page.width
+        );
+        assert!(
+            (height - page.height as f64).abs() <= 1.0,
+            "hauteur cohérente entre la géométrie et le rendu : {height} vs {}",
+            page.height
         );
 
         // Index hors bornes : pas de page.
@@ -482,9 +539,12 @@ mod tests {
         assert!(outcome.errors.is_empty(), "maths valides attendues");
 
         let document = outcome.document.expect("document compilé");
-        let png = render_page(&document, 0).expect("rendu");
+        let page = render_page(&document, 0).expect("rendu");
 
-        assert!(png.starts_with(b"\x89PNG"));
+        assert_eq!(
+            page.pixels.len(),
+            page.width as usize * page.height as usize * 4
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

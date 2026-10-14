@@ -1,4 +1,4 @@
-use crate::typst::render::CompileOutcome;
+use crate::typst::render::{CompileOutcome, PageImage};
 use iced_code_editor::Message as EditorMessage;
 use std::path::PathBuf;
 
@@ -40,11 +40,18 @@ pub enum Message {
     /// Résultat de la compilation (document et diagnostics).
     RenderDone(CompileOutcome),
 
-    /// Résultat de la rasterisation d'une page (index → octets PNG).
-    PageRendered(usize, Option<Vec<u8>>),
+    /// Résultat de la rasterisation d'une page.
+    ///
+    /// Porte le numéro de révision du document pour lequel le rendu a été
+    /// demandé : si une compilation est arrivée entre-temps, l'image est
+    /// écartée au lieu de remplacer une image plus récente.
+    PageRendered(u64, usize, Option<PageImage>),
 
     /// Le viewport de l'aperçu a changé : (première page visible, dernière).
     ViewportChanged(usize, usize),
+
+    /// Tic de sauvegarde périodique (écriture différée sur le disque).
+    SaveTick,
 
     /// Saute à la position d'un diagnostic dans l'éditeur.
     GotoError(usize, usize),

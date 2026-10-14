@@ -1,9 +1,8 @@
 use crate::app::{Message, State};
 use crate::typst::render::Diagnostic;
-use iced::widget::image::{Handle, Viewer};
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{ContentFit, Element, Fill, color};
+use iced::widget::{button, column, container, image, row, scrollable, space, text};
+use iced::{ContentFit, Element, Fill, Length, color};
 
 /// Taille du texte courant.
 const BODY_SIZE: f32 = 14.0;
@@ -14,8 +13,95 @@ const PAGE_GAP: f32 = 12.0;
 /// Marge intérieure du panneau.
 const PANEL_PADDING: f32 = 16.0;
 
+/// Densité de rendu des pages (pixels par point).
+///
+/// Doit correspondre à `crate::typst::render::PIXEL_PER_PT` : c'est le rapport
+/// entre les pixels de l'image et sa taille logique à l'écran.
+const PIXEL_PER_PT: f64 = 2.0;
+
+/// Pages rendues au-delà du viewport, de part et d'autre.
+///
+/// Une page de marge garantit qu'un défilement rapide ne révèle jamais un
+/// cadre vide, sans pour autant rasteriser tout le document.
+const VIEWPORT_MARGIN: usize = 1;
+
+/// Dimensions logiques (pixels écran) des pages du document.
+///
+/// La géométrie est connue avant tout rendu : elle sert à calculer la hauteur
+/// totale du panneau et à déterminer quelles pages sont visibles, ce qui rend
+/// la liste de pages virtualisable.
+fn page_sizes(state: &State) -> Vec<(f32, f32)> {
+    let Some(document) = state.render.document.as_ref() else {
+        return Vec::new();
+    };
+
+    (0..crate::typst::render::page_count(document))
+        .map(|index| crate::typst::render::page_size(document, index).unwrap_or((595.0, 842.0)))
+        // Les images sont rendues à 2 px/pt : on les affiche à leur taille
+        // logique, et la géométrie suit cette même échelle.
+        .map(|(width, height)| {
+            (
+                (width / PIXEL_PER_PT) as f32,
+                (height / PIXEL_PER_PT) as f32,
+            )
+        })
+        .collect()
+}
+
+/// Décalage vertical du sommet de la page `index` dans le contenu défilant.
+fn page_offset(sizes: &[(f32, f32)], index: usize) -> f32 {
+    sizes
+        .iter()
+        .take(index)
+        .fold(PANEL_PADDING, |offset, (_, height)| {
+            offset + height + PAGE_GAP
+        })
+}
+
+/// Première et dernière page visibles dans la fenêtre `[top, bottom]`, marge
+/// comprise. Les deux bornes sont exprimées dans le contenu défilant.
+///
+/// Le calcul utilise les hauteurs réelles des pages : il reste juste même sur
+/// un document dont les pages n'ont pas toutes la même taille.
+fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) {
+    let Some(last_index) = sizes.len().checked_sub(1) else {
+        return (0, 0);
+    };
+
+    // Première page dont le bas atteint le haut de la fenêtre.
+    let mut first = 0;
+    let mut offset = 0.0;
+
+    for (index, (_, height)) in sizes.iter().enumerate() {
+        if offset + height >= top {
+            first = index;
+            break;
+        }
+
+        offset += height + PAGE_GAP;
+        first = index + 1;
+    }
+
+    // Dernière page dont le haut reste au-dessus du bas de la fenêtre.
+    let mut last = first.min(last_index);
+
+    for index in first..=last_index {
+        if page_offset(sizes, index) > bottom {
+            break;
+        }
+
+        last = index;
+    }
+
+    (
+        first.saturating_sub(VIEWPORT_MARGIN),
+        (last + VIEWPORT_MARGIN).min(last_index),
+    )
+}
+
 pub fn view(state: &State) -> Element<'_, Message> {
     let render = &state.render;
+    let sizes = page_sizes(state);
 
     let mut content = column![]
         .spacing(PAGE_GAP)
@@ -35,27 +121,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(diagnostics_panel(&render.warnings, false));
     }
 
-    // Les pages du document : seules les pages rasterisées portent une image ;
-    // les autres sont des cadres de la taille exacte de la page, pour que la
-    // géométrie du défilement reste stable pendant le rendu.
-    let mut first_page_height = None;
-
-    if let Some(document) = render.document.as_ref() {
-        let count = crate::typst::render::page_count(document);
-
-        for index in 0..count {
-            content = content.push(page_view(state, index));
-
-            if first_page_height.is_none() {
-                if let Some((_, height)) = crate::typst::render::page_size(document, index) {
-                    first_page_height = Some((height / 2.0) as f32);
-                }
-            }
-        }
-    }
-
-    // État d'attente avant la première compilation.
-    if render.document.is_none() && render.errors.is_empty() && state.export_status.is_none() {
+    if sizes.is_empty() {
+        // État d'attente avant la première compilation.
         let message = if render.pending {
             "Compilation…"
         } else if render.done {
@@ -65,70 +132,84 @@ pub fn view(state: &State) -> Element<'_, Message> {
         };
 
         content = content.push(text(message).size(BODY_SIZE));
+
+        return scrollable(content)
+            .width(Fill)
+            .height(Fill)
+            // Aucune page : le viewport ne sert à rien, mais le message garde
+            // la forme attendue par l'état de rendu.
+            .on_scroll(|_| Message::ViewportChanged(0, 0))
+            .into();
     }
 
-    // Hauteur logique d'une page (première page du document).
-    let page_height = first_page_height.unwrap_or(842.0);
+    // Seules les pages proches du viewport sont matérialisées ; les autres
+    // sont remplacées par un unique espaceur de la hauteur exacte qu'elles
+    // occuperaient. Un document de 500 pages coûte donc le même nombre de
+    // widgets qu'un document d'une page, et la géométrie du défilement reste
+    // exacte — les hauteurs de pages sont connues avant tout rendu.
+    let last_index = sizes.len() - 1;
+    let (first, last) = render.visible.unwrap_or((0, last_index));
+
+    let first = first.min(last_index);
+    let last = last.clamp(first, last_index);
+
+    let head = page_offset(&sizes, first);
+
+    if head > PANEL_PADDING {
+        content = content.push(
+            space::vertical()
+                .height(Length::Fixed(head - PANEL_PADDING))
+                .width(Fill),
+        );
+    }
+
+    for index in first..=last {
+        content = content.push(page_view(state, index, sizes[index]));
+    }
+
+    if last < last_index {
+        let tail = page_offset(&sizes, last_index + 1) - page_offset(&sizes, last + 1);
+
+        if tail > 0.0 {
+            content = content.push(space::vertical().height(Length::Fixed(tail)).width(Fill));
+        }
+    }
 
     scrollable(content)
         .width(Fill)
         .height(Fill)
         .on_scroll(move |viewport| {
-            let (first, last) = visible_pages(&viewport, page_height);
+            // La marge intérieure du panneau n'est pas dans le repère du
+            // viewport : on la retire pour raisonner sur le contenu défilant.
+            let top = viewport.absolute_offset().y - PANEL_PADDING;
+            let bottom = top + viewport.bounds().height;
+
+            let (first, last) = visible_pages(&sizes, top, bottom);
 
             Message::ViewportChanged(first, last)
         })
         .into()
 }
 
-/// Calcule la première et la dernière page visibles dans le viewport, avec une
-/// marge d'une page de chaque côté (les hauteurs de pages varient, et le
-/// scroll pendant le rendu ne doit jamais découvrir un cadre vide).
-fn visible_pages(
-    viewport: &iced::widget::scrollable::Viewport,
-    page_height: f32,
-) -> (usize, usize) {
-    if page_height <= 0.0 {
-        return (0, 0);
-    }
-
-    let stride = page_height + PAGE_GAP;
-    let top = viewport.absolute_offset().y - PANEL_PADDING;
-    let bottom = top + viewport.bounds().height;
-
-    let first = (top / stride).floor().max(0.0) as usize;
-    let last = (bottom / stride).ceil() as usize;
-
-    // Marge d'une page de chaque côté.
-    (first.saturating_sub(1), last + 1)
-}
-
-/// Une page : l'image PNG si elle est rasterisée, sinon un cadre gris de la
-/// même taille (la géométrie du document est connue avant tout rendu).
-fn page_view(state: &State, index: usize) -> Element<'_, Message> {
+/// Une page : l'image si elle est rasterisée, sinon un cadre de la même
+/// taille (la géométrie du document est connue avant tout rendu).
+fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Message> {
     let render = &state.render;
-
-    let document = match render.document.as_ref() {
-        Some(document) => document,
-        None => return space().width(Fill).height(400).into(),
-    };
-
-    let (width, height) =
-        crate::typst::render::page_size(document, index).unwrap_or((595.0, 842.0));
-
-    // Le PNG est rendu à 2 px/pt : on l'affiche à sa taille logique (÷2).
-    let logical_width = (width / 2.0) as f32;
-    let logical_height = (height / 2.0) as f32;
+    let (width, height) = size;
 
     // Double tampon : l'image de la page est affichée dès qu'elle existe,
     // même si elle date de la compilation précédente. Une page modifiée se
     // met à jour en place quand son nouveau rendu arrive, sans jamais
     // disparaître de l'écran.
+    //
+    // Le `Handle` mis en cache est cloné tel quel : il porte le même
+    // identifiant, donc le backend graphique retrouve la texture déjà
+    // téléversée au lieu d'en créer une neuve à chaque image.
     match render.page_cache.get(&index) {
-        Some(png) => row![
-            Viewer::new(Handle::from_bytes(png.clone()))
-                .width(iced::Length::Fixed(logical_width))
-                .height(iced::Length::Fixed(logical_height))
+        Some(handle) => row![
+            image(handle.clone())
+                .width(Length::Fixed(width))
+                .height(Length::Fixed(height))
                 .content_fit(ContentFit::Contain)
         ]
         .width(Fill)
@@ -143,8 +224,8 @@ fn page_view(state: &State, index: usize) -> Element<'_, Message> {
             .size(13)
             .color(color!(0x666666)),
         )
-        .width(iced::Length::Fixed(logical_width))
-        .height(iced::Length::Fixed(logical_height))
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(height))
         .center_x(Fill)
         .center_y(Fill)
         .style(container::rounded_box)
@@ -222,5 +303,112 @@ fn panel_style(is_error: bool) -> impl Fn(&iced::Theme) -> container::Style {
             radius: 6.0.into(),
         },
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cinq pages de 100 px, séparées par `PAGE_GAP`.
+    fn sizes() -> Vec<(f32, f32)> {
+        vec![(600.0, 100.0); 5]
+    }
+
+    /// Le fenêtre visible, telle que `view()` la calcule depuis le viewport.
+    fn window(offset: f32, height: f32) -> (f32, f32) {
+        let top = offset - PANEL_PADDING;
+
+        (top, top + height)
+    }
+
+    #[test]
+    fn offsets_are_cumulative_and_include_padding() {
+        let sizes = sizes();
+
+        assert_eq!(page_offset(&sizes, 0), PANEL_PADDING);
+        assert_eq!(page_offset(&sizes, 1), PANEL_PADDING + 100.0 + PAGE_GAP);
+        assert_eq!(
+            page_offset(&sizes, 2),
+            PANEL_PADDING + 2.0 * (100.0 + PAGE_GAP)
+        );
+        // Au-delà de la dernière page : la hauteur totale du contenu.
+        assert_eq!(
+            page_offset(&sizes, sizes.len()),
+            PANEL_PADDING + 5.0 * (100.0 + PAGE_GAP)
+        );
+    }
+
+    /// La page sous le curseur est toujours dans l'intervalle rendu : c'est ce
+    /// qui garantit qu'un défilement ne révèle jamais un cadre vide.
+    #[test]
+    fn visible_pages_cover_the_scrolled_position() {
+        let sizes = sizes();
+        let stride = 100.0 + PAGE_GAP;
+
+        for scroll in 0..400 {
+            let (top, bottom) = window(scroll as f32, 300.0);
+            let (first, last) = visible_pages(&sizes, top, bottom);
+
+            assert!(first <= last, "intervalle inversé à {scroll}");
+            assert!(last < sizes.len(), "intervalle hors bornes à {scroll}");
+
+            // La page dont le sommet est dans la fenêtre est bien incluse.
+            let pointed = ((scroll as f32 + 150.0 - PANEL_PADDING) / stride) as usize;
+
+            assert!(
+                pointed >= first && pointed <= last,
+                "page pointue {pointed} hors de [{first}, {last}] au scroll {scroll}"
+            );
+        }
+    }
+
+    /// La marge d'une page est bien ajoutée des deux côtés.
+    #[test]
+    fn visible_pages_add_a_page_of_margin() {
+        let sizes = sizes();
+        let (top, bottom) = window(0.0, 100.0);
+
+        let (first, last) = visible_pages(&sizes, top, bottom);
+
+        assert_eq!(first, 0, "pas de marge négative en haut du document");
+        assert!(last >= 1, "une page de marge en dessous de la fenêtre");
+    }
+
+    /// Aucune page : intervalle dégénéré, pas de débordement.
+    #[test]
+    fn visible_pages_on_empty_document() {
+        assert_eq!(visible_pages(&[], 0.0, 300.0), (0, 0));
+    }
+
+    /// Des pages de hauteurs différentes ne doivent pas fausser le calcul :
+    /// c'est le cas des documents mixtes (titres, figures, sauts de page).
+    #[test]
+    fn visible_pages_with_variable_page_heights() {
+        let sizes = vec![
+            (600.0, 100.0),
+            (600.0, 800.0),
+            (600.0, 100.0),
+            (600.0, 100.0),
+        ];
+
+        // La fenêtre commence au sommet de la troisième page.
+        let top = page_offset(&sizes, 2);
+        let (first, last) = visible_pages(&sizes, top, top + 120.0);
+
+        assert!(first <= 2, "la page visée est dans l'intervalle : {first}");
+        assert!(last >= 2, "la page visée est dans l'intervalle : {last}");
+    }
+
+    /// En fin de document, la marge ne doit pas faire déborder l'intervalle.
+    #[test]
+    fn visible_pages_clamp_at_the_end_of_the_document() {
+        let sizes = sizes();
+        let (top, bottom) = window(10_000.0, 300.0);
+
+        let (first, last) = visible_pages(&sizes, top, bottom);
+
+        assert!(first < sizes.len(), "début dans le document : {first}");
+        assert_eq!(last, sizes.len() - 1, "fin bornée à la dernière page");
     }
 }

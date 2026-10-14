@@ -6,12 +6,16 @@ pub use state::State;
 
 use iced::event::{Event, Status};
 use iced::keyboard;
+use iced::widget::image::Handle;
 use iced::{Subscription, Task, time};
 
 use std::path::PathBuf;
 
 /// Intervalle de recompilation automatique après la dernière frappe.
 const RENDER_INTERVAL_MS: u64 = 300;
+
+/// Intervalle de sauvegarde automatique différée.
+const SAVE_INTERVAL_MS: u64 = 1000;
 
 impl State {
     /// État initial : le dernier document de la session est rouvert, ou le
@@ -94,6 +98,18 @@ impl State {
             .unwrap_or_default();
     }
 
+    /// Charge un document dans l'éditeur, rendu vierge.
+    ///
+    /// Les images du document précédent ne doivent pas survivre au
+    /// changement : les `Handle` sont relâchés pour que le backend libère les
+    /// textures correspondantes.
+    fn open_document(&mut self, path: PathBuf, content: String) {
+        self.editor = crate::editor::EditorState::new_file(path, content);
+        self.export_status = None;
+        self.render.reset();
+        self.refresh_context();
+    }
+
     /// Dossier du document actif (base des imports relatifs).
     fn document_dir(&self) -> PathBuf {
         self.editor
@@ -126,9 +142,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             match crate::project::create_document(&content) {
                 Ok(path) => {
-                    state.editor = crate::editor::EditorState::new_file(path, content);
-                    state.export_status = None;
-                    state.refresh_context();
+                    state.open_document(path, content);
                 }
                 Err(error) => {
                     state.export_status = Some(format!("Création du document : {error}"));
@@ -157,9 +171,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::FileOpened(result) => {
             if let Some((path, content)) = result {
-                state.editor = crate::editor::EditorState::new_file(path, content);
-                state.export_status = None;
-                state.refresh_context();
+                state.open_document(path, content);
             }
 
             Task::none()
@@ -178,9 +190,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         ),
 
         Message::LibraryDocumentOpened(path, content) => {
-            state.editor = crate::editor::EditorState::new_file(path, content);
-            state.export_status = None;
-            state.refresh_context();
+            state.open_document(path, content);
 
             crate::project::save_session(&crate::project::Session {
                 last_document: state.editor.path.clone(),
@@ -278,6 +288,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             let content = state.editor.content();
 
+            // Rien n'a changé : aucune compilation, donc aucun rendu, donc
+            // aucune image retravaillée. C'est la condition qui rend l'aperçu
+            // inerte — et gratuit — tant que l'on ne tape pas.
             if state.render.content == content {
                 return Task::none();
             }
@@ -297,33 +310,32 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.render.warnings = outcome.warnings;
             state.render.document = outcome.document;
 
-            // Le cache de pages est conservé : c'est le double tampon. Les
-            // images déjà affichées restent en place jusqu'à ce que leur
-            // nouveau rendu arrive — l'aperçu ne montre jamais de cadre gris
-            // ni de flash. Seules les entrées de pages disparues sont
-            // retirées, pour ne pas garder des images inutilisées.
+            // Nouveau document : toute image en cache est dorénavant suspecte.
+            // On ne les supprime pas pour autant — elles restent affichées
+            // (double tampon) — mais elles sont marquées périmées, et seules
+            // les pages visibles seront rasterisées à nouveau.
+            state.render.revision += 1;
+
+            // Les entrées de pages qui n'existent plus sont retirées, pour ne
+            // pas retenir des images inutilisées.
             if let Some(document) = state.render.document.as_deref() {
                 let total = crate::typst::render::page_count(document);
 
                 state.render.page_cache.retain(|index, _| *index < total);
+                state.render.rendering.retain(|index| *index < total);
+                state.render.stale.retain(|index| *index < total);
             }
 
-            // Sauvegarde automatique : le document actif est un fichier
-            // local de l'app, toujours à jour sur le disque dès que la
-            // compilation réussit. Un document invalide n'est pas écrit
-            // (le statut « modifié » le signale).
+            // Sauvegarde différée plutôt qu'immédiate : écrire le fichier à
+            // chaque compilation, c'était une écriture disque toutes les
+            // 300 ms pendant la frappe.
             if compiled_ok && state.editor.is_modified() {
-                state.persist();
+                state.render.save_pending = true;
             }
 
-            // Marquer les pages à rafraîchir comme périmées : leur nouveau
-            // rendu est lancé en arrière-plan, mais l'ancienne image reste
-            // affichée jusqu'à ce que la nouvelle arrive — aucun flash, et
-            // seules les pages réellement visibles sont rasterisées.
-            //
-            // Tant qu'aucun scroll n'a eu lieu, `visible` est `None` : c'est
-            // la première page qui doit être rendue, sinon l'écran resterait
-            // rempli de cadres gris.
+            // Marquer les pages visibles comme périmées. Tant qu'aucun scroll
+            // n'a eu lieu, `visible` est `None` : c'est la première page qui
+            // doit être rendue, sinon l'écran resterait rempli de cadres gris.
             let (first, last) = state.render.visible.unwrap_or((0, 0));
 
             for index in first..=last {
@@ -334,14 +346,30 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             rasterize_visible(state)
         }
 
-        Message::PageRendered(index, png) => {
+        Message::PageRendered(revision, index, image) => {
             state.render.rendering.remove(&index);
+
+            // Une compilation est arrivée pendant le rendu : cette image
+            // appartient à un document dépassé, on la jette plutôt que de
+            // faire régresser l'affichage.
+            if revision != state.render.revision {
+                state.render.stale.insert(index);
+
+                return Task::none();
+            }
+
             state.render.stale.remove(&index);
 
-            if let Some(png) = png {
-                // Remplacement en place : l'affichage bascule de l'ancienne
-                // image à la nouvelle sans jamais passer par le vide.
-                state.render.page_cache.insert(index, png);
+            if let Some(image) = image {
+                // Un seul `Handle` par page, créé ici et réutilisé tel quel
+                // par `view()` : le backend retrouve sa texture et ne la
+                // retéléverse pas. L'ancienne image reste en place jusqu'à
+                // ce que celle-ci la remplace — l'écran ne passe jamais par
+                // le vide.
+                state.render.page_cache.insert(
+                    index,
+                    Handle::from_rgba(image.width, image.height, image.pixels),
+                );
             }
 
             Task::none()
@@ -360,6 +388,18 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             rasterize_visible(state)
+        }
+
+        Message::SaveTick => {
+            // Écriture différée : une seule par tick, et seulement si le
+            // document compile et a réellement changé.
+            if state.render.save_pending && state.editor.is_modified() {
+                state.persist();
+                state.refresh_context();
+                state.render.save_pending = false;
+            }
+
+            Task::none()
         }
 
         Message::GotoError(line, column) => {
@@ -413,13 +453,13 @@ fn handle_shortcut(
     }
 }
 
-/// Lance les rasterisations nécessaires et rien de plus.
+/// Lance les rasterisations nécessaires, et rien de plus.
 ///
-/// Une page n'est rasterisée que si elle est visible, qu'aucun rendu n'est
-/// déjà en cours pour elle, et qu'elle est marquée périmée (document modifié
-/// ou page jamais rendue). Un document de 5500 mots ne coûte donc qu'une
-/// compilation (~15 ms) + 1-2 pages rasterisées (~35 ms chacune), et un
-/// défilement sur des images déjà à jour ne coûte rien du tout.
+/// Une page n'est rasterisée que si elle est visible, marquée périmée, et
+/// qu'aucun rendu n'est déjà en cours pour elle. Un document de 5500 mots ne
+/// coûte donc qu'une compilation (~15 ms) + 1-2 pages rasterisées (~30 ms
+/// chacune) ; un défilement sur des images déjà à jour ne déclenche aucun
+/// travail, et un document intact n'est jamais recompilé.
 fn rasterize_visible(state: &State) -> Task<Message> {
     let Some(document) = state.render.document.clone() else {
         return Task::none();
@@ -427,6 +467,7 @@ fn rasterize_visible(state: &State) -> Task<Message> {
 
     let (first, last) = state.render.visible.unwrap_or((0, 0));
     let total = crate::typst::render::page_count(&document);
+    let revision = state.render.revision;
 
     let tasks: Vec<Task<Message>> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| state.render.stale.contains(index))
@@ -436,7 +477,7 @@ fn rasterize_visible(state: &State) -> Task<Message> {
 
             Task::perform(
                 async move { crate::typst::render::render_page(&document, index) },
-                move |png| Message::PageRendered(index, png),
+                move |image| Message::PageRendered(revision, index, image),
             )
         })
         .collect();
@@ -460,6 +501,16 @@ fn subscription_timer() -> Subscription<Message> {
     time::every(time::milliseconds(RENDER_INTERVAL_MS)).map(|_| Message::RenderTick)
 }
 
+/// Écrit le document sur le disque à intervalle régulier, et seulement s'il
+/// y a quelque chose à écrire.
+///
+/// Écrire à chaque compilation réussie produisait une écriture disque toutes
+/// les 300 ms pendant la frappe ; la sauvegarde est maintenant différée et
+/// regroupée.
+fn subscription_save() -> Subscription<Message> {
+    time::every(time::milliseconds(SAVE_INTERVAL_MS)).map(|_| Message::SaveTick)
+}
+
 /// Écoute des événements clavier au niveau application.
 ///
 /// Les raccourcis globaux (Ctrl+S, Ctrl+N, Ctrl+O, Ctrl+E) n'agissent que
@@ -478,7 +529,11 @@ fn subscription_keys() -> Subscription<Message> {
 }
 
 pub fn subscription(_state: &State) -> Subscription<Message> {
-    Subscription::batch(vec![subscription_timer(), subscription_keys()])
+    Subscription::batch(vec![
+        subscription_timer(),
+        subscription_save(),
+        subscription_keys(),
+    ])
 }
 
 fn save_as_task(state: &State) -> Task<Message> {
