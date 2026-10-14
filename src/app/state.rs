@@ -32,12 +32,32 @@ pub struct State {
     /// Disposition des panneaux : visibilité, largeurs, position de l'aperçu.
     pub layout: LayoutState,
 
+    /// Renommage de chapitre en cours, s'il y en a un.
+    pub renaming: Option<ChapterRename>,
+
     /// Thème : choix de l'utilisateur et préférence détectée du système.
     pub theme: crate::ui::theme::ThemeMode,
 
     /// Mode rapporté par le système, `None` s'il n'a pas encore été lu ou
     /// n'exprime aucune préférence.
     pub system_theme: crate::ui::theme::SystemMode,
+}
+
+/// Un renommage de chapitre en cours.
+///
+/// Le titre est édité dans le panneau, en place : la ligne du chapitre devient
+/// un champ de saisie, ce qui évite une boîte de dialogue pour une opération
+/// aussi courante.
+#[derive(Debug, Clone)]
+pub struct ChapterRename {
+    /// Le chapitre visé.
+    pub path: std::path::PathBuf,
+
+    /// Le titre en cours de frappe.
+    ///
+    /// Conservé ici plutôt que dans le widget : le champ est reconstruit à
+    /// chaque rendu, il ne peut donc pas porter l'état de la saisie.
+    pub buffer: String,
 }
 
 /// Disposition des panneaux de l'interface.

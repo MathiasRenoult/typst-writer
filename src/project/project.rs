@@ -183,12 +183,18 @@ pub fn create(name: &str) -> std::io::Result<PathBuf> {
 /// Le numéro est le premier libre après le plus grand existant : créer un
 /// chapitre ne réordonne jamais les précédents, dont les numéros peuvent avoir
 /// été choisis à la main.
+///
+/// Le numéro est calculé à partir du **contenu réel du dossier**, et non de la
+/// liste passée par l'appelant : un instantané périmé ferait attribuer deux fois
+/// le même numéro à deux créations successives.
 pub fn create_chapter(project: &Project, title: &str) -> std::io::Result<PathBuf> {
     let chapters_dir = project.dir.join("chapitres");
 
     std::fs::create_dir_all(&chapters_dir)?;
 
-    let order = next_order(&project.chapters);
+    let existing = list_chapters(&project.dir, &read_includes(&project.main));
+
+    let order = next_order(&existing);
 
     let path = chapters_dir.join(format!("{order:02}-{}.typ", slug(title)));
 
@@ -216,6 +222,14 @@ fn next_order(chapters: &[Chapter]) -> u32 {
         .max()
         .map(|max| max + 1)
         .unwrap_or(1)
+}
+
+/// Le numéro qu'aura le prochain chapitre créé.
+///
+/// Lu sur le disque, comme [`create_chapter`] : le titre proposé et le nom du
+/// fichier doivent annoncer le même numéro.
+pub fn next_chapter_order(project: &Project) -> u32 {
+    next_order(&list_chapters(&project.dir, &read_includes(&project.main)))
 }
 
 /// Liste les chapitres d'un projet, dans l'ordre de numérotation.
@@ -324,6 +338,100 @@ fn parse_include_line(line: &str) -> Option<PathBuf> {
     let (path, _) = rest.split_once('"')?;
 
     Some(PathBuf::from(path))
+}
+
+/// Renomme un chapitre.
+///
+/// Le préfixe numérique est conservé : l'ordre des chapitres est une décision
+/// de structure, pas une conséquence du titre. L'assemblage est mis à jour
+/// **sur place**, à la même ligne — retirer puis ré-ajouter l'include le
+/// déplacerait en fin d'assemblage et changerait l'ordre du document.
+///
+/// Renvoie le nouveau chemin.
+pub fn rename_chapter(project: &Project, path: &Path, title: &str) -> std::io::Result<PathBuf> {
+    let order = project
+        .chapters
+        .iter()
+        .find(|chapter| chapter.path == path)
+        .map(|chapter| chapter.order)
+        .unwrap_or(0);
+
+    let target = path.with_file_name(format!("{order:02}-{}.typ", slug(title)));
+
+    if target == path {
+        return Ok(target);
+    }
+
+    // Deux chapitres du même nom seraient une confusion garantie dans le
+    // document comme dans le panneau : on refuse le titre plutôt que de créer
+    // un quasi-doublon.
+    let wanted = slug(title);
+
+    let already_used = project
+        .chapters
+        .iter()
+        .filter(|chapter| chapter.path != path)
+        .any(|chapter| slug(&chapter.title) == wanted);
+
+    if already_used {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("un chapitre s'appelle déjà « {title} »"),
+        ));
+    }
+
+    // Garde de dernier recours : un fichier homonyme présent sur le disque.
+    if target.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} existe déjà", target.display()),
+        ));
+    }
+
+    std::fs::rename(path, &target)?;
+
+    replace_include(&project.main, path, &target)?;
+
+    Ok(target)
+}
+
+/// Remplace le chemin d'un `#include` par un autre, à la même position.
+fn replace_include(main: &Path, from: &Path, to: &Path) -> std::io::Result<()> {
+    let Ok(content) = std::fs::read_to_string(main) else {
+        return Ok(());
+    };
+
+    let old = relative_to_chapters(from);
+    let new = relative_to_chapters(to);
+
+    let mut changed = false;
+
+    let rebuilt: Vec<String> = content
+        .lines()
+        .map(|line| {
+            if parse_include_line(line).as_ref() == Some(&old) {
+                changed = true;
+
+                // L'indentation et le reste de la ligne sont conservés : seule
+                // la chaîne du chemin change.
+                line.replace(&old.display().to_string(), &new.display().to_string())
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    if !changed {
+        return Ok(());
+    }
+
+    let mut text = rebuilt.join("\n");
+
+    if content.ends_with('\n') {
+        text.push('\n');
+    }
+
+    std::fs::write(main, text)
 }
 
 /// Ajoute un chapitre à un assemblage, s'il n'y est pas déjà.
@@ -693,6 +801,99 @@ mod tests {
 
         assert!(project.bibliography.is_some());
         assert_eq!(project.bibliography_entries, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Renommer un chapitre ne doit pas changer l'ordre du document.
+    ///
+    /// C'est le piège de l'implémentation naïve : retirer l'include puis le
+    /// ré-ajouter le déplace en fin d'assemblage, et le chapitre change de
+    /// place dans le PDF. L'include doit être réécrit sur place.
+    #[test]
+    fn renaming_a_chapter_keeps_the_assembly_order() {
+        let dir = scratch("rename_order");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).unwrap();
+
+        let project = load(&dir);
+
+        // Trois chapitres, dans l'ordre.
+        for title in ["Un", "Deux", "Trois"] {
+            create_chapter(&project, title).unwrap();
+        }
+
+        let before: Vec<PathBuf> = read_includes(&dir.join("main.typ"));
+
+        // On renomme celui du milieu.
+        let middle = dir.join("chapitres/02-deux.typ");
+        let renamed = rename_chapter(&load(&dir), &middle, "Introduction").unwrap();
+
+        assert!(
+            renamed.ends_with("02-introduction.typ"),
+            "obtenu {}",
+            renamed.display()
+        );
+        assert!(!middle.exists(), "l'ancien fichier doit avoir disparu");
+
+        let after: Vec<PathBuf> = read_includes(&dir.join("main.typ"));
+
+        assert_eq!(before.len(), after.len(), "même nombre d'includes");
+        assert_eq!(
+            after,
+            vec![
+                PathBuf::from("chapitres/01-un.typ"),
+                PathBuf::from("chapitres/02-introduction.typ"),
+                PathBuf::from("chapitres/03-trois.typ"),
+            ],
+            "l'ordre doit être inchangé, seule la deuxième ligne change"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Renommer ne doit pas écraser un chapitre existant.
+    #[test]
+    fn renaming_onto_an_existing_chapter_fails() {
+        let dir = scratch("rename_clash");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).unwrap();
+
+        let project = load(&dir);
+        create_chapter(&project, "Un").unwrap();
+        let second = create_chapter(&project, "Deux").unwrap();
+
+        let result = rename_chapter(&load(&dir), &second, "Un");
+
+        assert!(result.is_err(), "un titre déjà pris doit être refusé");
+        assert!(second.exists(), "le chapitre visé doit rester intact");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Le préfixe numérique est conservé : l'ordre est une décision de
+    /// structure, indépendante du titre.
+    #[test]
+    fn renaming_keeps_the_numeric_prefix() {
+        let dir = scratch("rename_prefix");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).unwrap();
+
+        let project = load(&dir);
+        let chapter = create_chapter(&project, "Chapitre 1").unwrap();
+
+        assert!(chapter.ends_with("01-chapitre-1.typ"));
+
+        let renamed = rename_chapter(&load(&dir), &chapter, "Le rôle de l'État").unwrap();
+
+        assert!(
+            renamed.ends_with("01-le-role-de-l-etat.typ"),
+            "préfixe attendu 01, obtenu {}",
+            renamed.display()
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

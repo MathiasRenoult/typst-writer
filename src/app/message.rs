@@ -30,6 +30,18 @@ pub enum Message {
     /// Supprime un chapitre : retiré de l'assemblage, puis du disque.
     DeleteChapter(PathBuf),
 
+    /// Commence le renommage d'un chapitre, en place dans le panneau.
+    StartRename(PathBuf),
+
+    /// Le titre est modifié dans le champ de saisie.
+    RenameChanged(String),
+
+    /// Valide le renommage.
+    RenameCommit,
+
+    /// Abandonne le renommage.
+    RenameCancel,
+
     /// Insère une citation `@clé` à la position du curseur.
     InsertCitation(String),
 

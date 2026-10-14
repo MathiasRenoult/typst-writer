@@ -1,7 +1,7 @@
 pub mod message;
 pub mod state;
 
-use crate::app::state::{Drag, LayoutState, PreviewPosition, Splitter};
+use crate::app::state::{ChapterRename, Drag, LayoutState, PreviewPosition, Splitter};
 pub use message::Message;
 pub use state::State;
 
@@ -53,6 +53,7 @@ impl State {
             bibliography: Vec::new(),
             project,
             projects,
+            renaming: None,
             render: Default::default(),
             layout: Default::default(),
             theme: Default::default(),
@@ -195,6 +196,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         ),
 
         Message::ChapterOpened(path, content) => {
+            state.renaming = None;
             state.open_document(path, content);
 
             Task::none()
@@ -585,6 +587,74 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::StartRename(path) => {
+            // Le titre actuel amorce la saisie : on corrige plus souvent qu'on
+            // ne réécrit entièrement.
+            let buffer = state
+                .project
+                .chapters
+                .iter()
+                .find(|chapter| chapter.path == path)
+                .map(|chapter| chapter.title.clone())
+                .unwrap_or_default();
+
+            state.renaming = Some(ChapterRename { path, buffer });
+
+            Task::none()
+        }
+
+        Message::RenameChanged(text) => {
+            if let Some(renaming) = state.renaming.as_mut() {
+                renaming.buffer = text;
+            }
+
+            Task::none()
+        }
+
+        Message::RenameCancel => {
+            state.renaming = None;
+
+            Task::none()
+        }
+
+        Message::RenameCommit => {
+            let Some(renaming) = state.renaming.clone() else {
+                return Task::none();
+            };
+
+            let title = renaming.buffer.trim().to_string();
+
+            // Un titre vide laisserait un nom de fichier sans signification.
+            if title.is_empty() {
+                state.export_status = Some("Le titre ne peut pas être vide.".to_string());
+
+                return Task::none();
+            }
+
+            match crate::project::rename_chapter(&state.project, &renaming.path, &title) {
+                Ok(new_path) => {
+                    state.renaming = None;
+
+                    // Le chapitre renommé peut être celui qui est ouvert : son
+                    // chemin a changé, l'éditeur doit suivre.
+                    if state.editor.path.as_deref() == Some(renaming.path.as_path()) {
+                        state.editor.path = Some(new_path.clone());
+                    }
+
+                    state.refresh_context();
+
+                    Task::none()
+                }
+                Err(error) => {
+                    // Le message reste affiché : sans lui, un renommage refusé
+                    // (titre déjà pris) serait indiscernable d'un clic perdu.
+                    state.export_status = Some(format!("Renommage : {error}"));
+
+                    Task::none()
+                }
+            }
+        }
+
         Message::GotoError(line, column) => {
             // Les positions de typst sont 1-based ; l'éditeur attend du
             // 0-based.
@@ -610,15 +680,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 /// « Chapitre N » avec N après le dernier numéro utilisé : le titre est une
 /// amorce à réécrire, pas une décision à prendre avant d'écrire.
 fn default_chapter_title(project: &crate::project::Project) -> String {
-    let next = project
-        .chapters
-        .iter()
-        .map(|chapter| chapter.order)
-        .max()
-        .map(|max| max + 1)
-        .unwrap_or(1);
-
-    format!("Chapitre {next}")
+    // Le numéro vient du disque, comme celui du nom de fichier : sans cela, le
+    // titre proposé et le nom réel pourraient annoncer deux numéros différents.
+    format!("Chapitre {}", crate::project::next_chapter_order(project))
 }
 
 /// Nom libre pour un nouveau projet.

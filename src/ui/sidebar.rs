@@ -1,7 +1,8 @@
+use crate::app::state::ChapterRename;
 use crate::app::{Message, State};
 use crate::project::{BibliographyEntry, Chapter};
 use crate::ui::theme::{self, Palette};
-use iced::widget::{Space, button, column, container, row, scrollable, text, tooltip};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, tooltip};
 use iced::{Alignment, Element, Fill, Length, Theme};
 
 /// Hauteur d'une ligne.
@@ -61,6 +62,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     for chapter in &project.chapters {
         content = content.push(chapter_row(
             chapter,
+            state.renaming.as_ref(),
             active.as_deref() == Some(chapter.path.as_path()),
             palette,
         ));
@@ -176,12 +178,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 /// Une ligne de chapitre : son numéro, son titre, son compte de mots, et de
-/// quoi le supprimer.
+/// quoi le renommer ou le supprimer.
+///
+/// Quand ce chapitre est celui qu'on renomme, la ligne devient un champ de
+/// saisie : l'édition se fait là où on lit, sans boîte de dialogue.
 fn chapter_row<'a>(
     chapter: &'a Chapter,
+    renaming: Option<&'a ChapterRename>,
     is_active: bool,
     palette: Palette,
 ) -> Element<'a, Message> {
+    let being_renamed = renaming
+        .filter(|renaming| renaming.path == chapter.path)
+        .map(|renaming| renaming.buffer.clone());
+
+    if let Some(buffer) = being_renamed {
+        return renaming_row(chapter, buffer, palette);
+    }
+
     let mut label = row![].spacing(8).align_y(Alignment::Center);
 
     if is_active {
@@ -231,19 +245,80 @@ fn chapter_row<'a>(
         .height(Length::Fixed(ENTRY_HEIGHT))
         .align_x(Alignment::End)
         .center_y(ENTRY_HEIGHT),
-        button(theme::icon(
+        icon_action(
+            lucide_icons::iced::icon_pencil::<Theme>(),
+            "Renommer le chapitre",
+            Message::StartRename(chapter.path.clone()),
+            palette,
+        ),
+        icon_action(
             lucide_icons::iced::icon_trash_2::<Theme>(),
-            13.0,
-            palette.text_muted,
-        ))
-        .on_press(Message::DeleteChapter(chapter.path.clone()))
-        .width(Length::Fixed(24.0))
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .padding([4, 4])
-        .style(move |t, status| delete_style(t, status, palette)),
+            "Supprimer le chapitre",
+            Message::DeleteChapter(chapter.path.clone()),
+            palette,
+        ),
     ]
     .spacing(2)
     .align_y(Alignment::Center)
+    .into()
+}
+
+/// La ligne d'un chapitre en cours de renommage : un champ de saisie, et de
+/// quoi valider ou abandonner.
+fn renaming_row<'a>(
+    chapter: &'a Chapter,
+    buffer: String,
+    palette: Palette,
+) -> Element<'a, Message> {
+    row![
+        text(format!("{:02}", chapter.order))
+            .size(11)
+            .color(palette.text_muted),
+        text_input::TextInput::new("Titre du chapitre", &buffer)
+            .on_input(Message::RenameChanged)
+            .on_submit(Message::RenameCommit)
+            .size(13)
+            .padding([4, 8])
+            .width(Fill),
+        icon_action(
+            lucide_icons::iced::icon_check::<Theme>(),
+            "Valider",
+            Message::RenameCommit,
+            palette,
+        ),
+        icon_action(
+            lucide_icons::iced::icon_x::<Theme>(),
+            "Abandonner",
+            Message::RenameCancel,
+            palette,
+        ),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .height(Length::Fixed(ENTRY_HEIGHT))
+    .into()
+}
+
+/// Une action discrète, réduite à une icône.
+fn icon_action<'a>(
+    glyph: iced::widget::Text<'a, Theme>,
+    tooltip_text: &'static str,
+    message: Message,
+    palette: Palette,
+) -> Element<'a, Message> {
+    tooltip(
+        button(theme::icon(glyph, 13.0, palette.text_muted))
+            .on_press(message)
+            .width(Length::Fixed(24.0))
+            .height(Length::Fixed(ENTRY_HEIGHT))
+            .padding([4, 4])
+            .style(move |t, status| delete_style(t, status, palette)),
+        container(text(tooltip_text).size(11).color(palette.text))
+            .padding([4, 8])
+            .style(move |_| tooltip_style(palette)),
+        tooltip::Position::Right,
+    )
+    .gap(6)
     .into()
 }
 
