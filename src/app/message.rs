@@ -53,6 +53,33 @@ pub enum Message {
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,
 
+    /// Le mode de thème du système a été lu au démarrage ou a changé.
+    SystemTheme(crate::ui::theme::SystemMode),
+
+    /// Affiche ou masque la bibliothèque.
+    ToggleSidebar,
+
+    /// Affiche ou masque l'aperçu.
+    TogglePreview,
+
+    /// Change la position de l'aperçu.
+    SetPreviewPosition(crate::app::state::PreviewPosition),
+
+    /// Un séparateur est saisi.
+    SplitterPressed(crate::app::state::Splitter),
+
+    /// Le curseur s'est déplacé pendant qu'un séparateur est tenu.
+    ///
+    /// Les deux coordonnées sont transmises : l'abscisse gouverne les
+    /// dispositions horizontales, l'ordonnée la disposition en colonnes.
+    SplitterDragged(iced::Point),
+
+    /// Le séparateur est relâché.
+    SplitterReleased,
+
+    /// Fait cycler le thème : système → clair → sombre → système.
+    CycleTheme,
+
     /// Saute à la position d'un diagnostic dans l'éditeur.
     GotoError(usize, usize),
 

@@ -22,6 +22,150 @@ pub struct State {
 
     /// Résultat du rendu fidèle (compilation Typst en bibliothèque).
     pub render: RenderState,
+
+    /// Disposition des panneaux : visibilité, largeurs, position de l'aperçu.
+    pub layout: LayoutState,
+
+    /// Thème : choix de l'utilisateur et préférence détectée du système.
+    pub theme: crate::ui::theme::ThemeMode,
+
+    /// Mode rapporté par le système, `None` s'il n'a pas encore été lu ou
+    /// n'exprime aucune préférence.
+    pub system_theme: crate::ui::theme::SystemMode,
+}
+
+/// Disposition des panneaux de l'interface.
+///
+/// Les largeurs sont en pixels logiques. Les deux séparateurs se manient à la
+/// souris : la largeur au moment du clic est retenue, puis le glissement
+/// applique un delta — inutile de connaître la taille de la fenêtre.
+#[derive(Debug, Clone)]
+pub struct LayoutState {
+    /// La bibliothèque est-elle affichée ?
+    pub sidebar_visible: bool,
+
+    /// L'aperçu est-il affiché ?
+    pub preview_visible: bool,
+
+    /// Largeur de la bibliothèque.
+    pub sidebar_width: f32,
+
+    /// Largeur de l'aperçu.
+    pub preview_width: f32,
+
+    /// Où l'aperçu se place par rapport à l'éditeur.
+    pub preview_position: PreviewPosition,
+
+    /// Hauteur de l'aperçu en disposition « en bas », en fraction de la
+    /// hauteur disponible (0,45 = 45 % pour l'aperçu).
+    pub preview_height: f32,
+
+    /// Séparateur en cours de glissement.
+    ///
+    /// Tant qu'un glissement est actif, c'est lui qui gouverne : le clic seul
+    /// ne donne pas la position du curseur, l'origine est donc prise au
+    /// premier mouvement.
+    pub dragging: Option<Drag>,
+}
+
+/// Un séparateur saisi par la souris.
+#[derive(Debug, Clone, Copy)]
+pub struct Drag {
+    /// Le séparateur tenu.
+    pub which: Splitter,
+
+    /// Coordonnée du curseur au début du glissement, `None` jusqu'au premier
+    /// mouvement : le clic seul ne la donne pas.
+    ///
+    /// L'axe dépend de la disposition — abscisse en lignes, ordonnée en
+    /// colonnes — et est tranché au moment du glissement.
+    pub origin: Option<f32>,
+}
+
+/// Où l'aperçu se situe par rapport à l'éditeur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PreviewPosition {
+    /// À droite de l'éditeur (défaut).
+    #[default]
+    Right,
+
+    /// À gauche de l'éditeur.
+    Left,
+
+    /// Sous l'éditeur, de pleine largeur.
+    Bottom,
+}
+
+impl PreviewPosition {
+    pub fn next(self) -> Self {
+        match self {
+            PreviewPosition::Right => PreviewPosition::Left,
+            PreviewPosition::Left => PreviewPosition::Bottom,
+            PreviewPosition::Bottom => PreviewPosition::Right,
+        }
+    }
+
+    /// Libellé lisible, pour l'infobulle.
+    pub fn label(self) -> &'static str {
+        match self {
+            PreviewPosition::Right => "Aperçu à droite",
+            PreviewPosition::Left => "Aperçu à gauche",
+            PreviewPosition::Bottom => "Aperçu en bas",
+        }
+    }
+}
+
+/// Les deux séparateurs manipulables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Splitter {
+    /// Entre la bibliothèque et l'éditeur.
+    Sidebar,
+
+    /// Entre l'éditeur et l'aperçu.
+    Preview,
+}
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            sidebar_visible: true,
+            preview_visible: true,
+            sidebar_width: 260.0,
+            preview_width: 420.0,
+            preview_position: PreviewPosition::Right,
+            preview_height: 0.45,
+            dragging: None,
+        }
+    }
+}
+
+impl LayoutState {
+    /// Largeur minimale d'un panneau : en deçà, il ne sert plus à rien et
+    /// mieux vaut le fermer.
+    pub const MIN_PANEL_WIDTH: f32 = 160.0;
+
+    /// Largeur maximale d'un panneau, pour qu'un panneau ne puisse pas
+    /// avaler tout l'espace de rédaction.
+    pub const MAX_PANEL_WIDTH: f32 = 720.0;
+
+    /// Part minimale de l'écran laissée à l'aperçu en disposition « en bas ».
+    pub const MIN_PREVIEW_SHARE: f32 = 0.15;
+
+    /// Part maximale : au-delà, l'aperçu mangerait la rédaction.
+    pub const MAX_PREVIEW_SHARE: f32 = 0.85;
+
+    /// Épaisseur de la zone préhensible d'un séparateur.
+    pub const SPLITTER_WIDTH: f32 = 6.0;
+
+    /// Applique une largeur, bornée aux limites d'un panneau.
+    pub fn clamp_width(width: f32) -> f32 {
+        width.clamp(Self::MIN_PANEL_WIDTH, Self::MAX_PANEL_WIDTH)
+    }
+
+    /// Applique une part de hauteur, bornée.
+    pub fn clamp_share(share: f32) -> f32 {
+        share.clamp(Self::MIN_PREVIEW_SHARE, Self::MAX_PREVIEW_SHARE)
+    }
 }
 
 /// État du rendu fidèle : compilation Typst + rasterisation à la demande.
@@ -175,5 +319,126 @@ mod tests {
             render.revision > previous,
             "la révision doit avancer pour invalider les rendus en vol"
         );
+    }
+
+    /// Les largeurs de panneaux sont bornées des deux côtés : un panneau ne
+    /// doit jamais devenir inutilisable, ni manger tout l'espace de rédaction.
+    #[test]
+    fn panel_widths_are_clamped() {
+        assert_eq!(
+            LayoutState::clamp_width(-500.0),
+            LayoutState::MIN_PANEL_WIDTH
+        );
+        assert_eq!(
+            LayoutState::clamp_width(5_000.0),
+            LayoutState::MAX_PANEL_WIDTH
+        );
+
+        // Dans les limites, la largeur est respectée telle quelle.
+        let inside = (LayoutState::MIN_PANEL_WIDTH + LayoutState::MAX_PANEL_WIDTH) / 2.0;
+        assert_eq!(LayoutState::clamp_width(inside), inside);
+    }
+
+    /// Un glissement très rapide ne doit pas faire sortir la largeur des
+    /// bornes, quel que soit le delta.
+    #[test]
+    fn extreme_drags_stay_within_bounds() {
+        for delta in [-10_000.0, -1.0, 0.0, 1.0, 10_000.0] {
+            let width = LayoutState::clamp_width(LayoutState::MAX_PANEL_WIDTH + delta);
+
+            assert!(
+                (LayoutState::MIN_PANEL_WIDTH..=LayoutState::MAX_PANEL_WIDTH).contains(&width),
+                "largeur {width} hors bornes pour un delta de {delta}"
+            );
+        }
+    }
+
+    /// La part de hauteur de l'aperçu est bornée elle aussi : ni invisible, ni
+    /// envahissante.
+    #[test]
+    fn preview_share_is_clamped() {
+        assert_eq!(
+            LayoutState::clamp_share(-1.0),
+            LayoutState::MIN_PREVIEW_SHARE
+        );
+        assert_eq!(
+            LayoutState::clamp_share(9.0),
+            LayoutState::MAX_PREVIEW_SHARE
+        );
+        assert_eq!(LayoutState::clamp_share(0.5), 0.5);
+    }
+
+    /// Le séparateur retenu l'origine au premier mouvement, pas au clic : le
+    /// clic ne donne pas de position de curseur.
+    #[test]
+    fn drag_origin_is_unknown_until_the_first_move() {
+        let mut drag = Drag {
+            which: Splitter::Sidebar,
+            origin: None,
+        };
+
+        assert!(drag.origin.is_none(), "aucune origine au clic");
+
+        drag.origin = Some(120.0);
+
+        assert_eq!(drag.origin, Some(120.0));
+    }
+
+    /// L'état de disposition par défaut doit être utilisable immédiatement :
+    /// les deux panneaux ouverts, dans des proportions raisonnables.
+    #[test]
+    fn default_layout_is_usable() {
+        let layout = LayoutState::default();
+
+        assert!(layout.sidebar_visible);
+        assert!(layout.preview_visible);
+        assert!(layout.dragging.is_none());
+
+        for width in [layout.sidebar_width, layout.preview_width] {
+            assert!(
+                (LayoutState::MIN_PANEL_WIDTH..=LayoutState::MAX_PANEL_WIDTH).contains(&width),
+                "largeur par défaut {width} hors bornes"
+            );
+        }
+
+        assert!(
+            (LayoutState::MIN_PREVIEW_SHARE..=LayoutState::MAX_PREVIEW_SHARE)
+                .contains(&layout.preview_height),
+            "part par défaut {} hors bornes",
+            layout.preview_height
+        );
+    }
+
+    /// Les trois positions de l'aperçu forment un cycle complet : le bouton de
+    /// la barre doit pouvoir revenir à son point de départ.
+    #[test]
+    fn preview_position_cycles_through_all_three() {
+        let position = PreviewPosition::Right;
+
+        assert_eq!(
+            [
+                position.next(),
+                position.next().next(),
+                position.next().next().next()
+            ],
+            [
+                PreviewPosition::Left,
+                PreviewPosition::Bottom,
+                PreviewPosition::Right,
+            ]
+        );
+    }
+
+    /// Chaque position doit avoir un libellé : la barre n'utilise que des
+    /// icônes, l'infobulle est donc la seule explication disponible.
+    #[test]
+    fn every_preview_position_has_a_label() {
+        for position in [
+            PreviewPosition::Right,
+            PreviewPosition::Left,
+            PreviewPosition::Bottom,
+        ] {
+            assert!(!position.label().is_empty());
+        }
     }
 }

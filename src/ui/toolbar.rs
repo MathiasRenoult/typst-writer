@@ -1,19 +1,239 @@
-use crate::app::Message;
-use iced::widget::{Space, button, row, text};
+use crate::app::state::PreviewPosition;
+use crate::app::{Message, State};
+use crate::ui::theme::{self, Palette};
+use iced::widget::{Space, button, container, row, text};
+use iced::{Alignment, Element, Length, Theme};
 
-pub fn view() -> iced::Element<'static, Message> {
-    row![
-        text("Typst Writer").size(20),
-        button("Nouveau").on_press(Message::NewFile),
-        button("Ouvrir").on_press(Message::OpenFile),
-        button("Sauvegarder").on_press(Message::SaveFile),
-        button("Enregistrer sous").on_press(Message::SaveAs),
-        button("Exporter en PDF").on_press(Message::ExportPdf),
-        Space::new().width(iced::Fill),
-        button("⚙ Settings").on_press(Message::OpenSettings),
-    ]
-    .spacing(10)
-    .padding(10)
-    .align_y(iced::Alignment::Center)
+/// Taille des icônes de la barre.
+const ICON_SIZE: f32 = 17.0;
+
+/// Espacement entre les boutons.
+const SPACING: f32 = 2.0;
+
+/// Côté d'un bouton-icône : carré, pour que la cible de clic soit généreuse
+/// sans que l'icône elle-même prenne de la place.
+const BUTTON: f32 = 30.0;
+
+/// Hauteur de la barre.
+const BAR_HEIGHT: f32 = 42.0;
+
+/// La barre d'outils : des icônes, pas des mots.
+///
+/// Chaque bouton porte une infobulle — sans elle une icône seule est une
+/// devinette, et le gain de place serait payé en friction. Les couleurs
+/// viennent de la palette du thème : la barre suit le clair et le sombre.
+pub fn view(state: &State) -> Element<'_, Message> {
+    let palette = Palette::from_theme(&theme::resolve(state.theme, state.system_theme));
+
+    let mut bar = row![].spacing(SPACING).align_y(Alignment::Center);
+
+    // Le nom du document, à gauche : repère discret, il ne prend pas la place
+    // d'un bouton.
+    bar = bar.push(
+        text(state.editor.filename())
+            .size(13)
+            .color(palette.text_muted),
+    );
+
+    bar = bar.push(spacer());
+
+    // Panneaux : ces trois-là gouvernent la disposition, ils vont ensemble.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_panel_left::<Theme>(),
+        if state.layout.sidebar_visible {
+            "Masquer la bibliothèque"
+        } else {
+            "Afficher la bibliothèque"
+        },
+        Message::ToggleSidebar,
+        palette,
+        state.layout.sidebar_visible,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_eye::<Theme>(),
+        if state.layout.preview_visible {
+            "Masquer l'aperçu"
+        } else {
+            "Afficher l'aperçu"
+        },
+        Message::TogglePreview,
+        palette,
+        state.layout.preview_visible,
+    ));
+
+    bar = bar.push(icon_button(
+        preview_position_icon(state.layout.preview_position),
+        state.layout.preview_position.label(),
+        Message::SetPreviewPosition(state.layout.preview_position.next()),
+        palette,
+        false,
+    ));
+
+    bar = bar.push(spacer());
+
+    // Fichier.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_file::<Theme>(),
+        "Nouveau document",
+        Message::NewFile,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_folder_open::<Theme>(),
+        "Ouvrir un document",
+        Message::OpenFile,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_save::<Theme>(),
+        "Enregistrer",
+        Message::SaveFile,
+        palette,
+        state.editor.is_modified(),
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_save_all::<Theme>(),
+        "Enregistrer sous…",
+        Message::SaveAs,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_download::<Theme>(),
+        "Exporter en PDF",
+        Message::ExportPdf,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(spacer());
+
+    // Apparence.
+    bar = bar.push(icon_button(
+        theme_icon(state.theme),
+        state.theme.label(),
+        Message::CycleTheme,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_settings::<Theme>(),
+        "Réglages",
+        Message::OpenSettings,
+        palette,
+        false,
+    ));
+
+    container(bar)
+        .width(Length::Fill)
+        .height(Length::Fixed(BAR_HEIGHT))
+        .padding([0, 8])
+        .center_y(BAR_HEIGHT)
+        .style(move |_| container::Style {
+            background: Some(palette.surface.into()),
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Un bouton-icône, sans bordure et sans fond au repos.
+///
+/// `active` ne signale pas une action mais un état : panneau ouvert,
+/// document modifié.
+fn icon_button<'a>(
+    glyph: iced::widget::Text<'a, Theme>,
+    tooltip: &'static str,
+    message: Message,
+    palette: Palette,
+    active: bool,
+) -> Element<'a, Message> {
+    let color = if active {
+        palette.accent
+    } else {
+        palette.text_muted
+    };
+
+    let button = button(theme::icon(glyph, ICON_SIZE, color))
+        .on_press(message)
+        .padding([6, 7])
+        .width(Length::Fixed(BUTTON))
+        .height(Length::Fixed(BUTTON))
+        .style(move |_, status| button_style(status, palette));
+
+    // L'infobulle est ce qui rend une icône seule acceptable : sans elle, un
+    // bouton de 30 px est une devinette, et le gain de place serait payé en
+    // friction.
+    iced::widget::tooltip(
+        button,
+        container(text(tooltip).size(12).color(palette.text))
+            .padding([4, 8])
+            .style(move |_| container::Style {
+                background: Some(palette.surface_hover.into()),
+                border: iced::Border {
+                    color: palette.border,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }),
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .gap(6)
     .into()
+}
+
+/// Bouton-icône : invisible au repos, un fond doux au survol.
+fn button_style(status: button::Status, palette: Palette) -> button::Style {
+    let background = match status {
+        button::Status::Active => None,
+        button::Status::Hovered => Some(palette.surface_hover),
+        button::Status::Pressed => Some(palette.surface_active),
+        button::Status::Disabled => None,
+    };
+
+    button::Style {
+        background: background.map(Into::into),
+        text_color: palette.text_muted,
+        border: iced::Border {
+            radius: 6.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Espacement élastique : pousse ce qui suit vers la droite.
+fn spacer() -> Space {
+    Space::new().width(Length::Fill).height(Length::Shrink)
+}
+
+/// Icône de la position de l'aperçu : elle montre où il ira au prochain clic.
+fn preview_position_icon(position: PreviewPosition) -> iced::widget::Text<'static, Theme> {
+    match position {
+        PreviewPosition::Right => lucide_icons::iced::icon_panel_right::<Theme>(),
+        PreviewPosition::Left => lucide_icons::iced::icon_panel_left::<Theme>(),
+        PreviewPosition::Bottom => lucide_icons::iced::icon_panel_bottom::<Theme>(),
+    }
+}
+
+/// Icône du thème : on voit d'un coup d'œil ce qui est actif.
+fn theme_icon(mode: theme::ThemeMode) -> iced::widget::Text<'static, Theme> {
+    match mode {
+        theme::ThemeMode::System => lucide_icons::iced::icon_sun_moon::<Theme>(),
+        theme::ThemeMode::Light => lucide_icons::iced::icon_sun::<Theme>(),
+        theme::ThemeMode::Dark => lucide_icons::iced::icon_moon::<Theme>(),
+    }
 }

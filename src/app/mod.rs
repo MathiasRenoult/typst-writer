@@ -1,6 +1,7 @@
 pub mod message;
 pub mod state;
 
+use crate::app::state::{Drag, LayoutState, PreviewPosition, Splitter};
 pub use message::Message;
 pub use state::State;
 
@@ -27,6 +28,9 @@ impl State {
             library: Vec::new(),
             bibliography: Vec::new(),
             render: Default::default(),
+            layout: Default::default(),
+            theme: Default::default(),
+            system_theme: None,
         };
 
         // 1. Le document de la session précédente, s'il existe toujours.
@@ -402,6 +406,102 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::SystemTheme(mode) => {
+            state.system_theme = mode;
+            retheme(state);
+
+            Task::none()
+        }
+
+        Message::CycleTheme => {
+            state.theme = state.theme.next();
+            retheme(state);
+
+            Task::none()
+        }
+
+        Message::ToggleSidebar => {
+            state.layout.sidebar_visible = !state.layout.sidebar_visible;
+
+            Task::none()
+        }
+
+        Message::TogglePreview => {
+            state.layout.preview_visible = !state.layout.preview_visible;
+
+            Task::none()
+        }
+
+        Message::SetPreviewPosition(position) => {
+            state.layout.preview_position = position;
+
+            Task::none()
+        }
+
+        Message::SplitterPressed(which) => {
+            // L'origine du glissement n'est pas connue au clic : elle sera
+            // prise au premier mouvement du curseur.
+            state.layout.dragging = Some(Drag {
+                which,
+                origin: None,
+            });
+
+            Task::none()
+        }
+
+        Message::SplitterDragged(at) => {
+            let Some(drag) = state.layout.dragging.as_mut() else {
+                // Aucun séparateur tenu : l'abonnement émet à chaque mouvement
+                // de souris, c'est ici qu'on écarte le bruit.
+                return Task::none();
+            };
+
+            // L'axe dépend de la disposition : en colonnes, l'aperçu se règle
+            // en hauteur.
+            let vertical = state.layout.preview_position == PreviewPosition::Bottom
+                && drag.which == Splitter::Preview;
+            let at = if vertical { at.y } else { at.x };
+
+            let origin = match drag.origin {
+                Some(origin) => origin,
+                None => {
+                    // Premier mouvement : lui seul donne l'origine.
+                    drag.origin = Some(at);
+
+                    return Task::none();
+                }
+            };
+
+            let delta = at - origin;
+
+            if vertical {
+                // Le curseur descend vers l'aperçu : sa part grandit.
+                state.layout.preview_height =
+                    LayoutState::clamp_share(state.layout.preview_height + delta / 600.0);
+            } else {
+                match drag.which {
+                    // Le curseur s'éloigne vers la droite : la bibliothèque
+                    // grandit, l'aperçu rétrécit.
+                    Splitter::Sidebar => {
+                        state.layout.sidebar_width =
+                            LayoutState::clamp_width(state.layout.sidebar_width + delta);
+                    }
+                    Splitter::Preview => {
+                        state.layout.preview_width =
+                            LayoutState::clamp_width(state.layout.preview_width - delta);
+                    }
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::SplitterReleased => {
+            state.layout.dragging = None;
+
+            Task::none()
+        }
+
         Message::GotoError(line, column) => {
             // Les positions de typst sont 1-based ; l'éditeur attend du
             // 0-based.
@@ -511,6 +611,36 @@ fn subscription_save() -> Subscription<Message> {
     time::every(time::milliseconds(SAVE_INTERVAL_MS)).map(|_| Message::SaveTick)
 }
 
+/// Lit le thème du système au démarrage, puis suit ses changements.
+///
+/// `iced` détecte la préférence de couleur du système (par `mundy` sous
+/// Linux) : il suffit de la demander une fois, puis de s'abonner.
+fn subscription_system_theme() -> Subscription<Message> {
+    iced::system::theme_changes().map(|mode| Message::SystemTheme(Some(mode)))
+}
+
+/// Suit le curseur pendant qu'un séparateur est tenu.
+///
+/// `mouse_area::on_move` ne sert à rien ici : il cesse de émettre dès que le
+/// curseur quitte la bande de 6 px, ce qui arrive à chaque glissement un peu
+/// vif. Il faut donc écouter la souris au niveau de la fenêtre, et ne rien
+/// faire tant qu'aucun séparateur n'est saisi.
+fn subscription_drag() -> Subscription<Message> {
+    iced::event::listen_with(|event, status, _window| match status {
+        // Un glissement de séparateur est une interaction exclusive : on prend
+        // les événements même si un widget les a capturés.
+        Status::Captured | Status::Ignored => match event {
+            Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                Some(Message::SplitterDragged(position))
+            }
+            Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                Some(Message::SplitterReleased)
+            }
+            _ => None,
+        },
+    })
+}
+
 /// Écoute des événements clavier au niveau application.
 ///
 /// Les raccourcis globaux (Ctrl+S, Ctrl+N, Ctrl+O, Ctrl+E) n'agissent que
@@ -532,8 +662,26 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
     Subscription::batch(vec![
         subscription_timer(),
         subscription_save(),
+        subscription_system_theme(),
+        subscription_drag(),
         subscription_keys(),
     ])
+}
+
+/// Réapplique le thème aux éléments qui en dépendent mais ne le recoivent pas
+/// à chaque rendu — en l'occurrence l'éditeur, dont les couleurs sont une
+/// copie prise au moment du réglage.
+fn retheme(state: &mut State) {
+    let theme = crate::ui::theme::resolve(state.theme, state.system_theme);
+
+    state.editor.retheme(&theme);
+}
+
+/// Tâche de démarrage : lire le thème du système avant le premier rendu, pour
+/// que la fenêtre n'apparaisse pas une frame en sombre avant de passer au
+/// clair (ou l'inverse).
+pub fn startup() -> Task<Message> {
+    iced::system::theme().map(|mode| Message::SystemTheme(Some(mode)))
 }
 
 fn save_as_task(state: &State) -> Task<Message> {

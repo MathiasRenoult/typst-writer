@@ -2993,6 +2993,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lucide-icons"
+version = "1.57.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e926a2ffc8cda3ffb6689b0c362cd9e3ded16da82a487c5f4cb9de07e1a8bf96"
+dependencies = [
+ "iced",
+]
+
+[[package]]
 name = "lyon"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6034,6 +6043,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced-code-editor",
+ "lucide-icons",
  "rfd",
  "serde",
  "serde_json",
