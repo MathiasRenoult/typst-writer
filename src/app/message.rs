@@ -68,8 +68,13 @@ pub enum Message {
     /// écartée au lieu de remplacer une image plus récente.
     PageRendered(u64, usize, Option<PageImage>),
 
-    /// Le viewport de l'aperçu a changé : (première page visible, dernière).
-    ViewportChanged(usize, usize),
+    /// Le viewport de l'aperçu a changé : première page visible, dernière, et
+    /// la place que le panneau laisse à une page.
+    ///
+    /// Les bornes viennent de la vue — seule à mesurer la place disponible — et
+    /// ne changent qu'au redimensionnement : un défilement les retransmet
+    /// identiques, et c'est cette égalité qui permet de ne rien refaire.
+    ViewportChanged(usize, usize, iced::Size),
 
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,

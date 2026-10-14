@@ -43,46 +43,43 @@ const CHAPTER_MARKER: &str = "#metadata(none) <tw-chapitre>";
 /// Nom du label du repère, tel qu'on le redemande à l'introspection.
 const CHAPTER_LABEL: &str = "tw-chapitre";
 
-/// Densité d'affichage : un pixel logique par point.
-///
-/// L'aperçu montre la page à sa taille naturelle, où **un point vaut un pixel
-/// logique** — une page A4 fait donc 595 px de large à l'écran. C'est une
-/// convention d'affichage, indépendante de la finesse du rendu.
-pub const DISPLAY_PIXEL_PER_PT: f64 = 1.0;
-
 /// Densité de rendu maximale : elle borne la mémoire d'une page.
 ///
 /// Une page A4 à 2 px/pt pèse 8 Mo de pixels, dont le backend graphique fait
 /// une texture d'environ 14 Mio. C'est un plafond, jamais une cible.
 pub const MAX_PIXEL_PER_PT: f64 = 2.0;
 
-/// Densité de rendu la plus faible jamais employée.
+/// Échelle d'écran minimale supposée.
 ///
 /// L'échelle que la fenêtre déclare n'est pas toujours la vérité. Sous Wayland,
 /// l'échelle **fractionnaire** d'un compositeur — 1,6 sur la machine de
 /// développement — est annoncée comme 1, et le compositeur agrandit ensuite
-/// l'image entière : la fenêtre ne peut pas le savoir. Suivre la déclaration à
-/// la lettre donnerait donc un aperçu visiblement flou sur un écran qui montrera
-/// bel et bien 1,6 pixel par point.
-///
-/// Cette borne est le compromis : mesurée, elle coûte 4,5 Mo de pixels par page
-/// A4 au lieu des 8 Mo d'une densité de 2,0, et reste nette aussi bien sur un
-/// écran à l'échelle 1 que sur un écran à 1,6 — dans le second cas, un
-/// échantillon de 1,5 pour 1,6 demandé, soit 6 % d'écart, invisible.
-pub const MIN_PIXEL_PER_PT: f64 = 1.5;
+/// l'image entière : la fenêtre ne peut pas le savoir. Supposer 1,5 quand la
+/// déclaration est plus basse évite un aperçu visiblement flou sur un écran qui
+/// montrera bel et bien 1,6 pixel par point ; sur un écran réellement à 1,0,
+/// c'est un demi-pixel de surechantillonnage, sans effet visible.
+pub const MIN_SCREEN_SCALE: f64 = 1.5;
 
-/// Densité de rendu qui correspond exactement à l'écran.
+/// Densité de rendu la plus faible : en dessous, la page n'est plus qu'une
+/// vignette, et la réduction n'économise plus rien qui vaille.
+pub const MIN_PIXEL_PER_PT: f64 = 0.4;
+
+/// Densité de rendu qui correspond exactement à l'affichage.
 ///
-/// Le rendu n'a besoin que des pixels **physiques** que l'afficheur consommera :
-/// `DISPLAY_PIXEL_PER_PT × facteur d'échelle`. Rasteriser plus fin ne se voit
-/// pas — l'écran ne peut pas montrer des pixels qu'il n'a pas — et coûte la
-/// mémoire au **carré** du rapport : 2,0 au lieu de 1,6 sur un écran à
-/// l'échelle 1,6, c'est 1,56 fois plus de mémoire pour rien.
+/// `display_ratio` est le rapport auquel la page est **montrée** — pixels
+/// logiques par point, qui dépend de la place que le panneau lui laisse — et
+/// `scale_factor` la finesse physique annoncée par la fenêtre. Le rendu n'a
+/// besoin que de leur produit : rasteriser plus fin ne se voit pas — l'écran ne
+/// peut pas montrer des pixels qu'il n'a pas — et coûte la mémoire au **carré**
+/// du rapport.
 ///
-/// Jamais moins que [`MIN_PIXEL_PER_PT] non plus : voir cette constante, qui
-/// explique pourquoi la déclaration de la fenêtre ne suffit pas.
-pub fn pixel_per_pt(scale_factor: f32) -> f64 {
-    (DISPLAY_PIXEL_PER_PT * f64::from(scale_factor)).clamp(MIN_PIXEL_PER_PT, MAX_PIXEL_PER_PT)
+/// C'est ce rapport qui fait qu'un aperçu est léger : une page montrée à 0,65
+/// pixel par point sur un écran à 1,5 ne demande que 0,98 px/pt, soit quatre
+/// fois moins de pixels qu'une page rendue à 2,0 « par sécurité ».
+pub fn pixel_per_pt(display_ratio: f64, scale_factor: f32) -> f64 {
+    let screen_scale = f64::from(scale_factor).max(MIN_SCREEN_SCALE);
+
+    (display_ratio * screen_scale).clamp(MIN_PIXEL_PER_PT, MAX_PIXEL_PER_PT)
 }
 
 /// Un diagnostic (erreur ou avertissement) positionné dans le document.
@@ -808,7 +805,7 @@ mod tests {
         // Une densité plus grossière doit coûter **moins de mémoire** : c'est
         // exactement ce qu'on vient chercher. 2,0 → 1,6, c'est 2,0²/1,6² ≈ 1,56
         // fois moins de pixels pour la même page.
-        let coarser = render_page(&document, 0, pixel_per_pt(1.6)).expect("rendu à 1,6");
+        let coarser = render_page(&document, 0, pixel_per_pt(1.0, 1.6)).expect("rendu à 1,6");
 
         let ratio = page.pixels.len() as f64 / coarser.pixels.len() as f64;
 
@@ -911,24 +908,27 @@ mod tests {
     /// à 2 px/pt — donc la seule fonction qui doit décider de sa valeur.
     #[test]
     fn the_rendering_density_follows_the_screen() {
-        // Un écran à l'échelle 1,6 : le rendu suit l'écran, pas une constante.
+        // Une page montrée à sa taille naturelle sur un écran à 1,6 : 1,6 px/pt.
         // La tolérance est celle du passage f32 → f64 : le facteur d'échelle
         // vient de la fenêtre en simple précision.
-        assert!((pixel_per_pt(1.6) - 1.6).abs() < 1e-6);
+        assert!((pixel_per_pt(1.0, 1.6) - 1.6).abs() < 1e-6);
+
+        // Une page réduite de moitié pour tenir dans le panneau : deux fois
+        // moins de pixels par point, donc quatre fois moins de mémoire.
+        assert!((pixel_per_pt(0.5, 1.5) - 0.75).abs() < 1e-9);
+
+        // Un écran qui se déclare à l'échelle 1 : jamais moins que l'échelle
+        // supposée, parce que la déclaration n'est pas toujours la vérité —
+        // c'est le cas de tout écran à échelle fractionnaire sous Wayland, qui
+        // s'annonce à 1 et se fait agrandir par le compositeur.
+        assert!((pixel_per_pt(1.0, 1.0) - MIN_SCREEN_SCALE).abs() < 1e-9);
+        assert!((pixel_per_pt(1.0, 0.5) - MIN_SCREEN_SCALE).abs() < 1e-9);
 
         // Le plein écran d'un portable dense, au-delà du plafond.
-        assert!((pixel_per_pt(3.0) - MAX_PIXEL_PER_PT).abs() < 1e-9);
+        assert!((pixel_per_pt(1.0, 3.0) - MAX_PIXEL_PER_PT).abs() < 1e-9);
 
-        // Un écran qui se déclare à l'échelle 1 : jamais moins que la borne
-        // basse, parce que la déclaration n'est pas toujours la vérité — c'est
-        // le cas de tout écran à échelle fractionnaire sous Wayland, qui
-        // s'annonce à 1 et se fait agrandir par le compositeur.
-        assert!((pixel_per_pt(1.0) - MIN_PIXEL_PER_PT).abs() < 1e-9);
-        assert!((pixel_per_pt(0.5) - MIN_PIXEL_PER_PT).abs() < 1e-9);
-
-        // La densité d'affichage, elle, est fixe : c'est elle qui veut dire
-        // « un point vaut un pixel logique ».
-        assert!((DISPLAY_PIXEL_PER_PT - 1.0).abs() < 1e-9);
+        // Une vignette reste une vignette : jamais zéro.
+        assert!((pixel_per_pt(0.01, 1.0) - MIN_PIXEL_PER_PT).abs() < 1e-9);
     }
 
     /// Le contenu en mémoire prime sur le disque.

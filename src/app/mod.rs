@@ -707,8 +707,39 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::ViewportChanged(first, last) => {
+        Message::ViewportChanged(first, last, bounds) => {
+            let unchanged = state.render.visible == Some((first, last))
+                && state.render.viewport == Some(bounds);
+
             state.render.visible = Some((first, last));
+
+            // La place d'une page a changé : la taille d'affichage change, donc
+            // la densité dont le rendu a besoin. Les images en cache
+            // appartiennent à l'ancienne — leur empreinte ne veut plus rien
+            // dire — mais elles restent affichées, simplement remises à
+            // l'échelle, jusqu'à l'arrivée des nouvelles.
+            if state.render.viewport != Some(bounds) {
+                state.render.viewport = Some(bounds);
+                state.render.image_hashes.clear();
+
+                let total = state
+                    .render
+                    .document
+                    .as_deref()
+                    .map_or(0, crate::typst::render::page_count);
+
+                state.render.stale.extend(0..total);
+            }
+
+            // **Rien de neuf : ne rien faire.** C'est la garde qui empêche un
+            // cycle. Un viewport identique — même place, mêmes pages — signifie
+            // que rien n'a bougé ; le traiter relançait des rasterisations, qui
+            // produisaient des images neuves, qui reconstruisaient la vue, qui
+            // signalait le même viewport : un tour de plus, plusieurs mégaoctets
+            // à chaque fois.
+            if unchanged {
+                return Task::none();
+            }
 
             // Une page qui entre dans le viewport sans image valide doit
             // être rasterisée ; une page déjà en cache et à jour ne l'est
@@ -1181,7 +1212,7 @@ fn handle_shortcut(
 /// coûte donc qu'une compilation (~15 ms) + 1-2 pages rasterisées (~30 ms
 /// chacune) ; un défilement sur des images déjà à jour ne déclenche aucun
 /// travail, et un document intact n'est jamais recompilé.
-fn rasterize_visible(state: &State) -> Task<Message> {
+fn rasterize_visible(state: &mut State) -> Task<Message> {
     let Some(document) = state.render.document.clone() else {
         return Task::none();
     };
@@ -1193,17 +1224,36 @@ fn rasterize_visible(state: &State) -> Task<Message> {
     let (first, last) = state.render.visible.unwrap_or((0, 2));
     let total = crate::typst::render::page_count(&document);
     let revision = state.render.revision;
+    let box_size = state
+        .render
+        .viewport
+        .unwrap_or_else(crate::ui::preview::default_viewport);
+    let scale_factor = state.scale_factor;
 
-    // La densité vient de l'écran, et non d'une constante : c'est elle qui
-    // décide de la mémoire d'une page, et une constante n'a pas raison sur tous
-    // les écrans.
-    let density = crate::typst::render::pixel_per_pt(state.scale_factor);
-
-    let tasks: Vec<Task<Message>> = (first..=last.min(total.saturating_sub(1)))
+    let wanted: Vec<usize> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| state.render.stale.contains(index))
         .filter(|index| !state.render.rendering.contains(index))
+        .collect();
+
+    state.render.requested += wanted.len() as u64;
+
+    let tasks: Vec<Task<Message>> = wanted
+        .into_iter()
         .map(|index| {
             let document = document.clone();
+
+            // La densité est celle de **l'affichage** : la page est montrée
+            // réduite — le panneau est plus étroit qu'une page — et le rendu
+            // n'a besoin que des pixels que cette réduction consomme. Elle se
+            // calcule page par page, parce qu'une page en paysage n'a pas le
+            // même rapport qu'une page en portrait.
+            let density = crate::typst::render::pixel_per_pt(
+                crate::ui::preview::display_ratio(
+                    box_size,
+                    crate::typst::render::page_size(&document, index).unwrap_or((595.3, 841.9)),
+                ),
+                scale_factor,
+            );
 
             Task::perform(
                 async move { crate::typst::render::render_page(&document, index, density) },
@@ -1242,8 +1292,15 @@ fn follow_chapter(state: &mut State) -> Task<Message> {
     // si le calcul échouait, on ne redéfilerait pas indéfiniment.
     state.render.followed_chapter = state.editor.path.clone();
 
-    let offset =
-        crate::ui::preview::scroll_offset_for_page(&crate::ui::preview::sizes_of(&document), page);
+    let sizes = crate::ui::preview::sizes_of(
+        &document,
+        state
+            .render
+            .viewport
+            .unwrap_or_else(crate::ui::preview::default_viewport),
+    );
+
+    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, page);
 
     // L'opération est paramétrée par le type de message qu'elle produirait :
     // elle n'en produit aucun, mais c'est ainsi qu'elle se raccorde à la
@@ -1408,9 +1465,29 @@ fn report_memory(state: &State) {
         .as_deref()
         .map_or(0, crate::typst::render::page_count);
 
+    // La densité réellement employée pour une page : c'est elle qui règle la
+    // mémoire, et c'est en la lisant d'une version à l'autre qu'on voit ce
+    // qu'une optimisation a changé.
+    let density = match state.render.document.as_deref() {
+        Some(document) => crate::typst::render::pixel_per_pt(
+            crate::ui::preview::display_ratio(
+                state
+                    .render
+                    .viewport
+                    .unwrap_or_else(crate::ui::preview::default_viewport),
+                crate::typst::render::page_size(document, 0).unwrap_or((595.3, 841.9)),
+            ),
+            state.scale_factor,
+        ),
+        None => 0.0,
+    };
+
+    let rasterizations = rasterizations_since_last_report(state.render.requested);
+
     println!(
         "[mémoire] {:>4} s | RSS {} Mo ({:+}) | GTT système {} Mio ({:+}) | VRAM système {} Mio ({:+}) \
-         | pages {pages} (en cache {}, en cours {}) | densité {:.2} px/pt",
+         | pages {pages} (en cache {}, en cours {}) | rendu à {density:.2} px/pt \
+         | {rasterizations} rasterisation(s) depuis le dernier relevé",
         start.elapsed().as_secs(),
         now.resident / 1024,
         delta(now.resident, baseline.resident),
@@ -1420,8 +1497,22 @@ fn report_memory(state: &State) {
         delta(now.vram, baseline.vram),
         state.render.page_cache.len(),
         state.render.rendering.len(),
-        crate::typst::render::pixel_per_pt(state.scale_factor),
     );
+}
+
+/// Nombre de rasterisations demandées depuis le relevé précédent.
+///
+/// C'est la **cadence** qui compte, et non le total : au repos l'aperçu n'en
+/// demande aucune, un défilement quelques-unes, et un cycle en demande des
+/// dizaines par seconde — plusieurs mégaoctets à chaque tour. Sans ce chiffre,
+/// une boucle de rasterisation est invisible : la mémoire monte, et rien ne dit
+/// pourquoi.
+fn rasterizations_since_last_report(requested: u64) -> u64 {
+    static PREVIOUS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    let previous = PREVIOUS.swap(requested, std::sync::atomic::Ordering::Relaxed);
+
+    requested.saturating_sub(previous)
 }
 
 /// Mémoire résidente du processus, en kilo-octets.

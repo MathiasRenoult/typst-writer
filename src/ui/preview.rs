@@ -15,6 +15,48 @@ const PAGE_GAP: f32 = 12.0;
 /// Marge intérieure du panneau.
 const PANEL_PADDING: f32 = 16.0;
 
+/// Place minimale laissée à une page dans le panneau, en pixels logiques.
+///
+/// Elle n'existe que pour qu'un panneau réduit à presque rien ne donne pas un
+/// rapport d'affichage absurde.
+const MIN_PAGE_BOX: f32 = 80.0;
+
+/// Agrandissement maximal d'une page.
+///
+/// Un aperçu reste un aperçu : au-delà du double, la page tiendrait plus de
+/// place que le texte qu'on écrit, et coûterait quatre fois plus de mémoire.
+const MAX_DISPLAY_RATIO: f64 = 2.0;
+
+/// Place supposée d'une page dans le panneau, avant que la vue ne l'ait mesurée.
+///
+/// Un panneau de 420 px de large sur 700 de haut, soit la disposition par
+/// défaut. Ce n'est qu'un point de départ : la première mesure de la vue la
+/// remplace, et la géométrie, puis le rendu, suivent.
+pub(crate) fn default_viewport() -> iced::Size {
+    iced::Size::new(420.0, 700.0)
+}
+
+/// Rapport d'affichage d'une page : pixels logiques par point.
+///
+/// Une page est montrée **entière**, réduite à ce que le panneau peut lui
+/// laisser : c'est ce qui distingue un aperçu d'une bande de papier. Le panneau
+/// est plus étroit qu'une page A4 — 420 px contre 595 —, donc la page est
+/// réduite, et le rendu suit cette réduction au lieu de la précéder : il ne
+/// calcule pas des pixels que l'écran ne montrera jamais.
+///
+/// Le calcul est par page, et non global : une page en paysage n'a pas le même
+/// rapport qu'une page en portrait, et la réduire comme les autres la ferait
+/// dépasser du panneau.
+pub(crate) fn display_ratio(box_size: iced::Size, page: (f64, f64)) -> f64 {
+    let width = f64::from((box_size.width - 2.0 * PANEL_PADDING).max(MIN_PAGE_BOX));
+    let height = f64::from((box_size.height - 2.0 * PANEL_PADDING).max(MIN_PAGE_BOX));
+
+    (width / page.0)
+        .min(height / page.1)
+        .min(MAX_DISPLAY_RATIO)
+        .max(0.05)
+}
+
 /// Pages rendues au-delà du viewport, de part et d'autre.
 ///
 /// Une page de marge garantit qu'un défilement rapide ne révèle jamais un
@@ -34,7 +76,10 @@ pub(crate) const SCROLL_ID: &str = "apercu";
 /// la liste de pages virtualisable.
 fn page_sizes(state: &State) -> Vec<(f32, f32)> {
     match state.render.document.as_ref() {
-        Some(document) => sizes_of(document),
+        Some(document) => sizes_of(
+            document,
+            state.render.viewport.unwrap_or_else(default_viewport),
+        ),
         None => Vec::new(),
     }
 }
@@ -43,23 +88,56 @@ fn page_sizes(state: &State) -> Vec<(f32, f32)> {
 ///
 /// Distinct de [`page_sizes`] pour être appelable depuis le gestionnaire de
 /// messages, qui tient le document sans passer par la vue.
-pub(crate) fn sizes_of(document: &typst_layout::PagedDocument) -> Vec<(f32, f32)> {
-    let document = document;
-
+pub(crate) fn sizes_of(
+    document: &typst_layout::PagedDocument,
+    box_size: iced::Size,
+) -> Vec<(f32, f32)> {
     (0..crate::typst::render::page_count(document))
         .map(|index| crate::typst::render::page_size(document, index).unwrap_or((595.3, 841.9)))
-        // La géométrie est en points, et l'aperçu affiche un pixel logique par
-        // point : la place d'une page à l'écran ne dépend donc pas de la
-        // densité du rendu. C'est ce qui permet de rasteriser plus ou moins fin
-        // — donc de consommer plus ou moins de mémoire — sans que la mise en
-        // page du panneau bouge d'un pixel.
+        // La géométrie est en points, et l'affichage applique le rapport que le
+        // panneau impose : la place d'une page dépend donc du panneau, et non
+        // de la densité du rendu. C'est ce qui permet de rasteriser plus ou
+        // moins fin — donc de consommer plus ou moins de mémoire — sans que la
+        // mise en page du panneau bouge d'un pixel.
         .map(|(width, height)| {
-            (
-                (width * crate::typst::render::DISPLAY_PIXEL_PER_PT) as f32,
-                (height * crate::typst::render::DISPLAY_PIXEL_PER_PT) as f32,
-            )
+            let ratio = display_ratio(box_size, (width, height));
+
+            ((width * ratio) as f32, (height * ratio) as f32)
         })
         .collect()
+}
+
+/// Hauteur du blanc qui précède la première page dessinée.
+pub(crate) fn head_height(sizes: &[(f32, f32)], first: usize) -> f32 {
+    // `page_offset` inclut la marge du panneau, que la colonne pose déjà.
+    page_offset(sizes, first) - PANEL_PADDING
+}
+
+/// Hauteur du blanc qui suit la dernière page dessinée.
+pub(crate) fn tail_height(sizes: &[(f32, f32)], last: usize) -> f32 {
+    page_offset(sizes, sizes.len()) - page_offset(sizes, last + 1)
+}
+
+/// Hauteur totale du contenu défilant.
+///
+/// Employée par les tests seuls : c'est **l'invariant** que la construction de
+/// la vue doit respecter, et les tests le mesurent pour toutes les plages de
+/// pages possibles. Le nommer vaut mieux que de le laisser implicite dans une
+/// suite de `push`.
+///
+/// **C'est un invariant, et non un détail de mise en page.** Si la hauteur du
+/// contenu dépendait du nombre de pages dessinées, chaque défilement déplacerait
+/// le contenu sous le curseur ; le défilement signalerait alors un nouveau
+/// viewport, qui relancerait une rasterisation, qui changerait les pages
+/// dessinées — un cycle sans fin, qui alloue à chaque tour. Les écarts entre
+/// pages appartiennent donc aux pages, jamais à l'espacement de la colonne.
+#[cfg(test)]
+pub(crate) fn content_height(sizes: &[(f32, f32)]) -> f32 {
+    2.0 * PANEL_PADDING
+        + sizes
+            .iter()
+            .map(|(_, height)| height + PAGE_GAP)
+            .sum::<f32>()
 }
 
 /// Décalage de défilement qui amène la page `index` en tête du panneau.
@@ -132,10 +210,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // longtemps que lui.
     let open = state.editor.path.as_deref();
 
-    let mut content = column![]
-        .spacing(PAGE_GAP)
-        .padding(PANEL_PADDING)
-        .width(Fill);
+    // Espacement nul, volontairement : les écarts entre pages sont posés avec
+    // les pages elles-mêmes, pour que la hauteur du contenu ne dépende pas du
+    // nombre de pages dessinées. Voir [`content_height`].
+    let mut content = column![].spacing(0.0).padding(PANEL_PADDING).width(Fill);
 
     if let Some(status) = &state.export_status {
         // Le gris était codé en dur : il ne suivait donc aucun thème, et un
@@ -182,7 +260,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .height(Fill)
             // Aucune page : le viewport ne sert à rien, mais le message garde
             // la forme attendue par l'état de rendu.
-            .on_scroll(|_| Message::ViewportChanged(0, 0))
+            .on_scroll(|viewport| Message::ViewportChanged(0, 0, viewport.bounds().size()))
             .into();
     }
 
@@ -197,26 +275,29 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let first = first.min(last_index);
     let last = last.clamp(first, last_index);
 
-    let head = page_offset(&sizes, first);
+    let head = head_height(&sizes, first);
 
-    if head > PANEL_PADDING {
-        content = content.push(
-            space::vertical()
-                .height(Length::Fixed(head - PANEL_PADDING))
-                .width(Fill),
-        );
+    if head > 0.0 {
+        content = content.push(space::vertical().height(Length::Fixed(head)).width(Fill));
     }
 
     for index in first..=last {
         content = content.push(page_view(state, index, sizes[index]));
+
+        // L'écart **après** la page : il l'accompagne, au lieu d'être posé par
+        // la colonne entre deux widgets. C'est ce qui rend la hauteur du
+        // contenu indépendante des pages dessinées.
+        content = content.push(
+            space::vertical()
+                .height(Length::Fixed(PAGE_GAP))
+                .width(Fill),
+        );
     }
 
-    if last < last_index {
-        let tail = page_offset(&sizes, last_index + 1) - page_offset(&sizes, last + 1);
+    let tail = tail_height(&sizes, last);
 
-        if tail > 0.0 {
-            content = content.push(space::vertical().height(Length::Fixed(tail)).width(Fill));
-        }
+    if tail > 0.0 {
+        content = content.push(space::vertical().height(Length::Fixed(tail)).width(Fill));
     }
 
     scrollable(content)
@@ -231,7 +312,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
             let (first, last) = visible_pages(&sizes, top, bottom);
 
-            Message::ViewportChanged(first, last)
+            // La place que le panneau laisse à une page vient d'ici : la vue est
+            // seule à la connaître, et c'est elle qui décide de la taille
+            // d'affichage — donc de la finesse dont le rendu a besoin. Les
+            // bornes du viewport la portent, et ne changent qu'au
+            // redimensionnement : un défilement ne les retransmet donc pas.
+            Message::ViewportChanged(first, last, viewport.bounds().size())
         })
         .into()
 }
@@ -423,6 +509,142 @@ fn panel_style(is_error: bool, palette: Palette) -> container::Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// DIAGNOSTIC : la géométrie du document réel, page par page.
+    ///
+    /// Ignoré par défaut. C'est l'outil qui dit si une page a une taille
+    /// anormale, où le défilement situe les pages, et si la fin du document est
+    /// couverte par les plages visibles.
+    ///
+    ///     PROJET=mon-travail cargo test --release -- --ignored diagnose_page_geometry --nocapture
+    #[test]
+    #[ignore]
+    fn diagnose_page_geometry() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let name = std::env::var("PROJET").unwrap_or_else(|_| "mon-travail".to_string());
+        let dir = std::path::PathBuf::from(home)
+            .join(".typst-writer/projets")
+            .join(&name);
+
+        let entry = std::fs::read_to_string(dir.join("main.typ")).expect("main.typ lisible");
+        let outcome = crate::typst::render::compile(&dir, &entry, &[]);
+
+        println!("projet {name} : {} erreur(s)", outcome.errors.len());
+
+        let Some(document) = outcome.document else {
+            println!("pas de document");
+            return;
+        };
+
+        let box_size = default_viewport();
+        let sizes = sizes_of(&document, box_size);
+
+        println!("pages : {}", sizes.len());
+
+        for (index, (width, height)) in sizes.iter().enumerate() {
+            let (point_width, point_height) =
+                crate::typst::render::page_size(&document, index).unwrap_or_default();
+
+            let ratio = display_ratio(box_size, (point_width, point_height));
+            let rendered = crate::typst::render::pixel_per_pt(ratio, 1.0);
+
+            println!(
+                "  page {index:>3} : {width:>7.1} × {height:>7.1} px à l'écran \
+                 | {point_width:>7.1} × {point_height:>7.1} pt | rapport {ratio:.3} \
+                 | rendu {:.0} × {:.0} px à {rendered:.2} px/pt",
+                point_width * rendered,
+                point_height * rendered,
+            );
+        }
+
+        let content = page_offset(&sizes, sizes.len());
+
+        println!("hauteur du contenu : {content:.1} px");
+
+        // Le panneau d'aperçu fait environ 390 px de haut, la fenêtre 780.
+        let visible_height = 390.0;
+
+        for top in [
+            0.0,
+            800.0,
+            2000.0,
+            4000.0,
+            8000.0,
+            12000.0,
+            content - visible_height,
+            content - visible_height - 40.0,
+            content - visible_height + 40.0,
+        ] {
+            let top = top.max(0.0);
+            let (first, last) = visible_pages(&sizes, top, top + visible_height);
+
+            println!("  défilement {top:>9.1} → pages {first}..={last}");
+        }
+    }
+
+    /// La hauteur du contenu ne dépend pas des pages dessinées.
+    ///
+    /// C'est l'invariant qui empêche le cycle : une hauteur qui bougerait avec
+    /// le défilement déplacerait le contenu sous le curseur, ferait signaler un
+    /// nouveau viewport, et relancerait une rasterisation à chaque tour.
+    #[test]
+    fn the_content_height_does_not_depend_on_the_pages_drawn() {
+        let sizes = vec![
+            (595.0, 842.0),
+            (595.0, 842.0),
+            (842.0, 595.0),
+            (595.0, 300.0),
+        ];
+
+        let expected = content_height(&sizes);
+
+        for first in 0..sizes.len() {
+            for last in first..sizes.len() {
+                let drawn: f32 = (first..=last).map(|index| sizes[index].1 + PAGE_GAP).sum();
+
+                let total = head_height(&sizes, first) + drawn + tail_height(&sizes, last);
+
+                assert!(
+                    (total - (expected - 2.0 * PANEL_PADDING)).abs() < 0.01,
+                    "pages {first}..={last} : {total} au lieu de {}",
+                    expected - 2.0 * PANEL_PADDING
+                );
+            }
+        }
+    }
+
+    /// Une page est montrée entière : elle tient dans la place que le panneau
+    /// lui laisse, quelles que soient ses dimensions.
+    #[test]
+    fn every_page_fits_in_the_panel() {
+        let box_size = iced::Size::new(420.0, 700.0);
+
+        // Un panneau plus étroit qu'une page : elle est réduite, et tient.
+        let portrait = display_ratio(box_size, (595.3, 841.9));
+
+        assert!(
+            portrait < 1.0,
+            "une page A4 doit être réduite, eu {portrait}"
+        );
+        assert!(595.3 * portrait <= 420.0, "la page doit tenir en largeur");
+        assert!(841.9 * portrait <= 700.0, "la page doit tenir en hauteur");
+
+        // Une page en paysage a son propre rapport : elle est plus large, donc
+        // réduite davantage — mais elle tient aussi.
+        let landscape = display_ratio(box_size, (841.9, 595.3));
+
+        assert!(
+            landscape < portrait,
+            "une page large doit être réduite plus"
+        );
+        assert!(841.9 * landscape <= 420.0);
+        assert!(595.3 * landscape <= 700.0);
+
+        // Un panneau large ne fait pas enfler une page indéfiniment.
+        let huge = display_ratio(iced::Size::new(4000.0, 4000.0), (595.3, 841.9));
+
+        assert!((huge - MAX_DISPLAY_RATIO).abs() < 1e-9);
+    }
 
     /// Le défilement amène la page demandée en tête du panneau.
     ///

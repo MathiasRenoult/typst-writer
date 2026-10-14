@@ -343,6 +343,24 @@ pub struct RenderState {
     /// dernier scroll. `None` avant le premier rendu de la vue.
     pub visible: Option<(usize, usize)>,
 
+    /// Place que le panneau laisse à une page, telle que la vue la mesure.
+    ///
+    /// C'est elle qui décide de la **taille d'affichage** d'une page, donc du
+    /// rapport auquel le rendu doit travailler. La vue est seule à la connaître,
+    /// et elle ne change qu'au redimensionnement — le défilement, lui, ne
+    /// touche pas aux bornes du viewport et ne la retransmet donc pas.
+    ///
+    /// `None` avant la première mesure : la géométrie part alors de la place
+    /// qu'un panneau prend par défaut, et se corrige à la première image.
+    pub viewport: Option<iced::Size>,
+
+    /// Nombre de rasterisations demandées depuis l'ouverture du document.
+    ///
+    /// Un compteur, et non une donnée de l'application : il rend visible, dans
+    /// le journal de mesure, la **cadence** à laquelle l'aperçu redemande des
+    /// images — c'est-à-dire ce qu'un cycle de rasterisation consomme.
+    pub requested: u64,
+
     /// Nombre de mots du document ouvert, tel que le texte le donne.
     ///
     /// Tenu à jour par les tics de rendu, et lu par la vue. La vue n'a pas le
@@ -511,6 +529,9 @@ impl RenderState {
         self.rendering.clear();
         self.stale.clear();
         self.visible = None;
+        // La place du panneau appartient à la disposition, pas au document :
+        // elle survit à un changement de chapitre.
+        self.requested = 0;
         self.chapter_page = None;
         // Le compte de mots est un fait du document qu'on quitte.
         self.words = None;
