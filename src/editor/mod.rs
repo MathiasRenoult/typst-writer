@@ -314,4 +314,53 @@ mod tests {
         assert!(editor.editor.wrap_enabled());
         assert_eq!(editor.editor.font_size(), BODY_SIZE);
     }
+
+    /// DIAGNOSTIC : la mémoire du chemin de frappe.
+    ///
+    /// Ignoré par défaut. Reproduit l'écriture sans interface, en passant par le
+    /// message d'insertion documenté du widget, et relève la mémoire résidente
+    /// au fil des insertions. C'est le seul moyen honnête de distinguer une
+    /// croissance réelle d'une impression.
+    ///
+    ///     cargo test --release -- --ignored diagnose_editor_memory --nocapture
+    #[test]
+    #[ignore]
+    fn diagnose_editor_memory() {
+        fn resident_mb() -> usize {
+            let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+
+            let pages: usize = statm
+                .split_whitespace()
+                .nth(1)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0);
+
+            pages * 4096 / (1024 * 1024)
+        }
+
+        let path = std::env::temp_dir().join("typst-writer-memoire-edit.typ");
+
+        let content = "Un paragraphe de départ, avec quelques mots pour que le rendu ait de quoi travailler.\n\n".repeat(200);
+
+        std::fs::write(&path, &content).unwrap();
+
+        let mut editor = EditorState::new_file(path.clone(), content);
+
+        println!("départ : {} Mo", resident_mb());
+
+        let mut total = 0usize;
+
+        for round in 1..=40 {
+            for _ in 0..250 {
+                let _ = editor.insert_at_cursor("une phrase de plus, écrite au clavier. ");
+                total += 1;
+            }
+
+            println!("{total:>6} insertions : {:>5} Mo", resident_mb());
+        }
+
+        println!("contenu final : {} caractères", editor.content().len());
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
