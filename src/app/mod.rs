@@ -316,6 +316,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.persist();
             }
 
+            // Invalider le cache des pages visibles pour forcer le re-rendu
+            // après une compilation réussie (le texte a changé), tout en
+            // gardant les autres pages affichées pour éviter le flicker global.
+            if let Some((first, last)) = state.render.visible {
+                for index in first..=last {
+                    state.render.page_cache.remove(&index);
+                }
+            }
+
             // Rendre immédiatement les pages actuellement visibles.
             rasterize_visible(state)
         }
