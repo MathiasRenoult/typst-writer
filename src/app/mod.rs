@@ -522,11 +522,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // seul chapitre rendrait l'aperçu sourd à toute frappe, puisque
             // l'assemblage ne change pas quand on écrit dans un chapitre.
             let fingerprint = state.compilation_fingerprint();
-            let paragraph_end = paragraph_was_just_finished(&state.editor.content());
+            let newlines = state.editor.content().matches('\n').count();
 
             if !state
                 .render
-                .compile_due(&fingerprint, paragraph_end, std::time::Instant::now())
+                .compile_due(&fingerprint, newlines, std::time::Instant::now())
             {
                 return Task::none();
             }
@@ -607,6 +607,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.render.stale.remove(&index);
 
             if let Some(image) = image {
+                // Le papier se lit sur le premier pixel de la première page
+                // rendue : c'est le coin supérieur gauche, donc le fond du
+                // document. Une seule fois — il ne change pas d'une page à
+                // l'autre — et il sert ensuite à remplir les cadres de page
+                // avant que leur texture n'existe.
+                if state.render.paper.is_none() {
+                    state.render.paper = paper_colour(&image);
+                }
+
                 // Pixels identiques à ceux déjà en place : la page n'a pas
                 // changé. On garde le **même** `Handle`, donc la même texture,
                 // et le compositeur n'a rien à refaire. Remplacer l'image
@@ -1284,16 +1293,20 @@ fn retheme(state: &mut State) {
     state.editor.retheme(&state.resolved);
 }
 
-/// Le texte vient-il de terminer un paragraphe ?
+/// La couleur du papier, lue sur le coin supérieur gauche d'une page rendue.
 ///
-/// Une ligne vide après du texte : c'est la frontière qu'un rédacteur franchit
-/// en s'arrêtant pour respirer, et le moment naturel de montrer le résultat.
-/// La condition ne peut pas être vraie en pleine phrase — il faut deux sauts de
-/// ligne — ce qui la rend sûre comme second déclencheur.
-fn paragraph_was_just_finished(content: &str) -> bool {
-    let trimmed = content.trim_end_matches([' ', '\t']);
+/// Le fond d'une page est en haut à gauche : c'est la seule couleur qui
+/// permette de remplir un cadre de page avant que sa texture n'existe, sans
+/// jamais laisser voir le fond de l'application.
+fn paper_colour(image: &crate::typst::render::PageImage) -> Option<iced::Color> {
+    let pixel = image.pixels.first_chunk::<4>()?;
 
-    trimmed.ends_with("\n\n") && !trimmed.trim().is_empty()
+    Some(iced::Color::from_rgba8(
+        pixel[0],
+        pixel[1],
+        pixel[2],
+        f32::from(pixel[3]) / 255.0,
+    ))
 }
 
 /// Ouvre un dossier dans le gestionnaire de fichiers du système.
@@ -1358,36 +1371,4 @@ fn save_as_task(state: &State) -> Task<Message> {
         },
         Message::FileSaved,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Une ligne vide après du texte : c'est une fin de paragraphe.
-    ///
-    /// Ce détecteur est ce qui permet à l'aperçu de se montrer **sans attendre**
-    /// le délai de repos, au moment où l'on s'arrête. Il ne doit donc être vrai
-    /// qu'à cette frontière, et jamais en pleine phrase — sinon il compilerait
-    /// au milieu d'un mot.
-    #[test]
-    fn a_paragraph_end_is_recognised_and_nothing_else_is() {
-        // La frontière.
-        assert!(paragraph_was_just_finished("Un paragraphe.\n\n"));
-
-        // Une espace ou une tabulation après la ligne vide ne change rien :
-        // les éditeurs en laissent.
-        assert!(paragraph_was_just_finished("Un paragraphe.\n\n  "));
-
-        // Un seul saut de ligne : on continue le même paragraphe.
-        assert!(!paragraph_was_just_finished("Un paragraphe.\n"));
-
-        // Une phrase en cours, même avec des espaces.
-        assert!(!paragraph_was_just_finished("Un paragraphe en cou"));
-
-        // Un texte vide, ou fait de blancs seulement : rien à montrer.
-        assert!(!paragraph_was_just_finished(""));
-        assert!(!paragraph_was_just_finished("\n\n"));
-        assert!(!paragraph_was_just_finished("   \n\n"));
-    }
 }

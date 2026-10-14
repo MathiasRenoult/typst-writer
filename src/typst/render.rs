@@ -1737,7 +1737,7 @@ mod tests {
             let later = start + std::time::Duration::from_millis(tick * 300);
 
             assert!(
-                !render.compile_due(&observed, false, later),
+                !render.compile_due(&observed, 0, later),
                 "tick {tick} : au repos, l'aperçu ne doit plus rien recompiler"
             );
         }
@@ -1745,8 +1745,8 @@ mod tests {
         // Et la fin de paragraphe ne doit pas rouvrir la porte : le texte n'a
         // pas changé, donc il n'y a rien à recompiler, quoi qu'il arrive.
         assert!(
-            !render.compile_due(&observed, true, start + std::time::Duration::from_secs(5)),
-            "un paragraphe terminé ne fait pas recompiler un texte inchangé"
+            !render.compile_due(&observed, 0, start + std::time::Duration::from_secs(5)),
+            "un texte inchangé ne se recompile jamais, quoi qu'il arrive"
         );
 
         let _ = fs::remove_dir_all(&dir);

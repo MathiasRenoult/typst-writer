@@ -2,7 +2,7 @@ use crate::app::{Message, State};
 use crate::typst::render::Diagnostic;
 use crate::ui::theme::Palette;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, image, row, scrollable, space};
+use iced::widget::{button, column, container, image, scrollable, space};
 use iced::{ContentFit, Element, Fill, Length};
 use std::path::Path;
 
@@ -253,16 +253,28 @@ fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Messa
     // Le `Handle` mis en cache est cloné tel quel : il porte le même
     // identifiant, donc le backend graphique retrouve la texture déjà
     // téléversée au lieu d'en créer une neuve à chaque image.
+    // Le **papier** du document est dessiné sous l'image, et non le fond de
+    // l'application. Le backend graphique téléverse une texture neuve au moment
+    // où elle change ; tant qu'elle n'est pas prête, ou si l'atlas n'a pas pu
+    // l'accueillir dans cette image-là, le dessin de l'image est simplement
+    // absent — et c'est alors le papier qu'on voit, à l'endroit exact de la
+    // page, et non le fond de l'application.
+    let paper = render.paper.unwrap_or(iced::Color::WHITE);
+
     match render.page_cache.get(&index) {
-        Some(handle) => row![
+        Some(handle) => container(
             image(handle.clone())
                 .width(Length::Fixed(width))
                 .height(Length::Fixed(height))
-                .content_fit(ContentFit::Contain)
-        ]
-        .width(Fill)
+                .content_fit(ContentFit::Contain),
+        )
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(height))
+        .style(paper_style(paper))
         .into(),
 
+        // Aucune texture encore : le cadre est du papier, de la taille de la
+        // page. Il n'apparaît donc jamais de trou dans le document.
         None => container(
             state
                 .resolved
@@ -273,16 +285,28 @@ fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Messa
                     ""
                 })
                 .size(13)
-                // Le gris était codé en dur : il ne suivait donc aucun thème, et
-                // un thème clair aurait laissé ce texte illisible.
                 .color(state.resolved.palette.text_muted),
         )
         .width(Length::Fixed(width))
         .height(Length::Fixed(height))
         .center_x(Fill)
         .center_y(Fill)
-        .style(container::rounded_box)
+        .style(paper_style(paper))
         .into(),
+    }
+}
+
+/// Fond d'un cadre de page : le papier du document.
+///
+/// Le backend graphique téléverse une texture neuve au moment où elle change ;
+/// tant qu'elle n'est pas prête, ou si l'atlas n'a pas pu l'accueillir dans
+/// cette image-là, le dessin de l'image est simplement absent. C'est alors le
+/// papier qu'on voit, à l'endroit exact de la page — et jamais le fond de
+/// l'application.
+fn paper_style(paper: iced::Color) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(paper.into()),
+        ..Default::default()
     }
 }
 

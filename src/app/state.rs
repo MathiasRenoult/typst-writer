@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 /// Délai de repos avant que l'aperçu ne se mette à jour.
 ///
-/// C'est le réglage qui gouverne tout le coût du rendu : un temps d'arrêt dans
-/// l'écriture déclenche la compilation, la frappe ne la déclenche jamais.
-pub const IDLE_DELAY_MS: u64 = 700;
+/// C'est le réglage qui gouverne tout le coût du rendu : deux secondes sans
+/// écrire déclenchent la compilation, la frappe ne la déclenche jamais.
+pub const IDLE_DELAY_MS: u64 = 2000;
 
 use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
@@ -365,6 +365,24 @@ pub struct RenderState {
     /// Instant du dernier changement observé. `None` : rien en attente.
     pub changed_at: Option<Instant>,
 
+    /// Nombre de retours à la ligne du texte **au moment de la dernière
+    /// compilation**.
+    ///
+    /// C'est ce qui fait d'un retour à la ligne une frontière : un retour de
+    /// plus qu'à la dernière compilation montre le résultat, sans attendre le
+    /// délai de repos. Compter les retours, plutôt que regarder si le texte
+    /// finit par un, rend le déclenchement robuste à ce qu'on écrit ensuite —
+    /// on continue presque toujours sa phrase après être passé à la ligne.
+    pub compiled_newlines: usize,
+
+    /// Couleur du papier du document, lue sur le premier pixel de la première
+    /// page rendue.
+    ///
+    /// Elle sert à remplir le cadre d'une page **avant** que sa texture
+    /// n'existe, ou pendant que le backend téléverse la nouvelle : sans elle,
+    /// on verrait le fond de l'application à la place de la page.
+    pub paper: Option<iced::Color>,
+
     /// Empreinte des pixels de chaque page en cache.
     ///
     /// Sert à ne pas remplacer une page par une image **identique** : chaque
@@ -392,9 +410,8 @@ impl RenderState {
     ///
     /// - **le texte n'a plus bougé depuis [`IDLE_DELAY_MS`]** : c'est la fin
     ///   d'un moment d'écriture, et le moment naturel de montrer le résultat ;
-    /// - **un paragraphe vient d'être terminé** — le texte se termine par une
-    ///   ligne vide — parce qu'on s'arrête volontiers à cette frontière, et
-    ///   qu'elle ne peut pas être atteinte en pleine frappe.
+    /// - **un retour à la ligne a été tapé** depuis la dernière compilation :
+    ///   c'est une frontière de la mise en page, et l'on s'y arrête.
     ///
     /// Jamais de compilation sans changement : la première condition est un
     /// retour immédiat.
@@ -403,11 +420,12 @@ impl RenderState {
     /// coûtait une compilation *et* la reprise de toutes les pages visibles,
     /// avec une texture neuve par page. À dix frappes par seconde, cela faisait
     /// plusieurs cycles par seconde, et l'œil n'y voyait qu'un clignotement.
-    pub fn compile_due(&mut self, fingerprint: &str, paragraph_end: bool, now: Instant) -> bool {
+    pub fn compile_due(&mut self, fingerprint: &str, newlines: usize, now: Instant) -> bool {
         // Déjà compilé : rien à faire, et surtout pas recompiler.
         if fingerprint == self.content {
             self.seen.clear();
             self.changed_at = None;
+            self.compiled_newlines = newlines;
 
             return false;
         }
@@ -424,7 +442,18 @@ impl RenderState {
 
         let idle = now.duration_since(changed_at) >= Duration::from_millis(IDLE_DELAY_MS);
 
-        idle || paragraph_end
+        // Un retour à la ligne de plus qu'à la dernière compilation.
+        let line_break = newlines > self.compiled_newlines;
+
+        if idle || line_break {
+            // Retenu maintenant : c'est le texte qu'on s'apprête à compiler, et
+            // la frontière ne doit se déclencher qu'une fois.
+            self.compiled_newlines = newlines;
+
+            return true;
+        }
+
+        false
     }
 
     /// Faut-il amener l'aperçu sur le chapitre ouvert ?
@@ -453,7 +482,11 @@ impl RenderState {
         self.document = None;
         self.seen.clear();
         self.changed_at = None;
+        self.compiled_newlines = 0;
         self.image_hashes.clear();
+        // Le papier appartient au document qu'on quitte : le suivant le fera
+        // connaître au premier rendu de page.
+        self.paper = None;
         self.page_cache.clear();
         self.rendering.clear();
         self.stale.clear();
@@ -820,7 +853,7 @@ mod tests {
             let now = start + Duration::from_millis(tick * 300);
 
             assert!(
-                !render.compile_due("le texte déjà compilé", false, now),
+                !render.compile_due("le texte déjà compilé", 0, now),
                 "tick {tick} : rien n'a changé, rien ne doit être compilé"
             );
         }
@@ -843,7 +876,7 @@ mod tests {
             let fingerprint = format!("texte au caractère {keystroke}");
 
             assert!(
-                !render.compile_due(&fingerprint, false, now),
+                !render.compile_due(&fingerprint, 0, now),
                 "frappe {keystroke} : la frappe ne doit jamais déclencher le rendu"
             );
         }
@@ -856,19 +889,19 @@ mod tests {
 
         let start = Instant::now();
 
-        assert!(!render.compile_due("un paragraphe écrit", false, start));
+        assert!(!render.compile_due("un paragraphe écrit", 0, start));
 
         // Juste avant le délai : rien encore.
         assert!(!render.compile_due(
             "un paragraphe écrit",
-            false,
+            0,
             start + Duration::from_millis(IDLE_DELAY_MS - 1)
         ));
 
         // Le délai atteint : on compile.
         assert!(render.compile_due(
             "un paragraphe écrit",
-            false,
+            0,
             start + Duration::from_millis(IDLE_DELAY_MS)
         ));
 
@@ -879,29 +912,75 @@ mod tests {
             let now = start + Duration::from_millis(IDLE_DELAY_MS + tick * 300);
 
             assert!(
-                !render.compile_due("un paragraphe écrit", false, now),
+                !render.compile_due("un paragraphe écrit", 0, now),
                 "tick {tick} après la compilation"
             );
         }
     }
 
-    /// Une fin de paragraphe montre le résultat sans attendre le repos.
+    /// Un retour à la ligne montre le résultat sans attendre le repos.
+    ///
+    /// C'est la frontière demandée : on revient à la ligne, et l'aperçu suit au
+    /// tick suivant, sans attendre les deux secondes.
+    ///
+    /// Le déclenchement se compte en **retours de plus** qu'à la dernière
+    /// compilation, ce qui le rend robuste à ce qu'on écrit ensuite : on
+    /// continue presque toujours sa phrase après être passé à la ligne.
     #[test]
-    fn a_finished_paragraph_shows_the_result_early() {
+    fn a_line_break_shows_the_result_early() {
         let mut render = RenderState::default();
 
         let start = Instant::now();
-        let content = "premier paragraphe écrit.\n\n";
+        let two_lines = "première ligne\ndeuxième ligne";
 
-        // Le texte vient de changer : l'horloge du repos repart de zéro.
-        assert!(!render.compile_due(content, false, start));
-
-        // Deux cents millisecondes plus tard, bien avant le délai de repos,
-        // mais le paragraphe est terminé : on montre.
+        // Un retour de plus qu'à la dernière compilation : on montre tout de
+        // suite.
         assert!(
-            render.compile_due(content, true, start + Duration::from_millis(200)),
-            "une fin de paragraphe doit montrer le résultat sans attendre le repos"
+            render.compile_due(two_lines, 1, start),
+            "un retour à la ligne doit montrer le résultat sans attendre les deux secondes"
         );
+
+        // La compilation faite, la frontière est acquise.
+        render.content = two_lines.to_string();
+
+        for tick in 0..20u64 {
+            let now = start + Duration::from_millis(300 + tick * 300);
+
+            assert!(
+                !render.compile_due(two_lines, 1, now),
+                "tick {tick} : le retour à la ligne a déjà été honoré"
+            );
+        }
+
+        // Un second retour à la ligne, lui, montre de nouveau.
+        let three_lines = "première ligne\ndeuxième ligne\ntroisième ligne";
+
+        assert!(
+            render.compile_due(three_lines, 2, start + Duration::from_millis(500)),
+            "un nouveau retour à la ligne doit montrer de nouveau"
+        );
+    }
+
+    /// Écrire dans une même ligne ne montre rien : c'est la frappe, et elle
+    /// n'a jamais à déclencher le rendu.
+    #[test]
+    fn writing_within_a_line_waits_for_the_pause() {
+        let mut render = RenderState::default();
+
+        let start = Instant::now();
+
+        for keystroke in 0..25u64 {
+            let now = start + Duration::from_millis(keystroke * 100);
+            let content = format!(
+                "une phrase sans retour {}",
+                "suite ".repeat(keystroke as usize)
+            );
+
+            assert!(
+                !render.compile_due(&content, 0, now),
+                "frappe {keystroke} : rien à montrer avant la pause"
+            );
+        }
     }
 
     /// Un nouveau changement relance l'horloge du repos.
@@ -914,21 +993,21 @@ mod tests {
 
         let start = Instant::now();
 
-        assert!(!render.compile_due("a", false, start));
+        assert!(!render.compile_due("a", 0, start));
 
         // Presque le délai s'écoule, puis on tape encore.
         let almost = start + Duration::from_millis(IDLE_DELAY_MS - 10);
 
-        assert!(!render.compile_due("ab", false, almost));
+        assert!(!render.compile_due("ab", 0, almost));
 
         // Dix millisecondes plus tard, le délai total est écoulé depuis le
         // début, mais seulement dix depuis la dernière frappe : rien.
         assert!(
-            !render.compile_due("ab", false, almost + Duration::from_millis(10)),
+            !render.compile_due("ab", 0, almost + Duration::from_millis(10)),
             "le repos se compte depuis la dernière frappe, pas depuis la première"
         );
 
         // Le repos complet depuis la dernière frappe : on compile.
-        assert!(render.compile_due("ab", false, almost + Duration::from_millis(IDLE_DELAY_MS)));
+        assert!(render.compile_due("ab", 0, almost + Duration::from_millis(IDLE_DELAY_MS)));
     }
 }
