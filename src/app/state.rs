@@ -47,6 +47,25 @@ pub struct State {
     /// Thème : choix de l'utilisateur et préférence détectée du système.
     pub theme: crate::ui::theme::ThemeMode,
 
+    /// Les thèmes disponibles : les natifs, puis les fichiers locaux.
+    pub themes: Vec<crate::theming::Theme>,
+
+    /// Les fichiers de thème qui n'ont pas pu être lus.
+    ///
+    /// Conservés pour être **montrés** : un thème qui n'apparaît pas dans la
+    /// liste sans explication est un défaut de plus, pas une discrétion.
+    pub theme_problems: Vec<String>,
+
+    /// Les thèmes retenus pour chaque apparence.
+    pub chosen: crate::theming::Chosen,
+
+    /// Le thème appliqué, sous sa forme exploitable par l'affichage.
+    ///
+    /// Résolu une fois par changement, et non à chaque image : construire le
+    /// thème iced et la palette de coloration n'est pas gratuit, et rien ne
+    /// changerait d'une image à l'autre.
+    pub resolved: crate::ui::theme::Resolved,
+
     /// Mode rapporté par le système, `None` s'il n'a pas encore été lu ou
     /// n'exprime aucune préférence.
     pub system_theme: crate::ui::theme::SystemMode,

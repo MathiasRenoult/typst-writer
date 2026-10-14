@@ -253,7 +253,7 @@ pub use canvas_editor::lsp::{
 };
 pub use canvas_editor::{
     ArrowDirection, CodeEditor, CommandHistory, ContextMenuEntry,
-    ContextMenuItem, IndentStyle, Message, VimMode,
+    ContextMenuItem, IndentStyle, Message, SyntaxPalette, SyntaxRule, VimMode,
 };
 pub use i18n::{Language, Translations};
 pub use theme::{Catalog, Style, StyleFn, from_iced_theme};

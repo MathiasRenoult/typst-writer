@@ -6057,6 +6057,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "toml",
  "tower-lsp",
  "typst",
  "typst-assets",

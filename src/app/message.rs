@@ -109,6 +109,21 @@ pub enum Message {
     /// Fait cycler le thème : système → clair → sombre → système.
     CycleTheme,
 
+    /// Applique le thème portant ce nom.
+    SelectTheme(String),
+
+    /// Relit le dossier des thèmes.
+    RefreshThemes,
+
+    /// Ouvre le sélecteur de fichier pour charger un thème.
+    LoadTheme,
+
+    /// Le chemin du fichier de thème choisi, s'il y en a un.
+    ThemeLoaded(Option<PathBuf>),
+
+    /// Supprime un thème local, désigné par son nom.
+    DeleteTheme(String),
+
     /// Saute à la position d'un diagnostic dans l'éditeur.
     GotoError(usize, usize),
 

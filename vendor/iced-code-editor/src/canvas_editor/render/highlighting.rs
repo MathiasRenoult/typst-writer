@@ -41,6 +41,84 @@ fn color_from_style(style: Style) -> Color {
     )
 }
 
+/// Une règle de coloration : une portée TextMate et la couleur de son texte.
+#[derive(Debug, Clone)]
+pub struct SyntaxRule {
+    /// Sélecteur de portée, par exemple `"keyword"` ou `"markup.heading"`.
+    pub selector: String,
+
+    /// Couleur du texte pour cette portée.
+    pub color: Color,
+}
+
+/// La palette de coloration syntaxique, telle que l'application la décrit.
+///
+/// Les couleurs viennent du thème choisi par l'utilisateur ; les portées, de
+/// l'application, qui seule sait à quoi elles correspondent.
+#[derive(Debug, Clone)]
+pub struct SyntaxPalette {
+    /// Couleur du texte là où aucune règle ne s'applique.
+    pub text: Color,
+
+    /// Fond de l'éditeur, qui sert à départager les règles de même spécificité.
+    pub background: Color,
+
+    /// Les règles, **dans l'ordre d'application** : la dernière qui correspond
+    /// l'emporte. Une règle générale doit donc précéder une règle plus
+    /// spécifique — `"keyword"` avant `"keyword.operator"`.
+    pub rules: Vec<SyntaxRule>,
+}
+
+impl SyntaxPalette {
+    /// Construit le thème syntect correspondant.
+    ///
+    /// Un sélecteur que syntect refuse est **ignoré**, et non fatal : une
+    /// coloration incomplète vaut mieux qu'un éditeur qui refuse de s'afficher.
+    fn build(&self) -> syntect::highlighting::Theme {
+        use syntect::highlighting::{
+            ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSettings,
+        };
+
+        let mut scopes = Vec::with_capacity(self.rules.len());
+
+        for rule in &self.rules {
+            let Ok(scope) = rule.selector.parse::<ScopeSelectors>() else {
+                continue;
+            };
+
+            scopes.push(ThemeItem {
+                scope,
+                style: StyleModifier {
+                    foreground: Some(syntect_color(rule.color)),
+                    background: None,
+                    font_style: None,
+                },
+            });
+        }
+
+        Theme {
+            name: Some("application".to_string()),
+            author: None,
+            settings: ThemeSettings {
+                foreground: Some(syntect_color(self.text)),
+                background: Some(syntect_color(self.background)),
+                ..ThemeSettings::default()
+            },
+            scopes,
+        }
+    }
+}
+
+/// Convertit une couleur iced en couleur syntect, qui travaille en octets.
+fn syntect_color(color: Color) -> syntect::highlighting::Color {
+    syntect::highlighting::Color {
+        r: (color.r * 255.0).round().clamp(0.0, 255.0) as u8,
+        g: (color.g * 255.0).round().clamp(0.0, 255.0) as u8,
+        b: (color.b * 255.0).round().clamp(0.0, 255.0) as u8,
+        a: (color.a * 255.0).round().clamp(0.0, 255.0) as u8,
+    }
+}
+
 /// Tokenizes a full logical line into colored spans using syntect.
 ///
 /// The returned spans cover the entire line in order, each pairing an iced
@@ -115,6 +193,28 @@ impl CodeEditor {
         }
     }
 
+    /// Remplace la palette de coloration syntaxique.
+    ///
+    /// La palette est conservée pour toute la vie de l'éditeur : elle est donc
+    /// posée à chaque changement de thème, jamais à chaque image. Le résultat
+    /// de la résolution en cours est invalidé, sans quoi l'ancienne palette
+    /// resterait en mémoire et la nouvelle n'apparaîtrait jamais.
+    ///
+    /// # Arguments
+    ///
+    /// * `palette` - La palette à appliquer, ou `None` pour revenir à celle de
+    ///   syntect.
+    pub fn set_syntax_palette(&mut self, palette: Option<SyntaxPalette>) {
+        self.syntax_theme = palette.map(|palette| {
+            let theme: &'static syntect::highlighting::Theme =
+                Box::leak(Box::new(palette.build()));
+
+            theme
+        });
+
+        *self.resolved_syntax.borrow_mut() = None;
+    }
+
     /// Resolves the syntect syntax and theme used to color this editor's text.
     ///
     /// Both the syntax set and the theme set are process-wide singletons, and
@@ -164,16 +264,25 @@ impl CodeEditor {
             return (syntax_set, syntax, theme);
         }
 
-        let theme_set = THEME_SET.get_or_init(ThemeSet::load_defaults);
-        let theme_name = if dark_background {
-            "base16-ocean.dark"
+        // Une palette fournie par l'application prime sur celles de syntect :
+        // elle vient du thème choisi par l'utilisateur, qui décrit aussi les
+        // couleurs de l'interface. Retomber sur `base16-ocean` ferait jurer la
+        // coloration avec le reste de la fenêtre.
+        let theme = if let Some(theme) = self.syntax_theme {
+            Some(theme)
         } else {
-            "base16-ocean.light"
+            let theme_set = THEME_SET.get_or_init(ThemeSet::load_defaults);
+            let theme_name = if dark_background {
+                "base16-ocean.dark"
+            } else {
+                "base16-ocean.light"
+            };
+
+            theme_set
+                .themes
+                .get(theme_name)
+                .or_else(|| theme_set.themes.values().next())
         };
-        let theme = theme_set
-            .themes
-            .get(theme_name)
-            .or_else(|| theme_set.themes.values().next());
 
         // Normalize common language aliases/extensions used by consumers.
         let syntax = match self.syntax.as_str() {
@@ -333,6 +442,69 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Une palette fournie par l'application doit réellement colorer le texte.
+    ///
+    /// C'est la seule façon de distinguer une palette prise en compte d'une
+    /// palette silencieusement ignorée : les deux donnent un éditeur qui
+    /// s'affiche, et un utilisateur qui se demande pourquoi son thème n'a aucun
+    /// effet sur la coloration.
+    #[test]
+    fn an_injected_palette_colors_the_text() {
+        let heading = Color::from_rgb8(0x11, 0x22, 0x33);
+
+        let mut editor = CodeEditor::new("= Titre\n\nDu texte.\n", "typ");
+
+        editor.set_syntax_palette(Some(SyntaxPalette {
+            text: Color::from_rgb8(0xaa, 0xaa, 0xaa),
+            background: Color::from_rgb8(0x00, 0x00, 0x00),
+            rules: vec![SyntaxRule {
+                selector: "markup.heading".to_string(),
+                color: heading,
+            }],
+        }));
+
+        let (syntax_set, syntax, theme) = editor.resolve_syntax();
+
+        let syntax = syntax.expect("la grammaire Typst doit être résolue");
+        let theme = theme.expect("la palette doit être résolue");
+
+        let spans = editor.highlighted_line_cached(0, syntax, theme, syntax_set);
+
+        let painted = spans.iter().any(|(color, _)| {
+            (color.r - heading.r).abs() < 0.01
+                && (color.g - heading.g).abs() < 0.01
+                && (color.b - heading.b).abs() < 0.01
+        });
+
+        assert!(
+            painted,
+            "la palette fournie doit colorer le titre, or les spans sont : {spans:?}"
+        );
+    }
+
+    /// Sans palette fournie, le comportement d'origine est conservé.
+    ///
+    /// C'est ce qui garantit que les thèmes natifs n'ont rien changé : la
+    /// coloration reste celle de syntect, choisie selon la clarté du fond.
+    #[test]
+    fn without_a_palette_the_builtin_colours_are_used() {
+        let mut editor = CodeEditor::new("= Titre\n", "typ");
+
+        editor.set_syntax_palette(None);
+
+        let (syntax_set, syntax, theme) = editor.resolve_syntax();
+
+        let syntax = syntax.expect("grammaire");
+        let theme = theme.expect("palette");
+
+        let spans = editor.highlighted_line_cached(0, syntax, theme, syntax_set);
+
+        assert!(
+            spans.iter().any(|(color, text)| !text.trim().is_empty() && color.r + color.g + color.b > 0.0),
+            "le texte doit rester coloré : {spans:?}"
+        );
+    }
+
     fn test_bracket_pair_colors_follow_the_editor_theme() {
         let mut editor = CodeEditor::new("(a)", "rs");
 

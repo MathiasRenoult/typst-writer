@@ -46,15 +46,30 @@ impl ThemeMode {
 /// `theme_changes`. `None` signifie « pas de préférence déclarée ».
 pub type SystemMode = Option<iced::theme::Mode>;
 
-/// Résout le thème à appliquer.
-pub fn resolve(mode: ThemeMode, system: SystemMode) -> Theme {
-    match mode {
-        ThemeMode::System => match system {
-            Some(iced::theme::Mode::Light) => Theme::Light,
-            _ => Theme::Dark,
-        },
-        ThemeMode::Light => Theme::Light,
-        ThemeMode::Dark => Theme::Dark,
+impl ThemeMode {
+    /// L'apparence à appliquer, une fois le système consulté.
+    ///
+    /// C'est le seul point où le mode du système entre en jeu : partout
+    /// ailleurs, l'application ne raisonne que par apparence — claire ou
+    /// sombre — et choisit le thème retenu pour celle-ci.
+    pub fn appearance(self, system: SystemMode) -> crate::theming::Appearance {
+        let light = match self {
+            ThemeMode::System => match system {
+                Some(iced::theme::Mode::Light) => true,
+                // Aucune préférence déclarée — ou pas de préférence du tout :
+                // le sombre, thème historique de l'application et le plus
+                // confortable pour écrire longtemps.
+                _ => false,
+            },
+            ThemeMode::Light => true,
+            ThemeMode::Dark => false,
+        };
+
+        if light {
+            crate::theming::Appearance::Light
+        } else {
+            crate::theming::Appearance::Dark
+        }
     }
 }
 
@@ -99,6 +114,14 @@ pub struct Palette {
 
     /// Succès.
     pub success: Color,
+
+    /// Famille de la police d'interface.
+    ///
+    /// `iced` ne sait changer sa police par défaut qu'**au démarrage** : la
+    /// famille choisie dans un thème ne peut donc s'appliquer qu'en la posant
+    /// sur chaque texte. La porter ici, avec les couleurs, évite de la faire
+    /// circuler en parallèle dans chaque vue.
+    pub interface: iced::Font,
 }
 
 impl Palette {
@@ -123,7 +146,45 @@ impl Palette {
             danger: palette.danger,
             warning: palette.warning,
             success: palette.success,
+            // Le thème natif ne touche pas aux polices : c'est celui du moteur.
+            interface: iced::Font::DEFAULT,
         }
+    }
+
+    /// Construit la palette à partir des couleurs écrites dans un thème.
+    ///
+    /// Contrairement à [`Palette::from_theme`], rien n'est déduit du thème iced :
+    /// on lit directement ce que l'auteur du thème a écrit, et l'on ne déduit
+    /// que ce qu'il a omis. C'est ce qui donne à un fichier de thème un effet
+    /// plus fin que les six couleurs cardinales qu'iced accepte.
+    pub fn from_colors(colors: &crate::theming::Colors) -> Self {
+        Self {
+            background: colors.background.0,
+            surface: colors.surface.0,
+            surface_hover: colors.surface_hover(),
+            surface_active: colors.surface_active(),
+            text: colors.text.0,
+            text_muted: colors.text_muted(),
+            border: colors.border(),
+            accent: colors.accent.0,
+            danger: colors.danger(),
+            warning: colors.warning(),
+            success: colors.success(),
+            // Rempli par l'appelant, qui seul connaît les polices du thème.
+            interface: iced::Font::DEFAULT,
+        }
+    }
+
+    /// Un texte de l'interface, dans la police du thème.
+    ///
+    /// Raccourci pour ne pas répéter un `.font()` sur chaque texte : `iced` ne
+    /// permet pas de changer sa police par défaut en cours d'exécution, la
+    /// famille choisie doit donc être posée sur chacun.
+    pub fn label<'a>(
+        &self,
+        text: impl iced::widget::text::IntoFragment<'a>,
+    ) -> iced::widget::Text<'a, iced::Theme> {
+        iced::widget::text(text).font(self.interface)
     }
 }
 
@@ -138,6 +199,238 @@ pub fn icon<'a>(
     color: Color,
 ) -> iced::widget::Text<'a, Theme> {
     glyph.size(size).color(color)
+}
+
+/// Les polices résolues d'un thème.
+#[derive(Debug, Clone, Copy)]
+pub struct Typography {
+    /// Famille de l'interface.
+    pub interface: iced::Font,
+
+    /// Famille de l'éditeur.
+    pub editor: iced::Font,
+
+    /// Corps du texte de l'éditeur, en pixels.
+    pub editor_size: f32,
+
+    /// Interligne de l'éditeur.
+    pub line_height: f32,
+}
+
+impl Default for Typography {
+    fn default() -> Self {
+        Self {
+            interface: iced::Font::DEFAULT,
+            editor: iced::Font::MONOSPACE,
+            editor_size: crate::theming::DEFAULT_EDITOR_SIZE,
+            line_height: crate::theming::DEFAULT_LINE_HEIGHT,
+        }
+    }
+}
+
+/// L'aspect de l'éditeur, quand un thème le décrit.
+#[derive(Debug, Clone)]
+pub struct EditorLook {
+    /// Les couleurs de l'éditeur.
+    pub style: iced_code_editor::Style,
+
+    /// La palette de coloration syntaxique.
+    pub syntax: iced_code_editor::SyntaxPalette,
+}
+
+/// Un thème prêt à l'emploi : tout ce que l'affichage consomme.
+///
+/// C'est le seul endroit où un thème de fichier devient des objets d'iced et du
+/// widget d'édition. Le reste de l'application ne connaît que ce type, si bien
+/// qu'aucun panneau n'a à savoir d'où vient le thème.
+pub struct Resolved {
+    /// Le thème iced : habille les widgets de la bibliothèque (boutons,
+    /// listes, champs de saisie).
+    pub iced: iced::Theme,
+
+    /// La palette de nos propres panneaux.
+    pub palette: Palette,
+
+    /// Les polices.
+    pub typography: Typography,
+
+    /// L'aspect de l'éditeur. `None` : les défauts du widget, ce qui est le cas
+    /// des thèmes natifs.
+    pub editor: Option<EditorLook>,
+}
+
+impl Resolved {
+    /// Résout un thème du magasin.
+    pub fn of(theme: &crate::theming::Theme) -> Self {
+        let Some(file) = &theme.file else {
+            // Un thème natif délègue tout à iced et au widget : le choisir ne
+            // change donc rien à l'apparence qui existait avant les thèmes.
+            // C'est ce qui garantit un point de comparaison stable.
+            let iced = match theme.appearance {
+                crate::theming::Appearance::Light => iced::Theme::Light,
+                crate::theming::Appearance::Dark => iced::Theme::Dark,
+            };
+
+            return Self {
+                palette: Palette::from_theme(&iced),
+                iced,
+                typography: Typography::default(),
+                editor: None,
+            };
+        };
+
+        let colors = &file.colors;
+
+        // iced n'a besoin que des six couleurs cardinales : il en dérive
+        // lui-même les nuances de survol, de bordure et de fond de ses propres
+        // widgets. Nos panneaux, eux, ont leur propre jeu, plus fin.
+        let iced = iced::Theme::custom(
+            theme.name.clone(),
+            iced::theme::Palette {
+                background: colors.background.0,
+                text: colors.text.0,
+                primary: colors.accent.0,
+                success: colors.success(),
+                warning: colors.warning(),
+                danger: colors.danger(),
+            },
+        );
+
+        let typography = Typography {
+            interface: file.fonts.interface_font(),
+            editor: file.fonts.editor_font(),
+            editor_size: file.fonts.editor_size(),
+            line_height: file.fonts.line_height(),
+        };
+
+        // La police d'interface accompagne les couleurs : tous les textes la
+        // lisent au même endroit.
+        let palette = Palette {
+            interface: typography.interface,
+            ..Palette::from_colors(colors)
+        };
+
+        Self {
+            palette,
+            iced,
+            typography,
+            editor: Some(EditorLook {
+                style: editor_style(file),
+                syntax: syntax_palette(file),
+            }),
+        }
+    }
+}
+
+/// Les couleurs de l'éditeur, déduites des couleurs d'interface.
+///
+/// Chaque champ de la section `[editor]` est facultatif ; ce qui n'est pas écrit
+/// se déduit, pour qu'un thème de cinq lignes reste cohérent au lieu de laisser
+/// des zones transparentes ou noires.
+fn editor_style(file: &crate::theming::ThemeFile) -> iced_code_editor::Style {
+    let colors = &file.colors;
+    let editor = &file.editor;
+    let pick = |declared: Option<crate::theming::HexColor>, fallback: Color| {
+        declared.map(|color| color.0).unwrap_or(fallback)
+    };
+
+    let background = pick(editor.background, colors.surface.0);
+
+    iced_code_editor::Style {
+        background,
+        text_color: pick(editor.text, colors.text.0),
+        gutter_background: pick(editor.gutter_background, background),
+        gutter_border: pick(editor.line_number, colors.border()),
+        line_number_color: pick(editor.line_number, colors.text_muted()),
+        scrollbar_background: pick(editor.scrollbar, background),
+        scroller_color: pick(editor.scroller, colors.surface_hover()),
+        // La ligne courante et la sélection doivent rester **discrètes** : un
+        // aplat opaque au milieu du texte gênerait la lecture, ce qui est
+        // exactement ce qu'on cherche à éviter dans un éditeur de rédaction.
+        current_line_highlight: alpha(pick(editor.current_line, colors.surface_hover()), 0.45),
+        whitespace_color: alpha(colors.text_muted(), 0.25),
+        indent_guide_color: alpha(colors.border(), 0.6),
+        // Les occurrences de recherche sont des repères, pas du texte : elles
+        // doivent se voir sans masquer ce qu'elles désignent.
+        search_match_color: alpha(pick(editor.search_match, colors.warning()), 0.35),
+        search_match_current_color: alpha(pick(editor.search_match_current, colors.accent.0), 0.55),
+        selection_color: alpha(pick(editor.selection, colors.surface_active()), 0.55),
+        bracket_match_color: alpha(pick(editor.bracket_match, colors.accent.0), 0.4),
+        ime_preedit_background_color: alpha(colors.surface_hover(), 0.5),
+    }
+}
+
+/// Une couleur rendue translucide.
+fn alpha(color: Color, alpha: f32) -> Color {
+    Color { a: alpha, ..color }
+}
+
+/// Les règles de coloration, **dans l'ordre d'application**.
+///
+/// L'ordre est le point délicat : syntect retient la **dernière** règle qui
+/// correspond à la portée, et il compare par préfixe — `constant` correspond
+/// aussi bien à `constant.numeric` qu'à `constant.language`. Une règle générale
+/// doit donc venir **avant** une règle plus fine, sans quoi la fine ne
+/// s'appliquerait jamais : placée avant `constant`, la couleur des nombres
+/// serait écrasée par celle des constantes, et un thème qui distingue les deux
+/// n'aurait aucun effet visible.
+///
+/// Chaque rôle a une déduction à partir des couleurs d'interface : un thème qui
+/// ne dit rien de la coloration obtient malgré tout une palette cohérente, et
+/// non du texte brut.
+fn syntax_palette(file: &crate::theming::ThemeFile) -> iced_code_editor::SyntaxPalette {
+    let syntax = &file.syntax;
+    let colors = &file.colors;
+
+    let pick = |declared: Option<crate::theming::HexColor>, fallback: Color| {
+        declared.map(|color| color.0).unwrap_or(fallback)
+    };
+
+    let muted = colors.text_muted();
+    let accent = colors.accent.0;
+
+    // Le fond est celui de l'éditeur : c'est sur lui que syntect départage ses
+    // règles internes.
+    let background = editor_style(file).background;
+
+    // Général d'abord, spécifique ensuite.
+    let rules: Vec<(&str, Color)> = vec![
+        ("comment", pick(syntax.comment, muted)),
+        ("string", pick(syntax.string, colors.success())),
+        // `keyword` couvre `keyword.control`, `keyword.operator`, etc.
+        ("keyword", pick(syntax.keyword, accent)),
+        ("storage", pick(syntax.keyword, accent)),
+        // `constant` couvre `constant.numeric`, `constant.language`…
+        ("constant", pick(syntax.constant, colors.warning())),
+        ("entity.name.type", pick(syntax.type_name, colors.warning())),
+        ("support.type", pick(syntax.type_name, colors.warning())),
+        ("storage.type", pick(syntax.type_name, colors.warning())),
+        ("variable.function", pick(syntax.function, accent)),
+        ("support.function", pick(syntax.function, accent)),
+        ("entity.name.function", pick(syntax.function, accent)),
+        ("punctuation", pick(syntax.punctuation, muted)),
+        // Spécifiques : après leurs règles générales, donc.
+        ("constant.numeric", pick(syntax.number, colors.warning())),
+        ("keyword.operator", pick(syntax.operator, muted)),
+        // Le balisage : ce qui se voit dans de la prose Typst.
+        ("markup.heading", pick(syntax.heading, accent)),
+        ("markup.bold", pick(syntax.strong, colors.warning())),
+        ("markup.italic", pick(syntax.emphasis, accent)),
+        ("markup.raw", pick(syntax.raw, colors.success())),
+        ("markup.underline.link", pick(syntax.link, accent)),
+    ];
+
+    iced_code_editor::SyntaxPalette {
+        text: pick(syntax.text, colors.text.0),
+        background,
+        rules: rules
+            .into_iter()
+            .map(|(selector, color)| iced_code_editor::SyntaxRule {
+                selector: selector.to_string(),
+                color,
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -170,19 +463,36 @@ mod tests {
     /// Une préférence système absente retombe sur le sombre : c'est le thème
     /// historique de l'application, et le plus lisible pour de la rédaction.
     #[test]
-    fn system_theme_falls_back_to_dark() {
-        assert_eq!(resolve(ThemeMode::System, None), Theme::Dark);
+    fn a_silent_system_falls_back_to_dark() {
+        assert_eq!(
+            ThemeMode::System.appearance(None),
+            crate::theming::Appearance::Dark
+        );
     }
 
+    /// Un choix explicite l'emporte sur ce que dit le système.
     #[test]
-    fn explicit_choice_overrides_the_system() {
+    fn an_explicit_mode_overrides_the_system() {
         assert_eq!(
-            resolve(ThemeMode::Light, Some(iced::theme::Mode::Dark)),
-            Theme::Light
+            ThemeMode::Light.appearance(Some(iced::theme::Mode::Dark)),
+            crate::theming::Appearance::Light
         );
         assert_eq!(
-            resolve(ThemeMode::Dark, Some(iced::theme::Mode::Light)),
-            Theme::Dark
+            ThemeMode::Dark.appearance(Some(iced::theme::Mode::Light)),
+            crate::theming::Appearance::Dark
+        );
+    }
+
+    /// En mode système, c'est bien le système qui décide.
+    #[test]
+    fn the_system_mode_follows_the_system() {
+        assert_eq!(
+            ThemeMode::System.appearance(Some(iced::theme::Mode::Light)),
+            crate::theming::Appearance::Light
+        );
+        assert_eq!(
+            ThemeMode::System.appearance(Some(iced::theme::Mode::Dark)),
+            crate::theming::Appearance::Dark
         );
     }
 

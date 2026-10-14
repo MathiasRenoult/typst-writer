@@ -1,5 +1,5 @@
 use crate::app::{Message, State};
-use crate::ui::theme::{self, Palette};
+
 use iced::widget::container;
 use iced::{Element, Fill, Padding, alignment};
 
@@ -29,7 +29,7 @@ const BOTTOM_MARGIN: f32 = 64.0;
 /// donne à l'éditeur des marges latérales sur une fenêtre large, et ce qui
 /// borne le retour à la ligne à une longueur lisible.
 pub fn view(state: &State) -> Element<'_, Message> {
-    let palette = Palette::from_theme(&theme::resolve(state.theme, state.system_theme));
+    let palette = state.resolved.palette;
 
     // La largeur demandée est fixe, mais iced la borne à l'espace disponible :
     // sur une fenêtre étroite le texte se réduit au lieu de déborder, et les

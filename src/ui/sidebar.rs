@@ -22,7 +22,7 @@ const COUNT_WIDTH: f32 = 58.0;
 /// bibliographie, les autres projets. Chaque chapitre porte son compte de mots,
 /// qui est le repère de progression.
 pub fn view(state: &State) -> Element<'_, Message> {
-    let palette = Palette::from_theme(&theme::resolve(state.theme, state.system_theme));
+    let palette = state.resolved.palette;
 
     let project = &state.project;
 
@@ -30,18 +30,21 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     // ---- Le projet et son volume ----
     content = content.push(
-        text(project.name.to_uppercase())
+        palette
+            .label(project.name.to_uppercase())
             .size(10)
             .color(palette.text_muted),
     );
 
     content = content.push(
         row![
-            text(format!("{} mots", format_count(live_words(state))))
+            palette
+                .label(format!("{} mots", format_count(live_words(state))))
                 .size(13)
                 .color(palette.text),
             Space::new().width(Length::Fill),
-            text(format!("{} chapitre(s)", project.chapters.len()))
+            palette
+                .label(format!("{} chapitre(s)", project.chapters.len()))
                 .size(11)
                 .color(palette.text_muted),
         ]
@@ -54,7 +57,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
     content = content.push(section_title("Chapitres", palette));
 
     if project.chapters.is_empty() {
-        content = content.push(text("Aucun chapitre.").size(12).color(palette.text_muted));
+        content = content.push(
+            palette
+                .label("Aucun chapitre.")
+                .size(12)
+                .color(palette.text_muted),
+        );
     }
 
     let active = state.editor.path.clone();
@@ -76,11 +84,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
     if orphans > 0 {
         content = content.push(Space::new().height(8));
         content = content.push(
-            text(format!(
-                "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
-            ))
-            .size(11)
-            .color(palette.warning),
+            palette
+                .label(format!(
+                    "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
+                ))
+                .size(11)
+                .color(palette.warning),
         );
     }
 
@@ -90,7 +99,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         button(
             row![
                 theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
-                text("Nouveau chapitre").size(13),
+                palette.label("Nouveau chapitre").size(13),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
@@ -138,7 +147,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         let is_current = other.dir == project.dir;
 
         content = content.push(
-            button(text(other.name.clone()).size(12))
+            button(palette.label(other.name.clone()).size(12))
                 .on_press(Message::OpenProject(other.dir.clone()))
                 .width(Fill)
                 .height(Length::Fixed(ENTRY_HEIGHT))
@@ -155,7 +164,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     13.0,
                     palette.text_muted
                 ),
-                text("Nouveau projet").size(12),
+                palette.label("Nouveau projet").size(12),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -211,7 +220,8 @@ fn chapter_row<'a>(
     // Le numéro passe en avertissement quand le chapitre n'est pas assemblé :
     // la couleur suffit à repérer l'oubli dans la liste.
     label = label.push(
-        text(format!("{:02}", chapter.order))
+        palette
+            .label(format!("{:02}", chapter.order))
             .size(11)
             .color(if chapter.included {
                 palette.text_muted
@@ -220,7 +230,12 @@ fn chapter_row<'a>(
             }),
     );
 
-    label = label.push(text(chapter.title.clone()).size(13).color(palette.text));
+    label = label.push(
+        palette
+            .label(chapter.title.clone())
+            .size(13)
+            .color(palette.text),
+    );
 
     let title = button(label)
         .on_press(Message::OpenChapter(chapter.path.clone()))
@@ -237,7 +252,8 @@ fn chapter_row<'a>(
         )
         .gap(6),
         container(
-            text(format_count(chapter.words))
+            palette
+                .label(format_count(chapter.words))
                 .size(12)
                 .color(palette.text_muted)
         )
@@ -271,7 +287,8 @@ fn renaming_row<'a>(
     palette: Palette,
 ) -> Element<'a, Message> {
     row![
-        text(format!("{:02}", chapter.order))
+        palette
+            .label(format!("{:02}", chapter.order))
             .size(11)
             .color(palette.text_muted),
         text_input::TextInput::new("Titre du chapitre", &buffer)
@@ -313,7 +330,7 @@ fn icon_action<'a>(
             .height(Length::Fixed(ENTRY_HEIGHT))
             .padding([4, 4])
             .style(move |t, status| delete_style(t, status, palette)),
-        container(text(tooltip_text).size(11).color(palette.text))
+        container(palette.label(tooltip_text).size(11).color(palette.text))
             .padding([4, 8])
             .style(move |_| tooltip_style(palette)),
         tooltip::Position::Right,
@@ -335,9 +352,10 @@ fn chapter_details<'a>(chapter: &'a Chapter, palette: Palette) -> Element<'a, Me
 
     container(
         column![
-            text(chapter.title.clone()).size(12),
-            text(status).size(11).color(color),
-            text(format_path(&chapter.path))
+            palette.label(chapter.title.clone()).size(12),
+            palette.label(status).size(11).color(color),
+            palette
+                .label(format_path(&chapter.path))
                 .size(10)
                 .color(palette.text_muted),
         ]
@@ -364,9 +382,9 @@ fn info_row<'a>(
 
     row![
         container(glyph).padding([0, 4]).center_y(ENTRY_HEIGHT),
-        text(name).size(13).color(color),
+        palette.label(name).size(13).color(color),
         Space::new().width(Length::Fill),
-        text(detail).size(11).color(if missing {
+        palette.label(detail).size(11).color(if missing {
             palette.warning
         } else {
             palette.text_muted
@@ -382,12 +400,17 @@ fn info_row<'a>(
 fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'a, Message> {
     // Le type BibTeX va dans l'infobulle : `@clé` suffit à citer, le type n'est
     // qu'une aide à la reconnaissance.
-    let kind = container(text(entry.kind.clone()).size(11).color(palette.text_muted))
-        .padding([4, 8])
-        .style(move |_| tooltip_style(palette));
+    let kind = container(
+        palette
+            .label(entry.kind.clone())
+            .size(11)
+            .color(palette.text_muted),
+    )
+    .padding([4, 8])
+    .style(move |_| tooltip_style(palette));
 
     tooltip(
-        button(text(format!("@{}", entry.key)).size(12))
+        button(palette.label(format!("@{}", entry.key)).size(12))
             .on_press(Message::InsertCitation(entry.key.clone()))
             .width(Fill)
             .height(Length::Fixed(ENTRY_HEIGHT))
@@ -402,7 +425,8 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'
 
 /// Titre de section, en petites capitales discrètes.
 fn section_title(title: &str, palette: Palette) -> text::Text<'_> {
-    text(title.to_uppercase())
+    palette
+        .label(title.to_uppercase())
         .size(10)
         .color(palette.text_muted)
 }

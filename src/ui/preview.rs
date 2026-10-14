@@ -1,8 +1,8 @@
 use crate::app::{Message, State};
 use crate::typst::render::Diagnostic;
-use crate::ui::theme::{self, Palette};
+use crate::ui::theme::Palette;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, image, row, scrollable, space, text};
+use iced::widget::{button, column, container, image, row, scrollable, space};
 use iced::{ContentFit, Element, Fill, Length, color};
 use std::path::Path;
 
@@ -127,7 +127,7 @@ fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) 
 pub fn view(state: &State) -> Element<'_, Message> {
     let render = &state.render;
     let sizes = page_sizes(state);
-    let palette = Palette::from_theme(&theme::resolve(state.theme, state.system_theme));
+    let palette = state.resolved.palette;
 
     // Le fichier ouvert : c'est lui seul dont les diagnostics peuvent être
     // localisés, puisque c'est le seul que l'éditeur affiche. Emprunté à
@@ -141,7 +141,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .width(Fill);
 
     if let Some(status) = &state.export_status {
-        content = content.push(text(status).size(13).color(color!(0x8a8a8a)));
+        content = content.push(palette.label(status).size(13).color(color!(0x8a8a8a)));
     }
 
     // Diagnostics du compilateur, en tête du panneau.
@@ -163,7 +163,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             "Écrivez du contenu : le document est compilé automatiquement."
         };
 
-        content = content.push(text(message).size(BODY_SIZE));
+        content = content.push(palette.label(message).size(BODY_SIZE));
 
         return scrollable(content)
             .id(SCROLL_ID)
@@ -250,13 +250,18 @@ fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Messa
         .into(),
 
         None => container(
-            text(if render.rendering.contains(&index) {
-                "Rendu…"
-            } else {
-                ""
-            })
-            .size(13)
-            .color(color!(0x666666)),
+            state
+                .resolved
+                .palette
+                .label(if render.rendering.contains(&index) {
+                    "Rendu…"
+                } else {
+                    ""
+                })
+                .size(13)
+                // Le gris était codé en dur : il ne suivait donc aucun thème, et
+                // un thème clair aurait laissé ce texte illisible.
+                .color(state.resolved.palette.text_muted),
         )
         .width(Length::Fixed(width))
         .height(Length::Fixed(height))
@@ -295,7 +300,7 @@ fn diagnostics_panel<'a>(
         palette.warning
     };
 
-    let mut list = column![text(title).size(13).color(accent)].spacing(4);
+    let mut list = column![palette.label(title).size(13).color(accent)].spacing(4);
 
     for diagnostic in diagnostics {
         let here = diagnostic.file.as_deref() == open;
@@ -330,11 +335,17 @@ fn diagnostics_panel<'a>(
         };
 
         list = list.push(
-            button(text(label).size(13).wrapping(Wrapping::Word).width(Fill))
-                .on_press_maybe(jump)
-                .padding([6, 10])
-                .width(Fill)
-                .style(button::text),
+            button(
+                palette
+                    .label(label)
+                    .size(13)
+                    .wrapping(Wrapping::Word)
+                    .width(Fill),
+            )
+            .on_press_maybe(jump)
+            .padding([6, 10])
+            .width(Fill)
+            .style(button::text),
         );
     }
 

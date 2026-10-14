@@ -66,16 +66,64 @@ dans le `PATH`) :
 - `LSP_SERVER_CONFIGS` : commande `tinymist lsp`, variables `TINYMIST` /
   `TINYMIST_PATH` pour désigner un binaire ailleurs que dans le `PATH`.
 
+### 3. Palette de coloration syntaxique fournie par l'application
+
+`src/canvas_editor/render/highlighting.rs` et `src/canvas_editor/mod.rs`.
+
+Le crate choisissait sa palette de coloration en dur, par **nom**, dans le
+`ThemeSet` de syntect : `base16-ocean.dark` ou `base16-ocean.light` selon la
+clarté du fond, sans aucun moyen d'en fournir une autre. Un thème de
+l'application ne pouvait donc décrire la coloration, et la rattacher au reste de
+la fenêtre était impossible.
+
+Sont ajoutés :
+
+- `SyntaxRule` — un sélecteur de portée TextMate et une couleur ;
+- `SyntaxPalette` — la couleur du texte ordinaire, le fond, et les règles
+  **dans l'ordre d'application** ;
+- `CodeEditor::set_syntax_palette(Option<SyntaxPalette>)` — `None` revient au
+  comportement d'origine.
+
+La palette fournie est construite en `syntect::highlighting::Theme` et primée
+sur la recherche par nom. Elle est conservée en `&'static` (fuite assumée, une
+fois par changement de thème) parce que tout le chemin de résolution manipule
+déjà des références statiques ; la faire tenir autrement aurait demandé de
+reprendre la structure du cache `ResolvedSyntax`. Poser une nouvelle palette
+vide ce cache, sans quoi l'ancienne resterait en mémoire.
+
+L'ordre des règles est délibérément sous la responsabilité de l'application :
+syntect compare les portées **par préfixe** et retient la dernière règle qui
+correspond, si bien qu'une règle générale doit précéder une règle fine —
+`constant` avant `constant.numeric`, `keyword` avant `keyword.operator`.
+
+## La feature `two-face` est nécessaire pour tester
+
+Les tests de ce crate **doivent** être lancés avec la feature, sinon il n'y a
+pas de grammaire Typst :
+
+```sh
+cargo test --lib --features two-face
+```
+
+Sans elle, `find_syntax_by_extension("typ")` ne trouve rien et tout retombe
+silencieusement sur du texte brut : les tests de coloration passent à vide, et
+l'on croit avoir vérifié quelque chose. C'est exactement le piège qui a fait
+échouer la première version du test de palette.
+
+Pour la même raison, l'identifiant de syntaxe est **`typ`**, pas `typst` :
+`find_syntax_by_extension("typst")` ne trouve aucune définition et replie sur du
+texte brut sans le dire.
+
 ## Reprendre une nouvelle version amont
 
-Les deux modifications sont localisées dans deux fichiers, à des endroits
+Les trois modifications sont localisées dans quatre fichiers, à des endroits
 identifiables par les commentaires qui les entourent. Pour passer à une
 version `N+1` :
 
 1. remplacer le contenu de ce dossier par la nouvelle version amont ;
-2. réappliquer les deux modifications ci-dessus ;
-3. vérifier que les tests ajoutés au module `tests` de `wrapping.rs` passent
-   depuis ce dossier : `cargo test --lib`.
+2. réappliquer les trois modifications ci-dessus ;
+3. vérifier que les tests ajoutés passent depuis ce dossier :
+   `cargo test --lib --features two-face`.
 
 Les tests de ce crate **ne sont pas exécutés** par le `cargo test` de la racine :
 la copie n'est pas un membre de l'espace de travail, car l'ajouter en membre

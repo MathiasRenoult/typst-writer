@@ -1,6 +1,6 @@
 use crate::app::{Message, State};
-use crate::ui::theme::{self, Palette};
-use iced::widget::{container, row, space, text};
+
+use iced::widget::{container, row, space};
 use iced::{Element, Length};
 
 /// Hauteur de la barre.
@@ -11,7 +11,7 @@ const BAR_HEIGHT: f32 = 26.0;
 /// Les pastilles « ● » et les libellés en anglais ont disparu : un statut se
 /// lit par sa couleur et son texte, pas par un symbole répété quatre fois.
 pub fn view(state: &State) -> Element<'_, Message> {
-    let palette = Palette::from_theme(&theme::resolve(state.theme, state.system_theme));
+    let palette = state.resolved.palette;
 
     let save = if state.editor.is_modified() {
         ("Non enregistré", palette.warning)
@@ -40,7 +40,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let mut bar = row![].spacing(16).align_y(iced::Alignment::Center);
 
     bar = bar.push(
-        text(state.editor.filename())
+        palette
+            .label(state.editor.filename())
             .size(12)
             .color(palette.text_muted),
     );
@@ -50,16 +51,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // Le compte de mots est le seul renseignement de fond utile pendant la
     // rédaction ; encodage et langage sont des constantes, on les omet.
     bar = bar.push(
-        text(format!("{} mots", words(state.editor.content())))
+        palette
+            .label(format!("{} mots", words(state.editor.content())))
             .size(12)
             .color(palette.text_muted),
     );
 
     if !render.is_empty() {
-        bar = bar.push(text(render).size(12).color(render_color));
+        bar = bar.push(palette.label(render).size(12).color(render_color));
     }
 
-    bar = bar.push(text(save.0).size(12).color(save.1));
+    bar = bar.push(palette.label(save.0).size(12).color(save.1));
 
     container(bar)
         .width(Length::Fill)

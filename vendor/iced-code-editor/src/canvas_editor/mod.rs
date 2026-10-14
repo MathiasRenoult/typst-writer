@@ -52,6 +52,7 @@ mod input;
 pub mod lsp;
 mod metrics;
 mod render;
+pub use render::highlighting::{SyntaxPalette, SyntaxRule};
 
 pub use features::context_menu::{ContextMenuEntry, ContextMenuItem};
 pub use features::vim::VimMode;
@@ -293,6 +294,12 @@ pub struct CodeEditor {
     /// the syntax identifier and the background lightness, so it needs no
     /// explicit invalidation from `set_syntax`/`set_theme`.
     pub(crate) resolved_syntax: RefCell<Option<ResolvedSyntax>>,
+
+    /// Palette de coloration fournie par l'application, si elle en a fourni une.
+    ///
+    /// `None` laisse la palette embarquée de syntect, choisie selon la clarté
+    /// du fond de l'éditeur.
+    pub(crate) syntax_theme: Option<&'static syntect::highlighting::Theme>,
     /// Sequential per-line syntax-highlight cache (see [`HighlightCache`]).
     ///
     /// Stored behind a `RefCell` because highlighting is performed during
@@ -714,6 +721,7 @@ impl CodeEditor {
             buffer_revision: 0,
             visual_lines_cache: RefCell::new(None),
             resolved_syntax: RefCell::new(None),
+            syntax_theme: None,
             highlight_cache: RefCell::new(None),
             highlight_lines_remaining: Cell::new(usize::MAX),
             bracket_depth_cache: RefCell::new(BracketDepthCache::new()),

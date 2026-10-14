@@ -3,6 +3,7 @@ mod editor;
 mod lsp;
 mod project;
 mod settings;
+mod theming;
 mod typst;
 mod ui;
 
@@ -24,5 +25,8 @@ fn main() -> iced::Result {
 /// Thème à appliquer, recalculé à chaque rendu : il suit la préférence de
 /// couleur du système tant que l'utilisateur n'a pas choisi clair ou sombre.
 fn theme(state: &app::State) -> iced::Theme {
-    ui::theme::resolve(state.theme, state.system_theme)
+    // Le thème est déjà résolu au changement, jamais à chaque image : le
+    // reconstruire ici ferait, soixante fois par seconde, un travail qui ne
+    // change qu'au clic.
+    state.resolved.iced.clone()
 }

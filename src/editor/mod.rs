@@ -25,18 +25,43 @@ pub const BODY_SIZE: f32 = 17.0;
 /// ne contient pas Typst.
 pub const SYNTAX: &str = "typ";
 
-/// Coloration de l'éditeur, déduite du thème de l'application.
+/// Habille l'éditeur selon un thème résolu.
 ///
-/// Le fond est délibérément **plus clair que le fond de l'application** (ou plus
-/// sombre en thème clair) : c'est ce qui fait apparaître la zone de rédaction
-/// comme une page, et donc ses marges. Sur un fond uniforme, une marge existe
-/// en géométrie mais ne se voit pas.
-fn page_style(theme: &iced::Theme) -> iced_code_editor::Style {
-    let mut style = iced_code_editor::from_iced_theme(theme);
+/// Trois choses dépendent du thème : les couleurs, les polices, et la palette de
+/// coloration syntaxique. Elles sont posées ensemble, en un seul endroit, pour
+/// qu'aucune ne puisse être oubliée quand on en ajoute une.
+fn apply_look(editor: &mut iced_code_editor::CodeEditor, resolved: &crate::ui::theme::Resolved) {
+    match &resolved.editor {
+        // Un thème de fichier décrit précisément l'éditeur.
+        Some(look) => {
+            editor.set_theme(look.style.clone());
+            editor.set_syntax_palette(Some(look.syntax.clone()));
+        }
+        // Un thème natif délègue au widget, comme avant les thèmes.
+        //
+        // Le fond est alors repris du panneau : c'est ce qui fait apparaître la
+        // zone de rédaction comme une page, et donc ses marges. Sur un fond
+        // uniforme, une marge existe en géométrie mais ne se voit pas.
+        None => {
+            let mut style = iced_code_editor::from_iced_theme(&resolved.iced);
 
-    style.background = crate::ui::theme::Palette::from_theme(theme).surface;
+            style.background = resolved.palette.surface;
 
-    style
+            editor.set_theme(style);
+            editor.set_syntax_palette(None);
+        }
+    }
+
+    let typography = resolved.typography;
+
+    // La police se pose **après** les couleurs : changer de police remesure la
+    // largeur des caractères, et le faire à chaque changement de thème une
+    // seule fois suffit.
+    editor.set_font(typography.editor);
+    editor.set_font_size(typography.editor_size, false);
+    // `set_line_height` attend une hauteur **en pixels**, pas un multiple de la
+    // taille du texte : la multiplier ici est ce qui rattache les deux unités.
+    editor.set_line_height(typography.editor_size * typography.line_height);
 }
 
 /// Interligne, en multiple de la taille du texte.
@@ -52,7 +77,7 @@ impl Default for EditorState {
             path: None,
         };
 
-        state.apply_prose_profile(&iced::Theme::Dark);
+        state.apply_prose_profile();
 
         state
     }
@@ -65,7 +90,7 @@ impl EditorState {
             path: Some(path),
         };
 
-        state.apply_prose_profile(&iced::Theme::Dark);
+        state.apply_prose_profile();
 
         state
     }
@@ -127,9 +152,10 @@ impl EditorState {
     /// widget est un éditeur de code, et tout ce qui le signale comme tel est
     /// du bruit dans un texte.
     ///
-    /// À appeler à la création de l'éditeur, puis à chaque changement de thème
-    /// puisque les couleurs en dépendent.
-    pub fn apply_prose_profile(&mut self, theme: &iced::Theme) {
+    /// À appeler à la création de l'éditeur. Les **couleurs et les polices**
+    /// n'en font pas partie : elles viennent de [`Self::retheme`], et les mêler
+    /// ici obligerait à rappeler tout le profil à chaque changement de thème.
+    pub fn apply_prose_profile(&mut self) {
         let editor = &mut self.editor;
 
         // Le point litigieux : l'éditeur traite l'apostrophe comme une paire
@@ -159,16 +185,15 @@ impl EditorState {
         // ne doit pas défiler horizontalement.
         editor.set_wrap_enabled(true);
 
-        // Confort de lecture.
+        // Confort de lecture, en attendant que `retheme` pose la typographie du
+        // thème : ces valeurs sont celles du thème natif.
         editor.set_font_size(BODY_SIZE, false);
         editor.set_line_height(BODY_SIZE * LINE_HEIGHT);
-
-        editor.set_theme(page_style(theme));
     }
 
     /// Réapplique les couleurs après un changement de thème.
-    pub fn retheme(&mut self, theme: &iced::Theme) {
-        self.editor.set_theme(page_style(theme));
+    pub fn retheme(&mut self, resolved: &crate::ui::theme::Resolved) {
+        apply_look(&mut self.editor, resolved);
     }
 }
 
