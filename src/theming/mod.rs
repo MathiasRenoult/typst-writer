@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 
 use iced::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Corps du texte de l'éditeur, par défaut.
 ///
@@ -555,7 +555,7 @@ impl ThemeFile {
 /// C'est ce qui permet de **suivre le système** tout en gardant ses propres
 /// thèmes : on se souvient du thème clair et du thème sombre retenus, et le
 /// mode système ne fait que décider lequel des deux s'applique.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chosen {
     /// Nom du thème clair retenu.
     pub light: String,
@@ -1127,6 +1127,106 @@ mod tests {
 
         assert!(!is_reserved_name("Mon thème"));
         assert!(!is_reserved_name("Clair de lune"));
+    }
+
+    /// Le thème retenu est retrouvé **par son nom**.
+    ///
+    /// C'est ce qui permet de le restaurer au redémarrage : la liste peut avoir
+    /// changé entre-temps — un thème chargé, un autre supprimé — sans que le
+    /// choix soit perdu ou décalé.
+    #[test]
+    fn the_chosen_theme_is_found_by_name() {
+        let mut themes = natives();
+
+        let file = ThemeFile::parse(EXAMPLE, None).unwrap();
+        let name = file.meta.name.clone();
+
+        themes.push(Theme {
+            name: name.clone(),
+            appearance: file.meta.appearance,
+            file: Some(file),
+        });
+
+        let chosen = Chosen {
+            light: "Clair".to_string(),
+            dark: name.clone(),
+        };
+
+        let index = select(&themes, Appearance::Dark, &chosen);
+
+        assert_eq!(themes[index].name, name);
+        assert_eq!(themes[index].appearance, Appearance::Dark);
+    }
+
+    /// Chaque apparence garde son propre thème : suivre le système ne fait que
+    /// choisir laquelle des deux s'applique.
+    #[test]
+    fn each_appearance_keeps_its_own_theme() {
+        let mut themes = natives();
+
+        let file = ThemeFile::parse(EXAMPLE, None).unwrap();
+        let name = file.meta.name.clone();
+
+        themes.push(Theme {
+            name: name.clone(),
+            appearance: file.meta.appearance,
+            file: Some(file),
+        });
+
+        let chosen = Chosen {
+            light: "Clair".to_string(),
+            dark: name.clone(),
+        };
+
+        assert_eq!(
+            themes[select(&themes, Appearance::Dark, &chosen)].name,
+            name,
+            "en sombre, le thème sombre retenu"
+        );
+        assert_eq!(
+            themes[select(&themes, Appearance::Light, &chosen)].name,
+            "Clair",
+            "en clair, le thème clair retenu"
+        );
+    }
+
+    /// Un thème retenu puis supprimé ne laisse pas la fenêtre sans couleurs.
+    ///
+    /// C'est le cas qui guette au redémarrage : la session nomme un thème dont
+    /// le fichier a disparu entre-temps. La sélection doit se rabattre sur un
+    /// thème de la **même apparence** — retomber sur le premier de la liste
+    /// donnerait un thème clair en pleine nuit.
+    #[test]
+    fn a_deleted_theme_falls_back_within_its_appearance() {
+        let themes = natives();
+
+        let chosen = Chosen {
+            light: "Clair".to_string(),
+            dark: "Thème disparu".to_string(),
+        };
+
+        let index = select(&themes, Appearance::Dark, &chosen);
+
+        assert_eq!(themes[index].name, "Sombre");
+        assert_eq!(themes[index].appearance, Appearance::Dark);
+    }
+
+    /// Le nom retenu est bien celui qu'on relit.
+    #[test]
+    fn a_chosen_name_survives_a_round_trip() {
+        let mut chosen = Chosen::default();
+
+        chosen.set(Appearance::Light, "Moka clair");
+        chosen.set(Appearance::Dark, "Moka sombre");
+
+        assert_eq!(chosen.get(Appearance::Light), "Moka clair");
+        assert_eq!(chosen.get(Appearance::Dark), "Moka sombre");
+
+        // Les deux apparences sont indépendantes : écrire l'une ne touche pas
+        // l'autre.
+        chosen.set(Appearance::Light, "Autre clair");
+
+        assert_eq!(chosen.get(Appearance::Dark), "Moka sombre");
     }
 
     /// Une police vide n'est pas une police : elle retombe sur celle du moteur.

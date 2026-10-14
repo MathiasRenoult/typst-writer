@@ -7,9 +7,15 @@
 //! que basculer entre clair et sombre ne demande aucun changement de code.
 
 use iced::{Color, Theme};
+use serde::{Deserialize, Serialize};
 
 /// Comment le thème est choisi.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// Le mode est enregistré dans la session : il doit donc être lisible et
+/// stable. Les variantes s'écrivent en minuscules dans le fichier, pour qu'il
+/// reste modifiable à la main sans surprendre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
     /// Suit le réglage du système (défaut).
     #[default]

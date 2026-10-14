@@ -57,11 +57,14 @@ impl State {
             renaming: None,
             render: Default::default(),
             layout: Default::default(),
-            theme: Default::default(),
             system_theme: None,
             themes: Vec::new(),
             theme_problems: Vec::new(),
-            chosen: crate::theming::Chosen::default(),
+            // Le thème retenu est restauré **avant** la première lecture du
+            // dossier : `refresh_themes` applique le thème, il doit donc savoir
+            // lequel.
+            chosen: session.themes.clone(),
+            theme: session.theme_mode,
             resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
         };
 
@@ -153,6 +156,8 @@ impl State {
         crate::project::save_session(&crate::project::Session {
             project: Some(self.project.dir.clone()),
             last_document: self.editor.path.clone(),
+            theme_mode: self.theme,
+            themes: self.chosen.clone(),
         });
     }
 
@@ -642,6 +647,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::CycleTheme => {
             state.theme = state.theme.next();
             retheme(state);
+            state.save_session();
 
             Task::none()
         }
@@ -672,6 +678,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             };
 
             retheme(state);
+            state.save_session();
 
             Task::none()
         }
@@ -712,6 +719,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                         };
 
                         retheme(state);
+                        state.save_session();
                     }
 
                     // L'auteur, quand il s'est nommé, est une politesse qu'on
@@ -751,6 +759,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     }
 
                     refresh_themes(state);
+                    state.save_session();
 
                     state.export_status = Some(format!("Thème « {name} » supprimé."));
                 }

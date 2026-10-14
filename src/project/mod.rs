@@ -28,7 +28,7 @@ pub fn work_dir() -> PathBuf {
 }
 
 /// Session de travail : ce qu'il faut rouvrir au démarrage.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Session {
     /// Dossier du projet ouvert.
     #[serde(default)]
@@ -37,6 +37,23 @@ pub struct Session {
     /// Chemin du chapitre ouvert dans ce projet.
     #[serde(default)]
     pub last_document: Option<PathBuf>,
+
+    /// Le mode d'apparence suivi : système, clair ou sombre.
+    ///
+    /// À défaut, `default` : le mode système, et les thèmes natifs. Une session
+    /// enregistrée avant les thèmes se relit donc sans rien perdre.
+    #[serde(default)]
+    pub theme_mode: crate::ui::theme::ThemeMode,
+
+    /// Les thèmes retenus pour chaque apparence.
+    ///
+    /// On enregistre le **nom**, jamais une position : la liste change quand on
+    /// charge ou supprime un thème, et une position finirait par désigner un
+    /// autre thème que celui qu'on avait choisi. Un nom devenu introuvable est
+    /// traité par la sélection elle-même, qui retombe sur un thème de la même
+    /// apparence.
+    #[serde(default)]
+    pub themes: crate::theming::Chosen,
 }
 
 fn session_path() -> PathBuf {
@@ -45,7 +62,19 @@ fn session_path() -> PathBuf {
 
 /// Charge la session enregistrée.
 pub fn load_session() -> Session {
-    std::fs::read_to_string(session_path())
+    load_session_from(&session_path())
+}
+
+/// Charge une session depuis un fichier donné.
+///
+/// Une session absente, tronquée ou illisible donne la session **vide** : un
+/// fichier de configuration cassé ne doit jamais empêcher l'application de
+/// démarrer, et repartir des valeurs par défaut est toujours possible.
+///
+/// Le chemin est un paramètre plutôt qu'une constante pour que la persistance
+/// soit vérifiable sur un fichier réel, et non seulement en mémoire.
+pub fn load_session_from(path: &Path) -> Session {
+    std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
@@ -53,6 +82,14 @@ pub fn load_session() -> Session {
 
 /// Enregistre la session.
 pub fn save_session(session: &Session) {
+    save_session_to(&session_path(), session);
+}
+
+/// Enregistre une session dans un fichier donné.
+///
+/// Un échec d'écriture est signalé sans interrompre : la session est une
+/// commodité, pas une donnée dont dépend la suite du travail.
+pub fn save_session_to(path: &Path, session: &Session) {
     let text = match serde_json::to_string_pretty(session) {
         Ok(text) => text,
         Err(error) => {
@@ -61,7 +98,7 @@ pub fn save_session(session: &Session) {
         }
     };
 
-    if let Err(error) = std::fs::write(session_path(), text) {
+    if let Err(error) = std::fs::write(path, text) {
         eprintln!("Enregistrement de la session : {error}");
     }
 }
@@ -175,6 +212,9 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
         save_session(&Session {
             project: Some(dir.clone()),
             last_document: None,
+            // Le thème retenu ne regarde pas la migration des documents à plat :
+            // il survit tel quel, et le reste de la session avec lui.
+            ..session.clone()
         });
     }
 
@@ -279,5 +319,116 @@ mod tests {
             Some(PathBuf::from("/tmp/ancien.typ"))
         );
         assert!(session.project.is_none());
+
+        // Les champs de thème, absents, retombent sur le mode système et les
+        // thèmes natifs : une session écrite avant les thèmes se relit donc
+        // sans rien perdre, et sans démarrer sur un thème inexistant.
+        assert_eq!(session.theme_mode, crate::ui::theme::ThemeMode::System);
+        assert_eq!(session.themes, crate::theming::Chosen::default());
+    }
+
+    /// Le thème retenu survit à un redémarrage.
+    ///
+    /// C'est la raison d'être de ces champs : sans eux, l'application repartait
+    /// sur les thèmes natifs à chaque lancement, et choisir un thème revenait à
+    /// le rechoisir tous les matins.
+    #[test]
+    fn a_session_keeps_the_chosen_theme() {
+        let session = Session {
+            project: Some(PathBuf::from("/tmp/projet")),
+            last_document: None,
+            theme_mode: crate::ui::theme::ThemeMode::Light,
+            themes: crate::theming::Chosen {
+                light: "Moka clair".to_string(),
+                dark: "Moka sombre".to_string(),
+            },
+        };
+
+        let text = serde_json::to_string_pretty(&session).unwrap();
+
+        // Le fichier reste lisible : c'est ce qu'on veut pouvoir inspecter et
+        // corriger à la main quand quelque chose ne se rouvre pas comme prévu.
+        assert!(text.contains("\"light\""), "session écrite :\n{text}");
+
+        let restored: Session = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(restored.theme_mode, crate::ui::theme::ThemeMode::Light);
+        assert_eq!(restored.themes.light, "Moka clair");
+        assert_eq!(restored.themes.dark, "Moka sombre");
+    }
+
+    /// Le thème retenu survit à un aller-retour par un vrai fichier.
+    ///
+    /// C'est la chaîne complète du redémarrage : écrire la session, la relire,
+    /// retrouver le thème qu'elle nomme dans la liste, et le sélectionner. Les
+    /// trois maillons sont ici, dans l'ordre où l'application les exécute.
+    #[test]
+    fn the_chosen_theme_survives_a_real_restart() {
+        let dir = std::env::temp_dir().join("typst-writer-session-theme");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = dir.join("session.json");
+
+        // 1. L'utilisateur choisit un thème clair et un thème sombre.
+        save_session_to(
+            &path,
+            &Session {
+                project: None,
+                last_document: None,
+                theme_mode: crate::ui::theme::ThemeMode::Dark,
+                themes: crate::theming::Chosen {
+                    light: "Clair".to_string(),
+                    dark: "Mon thème".to_string(),
+                },
+            },
+        );
+
+        // 2. L'application redémarre et relit la session.
+        let restored = load_session_from(&path);
+
+        assert_eq!(restored.theme_mode, crate::ui::theme::ThemeMode::Dark);
+
+        // 3. Les thèmes disponibles sont relus du dossier, et le choix retrouvé.
+        let mut themes = crate::theming::natives();
+
+        let file = crate::theming::ThemeFile::parse(crate::theming::EXAMPLE, None).unwrap();
+        let name = file.meta.name.clone();
+
+        themes.push(crate::theming::Theme {
+            name: name.clone(),
+            appearance: file.meta.appearance,
+            file: Some(file),
+        });
+
+        let index =
+            crate::theming::select(&themes, crate::theming::Appearance::Dark, &restored.themes);
+
+        assert_eq!(
+            themes[index].name, "Mon thème",
+            "le thème retenu avant le redémarrage doit être celui qu'on applique après"
+        );
+
+        // 4. Une session absente retombe sur les défauts, sans échouer.
+        let missing = load_session_from(&dir.join("absent.json"));
+
+        assert_eq!(missing.theme_mode, crate::ui::theme::ThemeMode::System);
+        assert_eq!(missing.themes, crate::theming::Chosen::default());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un mode de thème s'écrit en minuscules et se relit tel quel.
+    #[test]
+    fn the_theme_mode_is_written_in_lowercase() {
+        for (mode, expected) in [
+            (crate::ui::theme::ThemeMode::System, "\"system\""),
+            (crate::ui::theme::ThemeMode::Light, "\"light\""),
+            (crate::ui::theme::ThemeMode::Dark, "\"dark\""),
+        ] {
+            let text = serde_json::to_string(&mode).unwrap();
+
+            assert_eq!(text, expected, "mode {mode:?}");
+        }
     }
 }
