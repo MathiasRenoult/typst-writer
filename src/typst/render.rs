@@ -1807,8 +1807,10 @@ mod tests {
         let outcome = compile(&dir, &assembly, &overrides);
 
         // 3. L'état retient ce que la compilation a rapporté.
-        let mut render = crate::app::state::RenderState::default();
-        render.content = outcome.content.clone();
+        let mut render = crate::app::state::RenderState {
+            content: outcome.content.clone(),
+            ..Default::default()
+        };
 
         // 4. Le tick réobserve : plus rien ne doit être dû, indéfiniment.
         let start = std::time::Instant::now();

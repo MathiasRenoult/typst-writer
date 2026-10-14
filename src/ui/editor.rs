@@ -293,12 +293,12 @@ mod tests {
         assert_eq!(clamp_lines("éé\nà", 1), "éé");
     }
 
-    /// Les marges doivent laisser de la place au texte : une mesure plus étroite
-    /// que les deux marges réunies ne laisserait rien.
-    #[test]
-    fn margins_leave_room_for_the_text() {
-        assert!(MEASURE > SIDE_MARGIN * 2.0);
-        assert!(TOP_MARGIN > 0.0, "le texte ne doit pas toucher le haut");
-        assert!(BOTTOM_MARGIN > 0.0, "le texte ne doit pas toucher le bas");
-    }
+    /// Les marges doivent laisser de la place au texte, et le texte ne doit
+    /// toucher aucun bord.
+    ///
+    /// Vérifié à la **compilation** : un invariant de mise en page qui se casse
+    /// doit arrêter la construction, et non une épreuve qu'on peut ignorer.
+    const _: () = assert!(MEASURE > SIDE_MARGIN * 2.0);
+    const _: () = assert!(TOP_MARGIN > 0.0);
+    const _: () = assert!(BOTTOM_MARGIN > 0.0);
 }

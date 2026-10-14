@@ -34,7 +34,7 @@ fn apply_look(editor: &mut iced_code_editor::CodeEditor, resolved: &crate::ui::t
     match &resolved.editor {
         // Un thème de fichier décrit précisément l'éditeur.
         Some(look) => {
-            editor.set_theme(look.style.clone());
+            editor.set_theme(look.style);
             editor.set_syntax_palette(Some(look.syntax.clone()));
         }
         // Un thème natif délègue au widget, comme avant les thèmes.

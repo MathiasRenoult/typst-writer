@@ -6,11 +6,11 @@
 //!
 //! Un travail se présente comme un **projet** : un dossier dans
 //! `~/.typst-writer/projets/`, avec un fichier par chapitre, sa bibliographie
-//! et son assemblage. Voir [`project`] pour la structure exacte.
+//! et son assemblage. Voir [`model`] pour la structure exacte.
 
-pub mod project;
+pub mod model;
 
-pub use project::*;
+pub use model::*;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -123,10 +123,7 @@ pub fn parse_bibliography(path: &Path) -> Vec<BibliographyEntry> {
         return Vec::new();
     };
 
-    content
-        .lines()
-        .filter_map(|line| parse_bib_entry_line(line))
-        .collect()
+    content.lines().filter_map(parse_bib_entry_line).collect()
 }
 
 /// Analyse une ligne de fichier BibTeX : `@article{clé,` → entrée.
@@ -164,7 +161,7 @@ const MIGRATED_PROJECT: &str = "mon-travail";
 pub fn migrate_flat_documents() -> Option<PathBuf> {
     // Un projet existe déjà : le dossier a été migré, ou l'utilisateur a
     // commencé à travailler dans la nouvelle organisation.
-    if !project::list_projects().is_empty() {
+    if !model::list_projects().is_empty() {
         return None;
     }
 
@@ -174,7 +171,7 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
         return None;
     }
 
-    let dir = project::create(MIGRATED_PROJECT).ok()?;
+    let dir = model::create(MIGRATED_PROJECT).ok()?;
 
     // Une bibliographie restée à la racine doit rejoindre le projet : sans
     // cela, un chapitre qui la cite perdrait sa référence.
@@ -199,7 +196,7 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
             continue;
         }
 
-        let _ = project::add_chapter_to_assembly(&dir.join("main.typ"), &destination);
+        let _ = model::add_chapter_to_assembly(&dir.join("main.typ"), &destination);
 
         if session.last_document.as_deref() == Some(path.as_path()) {
             moved_session = true;
@@ -223,7 +220,7 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
 
 /// Fait rejoindre au projet une bibliographie laissée à la racine.
 ///
-/// Le fichier créé par `project::create` est un modèle vide : on ne le remplace
+/// Le fichier créé par `model::create` est un modèle vide : on ne le remplace
 /// que s'il est effectivement vide, pour ne jamais écraser des références
 /// existantes par un exemple commenté.
 fn adopt_stray_bibliography(project_dir: &Path) {

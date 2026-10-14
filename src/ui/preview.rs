@@ -25,6 +25,12 @@ const MIN_PAGE_BOX: f32 = 80.0;
 ///
 /// Un aperçu reste un aperçu : au-delà du double, la page tiendrait plus de
 /// place que le texte qu'on écrit, et coûterait quatre fois plus de mémoire.
+/// Plancher du rapport d'affichage : en deçà, la page ne serait plus lisible.
+///
+/// Ce n'est pas une cible, seulement un garde-fou : un panneau très étroit ne
+/// doit pas réduire la page à rien.
+const MIN_DISPLAY_RATIO: f64 = 0.05;
+
 const MAX_DISPLAY_RATIO: f64 = 2.0;
 
 /// Place supposée d'une page dans le panneau, avant que la vue ne l'ait mesurée.
@@ -53,8 +59,7 @@ pub(crate) fn display_ratio(box_size: iced::Size, page: (f64, f64)) -> f64 {
 
     (width / page.0)
         .min(height / page.1)
-        .min(MAX_DISPLAY_RATIO)
-        .max(0.05)
+        .clamp(MIN_DISPLAY_RATIO, MAX_DISPLAY_RATIO)
 }
 
 /// Pages rendues au-delà du viewport, de part et d'autre.
@@ -281,8 +286,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(space::vertical().height(Length::Fixed(head)).width(Fill));
     }
 
-    for index in first..=last {
-        content = content.push(page_view(state, index, sizes[index]));
+    for (index, size) in sizes
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(last.saturating_sub(first) + 1)
+    {
+        content = content.push(page_view(state, index, *size));
 
         // L'écart **après** la page : il l'accompagne, au lieu d'être posé par
         // la colonne entre deux widgets. C'est ce qui rend la hauteur du

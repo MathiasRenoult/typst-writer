@@ -705,15 +705,16 @@ mod tests {
     /// d'image ni de travail en cours.
     #[test]
     fn reset_clears_every_trace_of_the_previous_document() {
-        let mut render = RenderState::default();
-
-        render.content = "ancien document".to_string();
-        render.done = true;
-        render.page_cache.insert(0, handle());
-        render.rendering.insert(1);
-        render.stale.insert(2);
-        render.visible = Some((0, 4));
-        render.save_pending = true;
+        let mut render = RenderState {
+            content: "ancien document".to_string(),
+            done: true,
+            page_cache: [(0, handle())].into_iter().collect(),
+            rendering: [1].into_iter().collect(),
+            stale: [2].into_iter().collect(),
+            visible: Some((0, 4)),
+            save_pending: true,
+            ..Default::default()
+        };
         let previous = render.revision;
 
         render.reset();
@@ -885,8 +886,10 @@ mod tests {
         let first = std::path::Path::new("/projet/chapitres/01-un.typ");
         let second = std::path::Path::new("/projet/chapitres/02-deux.typ");
 
-        let mut render = RenderState::default();
-        render.chapter_page = Some(3);
+        let mut render = RenderState {
+            chapter_page: Some(3),
+            ..Default::default()
+        };
 
         // Chapitre jamais suivi : on y amène l'aperçu.
         assert!(render.should_follow_chapter(Some(first)));
@@ -913,9 +916,10 @@ mod tests {
     /// permet à une saisie de démarrer au bon endroit.
     #[test]
     fn cursor_position_is_kept_even_without_a_drag() {
-        let mut layout = LayoutState::default();
-
-        layout.cursor = iced::Point::new(150.0, 250.0);
+        let layout = LayoutState {
+            cursor: iced::Point::new(150.0, 250.0),
+            ..Default::default()
+        };
 
         assert!(
             layout.dragging.is_none(),
@@ -929,9 +933,11 @@ mod tests {
     /// rendre la disposition telle qu'elle était.
     #[test]
     fn focus_mode_leaves_panel_preferences_untouched() {
-        let mut layout = LayoutState::default();
+        let mut layout = LayoutState {
+            preview_position: PreviewPosition::Left,
+            ..Default::default()
+        };
 
-        layout.preview_position = PreviewPosition::Left;
         let sidebar = layout.sidebar_width;
         let preview = layout.preview_width;
 
@@ -1010,9 +1016,10 @@ mod tests {
     /// trois fois par seconde, et ne doit rien coûter.
     #[test]
     fn nothing_is_compiled_when_nothing_changed() {
-        let mut render = RenderState::default();
-
-        render.content = "le texte déjà compilé".to_string();
+        let mut render = RenderState {
+            content: "le texte déjà compilé".to_string(),
+            ..Default::default()
+        };
 
         let start = Instant::now();
 

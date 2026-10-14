@@ -104,10 +104,10 @@ impl State {
                 .map(|chapter| chapter.path.clone())
         });
 
-        if let Some(path) = chapter {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                state.editor = crate::editor::EditorState::new_file(path, content);
-            }
+        if let Some(path) = chapter
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            state.editor = crate::editor::EditorState::new_file(path, content);
         }
 
         state.refresh_context();
@@ -352,10 +352,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::CompletionAccept => accept_completion(state),
 
         Message::CompletionPick(index) => {
-            if let Some(open) = state.lsp.completion.as_mut() {
-                if index < open.shown.len() {
-                    open.selected = index;
-                }
+            if let Some(open) = state.lsp.completion.as_mut()
+                && index < open.shown.len()
+            {
+                open.selected = index;
             }
 
             accept_completion(state)
@@ -1357,9 +1357,7 @@ fn completion_shortcut(
 ) -> Option<Task<Message>> {
     use iced::keyboard::{Key, key::Named};
 
-    if state.lsp.completion.is_none() {
-        return None;
-    }
+    state.lsp.completion.as_ref()?;
 
     // Ctrl+Espace accepte : c'est le geste qu'on a dans les doigts quand la
     // liste est ouverte, et il ne sert à rien d'autre ici.

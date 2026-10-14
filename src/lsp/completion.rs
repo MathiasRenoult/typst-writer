@@ -404,7 +404,7 @@ mod tests {
         let mut value = serde_json::json!({ "label": "Une étiquette", "filterText": "figure" });
         let item: CompletionItem = serde_json::from_value(value.clone()).expect("élément");
 
-        assert_eq!(matching(&[item.clone()], "fig"), vec![0]);
+        assert_eq!(matching(std::slice::from_ref(&item), "fig"), vec![0]);
 
         value["filterText"] = serde_json::Value::String("autre".to_string());
         let other: CompletionItem = serde_json::from_value(value).expect("élément");

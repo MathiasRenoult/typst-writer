@@ -468,9 +468,8 @@ fn format_count(words: usize) -> String {
     let digits = words.to_string();
 
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
-    let mut count = 0;
 
-    for character in digits.chars().rev() {
+    for (count, character) in digits.chars().rev().enumerate() {
         if count > 0 && count % 3 == 0 {
             // Une espace fine insécable : le groupe ne doit pas se couper en fin
             // de ligne.
@@ -478,7 +477,6 @@ fn format_count(words: usize) -> String {
         }
 
         grouped.push(character);
-        count += 1;
     }
 
     grouped.chars().rev().collect()
