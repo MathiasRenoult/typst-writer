@@ -18,3 +18,10 @@ typst-pdf = "0.15.1"
 typst-render = "0.15.1"
 typst-syntax = "0.15.1"
 typst-utils = "0.15.1"
+
+# Le retour à la ligne au mot n'est pas réglable : le crate découpe au
+# caractère, au dernier qui tient, ce qui tranche les mots en deux au milieu
+# d'une ligne de prose. `vendor/iced-code-editor` porte ce correctif ; le diff
+# par rapport à l'amont est documenté dans `vendor/iced-code-editor/PATCHES.md`.
+[patch.crates-io]
+iced-code-editor = { path = "vendor/iced-code-editor" }

@@ -2080,8 +2080,6 @@ dependencies = [
 [[package]]
 name = "iced-code-editor"
 version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be9d53823db6605d795edd234785daca7694c4139870c3a984b238e172fda40d"
 dependencies = [
  "iced",
  "iced_aw",
