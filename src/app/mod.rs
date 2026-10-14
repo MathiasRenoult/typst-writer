@@ -316,14 +316,18 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.persist();
             }
 
-            // Marquer les pages visibles comme périmées : leur nouveau rendu
-            // est lancé en arrière-plan, mais l'ancienne image reste affichée
-            // jusqu'à ce que la nouvelle arrive — aucun flash, et seules les
-            // pages réellement visibles sont rasterisées.
-            if let Some((first, last)) = state.render.visible {
-                for index in first..=last {
-                    state.render.stale.insert(index);
-                }
+            // Marquer les pages à rafraîchir comme périmées : leur nouveau
+            // rendu est lancé en arrière-plan, mais l'ancienne image reste
+            // affichée jusqu'à ce que la nouvelle arrive — aucun flash, et
+            // seules les pages réellement visibles sont rasterisées.
+            //
+            // Tant qu'aucun scroll n'a eu lieu, `visible` est `None` : c'est
+            // la première page qui doit être rendue, sinon l'écran resterait
+            // rempli de cadres gris.
+            let (first, last) = state.render.visible.unwrap_or((0, 0));
+
+            for index in first..=last {
+                state.render.stale.insert(index);
             }
 
             // Rendre immédiatement les pages actuellement visibles.
