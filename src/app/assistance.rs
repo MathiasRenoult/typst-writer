@@ -89,11 +89,7 @@ pub(super) fn request_completion(state: &mut State) -> Task<Message> {
 
     let token = state.lsp.tokens;
     let position = crate::lsp::messages::position_of(&content, offset);
-    let anchor = state
-        .editor
-        .editor
-        .cursor_screen_position()
-        .unwrap_or(iced::Point::ORIGIN);
+    let anchor = state.editor.cursor_view_position();
 
     session.completion(
         position,
@@ -230,11 +226,7 @@ pub(super) fn open_completion(
         return;
     }
 
-    let anchor = state
-        .editor
-        .editor
-        .cursor_screen_position()
-        .unwrap_or(iced::Point::ORIGIN);
+    let anchor = state.editor.cursor_view_position();
 
     match state.lsp.completion.as_mut() {
         Some(open) => {
@@ -420,11 +412,7 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
 
             state.lsp.hover = text.map(|text| Hover {
                 text,
-                anchor: state
-                    .editor
-                    .editor
-                    .cursor_screen_position()
-                    .unwrap_or(iced::Point::ORIGIN),
+                anchor: state.editor.cursor_view_position(),
             });
 
             Task::none()

@@ -343,7 +343,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // C'est la frappe qui décide de la liste, et elle seule : après
             // chaque message de l'éditeur, on regarde si le texte demande une
             // complétion à l'endroit du curseur.
-            Task::batch(vec![task, request_completion(state)])
+            let completion = request_completion(state);
+
+            if std::env::var_os("TYPST_WRITER_LSP_VERBOSE").is_some() {
+                report_lsp(state);
+            }
+
+            Task::batch(vec![task, completion])
         }
 
         Message::CompletionMove(delta) => {

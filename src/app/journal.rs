@@ -149,6 +149,40 @@ pub(super) fn report_lsp(state: &State) {
             "au repos"
         },
     );
+
+    if !verbose() {
+        return;
+    }
+
+    // Ce que fait la liste — parce que « un menu jamais ouvert » et « un menu
+    // ouvert hors de l'écran » se ressemblent exactement, et qu'aucun des deux ne
+    // se voit dans une capture d'écran.
+    let editor = &state.editor.editor;
+    let document_y = editor
+        .cursor_screen_position()
+        .map_or(f32::NAN, |point| point.y);
+
+    match state.lsp.completion.as_ref() {
+        None => println!("[assistance] liste : fermée"),
+        Some(open) => println!(
+            "[assistance] liste : ouverte | déclencheur `{}` | mot « {} » | {} élément(s), {} montré(s), sélection {} | ancre ({:.0}, {:.0}) | curseur dans le document : {:.0} | défilement {:.0}, vue {:.0}",
+            open.trigger,
+            open.typed,
+            open.items.len(),
+            open.shown.len(),
+            open.selected,
+            open.anchor.x,
+            open.anchor.y,
+            document_y,
+            editor.viewport_scroll(),
+            editor.viewport_height(),
+        ),
+    }
+}
+
+/// Le journal détaillé est-il demandé ?
+fn verbose() -> bool {
+    std::env::var_os("TYPST_WRITER_LSP_VERBOSE").is_some()
 }
 
 /// Mémoire résidente du processus, en kilo-octets.

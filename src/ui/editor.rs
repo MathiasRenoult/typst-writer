@@ -79,6 +79,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }),
     };
 
+    // La forme de l'arbre change : conteneur simple quand rien ne se dessine,
+    // pile quand une bulle s'ajoute. C'est la structure où le menu a été **vu**.
+    // Une variante « arbre invariable » — un enfant vide en second, pour que le
+    // chemin des widgets ne bouge jamais — a été essayée : le menu ne s'y
+    // dessinait plus du tout. Elle est partie avec la raison qu'on lui donnait.
     let page = match overlay {
         Some((content, height, anchor)) => {
             let top = crate::lsp::completion::placement(anchor.y, panel_height(state), height);
@@ -129,6 +134,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
 /// La place où le curseur peut se trouver : la fenêtre, moins les deux barres et
 /// les marges du panneau. C'est le seul cadre qu'une bulle doive respecter.
 fn panel_height(state: &State) -> f32 {
+    // La hauteur **réellement vue** par l'éditeur quand il la connaît : c'est
+    // elle qui donne le seul cadre où le curseur peut être. Le calcul par la
+    // fenêtre reste en secours, pour la première image.
+    let visible = state.editor.visible_height();
+
+    if visible > 0.0 {
+        return visible;
+    }
+
     (state.window_size.height
         - crate::ui::toolbar::BAR_HEIGHT
         - crate::ui::status_bar::BAR_HEIGHT
@@ -168,15 +182,7 @@ fn hover_popup(hover: &crate::app::state::Hover, palette: Palette) -> Element<'_
             .width(Length::Fixed(COMPLETION_WIDTH)),
     )
     .padding(8)
-    .style(move |_| container::Style {
-        background: Some(palette.surface.into()),
-        border: iced::Border {
-            color: palette.border,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        ..Default::default()
-    })
+    .style(bubble_style(palette))
     .into()
 }
 
@@ -250,16 +256,28 @@ fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, M
 
     container(list)
         .width(Length::Fixed(COMPLETION_WIDTH))
-        .style(move |_| container::Style {
-            background: Some(palette.surface.into()),
-            border: iced::Border {
-                color: palette.border,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        })
+        .style(bubble_style(palette))
         .into()
+}
+
+/// Le fond d'une bulle : **détaché de ce qu'elle recouvre**.
+///
+/// `surface` est la couleur de la zone de rédaction elle-même : un menu peint de
+/// cette teinte se confond avec le texte qu'il couvre, et l'on croit qu'il ne
+/// s'est jamais ouvert. C'est très exactement ce qui est arrivé. La bulle prend
+/// donc la teinte « active » — celle d'un élément choisi, mesurée ici à 50
+/// niveaux au-dessus du fond de l'éditeur, donc visible — et un trait qui la
+/// borde.
+fn bubble_style(palette: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(palette.surface_active.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]

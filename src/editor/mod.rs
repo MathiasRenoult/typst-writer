@@ -143,6 +143,32 @@ impl EditorState {
         Task::batch(tasks)
     }
 
+    /// Où le curseur se trouve **dans la vue**, et non dans le document.
+    ///
+    /// `cursor_screen_position` porte mal son nom : elle rend l'ordonnée du
+    /// curseur dans **tout le document** (le rang de la ligne visuelle multiplié
+    /// par la hauteur de ligne, sans soustraction du défilement). Un menu posé à
+    /// cette ordonnée se retrouve des milliers de pixels sous la fenêtre dès
+    /// qu'on écrit au-delà du premier écran — c'est-à-dire toujours, dans un
+    /// chapitre. Le défilement se soustrait donc ici, une fois.
+    pub fn cursor_view_position(&self) -> iced::Point {
+        let point = self
+            .editor
+            .cursor_screen_position()
+            .unwrap_or(iced::Point::ORIGIN);
+
+        iced::Point::new(point.x, point.y - self.editor.viewport_scroll())
+    }
+
+    /// La hauteur réellement visible de l'éditeur, en pixels.
+    ///
+    /// C'est la seule mesure qui vaille pour placer une bulle : la fenêtre moins
+    /// deux barres n'est qu'une approximation, et elle ignore les marges du
+    /// panneau.
+    pub fn visible_height(&self) -> f32 {
+        self.editor.viewport_height()
+    }
+
     /// Amène le curseur à une ligne et une colonne.
     ///
     /// Les colonnes se comptent en **caractères**, comme partout dans l'éditeur.
