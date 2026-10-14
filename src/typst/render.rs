@@ -454,14 +454,21 @@ pub struct PreviewWorld {
 
 impl PreviewWorld {
     pub fn new(root: &Path, content: &str, overrides: &[(PathBuf, String)]) -> Self {
-        // Les polices embarquées sont celles du CLI Typst : le rendu est donc
-        // identique à celui de `typst compile`.
-        let fonts: Vec<Font> = typst_assets::fonts()
-            .enumerate()
-            .filter_map(|(index, data)| Font::new(Bytes::new(data.to_vec()), index as u32))
+        // Les polices : les embarquées de Typst, **plus celles que le document
+        // nomme** et que le système possède. Sans les secondes, un texte qui
+        // demande une police hébraïque se compose avec une autre, et l'aperçu
+        // comme l'export disent le contraire du document. La règle complète, et
+        // ce qu'elle refuse de faire, sont dans `crate::typst::fonts`.
+        let texts: Vec<String> = std::iter::once(content.to_string())
+            .chain(overrides.iter().map(|(_, text)| text.clone()))
             .collect();
 
-        let book = FontBook::from_fonts(fonts.iter());
+        let (fonts, book) = {
+            let mut shared = crate::typst::fonts::shared();
+
+            shared.complete(root, &texts);
+            shared.parts()
+        };
 
         let main_id = FileId::new(RootedPath::new(
             VirtualRoot::Project,
