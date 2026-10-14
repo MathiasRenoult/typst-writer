@@ -11,7 +11,7 @@ pub struct EditorState {
 ///
 /// Plus grande que les 13-14 px d'un éditeur de code : on lit des phrases, pas
 /// des identifiants.
-const BODY_SIZE: f32 = 17.0;
+pub const BODY_SIZE: f32 = 17.0;
 
 /// Interligne, en multiple de la taille du texte.
 ///

@@ -439,20 +439,31 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::SplitterPressed(which) => {
-            // L'origine du glissement n'est pas connue au clic : elle sera
-            // prise au premier mouvement du curseur.
-            state.layout.dragging = Some(Drag {
-                which,
-                origin: None,
-            });
+            // L'origine est la dernière position connue du curseur : elle est
+            // tenue à jour à chaque mouvement de souris, y compris hors
+            // glissement. Le premier mouvement pendant le glissement sert donc
+            // à déplacer, pas à repérer l'origine — un glissement court ne
+            // reste plus sans effet.
+            let vertical = state.layout.preview_position == PreviewPosition::Bottom
+                && which == Splitter::Preview;
+
+            let origin = if vertical {
+                state.layout.cursor.y
+            } else {
+                state.layout.cursor.x
+            };
+
+            state.layout.dragging = Some(Drag { which, origin });
 
             Task::none()
         }
 
-        Message::SplitterDragged(at) => {
-            let Some(drag) = state.layout.dragging.as_mut() else {
-                // Aucun séparateur tenu : l'abonnement émet à chaque mouvement
-                // de souris, c'est ici qu'on écarte le bruit.
+        Message::MouseMoved(at) => {
+            let Some(drag) = state.layout.dragging else {
+                // Aucun séparateur tenu : on retient seulement la position du
+                // curseur, pour que la prochaine saisie parte du bon endroit.
+                state.layout.cursor = at;
+
                 return Task::none();
             };
 
@@ -460,19 +471,14 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // en hauteur.
             let vertical = state.layout.preview_position == PreviewPosition::Bottom
                 && drag.which == Splitter::Preview;
-            let at = if vertical { at.y } else { at.x };
 
-            let origin = match drag.origin {
-                Some(origin) => origin,
-                None => {
-                    // Premier mouvement : lui seul donne l'origine.
-                    drag.origin = Some(at);
-
-                    return Task::none();
-                }
+            let delta = if vertical {
+                at.y - drag.origin
+            } else {
+                at.x - drag.origin
             };
 
-            let delta = at - origin;
+            state.layout.cursor = at;
 
             if vertical {
                 // Le curseur descend vers l'aperçu : sa part grandit.
@@ -498,6 +504,12 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::SplitterReleased => {
             state.layout.dragging = None;
+
+            Task::none()
+        }
+
+        Message::ToggleFocusMode => {
+            state.layout.focus_mode = !state.layout.focus_mode;
 
             Task::none()
         }
@@ -531,6 +543,12 @@ fn handle_shortcut(
     key: iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Task<Message> {
+    // F11 bascule le mode focus sans modificateur : c'est la touche consacrée
+    // au plein écran, et le geste doit rester d'une seule main.
+    if let iced::keyboard::Key::Named(iced::keyboard::key::Named::F11) = key {
+        return update(state, Message::ToggleFocusMode);
+    }
+
     if !modifiers.control() || modifiers.alt() || modifiers.logo() {
         return Task::none();
     }
@@ -631,7 +649,7 @@ fn subscription_drag() -> Subscription<Message> {
         // les événements même si un widget les a capturés.
         Status::Captured | Status::Ignored => match event {
             Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
-                Some(Message::SplitterDragged(position))
+                Some(Message::MouseMoved(position))
             }
             Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 Some(Message::SplitterReleased)

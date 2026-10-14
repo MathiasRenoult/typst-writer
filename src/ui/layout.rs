@@ -13,6 +13,13 @@ use super::{editor, preview, sidebar};
 /// connaître la taille de la fenêtre, et le calcul reste juste même si elle
 /// change en cours de route.
 pub fn view(state: &State) -> Element<'_, Message> {
+    // Mode focus : le texte source seul. Les préférences de panneaux ne sont
+    // pas touchées — c'est l'affichage qui les ignore — donc en sortir rend la
+    // disposition exactement telle qu'elle était.
+    if state.layout.focus_mode {
+        return editor::view(state);
+    }
+
     if state.layout.preview_visible && state.layout.preview_position == PreviewPosition::Bottom {
         return column_layout(state).into();
     }

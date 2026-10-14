@@ -68,14 +68,19 @@ pub enum Message {
     /// Un séparateur est saisi.
     SplitterPressed(crate::app::state::Splitter),
 
-    /// Le curseur s'est déplacé pendant qu'un séparateur est tenu.
+    /// La souris s'est déplacée.
     ///
     /// Les deux coordonnées sont transmises : l'abscisse gouverne les
-    /// dispositions horizontales, l'ordonnée la disposition en colonnes.
-    SplitterDragged(iced::Point),
+    /// dispositions en lignes, l'ordonnée la disposition en colonnes. La
+    /// position est mémorisée même hors glissement, pour que la saisie d'un
+    /// séparateur démarre à l'endroit exact du clic.
+    MouseMoved(iced::Point),
 
     /// Le séparateur est relâché.
     SplitterReleased,
+
+    /// Bascule le mode focus : seul le texte source reste visible.
+    ToggleFocusMode,
 
     /// Fait cycler le thème : système → clair → sombre → système.
     CycleTheme,

@@ -61,11 +61,22 @@ pub struct LayoutState {
     pub preview_height: f32,
 
     /// Séparateur en cours de glissement.
-    ///
-    /// Tant qu'un glissement est actif, c'est lui qui gouverne : le clic seul
-    /// ne donne pas la position du curseur, l'origine est donc prise au
-    /// premier mouvement.
     pub dragging: Option<Drag>,
+
+    /// Dernière position connue du curseur.
+    ///
+    /// Elle est mise à jour à chaque mouvement de souris, ce qui permet au
+    /// glissement de partir de la position réelle du clic. Sans cela, l'origine
+    /// ne pouvait être prise qu'au premier mouvement reçu : un glissement court
+    /// — appui, quelques pixels, relâchement — ne déplaçait rien du tout.
+    pub cursor: iced::Point,
+
+    /// Mode focus : seul le texte source est visible.
+    ///
+    /// Les préférences de panneaux sont conservées telles quelles ; c'est
+    /// l'affichage qui les ignore. Sortir du mode focus rend donc la
+    /// disposition exactement comme avant.
+    pub focus_mode: bool,
 }
 
 /// Un séparateur saisi par la souris.
@@ -74,12 +85,11 @@ pub struct Drag {
     /// Le séparateur tenu.
     pub which: Splitter,
 
-    /// Coordonnée du curseur au début du glissement, `None` jusqu'au premier
-    /// mouvement : le clic seul ne la donne pas.
+    /// Coordonnée du curseur au moment de la saisie.
     ///
-    /// L'axe dépend de la disposition — abscisse en lignes, ordonnée en
-    /// colonnes — et est tranché au moment du glissement.
-    pub origin: Option<f32>,
+    /// Le glissement applique ensuite un delta par rapport à cette origine, ce
+    /// qui suit le curseur sans avoir à connaître la taille de la fenêtre.
+    pub origin: f32,
 }
 
 /// Où l'aperçu se situe par rapport à l'éditeur.
@@ -135,6 +145,8 @@ impl Default for LayoutState {
             preview_position: PreviewPosition::Right,
             preview_height: 0.45,
             dragging: None,
+            cursor: iced::Point::ORIGIN,
+            focus_mode: false,
         }
     }
 }
@@ -368,20 +380,68 @@ mod tests {
         assert_eq!(LayoutState::clamp_share(0.5), 0.5);
     }
 
-    /// Le séparateur retenu l'origine au premier mouvement, pas au clic : le
-    /// clic ne donne pas de position de curseur.
+    /// Le glissement part de la dernière position connue du curseur.
+    ///
+    /// L'origine était auparavant prise au premier mouvement reçu, ce qui
+    /// avalait ce mouvement : un appui suivi d'un déplacement de quelques
+    /// pixels puis d'un relâchement ne déplaçait rien. L'origine est donc
+    /// désormais connue dès la saisie.
     #[test]
-    fn drag_origin_is_unknown_until_the_first_move() {
-        let mut drag = Drag {
-            which: Splitter::Sidebar,
-            origin: None,
+    fn drag_starts_from_the_last_known_cursor_position() {
+        let mut layout = LayoutState {
+            cursor: iced::Point::new(300.0, 400.0),
+            ..LayoutState::default()
         };
 
-        assert!(drag.origin.is_none(), "aucune origine au clic");
+        // La saisie reprend la position du curseur : elle n'est jamais absente.
+        layout.dragging = Some(Drag {
+            which: Splitter::Sidebar,
+            origin: layout.cursor.x,
+        });
 
-        drag.origin = Some(120.0);
+        let drag = layout.dragging.expect("séparateur saisi");
+        assert_eq!(drag.origin, 300.0, "l'origine est connue dès la saisie");
 
-        assert_eq!(drag.origin, Some(120.0));
+        // Un déplacement d'un seul pixel doit donc déjà produire un effet.
+        let delta = 301.0 - drag.origin;
+        assert_eq!(delta, 1.0, "aucun mouvement n'est avalé");
+    }
+
+    /// La position du curseur est retenue même hors glissement : c'est ce qui
+    /// permet à une saisie de démarrer au bon endroit.
+    #[test]
+    fn cursor_position_is_kept_even_without_a_drag() {
+        let mut layout = LayoutState::default();
+
+        layout.cursor = iced::Point::new(150.0, 250.0);
+
+        assert!(
+            layout.dragging.is_none(),
+            "aucun glissement ne doit être en cours"
+        );
+        assert_eq!(layout.cursor.x, 150.0);
+        assert_eq!(layout.cursor.y, 250.0);
+    }
+
+    /// Le mode focus ne touche pas aux préférences de panneaux : en sortir doit
+    /// rendre la disposition telle qu'elle était.
+    #[test]
+    fn focus_mode_leaves_panel_preferences_untouched() {
+        let mut layout = LayoutState::default();
+
+        layout.preview_position = PreviewPosition::Left;
+        let sidebar = layout.sidebar_width;
+        let preview = layout.preview_width;
+
+        layout.focus_mode = true;
+        assert!(layout.sidebar_visible, "la préférence est conservée");
+        assert!(layout.preview_visible, "la préférence est conservée");
+
+        layout.focus_mode = false;
+
+        assert_eq!(layout.sidebar_width, sidebar);
+        assert_eq!(layout.preview_width, preview);
+        assert_eq!(layout.preview_position, PreviewPosition::Left);
     }
 
     /// L'état de disposition par défaut doit être utilisable immédiatement :

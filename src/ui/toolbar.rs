@@ -38,36 +38,57 @@ pub fn view(state: &State) -> Element<'_, Message> {
     bar = bar.push(spacer());
 
     // Panneaux : ces trois-là gouvernent la disposition, ils vont ensemble.
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_panel_left::<Theme>(),
-        if state.layout.sidebar_visible {
-            "Masquer la bibliothèque"
-        } else {
-            "Afficher la bibliothèque"
-        },
-        Message::ToggleSidebar,
-        palette,
-        state.layout.sidebar_visible,
-    ));
+    // En mode focus ils disparaissent — les afficher donnerait à voir des
+    // commandes sans effet, et le mode focus n'a de sens que s'il ne reste que
+    // le texte.
+    if !state.layout.focus_mode {
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_panel_left::<Theme>(),
+            if state.layout.sidebar_visible {
+                "Masquer le panneau de travail"
+            } else {
+                "Afficher le panneau de travail"
+            },
+            Message::ToggleSidebar,
+            palette,
+            state.layout.sidebar_visible,
+        ));
+
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_eye::<Theme>(),
+            if state.layout.preview_visible {
+                "Masquer l'aperçu"
+            } else {
+                "Afficher l'aperçu"
+            },
+            Message::TogglePreview,
+            palette,
+            state.layout.preview_visible,
+        ));
+
+        bar = bar.push(icon_button(
+            preview_position_icon(state.layout.preview_position),
+            state.layout.preview_position.label(),
+            Message::SetPreviewPosition(state.layout.preview_position.next()),
+            palette,
+            false,
+        ));
+    }
 
     bar = bar.push(icon_button(
-        lucide_icons::iced::icon_eye::<Theme>(),
-        if state.layout.preview_visible {
-            "Masquer l'aperçu"
+        if state.layout.focus_mode {
+            lucide_icons::iced::icon_minimize_2::<Theme>()
         } else {
-            "Afficher l'aperçu"
+            lucide_icons::iced::icon_maximize_2::<Theme>()
         },
-        Message::TogglePreview,
+        if state.layout.focus_mode {
+            "Quitter le mode focus (F11)"
+        } else {
+            "Mode focus — le texte seul (F11)"
+        },
+        Message::ToggleFocusMode,
         palette,
-        state.layout.preview_visible,
-    ));
-
-    bar = bar.push(icon_button(
-        preview_position_icon(state.layout.preview_position),
-        state.layout.preview_position.label(),
-        Message::SetPreviewPosition(state.layout.preview_position.next()),
-        palette,
-        false,
+        state.layout.focus_mode,
     ));
 
     bar = bar.push(spacer());
