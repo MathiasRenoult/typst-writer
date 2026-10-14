@@ -27,15 +27,30 @@ const PIXEL_PER_PT: f64 = 2.0;
 /// cadre vide, sans pour autant rasteriser tout le document.
 const VIEWPORT_MARGIN: usize = 1;
 
+/// Identifiant du défilement de l'aperçu.
+///
+/// C'est par lui que l'application peut amener l'aperçu sur une page précise :
+/// un widget ne se pilote pas de l'extérieur sans être nommé.
+pub(crate) const SCROLL_ID: &str = "apercu";
+
 /// Dimensions logiques (pixels écran) des pages du document.
 ///
 /// La géométrie est connue avant tout rendu : elle sert à calculer la hauteur
 /// totale du panneau et à déterminer quelles pages sont visibles, ce qui rend
 /// la liste de pages virtualisable.
 fn page_sizes(state: &State) -> Vec<(f32, f32)> {
-    let Some(document) = state.render.document.as_ref() else {
-        return Vec::new();
-    };
+    match state.render.document.as_ref() {
+        Some(document) => sizes_of(document),
+        None => Vec::new(),
+    }
+}
+
+/// Dimensions logiques des pages d'un document.
+///
+/// Distinct de [`page_sizes`] pour être appelable depuis le gestionnaire de
+/// messages, qui tient le document sans passer par la vue.
+pub(crate) fn sizes_of(document: &typst_layout::PagedDocument) -> Vec<(f32, f32)> {
+    let document = document;
 
     (0..crate::typst::render::page_count(document))
         .map(|index| crate::typst::render::page_size(document, index).unwrap_or((595.0, 842.0)))
@@ -50,8 +65,16 @@ fn page_sizes(state: &State) -> Vec<(f32, f32)> {
         .collect()
 }
 
+/// Décalage de défilement qui amène la page `index` en tête du panneau.
+///
+/// La marge intérieure du panneau n'appartient pas au repère du défilement :
+/// le décalage absolu du viewport vaut donc `page_offset` moins cette marge.
+pub(crate) fn scroll_offset_for_page(sizes: &[(f32, f32)], index: usize) -> f32 {
+    (page_offset(sizes, index) - PANEL_PADDING).max(0.0)
+}
+
 /// Décalage vertical du sommet de la page `index` dans le contenu défilant.
-fn page_offset(sizes: &[(f32, f32)], index: usize) -> f32 {
+pub(crate) fn page_offset(sizes: &[(f32, f32)], index: usize) -> f32 {
     sizes
         .iter()
         .take(index)
@@ -143,6 +166,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(text(message).size(BODY_SIZE));
 
         return scrollable(content)
+            .id(SCROLL_ID)
             .width(Fill)
             .height(Fill)
             // Aucune page : le viewport ne sert à rien, mais le message garde
@@ -185,6 +209,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     }
 
     scrollable(content)
+        .id(SCROLL_ID)
         .width(Fill)
         .height(Fill)
         .on_scroll(move |viewport| {
@@ -352,6 +377,29 @@ fn panel_style(is_error: bool, palette: Palette) -> container::Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le défilement amène la page demandée en tête du panneau.
+    ///
+    /// Le décalage est exprimé dans le repère du défilement, qui ne comprend
+    /// pas la marge intérieure du panneau : d'où la différence avec
+    /// `page_offset`.
+    #[test]
+    fn scrolling_puts_the_wanted_page_at_the_top() {
+        let sizes = vec![(100.0, 100.0); 3];
+
+        assert_eq!(scroll_offset_for_page(&sizes, 0), 0.0);
+        assert_eq!(scroll_offset_for_page(&sizes, 1), 100.0 + PAGE_GAP);
+        assert_eq!(scroll_offset_for_page(&sizes, 2), 2.0 * (100.0 + PAGE_GAP));
+
+        // Le décalage suit toujours la géométrie de la page visée, quelle que
+        // soit sa hauteur.
+        let mixed = vec![(100.0, 50.0), (100.0, 200.0), (100.0, 100.0)];
+
+        assert_eq!(
+            scroll_offset_for_page(&mixed, 2),
+            50.0 + PAGE_GAP + 200.0 + PAGE_GAP
+        );
+    }
 
     /// Cinq pages de 100 px, séparées par `PAGE_GAP`.
     fn sizes() -> Vec<(f32, f32)> {

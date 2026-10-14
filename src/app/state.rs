@@ -2,6 +2,7 @@ use crate::editor::EditorState;
 use crate::project::{BibliographyEntry, Project};
 use crate::typst::render::Diagnostic;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::widget::image::Handle;
@@ -313,6 +314,21 @@ pub struct RenderState {
     /// ce numéro et n'écrase pas le cache avec une image obsolète.
     pub revision: u64,
 
+    /// Page où commence le chapitre en cours, telle que la dernière
+    /// compilation l'a rapportée.
+    ///
+    /// Rappelée à chaque compilation par l'introspection du document, à travers
+    /// le repère que la compilation insère devant l'`#include` du chapitre.
+    pub chapter_page: Option<usize>,
+
+    /// Chapitre vers lequel l'aperçu a déjà été amené.
+    ///
+    /// On retient le **chapitre**, pas la page : la page d'un chapitre se
+    /// décale à chaque frappe, et s'y accrocher ferait sauter l'aperçu sous les
+    /// yeux du rédacteur. L'aperçu n'est amené qu'une fois — quand on change de
+    /// chapitre.
+    pub followed_chapter: Option<PathBuf>,
+
     /// Le contenu a changé depuis la dernière écriture sur le disque.
     pub save_pending: bool,
 }
@@ -322,6 +338,23 @@ impl RenderState {
     ///
     /// Les `Handle` mis en cache sont relâchés : le backend libère alors les
     /// textures du document précédent à son prochain nettoyage.
+    /// Faut-il amener l'aperçu sur le chapitre ouvert ?
+    ///
+    /// La réponse est oui **une fois par chapitre**, et non à chaque
+    /// compilation : la page d'un chapitre se décale à chaque frappe, et s'y
+    /// accrocher arracherait l'aperçu sous les yeux du rédacteur au milieu
+    /// d'une phrase.
+    ///
+    /// Sans page connue, il n'y a rien à viser : mieux vaut ne pas bouger que
+    /// défiler au hasard.
+    pub fn should_follow_chapter(&self, open: Option<&std::path::Path>) -> bool {
+        let Some(open) = open else {
+            return false;
+        };
+
+        self.chapter_page.is_some() && self.followed_chapter.as_deref() != Some(open)
+    }
+
     pub fn reset(&mut self) {
         self.content.clear();
         self.pending = false;
@@ -333,6 +366,10 @@ impl RenderState {
         self.rendering.clear();
         self.stale.clear();
         self.visible = None;
+        self.chapter_page = None;
+        // Un document qu'on ouvre doit être amené à l'écran : oublier le
+        // chapitre déjà suivi évite d'hériter du précédent.
+        self.followed_chapter = None;
         self.save_pending = false;
         self.revision += 1;
     }
@@ -544,6 +581,40 @@ mod tests {
 
         assert!(deeper > start, "descendre agrandit l'aperçu : {deeper}");
         assert!(shallower < start, "monter le réduit : {shallower}");
+    }
+
+    /// L'aperçu ne doit être amené qu'une fois par chapitre.
+    ///
+    /// C'est la règle qui protège la lecture : suivre le numéro de page ferait
+    /// sauter l'aperçu à chaque phrase écrite dans un chapitre qui déborde sur
+    /// la page suivante.
+    #[test]
+    fn the_preview_follows_a_chapter_only_once() {
+        let first = std::path::Path::new("/projet/chapitres/01-un.typ");
+        let second = std::path::Path::new("/projet/chapitres/02-deux.typ");
+
+        let mut render = RenderState::default();
+        render.chapter_page = Some(3);
+
+        // Chapitre jamais suivi : on y amène l'aperçu.
+        assert!(render.should_follow_chapter(Some(first)));
+
+        render.followed_chapter = Some(first.to_path_buf());
+
+        // Même chapitre : on n'y touche plus, malgré les compilations
+        // qui continuent à chaque frappe.
+        assert!(!render.should_follow_chapter(Some(first)));
+
+        // Chapitre suivant : on y va.
+        assert!(render.should_follow_chapter(Some(second)));
+
+        // Aucun chapitre ouvert, ou aucune page connue : rien à viser.
+        render.followed_chapter = None;
+        assert!(render.should_follow_chapter(Some(first)));
+        assert!(!render.should_follow_chapter(None));
+
+        render.chapter_page = None;
+        assert!(!render.should_follow_chapter(Some(first)));
     }
 
     /// La position du curseur est retenue même hors glissement : c'est ce qui

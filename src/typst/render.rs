@@ -22,12 +22,26 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use typst::diag::{FileError, FileResult, SourceDiagnostic, Warned};
-use typst::foundations::{Bytes, Duration};
+use typst::foundations::{Bytes, Duration, Label};
+use typst::introspection::Introspector;
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
 use typst_layout::PagedDocument;
 use typst_syntax::{DiagSpan, FileId, RootedPath, Source, VirtualPath, VirtualRoot};
+
+/// Repère inséré dans l'entrée de compilation, devant l'`#include` du chapitre
+/// en cours d'écriture.
+///
+/// Un label Typst n'affiche rien et ne pèse pas dans la mise en page : il sert
+/// uniquement à demander au document, une fois compilé, la page où commence le
+/// chapitre qu'on écrit. Sans lui, l'aperçu n'a aucun moyen de savoir où il se
+/// trouve dans l'assemblage, et s'ouvre donc toujours à la première page — ce
+/// qui revenait à voir le chapitre 1 en écrivant le chapitre 7.
+const CHAPTER_MARKER: &str = "#metadata(none) <tw-chapitre>";
+
+/// Nom du label du repère, tel qu'on le redemande à l'introspection.
+const CHAPTER_LABEL: &str = "tw-chapitre";
 
 /// Densité de rendu des pages (pixels par point).
 ///
@@ -63,6 +77,13 @@ pub struct CompileOutcome {
 
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
+
+    /// Page où commence le chapitre en cours d'écriture (à partir de zéro),
+    /// `None` si elle n'a pas pu être déterminée.
+    ///
+    /// C'est ce qui permet d'amener l'aperçu sur le chapitre qu'on écrit plutôt
+    /// que de le laisser en tête de document.
+    pub chapter_page: Option<usize>,
 
     /// Document compilé, `None` si la compilation a échoué.
     ///
@@ -107,7 +128,18 @@ pub struct PageImage {
 /// retard sur la frappe, puisque l'assemblage `#include` les chapitres depuis
 /// le disque.
 pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> CompileOutcome {
-    let world = PreviewWorld::new(root, entry, overrides);
+    // Le chapitre en cours est celui dont `overrides` porte la version en
+    // mémoire : c'est exactement le fichier qu'on est en train d'écrire, donc
+    // celui dont on veut connaître la page. Quand l'assemblage lui-même est
+    // ouvert, `overrides` est vide et aucun repère n'est posé.
+    let marked = overrides
+        .first()
+        .and_then(|(path, _)| path.strip_prefix(root).ok())
+        .and_then(|chapter| mark_chapter(entry, chapter));
+
+    let compiled_entry = marked.as_deref().unwrap_or(entry);
+
+    let world = PreviewWorld::new(root, compiled_entry, overrides);
 
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
 
@@ -121,12 +153,63 @@ pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Com
     );
     let warnings = convert_diagnostics(&warnings, &world);
 
+    let document = output.ok().map(Arc::new);
+    let chapter_page = document.as_ref().and_then(|doc| chapter_page(doc));
+
     CompileOutcome {
-        content: fingerprint(entry, overrides),
+        // L'empreinte porte l'entrée **repérée** : le repère se déplace quand on
+        // change de chapitre, et c'est bien ce qui a été compilé.
+        content: fingerprint(compiled_entry, overrides),
         errors,
         warnings,
-        document: output.ok().map(Arc::new),
+        chapter_page,
+        document,
     }
+}
+
+/// Insère le repère devant l'`#include` du chapitre visé.
+///
+/// Renvoie `None` si l'assemblage n'inclut pas ce chapitre. Poser le repère
+/// ailleurs désignerait la page d'un autre texte — mieux vaut ne rien savoir
+/// que savoir faux, l'aperçu restant alors simplement où il est.
+fn mark_chapter(entry: &str, chapter: &Path) -> Option<String> {
+    // Les chemins de l'assemblage s'écrivent en relatif, avec des barres
+    // obliques, quels que soient la plateforme et le chemin d'origine.
+    let chapter = chapter.to_string_lossy().replace('\\', "/");
+    let include = format!("#include \"{chapter}\"");
+
+    let include_at = entry.find(&include)?;
+
+    // Le repère se pose en début de ligne : l'insérer en plein milieu
+    // décalerait tout le reste de la ligne.
+    let line_start = entry[..include_at].rfind('\n').map_or(0, |index| index + 1);
+
+    let mut marked = String::with_capacity(entry.len() + CHAPTER_MARKER.len() + 1);
+    marked.push_str(&entry[..line_start]);
+    marked.push_str(CHAPTER_MARKER);
+    marked.push('\n');
+    marked.push_str(&entry[line_start..]);
+
+    Some(marked)
+}
+
+/// Page où commence le chapitre repéré.
+///
+/// Le repère est un élément labellisé du document ; l'introspection rend sa
+/// position, dont le numéro de page — ramené **à partir de zéro** pour rester
+/// cohérent avec le reste de l'application.
+fn chapter_page(document: &PagedDocument) -> Option<usize> {
+    let introspector = document.introspector();
+
+    // Le label se reconstruit par `construct`, seul constructeur public depuis
+    // une chaîne — `Label::new` attend une chaîne internée.
+    let label = Label::construct(CHAPTER_LABEL.into()).ok()?;
+
+    let content = introspector.query_label(label).ok()?;
+    let location = content.location()?;
+    let position = introspector.position(location)?;
+
+    Some(position.page.get() - 1)
 }
 
 /// Empreinte de ce qui a été compilé.
@@ -871,6 +954,108 @@ mod tests {
         );
         let document = outcome.document.expect("document");
         println!("pages = {}", page_count(&document));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+    /// Le repère se pose sur sa propre ligne, juste avant l'`#include` visé.
+    #[test]
+    fn the_marker_is_inserted_on_its_own_line() {
+        let entry = "#set page(margin: 2cm)\n\n#include \"chapitres/01-un.typ\"\n\n#include \"chapitres/02-deux.typ\"\n";
+
+        let marked = mark_chapter(entry, Path::new("chapitres/02-deux.typ")).expect("repère posé");
+
+        assert_eq!(
+            marked,
+            "#set page(margin: 2cm)\n\n#include \"chapitres/01-un.typ\"\n\n\
+             #metadata(none) <tw-chapitre>\n#include \"chapitres/02-deux.typ\"\n"
+        );
+
+        // Retirer le repère doit rendre l'assemblage exactement tel qu'il était :
+        // le repère ne doit rien changer d'autre.
+        let restored = marked.replace(&format!("{CHAPTER_MARKER}\n"), "");
+
+        assert_eq!(restored, entry, "le repère ne doit rien modifier d'autre");
+
+        // Un chapitre absent de l'assemblage n'a pas de page à désigner.
+        assert_eq!(
+            mark_chapter(entry, Path::new("chapitres/09-absent.typ")),
+            None
+        );
+    }
+
+    /// Le repère doit désigner la page du chapitre en cours, pas la première.
+    ///
+    /// C'est ce qui permet d'amener l'aperçu sur le chapitre qu'on écrit : sans
+    /// lui il s'ouvre en tête d'assemblage, si bien qu'écrire le chapitre 7
+    /// revenait à regarder le chapitre 1.
+    #[test]
+    fn the_marker_locates_the_current_chapter() {
+        let dir = std::env::temp_dir().join("typst-writer-repere");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        // Le premier chapitre est poussé sur sa propre page par un saut
+        // explicite : sans cela les deux tiendraient sur la même, et le test ne
+        // pourrait pas distinguer l'un de l'autre.
+        let first_text = "= Premier\n\nALPHA.\n\n#pagebreak()\n";
+
+        fs::write(dir.join("chapitres/01-un.typ"), first_text).unwrap();
+        fs::write(dir.join("chapitres/02-deux.typ"), "= Second\n\nBETA.\n").unwrap();
+        fs::write(
+            dir.join("main.typ"),
+            "#include \"chapitres/01-un.typ\"\n\n#include \"chapitres/02-deux.typ\"\n",
+        )
+        .unwrap();
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+
+        // On écrit dans le second chapitre : sa version en mémoire est plus
+        // fraîche que le disque, c'est donc elle que `overrides` porte.
+        let second = dir.join("chapitres/02-deux.typ");
+        let outcome = compile(
+            &dir,
+            &assembly,
+            &[(second, "= Second\n\nBETA.\n".to_string())],
+        );
+
+        assert!(
+            outcome.errors.is_empty(),
+            "l'assemblage doit compiler : {:?}",
+            outcome.errors
+        );
+
+        let pages = page_count(outcome.document.as_ref().expect("document"));
+
+        assert!(
+            pages >= 2,
+            "il faut au moins deux pages, or il y en a {pages}"
+        );
+
+        // Deuxième page, comptée à partir de zéro.
+        assert_eq!(outcome.chapter_page, Some(1));
+
+        // Et le premier chapitre reste bien en tête.
+        let first = dir.join("chapitres/01-un.typ");
+        let outcome = compile(&dir, &assembly, &[(first, first_text.to_string())]);
+
+        assert_eq!(outcome.chapter_page, Some(0));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// L'assemblage ouvert lui-même ne porte aucun repère : il n'y a pas de
+    /// chapitre en cours dont on chercherait la page.
+    #[test]
+    fn no_marker_when_the_assembly_is_open() {
+        let dir = std::env::temp_dir().join("typst-writer-repere-vide");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("main.typ"), "= Titre\n\nDu contenu.\n").unwrap();
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+        let outcome = compile(&dir, &assembly, &[]);
+
+        assert_eq!(outcome.chapter_page, None);
 
         let _ = fs::remove_dir_all(&dir);
     }

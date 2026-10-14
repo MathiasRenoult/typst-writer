@@ -430,6 +430,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.render.pending = false;
             state.render.done = true;
             let compiled_ok = outcome.errors.is_empty();
+            let chapter_page = outcome.chapter_page;
 
             state.render.content = outcome.content;
             state.render.errors = outcome.errors;
@@ -459,17 +460,26 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.render.save_pending = true;
             }
 
-            // Marquer les pages visibles comme périmées. Tant qu'aucun scroll
-            // n'a eu lieu, `visible` est `None` : c'est la première page qui
-            // doit être rendue, sinon l'écran resterait rempli de cadres gris.
-            let (first, last) = state.render.visible.unwrap_or((0, 0));
+            state.render.chapter_page = chapter_page;
 
-            for index in first..=last {
+            // Toutes les pages sont périmées, et pas seulement les visibles :
+            // l'image d'une page hors écran appartient elle aussi à la
+            // révision précédente, et se retrouverait affichée telle quelle en
+            // y revenant. Le coût reste borné, `rasterize_visible` ne rendant
+            // que les pages visibles.
+            let total = state
+                .render
+                .document
+                .as_deref()
+                .map_or(0, crate::typst::render::page_count);
+
+            for index in 0..total {
                 state.render.stale.insert(index);
             }
 
-            // Rendre immédiatement les pages actuellement visibles.
-            rasterize_visible(state)
+            // Rendre les pages visibles, et amener l'aperçu sur le chapitre
+            // qu'on écrit s'il vient de changer.
+            Task::batch([rasterize_visible(state), follow_chapter(state)])
         }
 
         Message::PageRendered(revision, index, image) => {
@@ -844,7 +854,11 @@ fn rasterize_visible(state: &State) -> Task<Message> {
         return Task::none();
     };
 
-    let (first, last) = state.render.visible.unwrap_or((0, 0));
+    // Tant qu'aucun viewport n'a été signalé, les pages du haut sont celles
+    // qu'on voit. `iced` n'en signale d'ailleurs aucun tant que le contenu
+    // tient dans la fenêtre — auquel cas tout est visible d'un coup, et trois
+    // pages suffisent à couvrir ce cas comme le précédent.
+    let (first, last) = state.render.visible.unwrap_or((0, 2));
     let total = crate::typst::render::page_count(&document);
     let revision = state.render.revision;
 
@@ -862,6 +876,50 @@ fn rasterize_visible(state: &State) -> Task<Message> {
         .collect();
 
     Task::batch(tasks)
+}
+
+/// Amène l'aperçu sur le chapitre en cours d'écriture, une fois par chapitre.
+///
+/// Sans cela l'aperçu resterait en tête de l'assemblage : écrire le chapitre 7
+/// revenait à regarder le chapitre 1, et l'on pouvait croire que les chapitres
+/// suivants n'étaient pas rendus.
+///
+/// Le déclenchement a lieu à l'ouverture d'un chapitre, jamais à chaque
+/// compilation : la page d'un chapitre se décale à chaque frappe, et s'accrocher
+/// au numéro arracherait l'aperçu sous les yeux du rédacteur au milieu d'une
+/// phrase.
+fn follow_chapter(state: &mut State) -> Task<Message> {
+    if !state
+        .render
+        .should_follow_chapter(state.editor.path.as_deref())
+    {
+        return Task::none();
+    }
+
+    let (Some(document), Some(page)) = (state.render.document.clone(), state.render.chapter_page)
+    else {
+        return Task::none();
+    };
+
+    // Le chapitre est marqué comme suivi **avant** de calculer le défilement :
+    // si le calcul échouait, on ne redéfilerait pas indéfiniment.
+    state.render.followed_chapter = state.editor.path.clone();
+
+    let offset =
+        crate::ui::preview::scroll_offset_for_page(&crate::ui::preview::sizes_of(&document), page);
+
+    // L'opération est paramétrée par le type de message qu'elle produirait :
+    // elle n'en produit aucun, mais c'est ainsi qu'elle se raccorde à la
+    // boucle de messages.
+    iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
+        Message,
+    >(
+        crate::ui::preview::SCROLL_ID.into(),
+        iced::advanced::widget::operation::scrollable::AbsoluteOffset {
+            x: None,
+            y: Some(offset),
+        },
+    ))
 }
 
 /// Lance la compilation du document (moteur Typst en bibliothèque).
