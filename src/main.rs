@@ -6,6 +6,17 @@ mod theming;
 mod typst;
 mod ui;
 
+/// Allocateur global.
+///
+/// `mimalloc` rend au système la mémoire qu'on lui rend, au lieu de la garder
+/// dans des arènes par fil. L'application alloue par gros blocs et par à-coups —
+/// chaque page rasterisée pèse plusieurs mégaoctets, et chaque image en alloue
+/// pour la vue — et l'allocateur de la glibc conserve ces blocs libérés, un
+/// arène par fil de travail : la mémoire résidente enfle alors qu'aucune
+/// structure ne retient rien.
+#[global_allocator]
+static ALLOCATEUR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> iced::Result {
     iced::application(
         || (app::State::new(), app::startup()),

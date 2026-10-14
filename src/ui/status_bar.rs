@@ -52,7 +52,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // rédaction ; encodage et langage sont des constantes, on les omet.
     bar = bar.push(
         palette
-            .label(format!("{} mots", words(state.editor.content())))
+            // Le compte est tenu à jour par les tics de rendu : le calculer
+            // ici revenait à cloner le document entier à chaque image.
+            .label(format!("{} mots", state.render.words.unwrap_or(0)))
             .size(12)
             .color(palette.text_muted),
     );
@@ -78,10 +80,4 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ..Default::default()
         })
         .into()
-}
-
-/// Nombre de mots : ce qui intéresse une rédaction, pas le nombre de
-/// caractères.
-fn words(content: String) -> usize {
-    content.split_whitespace().count()
 }

@@ -350,7 +350,7 @@ mod tests {
 
         let mut total = 0usize;
 
-        for round in 1..=40 {
+        for _round in 1..=40 {
             for _ in 0..250 {
                 let _ = editor.insert_at_cursor("une phrase de plus, écrite au clavier. ");
                 total += 1;

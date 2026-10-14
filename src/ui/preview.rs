@@ -15,12 +15,6 @@ const PAGE_GAP: f32 = 12.0;
 /// Marge intérieure du panneau.
 const PANEL_PADDING: f32 = 16.0;
 
-/// Densité de rendu des pages (pixels par point).
-///
-/// Doit correspondre à `crate::typst::render::PIXEL_PER_PT` : c'est le rapport
-/// entre les pixels de l'image et sa taille logique à l'écran.
-const PIXEL_PER_PT: f64 = 2.0;
-
 /// Pages rendues au-delà du viewport, de part et d'autre.
 ///
 /// Une page de marge garantit qu'un défilement rapide ne révèle jamais un
@@ -53,13 +47,16 @@ pub(crate) fn sizes_of(document: &typst_layout::PagedDocument) -> Vec<(f32, f32)
     let document = document;
 
     (0..crate::typst::render::page_count(document))
-        .map(|index| crate::typst::render::page_size(document, index).unwrap_or((595.0, 842.0)))
-        // Les images sont rendues à 2 px/pt : on les affiche à leur taille
-        // logique, et la géométrie suit cette même échelle.
+        .map(|index| crate::typst::render::page_size(document, index).unwrap_or((595.3, 841.9)))
+        // La géométrie est en points, et l'aperçu affiche un pixel logique par
+        // point : la place d'une page à l'écran ne dépend donc pas de la
+        // densité du rendu. C'est ce qui permet de rasteriser plus ou moins fin
+        // — donc de consommer plus ou moins de mémoire — sans que la mise en
+        // page du panneau bouge d'un pixel.
         .map(|(width, height)| {
             (
-                (width / PIXEL_PER_PT) as f32,
-                (height / PIXEL_PER_PT) as f32,
+                (width * crate::typst::render::DISPLAY_PIXEL_PER_PT) as f32,
+                (height * crate::typst::render::DISPLAY_PIXEL_PER_PT) as f32,
             )
         })
         .collect()

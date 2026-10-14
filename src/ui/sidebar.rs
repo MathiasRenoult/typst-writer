@@ -451,7 +451,13 @@ fn live_words(state: &State) -> usize {
 
     match substituted {
         Some(chapter) => {
-            total - chapter.words + crate::project::count_words(&state.editor.content())
+            // Le compte du chapitre ouvert vient de l'état, tenu à jour par les
+            // tics de rendu. Le recalculer ici, c'est-à-dire à chaque image,
+            // clonait tout le document soixante fois par seconde. À défaut de
+            // mesure encore fraîche — juste après l'ouverture —, le compte
+            // relevé sur le disque : un chiffre vieux de quelques secondes vaut
+            // mieux qu'un zéro.
+            total - chapter.words + state.render.words.unwrap_or(chapter.words)
         }
         None => total,
     }

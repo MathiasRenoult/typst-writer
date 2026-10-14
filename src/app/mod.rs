@@ -18,6 +18,14 @@ const RENDER_INTERVAL_MS: u64 = 300;
 /// Intervalle de sauvegarde automatique différée.
 const SAVE_INTERVAL_MS: u64 = 1000;
 
+/// Variable d'environnement qui demande le suivi de la mémoire.
+///
+/// Un instrument, pas un réglage : absent, l'application ne mesure rien.
+pub const MEMORY_ENV: &str = "TYPST_WRITER_MEMOIRE";
+
+/// Période du relevé de mémoire, en secondes.
+const MEMORY_INTERVAL_S: u64 = 5;
+
 impl State {
     /// État initial : le projet de la session est rouvert, ou le plus récent,
     /// ou un premier projet est créé — puis le chapitre à reprendre est ouvert.
@@ -54,6 +62,9 @@ impl State {
             project,
             projects,
             window: None,
+            // L'écran se déclare dans les millisecondes qui suivent ; d'ici là,
+            // un pixel par point, la densité la plus économique.
+            scale_factor: 1.0,
             renaming: None,
             render: Default::default(),
             layout: Default::default(),
@@ -147,6 +158,10 @@ impl State {
         self.editor.retheme(&self.resolved);
         self.export_status = None;
         self.render.reset();
+        // Le compte de mots du document qu'on ouvre, tout de suite : la barre
+        // d'état et le panneau le lisent, et attendre le prochain tic
+        // afficherait un zéro entre-temps.
+        self.render.words = Some(crate::project::count_words(&self.editor.content()));
         self.refresh_context();
         self.save_session();
     }
@@ -241,7 +256,13 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
-        Message::Editor(message) => state.editor.update(message).map(Message::Editor),
+        Message::Editor(message) => {
+            // Le texte a peut-être changé : le compte de mots est à refaire, au
+            // prochain tic, et non à chaque image.
+            state.render.words = None;
+
+            state.editor.update(message).map(Message::Editor)
+        }
 
         Message::NewFile => {
             // Un « nouveau document » est désormais un nouveau chapitre : c'est
@@ -511,7 +532,51 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::ScaleFactor(scale_factor) => {
+            // La densité du rendu en découle, et elle décide de la mémoire d'une
+            // page : une A4 pèse 8 Mo de pixels à 2 px/pt, dont le backend fait
+            // une texture d'environ 14 Mio.
+            if (scale_factor - state.scale_factor).abs() < 0.001 {
+                return Task::none();
+            }
+
+            state.scale_factor = scale_factor;
+
+            // Les images en cache appartiennent à l'ancienne densité : leur
+            // empreinte ne veut plus rien dire, et toutes les pages sont à
+            // refaire. Elles ne sont pas jetées pour autant — une image à
+            // l'ancienne densité reste juste à l'écran, simplement remise à
+            // l'échelle, jusqu'à l'arrivée de la nouvelle. Changer d'écran ne
+            // doit pas faire disparaître le document.
+            state.render.image_hashes.clear();
+
+            let total = state
+                .render
+                .document
+                .as_deref()
+                .map_or(0, crate::typst::render::page_count);
+
+            state.render.stale.extend(0..total);
+
+            rasterize_visible(state)
+        }
+
+        Message::MemoryTick => {
+            report_memory(state);
+
+            Task::none()
+        }
+
         Message::RenderTick => {
+            // Le compte de mots est une donnée de la vue, et la vue n'a pas le
+            // droit de modifier l'état : il se calcule donc ici, au rythme des
+            // tics, et seulement quand le texte a changé. Le calculer chez elle,
+            // c'était cloner le document entier à chaque image — deux fois,
+            // puisque la barre d'état et le panneau le demandent chacun.
+            if state.render.words.is_none() {
+                state.render.words = Some(crate::project::count_words(&state.editor.content()));
+            }
+
             if state.render.pending {
                 // Une seule compilation à la fois ; si le contenu a changé
                 // pendant ce temps, le tick suivant relancera.
@@ -922,7 +987,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::WindowOpened(id) => {
             state.window = Some(id);
 
-            Task::none()
+            // L'échelle de l'écran est redemandée ici : une fenêtre peut
+            // s'ouvrir sur un écran dont l'échelle diffère de celle des autres,
+            // et c'est elle qui règle la densité du rendu.
+            iced::window::scale_factor(id).map(Message::ScaleFactor)
         }
 
         Message::ToggleFocusMode => {
@@ -1126,6 +1194,11 @@ fn rasterize_visible(state: &State) -> Task<Message> {
     let total = crate::typst::render::page_count(&document);
     let revision = state.render.revision;
 
+    // La densité vient de l'écran, et non d'une constante : c'est elle qui
+    // décide de la mémoire d'une page, et une constante n'a pas raison sur tous
+    // les écrans.
+    let density = crate::typst::render::pixel_per_pt(state.scale_factor);
+
     let tasks: Vec<Task<Message>> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| state.render.stale.contains(index))
         .filter(|index| !state.render.rendering.contains(index))
@@ -1133,7 +1206,7 @@ fn rasterize_visible(state: &State) -> Task<Message> {
             let document = document.clone();
 
             Task::perform(
-                async move { crate::typst::render::render_page(&document, index) },
+                async move { crate::typst::render::render_page(&document, index, density) },
                 move |image| Message::PageRendered(revision, index, image),
             )
         })
@@ -1273,7 +1346,119 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
         subscription_window(),
         subscription_drag(),
         subscription_keys(),
+        subscription_memory(),
     ])
+}
+
+/// Suit l'empreinte mémoire, si l'environnement le demande.
+///
+/// Désactivé par défaut : c'est un instrument de mesure, pas une fonction de
+/// l'application. Il existe parce qu'un rapport d'explosion mémoire ne se
+/// diagnostique pas à l'œil — trois campagnes de mesure n'ont pas réussi à le
+/// reproduire — et que la mémoire graphique n'apparaît dans aucun profil
+/// ordinaire.
+///
+///     TYPST_WRITER_MEMOIRE=1 cargo run --release
+fn subscription_memory() -> Subscription<Message> {
+    if std::env::var_os(MEMORY_ENV).is_none() {
+        return Subscription::none();
+    }
+
+    time::every(std::time::Duration::from_secs(MEMORY_INTERVAL_S)).map(|_| Message::MemoryTick)
+}
+
+/// Un relevé de mémoire.
+#[derive(Debug, Clone, Copy)]
+struct Memory {
+    /// Mémoire résidente de l'application, en kilo-octets.
+    resident: usize,
+
+    /// Mémoire graphique « GTT » du système, en kilo-octets.
+    gtt: usize,
+
+    /// Mémoire graphique « VRAM » du système, en kilo-octets.
+    vram: usize,
+}
+
+/// Relève et journalise l'empreinte mémoire.
+///
+/// Trois chiffres, parce qu'aucun ne suffit : la mémoire résidente de
+/// l'application, et celles du sous-système graphique. Ces dernières sont
+/// **celles de tout le système** — le compositeur et les autres applications y
+/// figurent aussi — et seuls leurs **écarts** depuis le premier relevé ont un
+/// sens : c'est la dérive qu'on cherche, pas la valeur absolue.
+fn report_memory(state: &State) {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    static BASELINE: std::sync::OnceLock<Memory> = std::sync::OnceLock::new();
+
+    let now = Memory {
+        resident: resident_memory_kb(),
+        gtt: graphics_memory_kb("mem_info_gtt_used"),
+        vram: graphics_memory_kb("mem_info_vram_used"),
+    };
+
+    let start = *START.get_or_init(std::time::Instant::now);
+    let baseline = *BASELINE.get_or_init(|| now);
+
+    let delta = |now: usize, baseline: usize| (now as i64 - baseline as i64) / 1024;
+
+    let pages = state
+        .render
+        .document
+        .as_deref()
+        .map_or(0, crate::typst::render::page_count);
+
+    println!(
+        "[mémoire] {:>4} s | RSS {} Mo ({:+}) | GTT système {} Mio ({:+}) | VRAM système {} Mio ({:+}) \
+         | pages {pages} (en cache {}, en cours {}) | densité {:.2} px/pt",
+        start.elapsed().as_secs(),
+        now.resident / 1024,
+        delta(now.resident, baseline.resident),
+        now.gtt / 1024,
+        delta(now.gtt, baseline.gtt),
+        now.vram / 1024,
+        delta(now.vram, baseline.vram),
+        state.render.page_cache.len(),
+        state.render.rendering.len(),
+        crate::typst::render::pixel_per_pt(state.scale_factor),
+    );
+}
+
+/// Mémoire résidente du processus, en kilo-octets.
+fn resident_memory_kb() -> usize {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status.lines().find_map(|line| {
+                line.strip_prefix("VmRSS:")?
+                    .trim()
+                    .trim_end_matches(" kB")
+                    .trim()
+                    .parse()
+                    .ok()
+            })
+        })
+        .unwrap_or(0)
+}
+
+/// Somme d'un compteur de mémoire graphique, en kilo-octets.
+///
+/// Ces compteurs appartiennent au noyau (`/sys/class/drm`) et couvrent **tout le
+/// système**. Ils valent zéro là où ils n'existent pas, ce qui est le cas de
+/// toute autre plateforme que Linux — la mesure ne doit jamais gêner.
+fn graphics_memory_kb(counter: &str) -> usize {
+    let Ok(entries) = std::fs::read_dir("/sys/class/drm") else {
+        return 0;
+    };
+
+    let bytes: usize = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("card"))
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("device").join(counter)).ok())
+        .filter_map(|value| value.trim().parse::<usize>().ok())
+        .sum();
+
+    bytes / 1024
 }
 
 /// Réapplique le thème aux éléments qui en dépendent mais ne le recoivent pas
@@ -1345,7 +1530,15 @@ fn refresh_themes(state: &mut State) {
 /// que la fenêtre n'apparaisse pas une frame en sombre avant de passer au
 /// clair (ou l'inverse).
 pub fn startup() -> Task<Message> {
-    iced::system::theme().map(|mode| Message::SystemTheme(Some(mode)))
+    Task::batch(vec![
+        iced::system::theme().map(|mode| Message::SystemTheme(Some(mode))),
+        // La densité du rendu vient de l'écran : elle doit être connue avant la
+        // première rasterisation, sinon la première page se paie à la densité de
+        // repli, et il faut la refaire.
+        iced::window::latest()
+            .and_then(iced::window::scale_factor)
+            .map(Message::ScaleFactor),
+    ])
 }
 
 fn save_as_task(state: &State) -> Task<Message> {

@@ -43,11 +43,47 @@ const CHAPTER_MARKER: &str = "#metadata(none) <tw-chapitre>";
 /// Nom du label du repère, tel qu'on le redemande à l'introspection.
 const CHAPTER_LABEL: &str = "tw-chapitre";
 
-/// Densité de rendu des pages (pixels par point).
+/// Densité d'affichage : un pixel logique par point.
 ///
-/// 2.0 correspond à un écran HiDPI raisonnable : net, et ~4× moins de pixels
-/// qu'une export à 4.0. Le coût de rasterisation reste sous les 30 ms/page.
-const PIXEL_PER_PT: f64 = 2.0;
+/// L'aperçu montre la page à sa taille naturelle, où **un point vaut un pixel
+/// logique** — une page A4 fait donc 595 px de large à l'écran. C'est une
+/// convention d'affichage, indépendante de la finesse du rendu.
+pub const DISPLAY_PIXEL_PER_PT: f64 = 1.0;
+
+/// Densité de rendu maximale : elle borne la mémoire d'une page.
+///
+/// Une page A4 à 2 px/pt pèse 8 Mo de pixels, dont le backend graphique fait
+/// une texture d'environ 14 Mio. C'est un plafond, jamais une cible.
+pub const MAX_PIXEL_PER_PT: f64 = 2.0;
+
+/// Densité de rendu la plus faible jamais employée.
+///
+/// L'échelle que la fenêtre déclare n'est pas toujours la vérité. Sous Wayland,
+/// l'échelle **fractionnaire** d'un compositeur — 1,6 sur la machine de
+/// développement — est annoncée comme 1, et le compositeur agrandit ensuite
+/// l'image entière : la fenêtre ne peut pas le savoir. Suivre la déclaration à
+/// la lettre donnerait donc un aperçu visiblement flou sur un écran qui montrera
+/// bel et bien 1,6 pixel par point.
+///
+/// Cette borne est le compromis : mesurée, elle coûte 4,5 Mo de pixels par page
+/// A4 au lieu des 8 Mo d'une densité de 2,0, et reste nette aussi bien sur un
+/// écran à l'échelle 1 que sur un écran à 1,6 — dans le second cas, un
+/// échantillon de 1,5 pour 1,6 demandé, soit 6 % d'écart, invisible.
+pub const MIN_PIXEL_PER_PT: f64 = 1.5;
+
+/// Densité de rendu qui correspond exactement à l'écran.
+///
+/// Le rendu n'a besoin que des pixels **physiques** que l'afficheur consommera :
+/// `DISPLAY_PIXEL_PER_PT × facteur d'échelle`. Rasteriser plus fin ne se voit
+/// pas — l'écran ne peut pas montrer des pixels qu'il n'a pas — et coûte la
+/// mémoire au **carré** du rapport : 2,0 au lieu de 1,6 sur un écran à
+/// l'échelle 1,6, c'est 1,56 fois plus de mémoire pour rien.
+///
+/// Jamais moins que [`MIN_PIXEL_PER_PT] non plus : voir cette constante, qui
+/// explique pourquoi la déclaration de la fenêtre ne suffit pas.
+pub fn pixel_per_pt(scale_factor: f32) -> f64 {
+    (DISPLAY_PIXEL_PER_PT * f64::from(scale_factor)).clamp(MIN_PIXEL_PER_PT, MAX_PIXEL_PER_PT)
+}
 
 /// Un diagnostic (erreur ou avertissement) positionné dans le document.
 #[derive(Debug, Clone)]
@@ -268,18 +304,22 @@ pub fn fingerprint(entry: &str, overrides: &[(PathBuf, String)]) -> String {
     fingerprint
 }
 
-/// Rasterise une page du document en pixels RGBA bruts.
+/// Rasterise une page du document en pixels RGBA bruts, à la densité demandée.
+///
+/// La densité vient de l'écran — voir [`pixel_per_pt`] — et non d'une constante :
+/// c'est elle qui règle la mémoire d'une page, et une constante ne peut pas
+/// avoir raison sur tous les écrans.
 ///
 /// Renvoie `None` si l'index dépasse le nombre de pages.
 ///
 /// C'est la seule opération coûteuse de l'aperçu (~30 ms pour une page A4) :
 /// elle ne doit donc être déclenchée que pour les pages réellement
 /// nécessaires, et jamais depuis le thread d'affichage.
-pub fn render_page(document: &PagedDocument, index: usize) -> Option<PageImage> {
+pub fn render_page(document: &PagedDocument, index: usize, density: f64) -> Option<PageImage> {
     let page = document.pages().get(index)?;
 
     let options = typst_render::RenderOptions {
-        pixel_per_pt: typst_utils::Scalar::new(PIXEL_PER_PT),
+        pixel_per_pt: typst_utils::Scalar::new(density),
         render_bleed: false,
     };
 
@@ -317,14 +357,17 @@ fn pixels_hash(pixels: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// Dimensions d'une page en pixels (largeur, hauteur) à la densité de rendu.
+/// Dimensions d'une page en **points** (largeur, hauteur).
+///
+/// En points, et non en pixels : la densité du rendu dépend de l'écran, et une
+/// géométrie qui l'incorporerait obligerait à recalculer toute la mise en page
+/// de l'aperçu au moindre changement d'écran. C'est la vue qui multiplie — par
+/// la densité pour le rendu, par [`DISPLAY_PIXEL_PER_PT`] pour l'affichage.
 pub fn page_size(document: &PagedDocument, index: usize) -> Option<(f64, f64)> {
     let page = document.pages().get(index)?;
     let size = page.frame.size();
 
-    let scale = PIXEL_PER_PT;
-
-    Some((size.x.to_pt() * scale, size.y.to_pt() * scale))
+    Some((size.x.to_pt(), size.y.to_pt()))
 }
 
 /// Nombre de pages du document.
@@ -618,7 +661,7 @@ mod tests {
         let mut rendered = 0;
 
         for index in 0..2.min(page_count(&document)) {
-            if render_page(&document, index).is_some() {
+            if render_page(&document, index, MAX_PIXEL_PER_PT).is_some() {
                 rendered += 1;
             }
         }
@@ -632,7 +675,7 @@ mod tests {
 
         // 3. Taille d'une page.
         if let Some((width, height)) = page_size(&document, 0) {
-            println!("Taille d'une page  : {width:.0} × {height:.0} px");
+            println!("Taille d'une page  : {width:.0} × {height:.0} pt");
         }
 
         // 4. Compilation incrémentale : une frappe en fin de document.
@@ -724,18 +767,34 @@ mod tests {
         let outcome = compile(&dir, "= Titre\n\nDu contenu.\n", &[]);
         let document = outcome.document.expect("document compilé");
 
-        let page = render_page(&document, 0).expect("rendu de la page");
+        // La géométrie est en points : A4, 210 × 297 mm, soit ≈ 595 × 842 pt.
+        // Elle ne dépend donc pas de la densité du rendu, ce qui est tout
+        // l'intérêt : changer d'écran ne doit pas changer la mise en page.
+        let (point_width, point_height) = page_size(&document, 0).expect("taille de page");
 
-        // A4 à 2 px/pt : ~1191 × 1684 px.
         assert!(
-            (page.width as f64 - 1191.0).abs() < 5.0,
-            "largeur A4 attendue, eu {}",
-            page.width
+            (point_width - 595.3).abs() < 2.0,
+            "largeur A4 attendue en points, eu {point_width}"
         );
         assert!(
-            (page.height as f64 - 1684.0).abs() < 5.0,
-            "hauteur A4 attendue, eu {}",
-            page.height
+            (point_height - 841.9).abs() < 2.0,
+            "hauteur A4 attendue en points, eu {point_height}"
+        );
+
+        let page = render_page(&document, 0, MAX_PIXEL_PER_PT).expect("rendu de la page");
+
+        // Les pixels suivent la densité demandée, au pixel près.
+        assert!(
+            (page.width as f64 - point_width * MAX_PIXEL_PER_PT).abs() <= 1.0,
+            "largeur cohérente avec la densité : {} vs {} pt × {MAX_PIXEL_PER_PT}",
+            page.width,
+            point_width
+        );
+        assert!(
+            (page.height as f64 - point_height * MAX_PIXEL_PER_PT).abs() <= 1.0,
+            "hauteur cohérente avec la densité : {} vs {} pt × {MAX_PIXEL_PER_PT}",
+            page.height,
+            point_height
         );
 
         // Le tampon doit être exactement un RGBA par pixel : `from_rgba`
@@ -746,26 +805,20 @@ mod tests {
             "tampon RGBA de taille width * height * 4 attendu"
         );
 
-        // La géométrie annoncée par `page_size` doit correspondre aux pixels
-        // produits : c'est ce rapport qui règle la taille d'affichage. Les
-        // deux voies de calcul ne s'arrondissent pas de la même façon, d'où
-        // la tolérance d'un pixel — sans effet visible puisque l'image est
-        // affichée en `ContentFit::Contain`.
-        let (width, height) = page_size(&document, 0).expect("taille de page");
+        // Une densité plus grossière doit coûter **moins de mémoire** : c'est
+        // exactement ce qu'on vient chercher. 2,0 → 1,6, c'est 2,0²/1,6² ≈ 1,56
+        // fois moins de pixels pour la même page.
+        let coarser = render_page(&document, 0, pixel_per_pt(1.6)).expect("rendu à 1,6");
+
+        let ratio = page.pixels.len() as f64 / coarser.pixels.len() as f64;
 
         assert!(
-            (width - page.width as f64).abs() <= 1.0,
-            "largeur cohérente entre la géométrie et le rendu : {width} vs {}",
-            page.width
-        );
-        assert!(
-            (height - page.height as f64).abs() <= 1.0,
-            "hauteur cohérente entre la géométrie et le rendu : {height} vs {}",
-            page.height
+            (ratio - 1.56).abs() < 0.15,
+            "une page à 1,6 px/pt doit coûter ~1,56 fois moins de pixels, rapport {ratio:.2}"
         );
 
         // Index hors bornes : pas de page.
-        assert!(render_page(&document, 99).is_none());
+        assert!(render_page(&document, 99, MAX_PIXEL_PER_PT).is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -783,7 +836,7 @@ mod tests {
         assert!(outcome.errors.is_empty(), "maths valides attendues");
 
         let document = outcome.document.expect("document compilé");
-        let page = render_page(&document, 0).expect("rendu");
+        let page = render_page(&document, 0, MAX_PIXEL_PER_PT).expect("rendu");
 
         assert_eq!(
             page.pixels.len(),
@@ -829,13 +882,13 @@ mod tests {
         let document = compile(&dir, &assembly, &[]).document.expect("rendu");
         let (width, height) = page_size(&document, 0).expect("taille de page");
 
-        // A6 : 105 × 148 mm, soit ≈ 595 × 839 px à 2 px/pt.
+        // A6 : 105 × 148 mm, soit ≈ 297,6 × 419,5 pt.
         assert!(
-            (width - 595.0).abs() < 5.0,
+            (width - 297.6).abs() < 2.0,
             "largeur A6 attendue, eu {width}"
         );
         assert!(
-            (height - 839.0).abs() < 5.0,
+            (height - 419.5).abs() < 2.0,
             "hauteur A6 attendue, eu {height}"
         );
 
@@ -845,11 +898,37 @@ mod tests {
         let (plain_width, _) = page_size(&alone, 0).expect("taille de page");
 
         assert!(
-            (plain_width - 1191.0).abs() < 5.0,
+            (plain_width - 595.3).abs() < 2.0,
             "largeur A4 attendue sans en-tête, eu {plain_width}"
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// La densité de rendu suit l'écran, et rien d'autre.
+    ///
+    /// C'est elle qui règle la mémoire d'une page — 8 Mo de pixels pour une A4
+    /// à 2 px/pt — donc la seule fonction qui doit décider de sa valeur.
+    #[test]
+    fn the_rendering_density_follows_the_screen() {
+        // Un écran à l'échelle 1,6 : le rendu suit l'écran, pas une constante.
+        // La tolérance est celle du passage f32 → f64 : le facteur d'échelle
+        // vient de la fenêtre en simple précision.
+        assert!((pixel_per_pt(1.6) - 1.6).abs() < 1e-6);
+
+        // Le plein écran d'un portable dense, au-delà du plafond.
+        assert!((pixel_per_pt(3.0) - MAX_PIXEL_PER_PT).abs() < 1e-9);
+
+        // Un écran qui se déclare à l'échelle 1 : jamais moins que la borne
+        // basse, parce que la déclaration n'est pas toujours la vérité — c'est
+        // le cas de tout écran à échelle fractionnaire sous Wayland, qui
+        // s'annonce à 1 et se fait agrandir par le compositeur.
+        assert!((pixel_per_pt(1.0) - MIN_PIXEL_PER_PT).abs() < 1e-9);
+        assert!((pixel_per_pt(0.5) - MIN_PIXEL_PER_PT).abs() < 1e-9);
+
+        // La densité d'affichage, elle, est fixe : c'est elle qui veut dire
+        // « un point vaut un pixel logique ».
+        assert!((DISPLAY_PIXEL_PER_PT - 1.0).abs() < 1e-9);
     }
 
     /// Le contenu en mémoire prime sur le disque.
@@ -1444,9 +1523,10 @@ mod tests {
             return;
         };
 
-        // Exactement les réglages de l'aperçu.
+        // La plus fine des densités : ce diagnostic existe pour regarder les
+        // pixels, pas pour mesurer l'aperçu.
         let options = typst_render::RenderOptions {
-            pixel_per_pt: typst_utils::Scalar::new(PIXEL_PER_PT),
+            pixel_per_pt: typst_utils::Scalar::new(MAX_PIXEL_PER_PT),
             render_bleed: false,
         };
 
@@ -1460,7 +1540,7 @@ mod tests {
         }
 
         println!(
-            "taille : {} × {} px, à {PIXEL_PER_PT} px/pt",
+            "taille : {} × {} px, à {MAX_PIXEL_PER_PT} px/pt",
             pixmap.width(),
             pixmap.height()
         );
@@ -1579,7 +1659,7 @@ mod tests {
         };
 
         let options = typst_render::RenderOptions {
-            pixel_per_pt: typst_utils::Scalar::new(PIXEL_PER_PT),
+            pixel_per_pt: typst_utils::Scalar::new(MAX_PIXEL_PER_PT),
             render_bleed: false,
         };
 

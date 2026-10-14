@@ -74,6 +74,21 @@ pub enum Message {
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,
 
+    /// Le facteur d'échelle de l'écran, demandé à l'ouverture de la fenêtre.
+    ///
+    /// La densité du rendu en découle : rendue constante, elle rasterise plus
+    /// fin que l'écran ne peut montrer sur les écrans denses, et paie la mémoire
+    /// au carré du rapport.
+    ScaleFactor(f32),
+
+    /// Tic de mesure de la mémoire : actif seulement si l'environnement le
+    /// demande (`TYPST_WRITER_MEMOIRE`).
+    ///
+    /// Un instrument, pas une fonction de l'application : il est là parce qu'un
+    /// rapport d'explosion mémoire ne se diagnostique pas à l'œil, et que la
+    /// mémoire graphique n'apparaît dans aucun profil ordinaire.
+    MemoryTick,
+
     /// Le mode de thème du système a été lu au démarrage ou a changé.
     SystemTheme(crate::ui::theme::SystemMode),
 

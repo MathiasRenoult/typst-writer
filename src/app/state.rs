@@ -48,6 +48,15 @@ pub struct State {
     /// donnée qui ne change pas.
     pub window: Option<iced::window::Id>,
 
+    /// Facteur d'échelle de l'écran, demandé à l'ouverture de la fenêtre.
+    ///
+    /// Il règle la **densité du rendu** (`crate::typst::render::pixel_per_pt`) :
+    /// rasteriser plus fin que ce que l'écran peut montrer ne se voit pas, et
+    /// coûte la mémoire au carré du rapport. Un pixel par point tant que l'écran
+    /// ne s'est pas déclaré — la mesure la plus économique, et la bonne sur un
+    /// écran non dense.
+    pub scale_factor: f32,
+
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 
@@ -334,6 +343,17 @@ pub struct RenderState {
     /// dernier scroll. `None` avant le premier rendu de la vue.
     pub visible: Option<(usize, usize)>,
 
+    /// Nombre de mots du document ouvert, tel que le texte le donne.
+    ///
+    /// Tenu à jour par les tics de rendu, et lu par la vue. La vue n'a pas le
+    /// droit de modifier l'état, et le recalculer chez elle revenait à cloner le
+    /// document entier **soixante fois par seconde** — deux fois, puisque la
+    /// barre d'état et le panneau le demandent chacun. Ce n'est pas une fuite,
+    /// mais c'est de l'agitation d'allocateur à chaque image, et elle se paie.
+    ///
+    /// `None` : le texte a changé depuis le dernier tic.
+    pub words: Option<usize>,
+
     /// Numéro du document compilé, incrémenté à chaque compilation.
     ///
     /// Un rendu de page lancé sur un document depuis dépassé se reconnaît à
@@ -492,6 +512,8 @@ impl RenderState {
         self.stale.clear();
         self.visible = None;
         self.chapter_page = None;
+        // Le compte de mots est un fait du document qu'on quitte.
+        self.words = None;
         // Un document qu'on ouvre doit être amené à l'écran : oublier le
         // chapitre déjà suivi évite d'hériter du précédent.
         self.followed_chapter = None;
