@@ -79,6 +79,16 @@ pub enum Message {
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,
 
+    /// Le battement d'écoute du serveur de langage.
+    ///
+    /// On **relève** ses événements au lieu de les attendre : son canal est un
+    /// canal ordinaire, et l'attendre dans un abonnement immobiliserait un fil
+    /// de l'exécuteur pour un serveur qui parle rarement.
+    LspPoll,
+
+    /// Un événement du serveur de langage.
+    Lsp(crate::lsp::client::Event),
+
     /// Le facteur d'échelle de l'écran, demandé à l'ouverture de la fenêtre.
     ///
     /// La densité du rendu en découle : rendue constante, elle rasterise plus

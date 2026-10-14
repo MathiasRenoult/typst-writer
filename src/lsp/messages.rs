@@ -269,6 +269,20 @@ impl CompletionItem {
     }
 }
 
+/// Combien de diagnostics, et combien d'erreurs parmi eux.
+///
+/// C'est ce qu'une barre d'état résume. Le tri se fait ici, une fois, plutôt que
+/// dans la vue : c'est une donnée que l'on affiche, donc une donnée que l'on
+/// éprouve.
+pub fn counts(diagnostics: &[Diagnostic]) -> (usize, usize) {
+    let errors = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.severity == Some(Severity::Error))
+        .count();
+
+    (errors, diagnostics.len())
+}
+
 /// Une plage désigne une chaîne, un nombre ou rien : on n'en garde que le texte.
 fn string_or_number<'de, D: Deserializer<'de>>(
     deserializer: D,
@@ -478,6 +492,23 @@ mod tests {
             ),
             0
         );
+    }
+
+    /// Le résumé compte les erreurs, et sépare les autres.
+    #[test]
+    fn the_summary_counts_errors_apart() {
+        let diagnostics: Vec<Diagnostic> = serde_json::from_value(serde_json::json!([
+            { "message": "une erreur", "severity": 1,
+              "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 1 } } },
+            { "message": "un avertissement", "severity": 2,
+              "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 1 } } },
+            { "message": "sans gravité déclarée",
+              "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 1 } } },
+        ]))
+        .expect("diagnostics");
+
+        assert_eq!(counts(&diagnostics), (1, 3));
+        assert_eq!(counts(&[]), (0, 0));
     }
 
     /// Un décalage au milieu d'un caractère est ramené à la frontière.

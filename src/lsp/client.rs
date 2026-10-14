@@ -69,7 +69,10 @@ impl<'de> serde::Deserialize<'de> for Location {
 }
 
 /// Ce que le serveur peut nous apprendre, du point de vue de l'application.
-#[derive(Debug)]
+///
+/// `Clone` parce qu'un message d'`iced` doit pouvoir l'être ; les événements
+/// sont de petites choses, et leur clonage ne pèse rien.
+#[derive(Debug, Clone)]
 pub enum Event {
     /// Le serveur a répondu à l'initialisation : il est prêt.
     ///
@@ -178,7 +181,12 @@ impl Session {
     /// recevant [`Event::Ready`]. Bloquer dessus ferait attendre l'interface
     /// plusieurs secondes au démarrage, pour une fonction dont elle peut très
     /// bien se passer.
-    pub fn start(root: &Path, path: &Path, text: &str) -> std::io::Result<Self> {
+    pub fn start(
+        root: &Path,
+        entry: Option<&Path>,
+        path: &Path,
+        text: &str,
+    ) -> std::io::Result<Self> {
         let mut child = Command::new(command())
             .arg("lsp")
             .current_dir(root)
@@ -213,7 +221,7 @@ impl Session {
             next_id: 1,
         };
 
-        session.initialize(root);
+        session.initialize(root, entry);
         session.did_open(text);
 
         Ok(session)
@@ -288,6 +296,23 @@ impl Session {
         );
     }
 
+    /// Ouvre un autre document auprès du serveur.
+    ///
+    /// Le protocole demande de **fermer** celui qu'on quittait : un serveur qui
+    /// garde ouvert un document dont on ne lui parle plus continue de le
+    /// compiler, de le diagnostiquer, et de consommer pour rien.
+    pub fn open_document(&mut self, path: &Path, text: &str) {
+        self.notify(
+            "textDocument/didClose",
+            json!({ "textDocument": { "uri": self.uri } }),
+        );
+
+        self.uri = Self::uri_for(path);
+        self.version = 1;
+
+        self.did_open(text);
+    }
+
     /// Signale que le document a changé.
     ///
     /// Le texte entier est renvoyé, sans intervalle : le protocole autorise un
@@ -348,7 +373,7 @@ impl Session {
     }
 
     /// La salutation initiale, telle que le protocole la décrit.
-    fn initialize(&mut self, root: &Path) {
+    fn initialize(&mut self, root: &Path, entry: Option<&Path>) {
         let request = json!({
             "jsonrpc": "2.0",
             "id": self.next_id,
@@ -361,6 +386,20 @@ impl Session {
                     "uri": format!("file://{}", percent_encode(&root.to_string_lossy())),
                     "name": "Projet",
                 } ],
+                // **Le point d'entrée du projet.** Sans lui, tinymist résout le
+                // projet « fichier par fichier » : il traite le document ouvert
+                // comme un document isolé, ignore l'en-tête de l'assemblage et
+                // sa bibliographie. Un chapitre paraît alors plein d'erreurs qui
+                // n'en sont pas — une macro définie dans l'assemblage serait
+                // « inconnue » — et les citations ne se complètent pas.
+                //
+                // C'est **le même point d'entrée que celui de l'aperçu** : les
+                // diagnostics du serveur et notre rendu parlent donc du même
+                // document, et non de deux documents qui se ressemblent.
+                "initializationOptions": {
+                    "projectResolution": "lockDatabase",
+                    "entry": entry.map(|path| path.to_string_lossy().to_string()),
+                },
                 "capabilities": {
                     "textDocument": {
                         "synchronization": { "dynamicRegistration": false },
@@ -827,7 +866,34 @@ mod tests {
         let chapter = dir.join("chapitres/01-intro.typ");
         let text = fs::read_to_string(&chapter).expect("chapitre lisible");
 
-        let mut session = Session::start(&dir, &chapter, &text).expect("démarrage du serveur");
+        // Le point d'entrée est l'assemblage : c'est lui qui porte la
+        // bibliographie, et c'est lui que l'aperçu compile.
+        let entry = dir.join("main.typ");
+
+        // Tinymist ne sait pas quel fichier est l'entrée d'un projet sans le
+        // lui dire : sa documentation est explicite — la « résolution par
+        // verrou » s'appuie sur un fichier `tinymist.lock`, écrit par la ligne
+        // de commande, les commandes LSP correspondantes n'étant *pas*
+        // implémentées. C'est donc à l'application de créer ce verrou.
+        let lock = std::process::Command::new(Session::command())
+            .args(["compile", "--save-lock", "main.typ"])
+            .current_dir(&dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("compilation avec verrou");
+
+        // C'est le **fichier** qui compte, et non le code de sortie : tinymist
+        // écrit son verrou même quand le document contient une erreur — et le
+        // projet de ce test en contient une exprès, puisqu'il sert à éprouver la
+        // complétion après un nom de commande incomplet.
+        assert!(
+            dir.join("tinymist.lock").is_file(),
+            "le verrou du projet doit être écrit (compilation sortie en {lock:?})"
+        );
+
+        let mut session =
+            Session::start(&dir, Some(&entry), &chapter, &text).expect("démarrage du serveur");
 
         // 1. Il se présente.
         match wait_for(

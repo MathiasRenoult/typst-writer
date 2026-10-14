@@ -40,6 +40,9 @@ pub struct State {
     /// Disposition des panneaux : visibilité, largeurs, position de l'aperçu.
     pub layout: LayoutState,
 
+    /// L'assistance à la frappe : tinymist, s'il est là.
+    pub lsp: LspState,
+
     /// Fenêtre de l'application, retenue dès son ouverture.
     ///
     /// Elle est nécessaire pour passer en plein écran en mode focus : le
@@ -286,6 +289,39 @@ impl LayoutState {
             Splitter::Preview => Self::clamp_width(extent - delta),
         }
     }
+}
+
+/// L'assistance du serveur de langage, quand il est là.
+///
+/// Le serveur est **facultatif** : sans lui, tout le reste de l'application
+/// fonctionne à l'identique — l'aperçu compile par ses propres moyens. Cet état
+/// ne décrit donc que ce qui *s'ajoute*, et l'interface le dit tel quel plutôt
+/// que de présenter son absence comme une panne.
+#[derive(Default)]
+pub struct LspState {
+    /// La session avec le serveur, tant qu'il répond.
+    pub session: Option<crate::lsp::client::Session>,
+
+    /// Le serveur a été cherché, et n'est pas là.
+    ///
+    /// Retenu, pour ne pas payer un démarrage raté à chaque document ouvert :
+    /// le chercher une fois suffit, et l'utilisateur qui l'installe en cours de
+    /// route relancera l'application.
+    pub unavailable: bool,
+
+    /// Le serveur a répondu à l'initialisation : il est prêt à être questionné.
+    pub ready: bool,
+
+    /// L'adresse du document ouvert auprès du serveur.
+    pub document: Option<String>,
+
+    /// Ce que le serveur signale dans le document ouvert.
+    ///
+    /// Résumé dans la barre d'état tant que l'éditeur ne sait pas les dessiner.
+    pub diagnostics: Vec<crate::lsp::messages::Diagnostic>,
+
+    /// Une réponse est attendue : le battement d'écoute se resserre.
+    pub awaiting: bool,
 }
 
 /// État du rendu fidèle : compilation Typst + rasterisation à la demande.

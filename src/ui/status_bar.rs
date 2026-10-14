@@ -59,6 +59,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .color(palette.text_muted),
     );
 
+    // L'assistance à la frappe. Son absence se dit **sans alarme** : une
+    // application qui fonctionne sans elle ne doit pas présenter son manque
+    // comme une panne, mais rien dire du tout laisserait croire qu'elle est là.
+    bar = bar.push(
+        palette
+            .label(lsp_status(state).0)
+            .size(12)
+            .color(lsp_status(state).1),
+    );
+
     if !render.is_empty() {
         bar = bar.push(palette.label(render).size(12).color(render_color));
     }
@@ -80,4 +90,40 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ..Default::default()
         })
         .into()
+}
+
+/// Ce que dit l'assistance à la frappe, et de quelle couleur.
+///
+/// Son absence se dit **sans alarme** : l'application fonctionne sans elle, et
+/// présenter ce manque comme une panne serait faux. Mais ne rien dire du tout
+/// laisserait croire qu'elle est là.
+fn lsp_status(state: &State) -> (String, iced::Color) {
+    let palette = state.resolved.palette;
+
+    if state.lsp.unavailable {
+        return ("assistance absente".to_string(), palette.text_muted);
+    }
+
+    if state.lsp.session.is_none() {
+        return (String::new(), palette.text_muted);
+    }
+
+    if !state.lsp.ready {
+        return ("assistance au démarrage".to_string(), palette.text_muted);
+    }
+
+    let (errors, total) = crate::lsp::messages::counts(&state.lsp.diagnostics);
+
+    if total == 0 {
+        return ("assistance active".to_string(), palette.success);
+    }
+
+    if errors > 0 {
+        return (format!("{errors} erreur(s) du serveur"), palette.danger);
+    }
+
+    (
+        format!("{total} avertissement(s) du serveur"),
+        palette.warning,
+    )
 }

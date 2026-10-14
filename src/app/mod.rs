@@ -68,6 +68,7 @@ impl State {
             renaming: None,
             render: Default::default(),
             layout: Default::default(),
+            lsp: Default::default(),
             system_theme: None,
             themes: Vec::new(),
             theme_problems: Vec::new(),
@@ -164,6 +165,73 @@ impl State {
         self.render.words = Some(crate::project::count_words(&self.editor.content()));
         self.refresh_context();
         self.save_session();
+    }
+
+    /// Met le serveur de langage au service du document que l'éditeur tient.
+    ///
+    /// Appelée à chaque tic, et **idempotente** : elle ne fait rien tant que le
+    /// document ouvert est déjà celui que le serveur connaît. C'est ce qui la
+    /// rend sûre comme unique point d'accroche — il n'y a pas de chemin
+    /// d'ouverture à oublier, puisqu'on ne l'appelle depuis aucun.
+    ///
+    /// Le processus est cherché au premier document, une seule fois : quelques
+    /// mégaoctets et une seconde de démarrage, ce qui n'a pas à être payé à
+    /// chaque changement de chapitre — on lui ouvre donc le nouveau document, et
+    /// on lui ferme l'ancien.
+    ///
+    /// Son absence n'est pas une panne : c'est un état, que l'état retient pour
+    /// ne pas reposer la question.
+    fn follow_with_lsp(&mut self) {
+        if self.lsp.unavailable {
+            return;
+        }
+
+        let Some(path) = self.editor.path.clone() else {
+            return;
+        };
+
+        let wanted = crate::lsp::client::Session::uri_for(&path);
+
+        if self.lsp.document.as_deref() == Some(wanted.as_str()) {
+            return;
+        }
+
+        let text = self.editor.content();
+
+        if let Some(session) = self.lsp.session.as_mut() {
+            session.open_document(&path, &text);
+            self.lsp.document = Some(session.uri().to_string());
+            self.lsp.diagnostics.clear();
+
+            return;
+        }
+
+        if !crate::lsp::client::Session::is_available() {
+            self.lsp.unavailable = true;
+
+            return;
+        }
+
+        // L'assemblage est donné comme point d'entrée : c'est lui qui porte
+        // l'en-tête et la bibliographie, et c'est lui que l'aperçu compile. Le
+        // serveur et le rendu parlent donc du même document.
+        match crate::lsp::client::Session::start(
+            &self.project.dir,
+            Some(&self.project.main),
+            &path,
+            &text,
+        ) {
+            Ok(session) => {
+                self.lsp.document = Some(session.uri().to_string());
+                self.lsp.session = Some(session);
+                self.lsp.ready = false;
+            }
+            Err(error) => {
+                eprintln!("Le serveur de langage n'a pas pu démarrer : {error}");
+
+                self.lsp.unavailable = true;
+            }
+        }
     }
 
     /// Retient le projet et le chapitre ouverts pour le prochain démarrage.
@@ -561,20 +629,56 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             rasterize_visible(state)
         }
 
+        Message::LspPoll => {
+            let events: Vec<crate::lsp::client::Event> = match state.lsp.session.as_ref() {
+                Some(session) => session.events().try_iter().collect(),
+                None => Vec::new(),
+            };
+
+            // Un message par événement, plutôt qu'un appel direct : tout ce qui
+            // change l'état passe par la même porte, et c'est cette porte qu'un
+            // test peut franchir pour éprouver l'application.
+            Task::batch(
+                events
+                    .into_iter()
+                    .map(|event| Task::done(Message::Lsp(event))),
+            )
+        }
+
+        Message::Lsp(event) => apply_lsp(state, event),
+
         Message::MemoryTick => {
             report_memory(state);
+            report_lsp(state);
 
             Task::none()
         }
 
         Message::RenderTick => {
+            // Le serveur de langage suit **le document que l'éditeur tient**,
+            // quel que soit le chemin par lequel on y est arrivé. S'accrocher
+            // aux fonctions qui *ouvrent* un document laissait passer le
+            // démarrage, qui ouvre le premier d'une autre façon : le serveur
+            // n'était alors jamais lancé, et rien ne le disait.
+            state.follow_with_lsp();
+
             // Le compte de mots est une donnée de la vue, et la vue n'a pas le
             // droit de modifier l'état : il se calcule donc ici, au rythme des
             // tics, et seulement quand le texte a changé. Le calculer chez elle,
             // c'était cloner le document entier à chaque image — deux fois,
             // puisque la barre d'état et le panneau le demandent chacun.
             if state.render.words.is_none() {
-                state.render.words = Some(crate::project::count_words(&state.editor.content()));
+                let content = state.editor.content();
+
+                state.render.words = Some(crate::project::count_words(&content));
+
+                // C'est **le** moment où l'on sait que le texte a changé, et le
+                // seul endroit où l'on en a la preuve : le serveur de langage
+                // voit donc le document au même rythme. Le synchroniser à
+                // chaque frappe lui renverrait tout le fichier à chaque touche.
+                if let Some(session) = state.lsp.session.as_mut() {
+                    session.did_change(&content);
+                }
             }
 
             if state.render.pending {
@@ -760,6 +864,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.persist();
                 state.refresh_context();
                 state.render.save_pending = false;
+
+                // Le serveur suit les écritures : c'est ainsi qu'il sait
+                // recompiler le projet, et que les diagnostics des *autres*
+                // chapitres se mettent à jour.
+                if let Some(session) = state.lsp.session.as_mut() {
+                    session.did_save();
+                }
             }
 
             Task::none()
@@ -1403,8 +1514,76 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
         subscription_window(),
         subscription_drag(),
         subscription_keys(),
+        subscription_lsp(_state),
         subscription_memory(),
     ])
+}
+
+/// L'écoute du serveur de langage.
+///
+/// Deux rythmes, parce qu'un seul ne peut pas convenir aux deux moments : quand
+/// une réponse est attendue, l'attente doit être courte — une liste de
+/// complétion qui arrive un quart de seconde après la frappe est une liste qu'on
+/// a déjà cessé d'attendre ; au repos, un réveil fréquent ne ferait que
+/// reconstruire la vue vingt fois par seconde pour rien.
+///
+/// Sans serveur, il n'y a rien à écouter : l'abonnement disparaît, et
+/// l'application ne se réveille plus pour lui.
+fn subscription_lsp(state: &State) -> Subscription<Message> {
+    if state.lsp.session.is_none() {
+        return Subscription::none();
+    }
+
+    let interval = if state.lsp.awaiting { 16 } else { 250 };
+
+    time::every(std::time::Duration::from_millis(interval)).map(|_| Message::LspPoll)
+}
+
+/// Applique un événement du serveur de langage.
+///
+/// Le serveur est une source de vérité **en plus**, jamais *à la place* : ses
+/// diagnostics ne remplacent pas ceux de notre propre compilation, qui restent
+/// ceux de l'aperçu. Il arrive aussi qu'il parle d'un autre fichier que celui
+/// qu'on écrit — ses diagnostics ne sont donc gardés que pour le document
+/// ouvert.
+fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> Task<Message> {
+    use crate::lsp::client::Event;
+
+    match event {
+        Event::Ready { .. } => {
+            state.lsp.ready = true;
+            state.lsp.awaiting = false;
+
+            Task::none()
+        }
+
+        Event::Diagnostics { uri, items } => {
+            if state.lsp.document.as_deref() == Some(uri.as_str()) {
+                state.lsp.diagnostics = items;
+            }
+
+            Task::none()
+        }
+
+        Event::Gone { reason } => {
+            // Le serveur est parti : l'application continue sans lui, et le
+            // dit. Rien de ce qui suit ne dépend de lui.
+            eprintln!("Le serveur de langage s'est arrêté : {reason}");
+
+            state.lsp.session = None;
+            state.lsp.unavailable = true;
+            state.lsp.ready = false;
+            state.lsp.awaiting = false;
+            state.lsp.document = None;
+            state.lsp.diagnostics.clear();
+
+            Task::none()
+        }
+
+        // Les réponses aux questions qu'on n'a pas encore posées : la liste de
+        // complétion et la navigation viennent à l'étape suivante.
+        Event::Completions { .. } | Event::Hover { .. } | Event::Definitions { .. } => Task::none(),
+    }
 }
 
 /// Suit l'empreinte mémoire, si l'environnement le demande.
@@ -1513,6 +1692,40 @@ fn rasterizations_since_last_report(requested: u64) -> u64 {
     let previous = PREVIOUS.swap(requested, std::sync::atomic::Ordering::Relaxed);
 
     requested.saturating_sub(previous)
+}
+
+/// Relève l'état de l'assistance, quand l'environnement demande le journal.
+///
+/// Le même instrument que la mémoire, et pour la même raison : un serveur de
+/// langage est un sous-système qu'on ne voit pas. Sans ce relevé, « l'assistance
+/// est branchée » ne se vérifie qu'à l'œil, sur une barre d'état.
+fn report_lsp(state: &State) {
+    if state.lsp.session.is_none() && !state.lsp.unavailable {
+        return;
+    }
+
+    let (errors, total) = crate::lsp::messages::counts(&state.lsp.diagnostics);
+
+    println!(
+        "[assistance] {} | document {} | {errors} erreur(s) sur {total} diagnostic(s) | {}",
+        if state.lsp.unavailable {
+            "absente"
+        } else if state.lsp.ready {
+            "active"
+        } else {
+            "au démarrage"
+        },
+        if state.lsp.document.is_some() {
+            "ouvert"
+        } else {
+            "aucun"
+        },
+        if state.lsp.awaiting {
+            "réponse attendue"
+        } else {
+            "au repos"
+        },
+    );
 }
 
 /// Mémoire résidente du processus, en kilo-octets.
