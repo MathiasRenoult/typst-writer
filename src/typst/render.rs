@@ -1553,6 +1553,72 @@ mod tests {
         );
     }
 
+    /// Ce qui est **réellement composé**, famille par famille.
+    ///
+    /// Avoir une police dans le jeu ne prouve pas qu'elle soit choisie : seule
+    /// la lecture des pages le dit. Le document à éprouver se donne par
+    /// l'environnement, parce qu'il n'appartient pas au dépôt :
+    ///
+    ///     TYPST_WRITER_EPREUVE=~/.typst-writer/projets/mon-travail/main.typ \
+    ///         cargo test --release -- --ignored diagnose_composition --nocapture
+    #[test]
+    #[ignore]
+    fn diagnose_composition() {
+        let Some(entry) = std::env::var_os("TYPST_WRITER_EPREUVE") else {
+            println!("TYPST_WRITER_EPREUVE n'est pas posé : rien à éprouver");
+
+            return;
+        };
+
+        let entry = PathBuf::from(entry);
+        let root = crate::lsp::client::root_of(&entry);
+        let content = std::fs::read_to_string(&entry).expect("assemblage lisible");
+
+        let outcome = compile(&root, &content, &[]);
+
+        println!("avertissements : {}", outcome.warnings.len());
+
+        for warning in &outcome.warnings {
+            println!("  {}", warning.message.trim());
+        }
+
+        let Some(document) = outcome.document else {
+            println!("compilation en échec : {} erreur(s)", outcome.errors.len());
+
+            return;
+        };
+
+        fn walk(frame: &typst::layout::Frame, seen: &mut Vec<(String, String)>) {
+            for (_, item) in frame.items() {
+                match item {
+                    typst::layout::FrameItem::Text(text) => {
+                        let family = text.font.info().family.to_string();
+
+                        if seen.iter().any(|(name, _)| *name == family) {
+                            continue;
+                        }
+
+                        seen.push((family, text.text.chars().take(24).collect()));
+                    }
+                    typst::layout::FrameItem::Group(group) => walk(&group.frame, seen),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut seen: Vec<(String, String)> = Vec::new();
+
+        for page in document.pages() {
+            walk(&page.frame, &mut seen);
+        }
+
+        println!("familles réellement composées : {}", seen.len());
+
+        for (family, sample) in &seen {
+            println!("  {family}  →  {sample:?}");
+        }
+    }
+
     /// DIAGNOSTIC : les glyphes d'un texte, un par un.
     ///
     /// Ignoré par défaut. L'exposant ne se voit **pas** dans la taille du texte
