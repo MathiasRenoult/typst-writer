@@ -1660,10 +1660,6 @@ fn reserved_keys() -> Vec<iced::keyboard::Key> {
 /// l'éditeur, on regarde le mot en cours. Le serveur répond plus tard, et la
 /// liste s'ouvre à ce moment-là — une réponse est un événement comme un autre.
 fn request_completion(state: &mut State) -> Task<Message> {
-    let Some(session) = state.lsp.session.as_mut() else {
-        return Task::none();
-    };
-
     let content = state.editor.content();
     let offset = state.editor.cursor_offset();
 
@@ -1681,6 +1677,29 @@ fn request_completion(state: &mut State) -> Task<Message> {
     {
         return Task::none();
     }
+
+    // `@` appelle une citation, et les citations sont **nos données** : le projet
+    // connaît ses clés. Les proposer ici n'est pas un raccourci — c'est la seule
+    // source qui les ait, tinymist n'en fournissant aucune pour un chapitre — et
+    // c'est immédiat, puisqu'il n'y a personne à interroger.
+    if context.trigger == crate::lsp::completion::CITATION {
+        let items = crate::lsp::completion::citations(
+            state
+                .bibliography
+                .iter()
+                .map(|entry| (entry.key.as_str(), entry.kind.as_str())),
+        );
+
+        if !items.is_empty() {
+            open_completion(state, items, &context);
+
+            return Task::none();
+        }
+    }
+
+    let Some(session) = state.lsp.session.as_mut() else {
+        return Task::none();
+    };
 
     // **Synchroniser avant de demander.** tinymist répond sur le document qu'il
     // connaît : demander la liste avant de lui avoir donné la frappe, c'est lui
@@ -1735,6 +1754,56 @@ fn request_completion(state: &mut State) -> Task<Message> {
     }
 
     Task::none()
+}
+
+/// Ouvre la liste, ou la remplit si elle attendait déjà.
+///
+/// **Une seule porte** : les clés du projet comme les éléments du serveur passent
+/// par ici, ce qui évite que les deux chemins divergent. Et une liste qui ne
+/// montrerait rien se ferme, plutôt que de retenir les touches pour rien.
+fn open_completion(
+    state: &mut State,
+    items: Vec<crate::lsp::messages::CompletionItem>,
+    context: &crate::lsp::completion::Context,
+) {
+    let shown = crate::lsp::completion::matching(&items, &context.typed);
+
+    if shown.is_empty() {
+        close_completion(state);
+
+        return;
+    }
+
+    let anchor = state
+        .editor
+        .editor
+        .cursor_screen_position()
+        .unwrap_or(iced::Point::ORIGIN);
+
+    match state.lsp.completion.as_mut() {
+        Some(open) => {
+            open.items = items;
+            open.shown = shown;
+            open.selected = 0;
+            open.typed = context.typed.clone();
+            open.trigger = context.trigger;
+            open.start = context.start;
+            open.anchor = anchor;
+        }
+        None => {
+            state.lsp.completion = Some(Completion {
+                items,
+                shown,
+                selected: 0,
+                typed: context.typed.clone(),
+                trigger: context.trigger,
+                start: context.start,
+                anchor,
+            });
+
+            state.editor.editor.set_reserved_keys(reserved_keys());
+        }
+    }
 }
 
 /// Ferme la liste, et rend les touches à l'éditeur.
@@ -1831,30 +1900,23 @@ fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> Task<Messag
                 return Task::none();
             }
 
-            let typed = state
-                .lsp
-                .completion
-                .as_ref()
-                .map(|open| open.typed.clone())
-                .unwrap_or_default();
-
-            let shown = crate::lsp::completion::matching(&items, &typed);
-
-            // Rien à proposer : la liste se ferme. La garder ouverte
-            // réserverait les touches pour une liste vide, et les flèches ne
-            // feraient plus rien dans le texte — un défaut visible, et pour
-            // aucune raison.
-            if shown.is_empty() {
-                close_completion(state);
-
+            // Le mot en cours, tel qu'il est **maintenant** : entre la demande et
+            // la réponse, la frappe a pu continuer.
+            let Some(context) =
+                state
+                    .lsp
+                    .completion
+                    .as_ref()
+                    .map(|open| crate::lsp::completion::Context {
+                        trigger: open.trigger,
+                        typed: open.typed.clone(),
+                        start: open.start,
+                    })
+            else {
                 return Task::none();
-            }
+            };
 
-            if let Some(open) = state.lsp.completion.as_mut() {
-                open.items = items;
-                open.shown = shown;
-                open.selected = 0;
-            }
+            open_completion(state, items, &context);
 
             Task::none()
         }

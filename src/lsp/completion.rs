@@ -14,6 +14,31 @@ use super::messages::CompletionItem;
 /// que le serveur a dit savoir faire.
 pub const TRIGGERS: [char; 2] = ['#', '@'];
 
+/// Le caractère qui appelle une citation.
+pub const CITATION: char = '@';
+
+/// Les clés citables du projet, prêtes à être proposées.
+///
+/// tinymist n'en propose **aucune** — c'est mesuré, et cela tient à la portée des
+/// noms en Typst : la bibliographie appartient à l'assemblage, et un chapitre ne
+/// la voit pas. Mais le projet, lui, sait quelles clés il contient : les offrir
+/// nous-mêmes est donc à la fois juste et **plus rapide** qu'un aller-retour, car
+/// il n'y a rien à demander.
+pub fn citations<'a>(entries: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<CompletionItem> {
+    entries
+        .map(|(key, kind)| CompletionItem {
+            label: key.to_string(),
+            kind: Some(super::messages::CompletionKind::Reference),
+            insert_text: Some(key.to_string()),
+            text_edit: None,
+            detail: Some(kind.to_string()),
+            documentation: None,
+            filter_text: None,
+            sort_text: None,
+        })
+        .collect()
+}
+
 /// Ce qu'un déclencheur a ouvert : le mot en cours, et où il commence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
@@ -369,6 +394,32 @@ mod tests {
         // Un marqueur échappé reste un caractère, et un `$` seul aussi.
         assert_eq!(expand("un \\$ dollar"), ("un $ dollar".to_string(), None));
         assert_eq!(expand("prix : 5$"), ("prix : 5$".to_string(), None));
+    }
+
+    /// Les clés du projet deviennent des éléments proposables.
+    #[test]
+    fn the_project_keys_become_candidates() {
+        let items = citations([("dupont2026", "article"), ("martin-2024", "book")].into_iter());
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "dupont2026");
+        assert_eq!(items[0].detail.as_deref(), Some("article"));
+        assert_eq!(items[0].insertion(), Some("dupont2026"));
+
+        // Sans modification à appliquer, l'insertion se rabat sur ce qui a ete
+        // tape : `@dup` devient `@dupont2026`, et non `@dupdupont2026`.
+        assert_eq!(
+            insertion(&items[0], "dup", None),
+            Insertion {
+                backspaces: 3,
+                text: "dupont2026".to_string(),
+                caret: None
+            }
+        );
+
+        // Et elles se filtrent comme les autres.
+        assert_eq!(matching(&items, "mar"), vec![1]);
+        assert!(matching(&items, "zzz").is_empty());
     }
 
     /// La liste reste dans le panneau, quelle que soit la position du curseur.
