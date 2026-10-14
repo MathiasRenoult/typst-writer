@@ -152,6 +152,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
     bar = bar.push(
         pick_list(names, current, Message::SelectTheme)
             .text_size(12)
+            // La liste suit la police du thème comme le reste de l'interface :
+            // sans cela, choisir une famille laissait ce seul contrôle dans
+            // celle du moteur.
+            .font(palette.interface)
             .padding([4, 8])
             .width(Length::Fixed(168.0)),
     );
@@ -194,10 +198,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
         false,
     ));
 
+    // Un thème s'écrit à la main : sans ce bouton, le seul moyen d'atteindre le
+    // dossier était de connaître son chemin par cœur.
     bar = bar.push(icon_button(
-        lucide_icons::iced::icon_settings::<Theme>(),
-        "Réglages",
-        Message::OpenSettings,
+        lucide_icons::iced::icon_folder_cog::<Theme>(),
+        "Ouvrir le dossier des thèmes",
+        Message::OpenThemesFolder,
         palette,
         false,
     ));

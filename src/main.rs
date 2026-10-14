@@ -2,7 +2,6 @@ mod app;
 mod editor;
 mod lsp;
 mod project;
-mod settings;
 mod theming;
 mod typst;
 mod ui;
@@ -14,11 +13,22 @@ fn main() -> iced::Result {
         ui::view,
     )
     .title("Typst Writer")
+    .window(iced::window::Settings {
+        // Une taille de départ qui montre l'éditeur, le panneau de travail et
+        // l'aperçu côte à côte : la mesure de lecture fait 760 px, les panneaux
+        // prennent le reste.
+        size: iced::Size::new(1180.0, 780.0),
+        // Sans minimum, la fenêtre pouvait être réduite à rien, et la
+        // disposition n'a plus de sens dès que la mesure ne tient plus.
+        min_size: Some(iced::Size::new(820.0, 540.0)),
+        ..Default::default()
+    })
     // Police Lucide embarquée : les icônes s'affichent sans dépendre des
     // polices installées sur le système.
     .font(lucide_icons::LUCIDE_FONT_BYTES)
     .subscription(app::subscription)
     .theme(theme)
+    .centered()
     .run()
 }
 

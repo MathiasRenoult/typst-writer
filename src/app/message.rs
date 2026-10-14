@@ -115,6 +115,9 @@ pub enum Message {
     /// Relit le dossier des thèmes.
     RefreshThemes,
 
+    /// Ouvre le dossier des thèmes dans le gestionnaire de fichiers.
+    OpenThemesFolder,
+
     /// Ouvre le sélecteur de fichier pour charger un thème.
     LoadTheme,
 
@@ -130,5 +133,5 @@ pub enum Message {
     /// Événement clavier non consommé par les widgets (raccourcis globaux).
     RawKey(iced::keyboard::Key, iced::keyboard::Modifiers),
 
-    OpenSettings,
+
 }

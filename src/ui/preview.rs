@@ -3,7 +3,7 @@ use crate::typst::render::Diagnostic;
 use crate::ui::theme::Palette;
 use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, image, row, scrollable, space};
-use iced::{ContentFit, Element, Fill, Length, color};
+use iced::{ContentFit, Element, Fill, Length};
 use std::path::Path;
 
 /// Taille du texte courant.
@@ -141,7 +141,21 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .width(Fill);
 
     if let Some(status) = &state.export_status {
-        content = content.push(palette.label(status).size(13).color(color!(0x8a8a8a)));
+        // Le gris était codé en dur : il ne suivait donc aucun thème, et un
+        // thème clair l'aurait rendu illisible. C'était la dernière couleur
+        // fixe de l'interface.
+        content = content.push(palette.label(status).size(13).color(palette.text_muted));
+    }
+
+    // Fichiers de thème illisibles. Ils sont **dits** : un thème absent de la
+    // liste sans explication est un défaut de plus, pas une discrétion.
+    for problem in &state.theme_problems {
+        content = content.push(
+            palette
+                .label(format!("Thème illisible — {problem}"))
+                .size(12)
+                .color(palette.danger),
+        );
     }
 
     // Diagnostics du compilateur, en tête du panneau.

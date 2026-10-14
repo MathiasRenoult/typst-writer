@@ -658,6 +658,18 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::OpenThemesFolder => {
+            let dir = crate::theming::themes_dir();
+
+            open_folder(&dir);
+
+            // Le chemin est dit dans tous les cas : sur un système où
+            // l'ouverture n'est pas prévue, il reste au moins de quoi y aller.
+            state.export_status = Some(format!("Dossier des thèmes : {}", dir.display()));
+
+            Task::none()
+        }
+
         Message::SelectTheme(name) => {
             let Some(theme) = state.themes.iter().find(|theme| theme.name == name) else {
                 return Task::none();
@@ -703,6 +715,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 Ok(loaded) => {
                     let name = loaded.meta.name.clone();
 
+                    // Un thème du même nom existait déjà : le fichier a été
+                    // remplacé, et le dire évite de croire à un doublon.
+                    let updated = state.themes.iter().any(|theme| theme.name == name);
+
                     refresh_themes(state);
 
                     // On applique le thème qu'on vient de charger : c'est ce
@@ -724,9 +740,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
                     // L'auteur, quand il s'est nommé, est une politesse qu'on
                     // lui rend : c'est la seule raison d'écrire ce champ.
+                    let verb = if updated { "mis à jour" } else { "chargé" };
+
                     state.export_status = Some(match loaded.meta.author.as_deref() {
-                        Some(author) => format!("Thème « {name} », par {author}, chargé."),
-                        None => format!("Thème « {name} » chargé."),
+                        Some(author) => format!("Thème « {name} », par {author}, {verb}."),
+                        None => format!("Thème « {name} » {verb}."),
                     });
                 }
                 Err(error) => {
@@ -977,10 +995,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::RawKey(key, modifiers) => handle_shortcut(state, key, modifiers),
 
-        Message::OpenSettings => {
-            println!("Open settings");
-            Task::none()
-        }
     }
 }
 
@@ -1247,6 +1261,19 @@ fn retheme(state: &mut State) {
 
     state.editor.retheme(&state.resolved);
 }
+
+/// Ouvre un dossier dans le gestionnaire de fichiers du système.
+///
+/// Sous Linux seulement : c'est la seule plateforme où l'application est
+/// utilisée, et deviner la commande des autres serait du code jamais vérifié.
+/// L'appelant dit le chemin de toute façon, ce qui reste une issue.
+#[cfg(target_os = "linux")]
+fn open_folder(dir: &std::path::Path) {
+    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_folder(_dir: &std::path::Path) {}
 
 /// Relit les thèmes du disque, puis réapplique celui qui est retenu.
 ///

@@ -306,14 +306,19 @@ fn chapter_of(path: &Path, included: &[PathBuf]) -> Option<Chapter> {
 
 /// Compare deux chemins en tolérant l'un relatif à l'autre.
 ///
-/// `main.typ` écrit `chapitres/01-intro.typ` — un chemin relatif — alors que
-/// l'analyse produit des chemins absolus. On compare donc les deux derniers
-/// composants, ce qui suffit ici et évite de canoniser (qui échoue sur un
-/// chemin inexistant).
+/// Deux chemins qui **existent** se comparent une fois résolus : c'est exact, et
+/// cela distingue deux projets différents dont les fichiers portent le même nom.
 ///
-/// La comparaison porte sur le nom du dossier parent **et** sur celui du
-/// fichier : deux projets distincts gardent ainsi leurs `main.typ` séparés.
+/// Sinon — un chemin relatif écrit dans l'assemblage, ou un fichier pas encore
+/// créé — on se rabat sur les deux derniers composants, ce qui suffit et évite
+/// d'échouer sur un chemin inexistant. La comparaison porte alors sur le nom du
+/// dossier parent **et** sur celui du fichier : deux projets distincts gardent
+/// ainsi leurs `main.typ` séparés.
 pub fn same_file(a: &Path, b: &Path) -> bool {
+    if let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize()) {
+        return a == b;
+    }
+
     fn tail(path: &Path) -> (Option<std::ffi::OsString>, std::ffi::OsString) {
         let mut components = path.components().rev();
 
@@ -637,7 +642,14 @@ pub fn find_bibliography(dir: &Path) -> Option<PathBuf> {
 /// barre d'état, donc les deux chiffres s'accordent. Tenir compte réellement de
 /// la syntaxe Typst demanderait de l'analyser.
 pub fn count_words(content: &str) -> usize {
-    content.split_whitespace().count()
+    content
+        .split_whitespace()
+        // Un **mot** doit contenir au moins une lettre ou un chiffre. Sans
+        // cette règle, les marqueurs de balisage étaient comptés comme des
+        // mots : le `=` d'un titre en ajoutait un à chaque chapitre, si bien
+        // qu'un projet de vingt chapitres affichait vingt mots de trop.
+        .filter(|token| token.chars().any(char::is_alphanumeric))
+        .count()
 }
 
 /// Transforme un titre en nom de fichier : minuscules, tirets, sans accent.
@@ -1078,10 +1090,8 @@ mod tests {
             reloaded.chapters[0].included,
             "sans inclusion, le chapitre ne serait jamais rendu"
         );
-        // Le compte de mots inclut le marqueur `=` du titre : « Les réseaux Du
-        // texte. » plus l'annonce du titre. C'est le comportement d'origine de
-        // `count_words`, appliqué de la même façon à tous les chapitres.
-        assert_eq!(reloaded.words(), 5);
+        // « Les réseaux » et « Du texte. » : le `=` du titre n'est pas un mot.
+        assert_eq!(reloaded.words(), 4);
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&elsewhere);
@@ -1230,6 +1240,73 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&elsewhere);
     }
+    /// Les marqueurs de balisage ne sont pas des mots.
+    ///
+    /// Le `=` d'un titre en ajoutait un à chaque chapitre : sur un projet de
+    /// vingt chapitres, cela faisait vingt mots de trop au compteur, et le
+    /// chiffre ne voulait plus rien dire.
+    #[test]
+    fn markup_markers_are_not_words() {
+        assert_eq!(count_words("un deux trois"), 3);
+
+        // Le marqueur d'un titre ne compte pas, son texte si.
+        assert_eq!(count_words("= Titre"), 1);
+        assert_eq!(count_words("= Titre\n\nDu texte."), 3);
+
+        // Les mots accentués sont des mots, apostrophe comprise.
+        assert_eq!(count_words("l'État français"), 2);
+
+        // Dans du code, les identifiants comptent, pas les opérateurs.
+        assert_eq!(count_words("#let x = 1"), 3);
+
+        // Un texte vide ne compte rien.
+        assert_eq!(count_words(""), 0);
+        assert_eq!(count_words("-- == ~~"), 0);
+    }
+
+    /// Deux fichiers réels du même nom, dans deux dossiers différents, ne sont
+    /// pas le même fichier.
+    ///
+    /// La comparaison par les deux derniers composants ne suffisait pas : deux
+    /// projets dont le dossier parent porte le même nom auraient été confondus,
+    /// et un chapitre aurait pu être rattaché au mauvais projet.
+    #[test]
+    fn two_real_files_with_the_same_name_are_distinct() {
+        let first = scratch("same-file-a");
+        let second = scratch("same-file-b");
+
+        std::fs::create_dir_all(first.join("projet")).unwrap();
+        std::fs::create_dir_all(second.join("projet")).unwrap();
+
+        std::fs::write(first.join("projet/main.typ"), "").unwrap();
+        std::fs::write(second.join("projet/main.typ"), "").unwrap();
+
+        assert!(
+            !same_file(
+                &first.join("projet/main.typ"),
+                &second.join("projet/main.typ")
+            ),
+            "deux projets distincts ne doivent pas être confondus"
+        );
+
+        // Le même fichier, écrit de deux façons, reste le même.
+        assert!(same_file(
+            &first.join("projet/main.typ"),
+            &first.join("projet/./main.typ")
+        ));
+
+        // Et la tolérance au chemin relatif, sur des fichiers inexistants, est
+        // conservée : c'est le cas de l'assemblage, qui écrit
+        // `chapitres/01-un.typ` là où l'analyse produit un chemin absolu.
+        assert!(same_file(
+            Path::new("chapitres/01-un.typ"),
+            &first.join("chapitres/01-un.typ")
+        ));
+
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(&second);
+    }
+
     /// Un document extérieur au projet n'est pas un chapitre.
     ///
     /// C'est ce que vérifie le démarrage avant de rouvrir le document de la
