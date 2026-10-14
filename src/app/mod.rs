@@ -61,6 +61,7 @@ impl State {
             bibliography: Vec::new(),
             project,
             projects,
+            window_size: iced::Size::new(1180.0, 780.0),
             window: None,
             // L'écran se déclare dans les millisecondes qui suivent ; d'ici là,
             // un pixel par point, la densité la plus économique.
@@ -1154,6 +1155,18 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::SplitterReleased => {
             state.layout.dragging = None;
 
+            // **Le relâchement va aussi à l'éditeur.** Si le bouton a été
+            // relâché ailleurs que sur lui — sur une ligne de la liste de
+            // complétion, par exemple —, il ne le voit jamais, et reste en
+            // glissement : ensuite, chaque mouvement de souris déplace le caret
+            // et la vue se met à le suivre. Le message est sans effet s'il n'y
+            // avait rien à relâcher.
+            Task::done(Message::Editor(iced_code_editor::Message::MouseRelease))
+        }
+
+        Message::WindowResized(size) => {
+            state.window_size = size;
+
             Task::none()
         }
 
@@ -1571,7 +1584,12 @@ fn subscription_drag() -> Subscription<Message> {
 /// donc la priorité sur ses propres raccourcis.
 /// Retient l'identifiant de la fenêtre dès son ouverture.
 fn subscription_window() -> Subscription<Message> {
-    iced::window::open_events().map(Message::WindowOpened)
+    Subscription::batch(vec![
+        iced::window::open_events().map(Message::WindowOpened),
+        // La taille de la fenêtre : c'est elle qui dit où il y a de la place
+        // pour la liste de complétion.
+        iced::window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+    ])
 }
 
 fn subscription_keys() -> Subscription<Message> {
@@ -1663,6 +1681,15 @@ fn request_completion(state: &mut State) -> Task<Message> {
     {
         return Task::none();
     }
+
+    // **Synchroniser avant de demander.** tinymist répond sur le document qu'il
+    // connaît : demander la liste avant de lui avoir donné la frappe, c'est lui
+    // demander de compléter un texte qui ne contient pas encore ce qu'on vient
+    // d'écrire. Le serveur répondait alors pour l'ancien texte, et la liste ne
+    // venait qu'à la demande suivante — d'où l'impression qu'il fallait une
+    // touche de plus. Le coût est borné : on ne synchronise que lorsque le
+    // curseur est dans un mot déclenché par `#` ou `@`.
+    session.did_change(&content);
 
     state.lsp.tokens += 1;
 

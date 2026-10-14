@@ -101,6 +101,9 @@ pub enum Message {
     /// On ferme la liste sans rien accepter.
     CompletionDismiss,
 
+    /// La fenêtre a changé de taille : (largeur, hauteur).
+    WindowResized(iced::Size),
+
     /// Le facteur d'échelle de l'écran, demandé à l'ouverture de la fenêtre.
     ///
     /// La densité du rendu en découle : rendue constante, elle rasterise plus

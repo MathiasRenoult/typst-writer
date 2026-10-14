@@ -215,6 +215,29 @@ pub struct Insertion {
     pub caret: Option<usize>,
 }
 
+/// Où poser la liste, en pixels depuis le haut du panneau de l'éditeur.
+///
+/// Deux règles, et rien de plus : sous la ligne quand il y a la place,
+/// au-dessus sinon, et jamais en dehors du panneau. Un menu qui sort de l'écran
+/// ne sert à rien — c'est le seul cas où il se rend vraiment nuisible.
+pub fn placement(caret_y: f32, panel_height: f32, menu_height: f32) -> f32 {
+    /// Le souffle entre la ligne et la liste.
+    const GAP: f32 = 6.0;
+
+    /// La marge gardée en haut et en bas du panneau.
+    const MARGIN: f32 = 6.0;
+
+    let below = caret_y + GAP + menu_height;
+
+    if below + MARGIN <= panel_height {
+        return caret_y + GAP;
+    }
+
+    // Au-dessus : la liste se termine juste au-dessus de la ligne, et jamais
+    // avant le haut du panneau.
+    (caret_y - GAP - menu_height).max(MARGIN)
+}
+
 /// Ce qu'il faut faire pour accepter un élément.
 ///
 /// `typed` est ce qui a été tapé après le déclencheur, et `replacement` la
@@ -346,6 +369,31 @@ mod tests {
         // Un marqueur échappé reste un caractère, et un `$` seul aussi.
         assert_eq!(expand("un \\$ dollar"), ("un $ dollar".to_string(), None));
         assert_eq!(expand("prix : 5$"), ("prix : 5$".to_string(), None));
+    }
+
+    /// La liste reste dans le panneau, quelle que soit la position du curseur.
+    #[test]
+    fn the_menu_always_stays_in_the_panel() {
+        let (panel, menu) = (600.0, 180.0);
+
+        // Au milieu : sous la ligne, à la distance prévue.
+        assert_eq!(placement(100.0, panel, menu), 106.0);
+
+        // Trop bas pour tenir dessous : au-dessus, et il tient tout entier.
+        let high = placement(560.0, panel, menu);
+
+        assert!(high + menu <= panel, "la liste dépasse le bas : {high}");
+        assert!(high < 560.0, "la liste doit passer au-dessus");
+
+        // Trop haut pour tenir dessus : collé au bord, jamais négatif.
+        let pinned = placement(20.0, panel, menu);
+
+        assert!(pinned >= 0.0, "la liste sort par le haut : {pinned}");
+
+        // Panneau plus court que la liste : elle reste à l'intérieur.
+        let tight = placement(50.0, 100.0, 400.0);
+
+        assert_eq!(tight, 6.0);
     }
 
     /// Accepter remplace ce qui a été tapé, et pose le curseur.

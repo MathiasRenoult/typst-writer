@@ -4,7 +4,7 @@ use iced::widget::{container, row, space};
 use iced::{Element, Length};
 
 /// Hauteur de la barre.
-const BAR_HEIGHT: f32 = 26.0;
+pub(crate) const BAR_HEIGHT: f32 = 26.0;
 
 /// La barre d'état : l'essentiel, une fois, sans ponctuation décorative.
 ///

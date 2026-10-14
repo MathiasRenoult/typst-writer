@@ -43,6 +43,13 @@ pub struct State {
     /// L'assistance à la frappe : tinymist, s'il est là.
     pub lsp: LspState,
 
+    /// Taille de la fenêtre, telle que la vue la rapporte.
+    ///
+    /// Elle sert à savoir **où il y a de la place** pour la liste de complétion :
+    /// un menu qui sort du panneau ne sert à rien. La valeur de départ est celle
+    /// demandée à l'ouverture, remplacée dès la première mesure.
+    pub window_size: iced::Size,
+
     /// Fenêtre de l'application, retenue dès son ouverture.
     ///
     /// Elle est nécessaire pour passer en plein écran en mode focus : le

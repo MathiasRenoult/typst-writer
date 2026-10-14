@@ -15,7 +15,7 @@ const SPACING: f32 = 2.0;
 const BUTTON: f32 = 30.0;
 
 /// Hauteur de la barre.
-const BAR_HEIGHT: f32 = 42.0;
+pub(crate) const BAR_HEIGHT: f32 = 42.0;
 
 /// La barre d'outils : des icônes, pas des mots.
 ///

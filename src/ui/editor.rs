@@ -26,6 +26,12 @@ const TOP_MARGIN: f32 = 28.0;
 /// Largeur de la liste de complétion.
 const COMPLETION_WIDTH: f32 = 320.0;
 
+/// Hauteur approximative d'une ligne de la liste, en pixels.
+///
+/// C'est une **estimation**, et elle suffit : la place calculée est bornée au
+/// panneau, donc une imprécision ne peut pas faire sortir la liste de l'écran.
+const COMPLETION_ROW: f32 = 28.0;
+
 /// Combien d'éléments la liste montre d'un coup.
 const COMPLETION_VISIBLE: usize = 8;
 
@@ -50,6 +56,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // c'est là que le regard est déjà, et l'on choisit sans quitter la ligne
         // qu'on écrit.
         Some(open) if !open.shown.is_empty() => {
+            // La place disponible est la fenêtre moins les deux barres et les
+            // marges du panneau : c'est le seul cadre où le curseur peut être.
+            let panel = (state.window_size.height
+                - crate::ui::toolbar::BAR_HEIGHT
+                - crate::ui::status_bar::BAR_HEIGHT
+                - TOP_MARGIN
+                - BOTTOM_MARGIN)
+                .max(0.0);
+
+            let menu = open.shown.len().min(COMPLETION_VISIBLE) as f32 * COMPLETION_ROW + 2.0;
+
+            let top = crate::lsp::completion::placement(open.anchor.y, panel, menu);
+
             let popup = container(completion_popup(open, palette))
                 .width(Fill)
                 .height(Fill)
@@ -58,7 +77,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 // Le décalage se donne par une marge intérieure : c'est ainsi
                 // qu'un élément de pile se pose ailleurs qu'au coin.
                 .padding(Padding {
-                    top: open.anchor.y + 20.0,
+                    top,
                     left: open.anchor.x,
                     ..Padding::default()
                 });
