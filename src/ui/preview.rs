@@ -1,8 +1,10 @@
 use crate::app::{Message, State};
 use crate::typst::render::Diagnostic;
+use crate::ui::theme::{self, Palette};
 use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, image, row, scrollable, space, text};
 use iced::{ContentFit, Element, Fill, Length, color};
+use std::path::Path;
 
 /// Taille du texte courant.
 const BODY_SIZE: f32 = 14.0;
@@ -102,6 +104,13 @@ fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) 
 pub fn view(state: &State) -> Element<'_, Message> {
     let render = &state.render;
     let sizes = page_sizes(state);
+    let palette = Palette::from_theme(&theme::resolve(state.theme, state.system_theme));
+
+    // Le fichier ouvert : c'est lui seul dont les diagnostics peuvent être
+    // localisés, puisque c'est le seul que l'éditeur affiche. Emprunté à
+    // l'état, et non cloné, pour que les éléments retournés vivent aussi
+    // longtemps que lui.
+    let open = state.editor.path.as_deref();
 
     let mut content = column![]
         .spacing(PAGE_GAP)
@@ -114,11 +123,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     // Diagnostics du compilateur, en tête du panneau.
     if !render.errors.is_empty() {
-        content = content.push(diagnostics_panel(&render.errors, true));
+        content = content.push(diagnostics_panel(&render.errors, true, open, palette));
     }
 
     if !render.warnings.is_empty() {
-        content = content.push(diagnostics_panel(&render.warnings, false));
+        content = content.push(diagnostics_panel(&render.warnings, false, open, palette));
     }
 
     if sizes.is_empty() {
@@ -233,43 +242,67 @@ fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Messa
     }
 }
 
-/// Bandeau listant les erreurs (ou avertissements) du compilateur, cliquables
-/// pour sauter à la ligne concernée.
-fn diagnostics_panel<'a>(diagnostics: &'a [Diagnostic], is_error: bool) -> Element<'a, Message> {
+/// Bandeau listant les erreurs (ou avertissements) du compilateur.
+///
+/// Le document compilé est l'assemblage, qui inclut les chapitres : un
+/// diagnostic peut donc tomber dans un fichier qui n'est pas celui qu'on est en
+/// train d'écrire. Ceux-là nomment leur fichier et ne proposent pas de saut —
+/// un saut calculé pour un autre fichier mènerait au mauvais endroit, ce qui est
+/// pire que pas de saut du tout.
+fn diagnostics_panel<'a>(
+    diagnostics: &'a [Diagnostic],
+    is_error: bool,
+    open: Option<&'a Path>,
+    palette: Palette,
+) -> Element<'a, Message> {
     let title = if is_error {
         format!(
-            "⚠ {} erreur(s) — le document ne compilera pas en PDF",
+            "{} erreur(s) — le document ne compilera pas en PDF",
             diagnostics.len()
         )
     } else {
-        format!("⚠ {} avertissement(s)", diagnostics.len())
+        format!("{} avertissement(s)", diagnostics.len())
     };
 
     let accent = if is_error {
-        color!(0xff8a8a)
+        palette.danger
     } else {
-        color!(0xe8c07a)
+        palette.warning
     };
 
     let mut list = column![text(title).size(13).color(accent)].spacing(4);
 
     for diagnostic in diagnostics {
+        let here = diagnostic.file.as_deref() == open;
+
         let location = match (diagnostic.line, diagnostic.column) {
             (Some(line), Some(column)) => format!("ligne {line}, colonne {column}"),
             (Some(line), None) => format!("ligne {line}"),
             _ => String::new(),
         };
 
-        let label = if location.is_empty() {
-            diagnostic.message.clone()
-        } else {
-            format!("{location} — {}", diagnostic.message)
+        // Le fichier n'est nommé que s'il diffère de celui qui est ouvert :
+        // répéter « le fichier que vous éditez » sur chaque ligne serait du
+        // bruit.
+        let where_ = match (&diagnostic.file, here) {
+            (Some(path), false) => format!("{} — ", file_name(path)),
+            _ => String::new(),
         };
 
-        let jump = diagnostic
-            .line
-            .zip(diagnostic.column)
-            .map(|(line, column)| Message::GotoError(line, column));
+        let label = if location.is_empty() {
+            format!("{where_}{}", diagnostic.message)
+        } else {
+            format!("{where_}{location} — {}", diagnostic.message)
+        };
+
+        let jump = if here {
+            diagnostic
+                .line
+                .zip(diagnostic.column)
+                .map(|(line, column)| Message::GotoError(line, column))
+        } else {
+            None
+        };
 
         list = list.push(
             button(text(label).size(13).wrapping(Wrapping::Word).width(Fill))
@@ -283,22 +316,32 @@ fn diagnostics_panel<'a>(diagnostics: &'a [Diagnostic], is_error: bool) -> Eleme
     container(list)
         .padding(10)
         .width(Fill)
-        .style(panel_style(is_error))
+        .style(move |_| panel_style(is_error, palette))
         .into()
 }
 
+/// Nom d'un fichier, pour nommer un diagnostic venu d'ailleurs.
+///
+/// Le nom seul suffit : le chemin complet est le même préfixe pour tout le
+/// monde, et l'infobulle d'une ligne de chapitre le donne déjà.
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 /// Fond et bordure du bandeau de diagnostics.
-fn panel_style(is_error: bool) -> impl Fn(&iced::Theme) -> container::Style {
-    let (background, border) = if is_error {
-        (color!(0x3b2026), color!(0x9c4444))
+fn panel_style(is_error: bool, palette: Palette) -> container::Style {
+    let accent = if is_error {
+        palette.danger
     } else {
-        (color!(0x332b1e), color!(0x8a7233))
+        palette.warning
     };
 
-    move |_theme| container::Style {
-        background: Some(background.into()),
+    container::Style {
+        background: Some(palette.surface_hover.into()),
         border: iced::Border {
-            color: border,
+            color: accent,
             width: 1.0,
             radius: 6.0.into(),
         },

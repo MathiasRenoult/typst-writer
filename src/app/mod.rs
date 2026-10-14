@@ -124,6 +124,50 @@ impl State {
         });
     }
 
+    /// Ce qu'il faut compiler pour refléter l'état réel du document.
+    ///
+    /// L'entrée est l'**assemblage** du projet, et non le chapitre ouvert : c'est
+    /// la seule façon que l'en-tête Typst (`#set`, `#show`, réglages de page)
+    /// soit toujours appliqué, avec la pagination et les compteurs qui en
+    /// découlent.
+    ///
+    /// Le fichier ouvert est fourni en mémoire, car l'assemblage l'`#include`
+    /// depuis le disque : sans cet apport, l'aperçu aurait jusqu'à une seconde
+    /// de retard sur la frappe, le temps de la sauvegarde différée.
+    fn compilation_unit(&self) -> (String, Vec<(PathBuf, String)>) {
+        let open = self.editor.path.clone();
+        let buffer = self.editor.content();
+
+        let assembly_is_open = open.as_deref() == Some(self.project.main.as_path());
+
+        let entry = if assembly_is_open {
+            buffer.clone()
+        } else {
+            std::fs::read_to_string(&self.project.main).unwrap_or_default()
+        };
+
+        let overrides = match open {
+            // L'assemblage est l'entrée : il n'a pas à figurer aussi en mémoire.
+            Some(path) if assembly_is_open => {
+                let _ = path;
+
+                Vec::new()
+            }
+            Some(path) => vec![(path, buffer)],
+            None => Vec::new(),
+        };
+
+        (entry, overrides)
+    }
+
+    /// Empreinte de ce qui serait compilé : sert à ne relancer que si quelque
+    /// chose a changé.
+    pub fn compilation_fingerprint(&self) -> String {
+        let (entry, overrides) = self.compilation_unit();
+
+        crate::typst::render::fingerprint(&entry, &overrides)
+    }
+
     /// Dossier résolu pour les imports et la bibliographie.
     ///
     /// C'est la racine du projet, et non le dossier du chapitre : un chapitre
@@ -316,12 +360,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::ExportPdf => {
-            let content = state.editor.content();
             let dir = state.document_dir();
+            let (entry, overrides) = state.compilation_unit();
 
             Task::perform(
                 async move {
-                    let Some(bytes) = crate::typst::render::render_pdf(&dir, &content) else {
+                    let Some(bytes) = crate::typst::render::render_pdf(&dir, &entry, &overrides)
+                    else {
                         return Err(
                             "La compilation a échoué : corrigez les erreurs signalées dans le panneau."
                                 .to_string(),
@@ -363,18 +408,21 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            let content = state.editor.content();
+            // L'empreinte couvre l'assemblage et le fichier ouvert : comparer le
+            // seul chapitre rendrait l'aperçu sourd à toute frappe, puisque
+            // l'assemblage ne change pas quand on écrit dans un chapitre.
+            let fingerprint = state.compilation_fingerprint();
 
             // Rien n'a changé : aucune compilation, donc aucun rendu, donc
             // aucune image retravaillée. C'est la condition qui rend l'aperçu
             // inerte — et gratuit — tant que l'on ne tape pas.
-            if state.render.content == content {
+            if state.render.content == fingerprint {
                 return Task::none();
             }
 
             state.render.pending = true;
 
-            compile_task(state, content)
+            compile_task(state)
         }
 
         Message::RenderDone(outcome) => {
@@ -774,12 +822,13 @@ fn rasterize_visible(state: &State) -> Task<Message> {
     Task::batch(tasks)
 }
 
-/// Lance la compilation du contenu (moteur Typst en bibliothèque).
-fn compile_task(state: &State, content: String) -> Task<Message> {
+/// Lance la compilation du document (moteur Typst en bibliothèque).
+fn compile_task(state: &State) -> Task<Message> {
     let dir = state.document_dir();
+    let (entry, overrides) = state.compilation_unit();
 
     Task::perform(
-        async move { crate::typst::render::compile(&dir, &content) },
+        async move { crate::typst::render::compile(&dir, &entry, &overrides) },
         Message::RenderDone,
     )
 }

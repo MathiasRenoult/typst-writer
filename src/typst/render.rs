@@ -27,7 +27,7 @@ use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World, WorldExt};
 use typst_layout::PagedDocument;
-use typst_syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
+use typst_syntax::{DiagSpan, FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 
 /// Densité de rendu des pages (pixels par point).
 ///
@@ -45,6 +45,14 @@ pub struct Diagnostic {
 
     /// Colonne du diagnostic (1-based), si le compilateur l'a précisée.
     pub column: Option<usize>,
+
+    /// Le fichier où se situe le diagnostic, résolu sur le disque.
+    ///
+    /// Le document compilé est l'assemblage, qui `#include` les chapitres : un
+    /// diagnostic peut donc tomber dans n'importe lequel. Sans ce champ, une
+    /// erreur dans un chapitre serait signalée sans qu'on sache où la
+    /// corriger — et « sauter à l'erreur » n'aurait aucun sens.
+    pub file: Option<PathBuf>,
 }
 
 /// Résultat de la compilation d'un document.
@@ -82,13 +90,24 @@ pub struct PageImage {
     pub pixels: Vec<u8>,
 }
 
-/// Compile le document (sans rasteriser).
+/// Compile un document (sans rasteriser).
 ///
-/// `root` est le dossier du document actif : les imports et images relatifs
-/// s'y résolvent exactement comme à l'export.
-pub fn compile(root: &Path, content: &str) -> CompileOutcome {
-    let world = PreviewWorld::new(root, content);
-    let main = world.main_source().clone();
+/// `root` est la racine du projet : les chemins de l'assemblage s'y résolvent
+/// exactement comme à l'export.
+///
+/// `entry` est le contenu du fichier d'entrée — l'**assemblage** du projet, et
+/// non le chapitre ouvert. C'est ce qui fait que l'en-tête Typst (les `#set`,
+/// `#show` et autres réglages du document) est toujours appliqué, avec la
+/// pagination et les compteurs qui en découlent. Compiler un chapitre seul
+/// donnerait un rendu qui ne correspond pas au PDF.
+///
+/// `overrides` porte les fichiers dont la version en mémoire est plus récente
+/// que le disque : en pratique le chapitre en cours d'édition, dont la
+/// sauvegarde est différée. Sans eux, l'aperçu aurait jusqu'à une seconde de
+/// retard sur la frappe, puisque l'assemblage `#include` les chapitres depuis
+/// le disque.
+pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> CompileOutcome {
+    let world = PreviewWorld::new(root, entry, overrides);
 
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
 
@@ -99,16 +118,36 @@ pub fn compile(root: &Path, content: &str) -> CompileOutcome {
             .map(|errors| errors.as_slice())
             .unwrap_or(&[]),
         &world,
-        &main,
     );
-    let warnings = convert_diagnostics(&warnings, &world, &main);
+    let warnings = convert_diagnostics(&warnings, &world);
 
     CompileOutcome {
-        content: content.to_string(),
+        content: fingerprint(entry, overrides),
         errors,
         warnings,
         document: output.ok().map(Arc::new),
     }
+}
+
+/// Empreinte de ce qui a été compilé.
+///
+/// Sert à ne relancer la compilation que si le document a réellement changé.
+/// Elle couvre l'assemblage **et** les fichiers fournis en mémoire : ne
+/// comparer que l'assemblage rendrait l'aperçu sourd à toute frappe, puisque
+/// l'assemblage ne change pas quand on écrit dans un chapitre.
+pub fn fingerprint(entry: &str, overrides: &[(PathBuf, String)]) -> String {
+    let mut fingerprint = String::with_capacity(entry.len() + 64);
+
+    fingerprint.push_str(entry);
+
+    for (path, content) in overrides {
+        fingerprint.push('\u{0}');
+        fingerprint.push_str(&path.to_string_lossy());
+        fingerprint.push('\u{0}');
+        fingerprint.push_str(content);
+    }
+
+    fingerprint
 }
 
 /// Rasterise une page du document en pixels RGBA bruts.
@@ -156,8 +195,8 @@ pub fn page_count(document: &PagedDocument) -> usize {
 ///
 /// Renvoie `None` si le document ne compile pas (les erreurs sont alors
 /// disponibles via [`compile`]).
-pub fn render_pdf(root: &Path, content: &str) -> Option<Vec<u8>> {
-    let world = PreviewWorld::new(root, content);
+pub fn render_pdf(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Option<Vec<u8>> {
+    let world = PreviewWorld::new(root, entry, overrides);
 
     let document = typst::compile::<PagedDocument>(&world).output.ok()?;
 
@@ -165,32 +204,55 @@ pub fn render_pdf(root: &Path, content: &str) -> Option<Vec<u8>> {
 }
 
 /// Convertit les diagnostics du compilateur en diagnostics positionnés.
-fn convert_diagnostics(
-    diagnostics: &[SourceDiagnostic],
-    world: &PreviewWorld,
-    main: &Source,
-) -> Vec<Diagnostic> {
+///
+/// Chaque position est calculée **dans le fichier auquel appartient le span** :
+/// l'assemblage inclut les chapitres, donc un diagnostic peut tomber n'importe
+/// où. Rapporter une position calculée sur un autre fichier produirait un saut
+/// au mauvais endroit — pire que pas de saut du tout.
+fn convert_diagnostics(diagnostics: &[SourceDiagnostic], world: &PreviewWorld) -> Vec<Diagnostic> {
     diagnostics
         .iter()
         .map(|diagnostic| {
-            // Seules les positions du fichier principal sont exploitables :
-            // un span dans un fichier importé aurait une position fausse.
-            let position = world
-                .range(diagnostic.span.clone())
-                .filter(|range| range.end <= main.text().len())
-                .and_then(|range| main.lines().byte_to_line_column(range.start));
+            let (file, line, column) = locate(diagnostic.span, world);
 
             Diagnostic {
                 message: diagnostic.message.to_string(),
-                line: position.map(|(line, _)| line + 1),
-                column: position.map(|(_, column)| column + 1),
+                line,
+                column,
+                file,
             }
         })
         .collect()
 }
 
-/// Un monde Typst minimal : le document courant en mémoire, les fichiers
-/// importés lus depuis le disque, les polices embarquées de Typst.
+/// Résout un span en (fichier, ligne, colonne).
+///
+/// Renvoie des valeurs absentes pour un span synthétique, sans fichier
+/// d'origine : certains diagnostics du moteur n'en portent pas.
+fn locate(span: DiagSpan, world: &PreviewWorld) -> (Option<PathBuf>, Option<usize>, Option<usize>) {
+    let Some(id) = span.id() else {
+        return (None, None, None);
+    };
+
+    let Some(range) = world.range(span) else {
+        return (None, None, None);
+    };
+
+    let Ok(source) = world.source(id) else {
+        return (None, None, None);
+    };
+
+    let file = world.path_of(id);
+
+    match source.lines().byte_to_line_column(range.start) {
+        // Les positions de typst sont 0-based, celles de l'interface 1-based.
+        Some((line, column)) => (Some(file), Some(line + 1), Some(column + 1)),
+        None => (Some(file), None, None),
+    }
+}
+
+/// Un monde Typst minimal : le fichier d'entrée en mémoire, les autres lus
+/// depuis le disque, les polices embarquées de Typst.
 pub struct PreviewWorld {
     library: LazyHash<Library>,
     book: LazyHash<FontBook>,
@@ -198,12 +260,19 @@ pub struct PreviewWorld {
     main_id: FileId,
     source: Source,
 
-    /// Dossier du document actif, pour résoudre les imports relatifs.
+    /// Racine du projet, pour résoudre les chemins relatifs.
     root: std::path::PathBuf,
+
+    /// Fichiers servis depuis la mémoire plutôt que depuis le disque.
+    ///
+    /// L'assemblage `#include` les chapitres : sans cela, l'aperçu afficherait
+    /// le document tel qu'il était à la dernière sauvegarde, et la frappe
+    /// n'apparaîtrait qu'avec un temps de retard.
+    overrides: Vec<(PathBuf, String)>,
 }
 
 impl PreviewWorld {
-    pub fn new(root: &Path, content: &str) -> Self {
+    pub fn new(root: &Path, content: &str, overrides: &[(PathBuf, String)]) -> Self {
         // Les polices embarquées sont celles du CLI Typst : le rendu est donc
         // identique à celui de `typst compile`.
         let fonts: Vec<Font> = typst_assets::fonts()
@@ -227,17 +296,41 @@ impl PreviewWorld {
             main_id,
             source,
             root: root.to_path_buf(),
+            overrides: overrides.to_vec(),
         }
-    }
-
-    /// Le source du fichier principal.
-    fn main_source(&self) -> &Source {
-        &self.source
     }
 
     /// Chemin sur disque d'un fichier référencé par un FileId.
     fn path_of(&self, id: FileId) -> PathBuf {
         self.root.join(id.vpath().get_without_slash())
+    }
+
+    /// Contenu en mémoire d'un fichier, s'il y en a un.
+    ///
+    /// La comparaison se fait sur le chemin canonique quand c'est possible :
+    /// l'assemblage nomme ses includes en relatif, l'application connaît ses
+    /// fichiers en absolu, et les deux doivent désigner le même fichier.
+    fn override_for(&self, path: &Path) -> Option<&str> {
+        self.overrides
+            .iter()
+            .find(|(candidate, _)| same_path(candidate, path))
+            .map(|(_, content)| content.as_str())
+    }
+}
+
+/// Deux chemins désignent-ils le même fichier ?
+///
+/// On compare les chemins canoniques lorsque c'est possible, et à défaut les
+/// composants : un chemin inexistant ne peut pas être canonisé, et une erreur de
+/// résolution ne doit pas faire perdre le contenu en mémoire.
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.ends_with(b) || b.ends_with(a),
     }
 }
 
@@ -261,6 +354,12 @@ impl World for PreviewWorld {
 
         let path = self.path_of(id);
 
+        // Le contenu en mémoire prime sur le disque : c'est ce qui permet à
+        // l'aperçu de suivre la frappe malgré la sauvegarde différée.
+        if let Some(text) = self.override_for(&path) {
+            return Ok(Source::new(id, text.to_string()));
+        }
+
         let text = std::fs::read_to_string(&path).map_err(|_| FileError::NotFound(path))?;
 
         Ok(Source::new(id, text))
@@ -272,6 +371,10 @@ impl World for PreviewWorld {
         }
 
         let path = self.path_of(id);
+
+        if let Some(text) = self.override_for(&path) {
+            return Ok(Bytes::from_string(text.to_string()));
+        }
 
         let bytes = std::fs::read(&path).map_err(|_| FileError::NotFound(path))?;
 
@@ -359,7 +462,7 @@ mod tests {
 
         // 1. Compilation complète.
         let start = Instant::now();
-        let outcome = compile(&dir, &content);
+        let outcome = compile(&dir, &content, &[]);
         let compile_time = start.elapsed();
 
         let document = outcome.document.expect("document compilé");
@@ -396,7 +499,7 @@ mod tests {
         edited.push_str("\nUn mot de plus.\n");
 
         let start = Instant::now();
-        let _second = compile(&dir, &edited);
+        let _second = compile(&dir, &edited, &[]);
         let incremental_time = start.elapsed();
 
         println!("Compilation incré. : {incremental_time:>10.2?}");
@@ -418,7 +521,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = compile(&dir, "= Titre\n\nDu texte avec du *gras*.\n");
+        let outcome = compile(&dir, "= Titre\n\nDu texte avec du *gras*.\n", &[]);
 
         assert!(outcome.errors.is_empty(), "aucune erreur attendue");
         assert_eq!(page_count(outcome.document.as_ref().unwrap()), 1);
@@ -433,7 +536,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = compile(&dir, "= Titre\n\n#foo()\n");
+        let outcome = compile(&dir, "= Titre\n\n#foo()\n", &[]);
 
         assert_eq!(outcome.errors.len(), 1, "une erreur attendue");
         assert_eq!(outcome.errors[0].message, "unknown variable: foo");
@@ -461,7 +564,7 @@ mod tests {
             content.push_str(&format!("= Page {i}\n"));
         }
 
-        let outcome = compile(&dir, &content);
+        let outcome = compile(&dir, &content, &[]);
 
         assert!(outcome.errors.is_empty());
         assert_eq!(page_count(outcome.document.as_ref().unwrap()), 3);
@@ -477,7 +580,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = compile(&dir, "= Titre\n\nDu contenu.\n");
+        let outcome = compile(&dir, "= Titre\n\nDu contenu.\n", &[]);
         let document = outcome.document.expect("document compilé");
 
         let page = render_page(&document, 0).expect("rendu de la page");
@@ -534,7 +637,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = compile(&dir, "Inline $x_1^2$ et display $ sum_(i=1)^n i $");
+        let outcome = compile(&dir, "Inline $x_1^2$ et display $ sum_(i=1)^n i $", &[]);
 
         assert!(outcome.errors.is_empty(), "maths valides attendues");
 
@@ -549,6 +652,183 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Un projet minimal : un assemblage qui règle la page et inclut un
+    /// chapitre.
+    fn project(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("typst-writer-{name}"));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        let chapter = dir.join("chapitres/01-intro.typ");
+        fs::write(&chapter, "= Introduction\n\nDu texte.\n").unwrap();
+
+        fs::write(
+            dir.join("main.typ"),
+            "#set page(paper: \"a6\")\n#set text(size: 11pt)\n\n#include \"chapitres/01-intro.typ\"\n",
+        )
+        .unwrap();
+
+        (dir, chapter)
+    }
+
+    /// L'en-tête Typst est appliqué au rendu.
+    ///
+    /// C'est la raison d'être de compiler l'assemblage : composé seul, le
+    /// chapitre ne verrait pas le `#set page` de l'en-tête et serait rendu au
+    /// format par défaut — un aperçu qui ne correspond pas au PDF.
+    #[test]
+    fn the_assembly_header_is_applied_to_the_rendering() {
+        let (dir, chapter) = project("header");
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+        let chapter_source = fs::read_to_string(&chapter).unwrap();
+
+        // Le document, dont l'en-tête impose un format A6.
+        let document = compile(&dir, &assembly, &[]).document.expect("rendu");
+        let (width, height) = page_size(&document, 0).expect("taille de page");
+
+        // A6 : 105 × 148 mm, soit ≈ 595 × 839 px à 2 px/pt.
+        assert!(
+            (width - 595.0).abs() < 5.0,
+            "largeur A6 attendue, eu {width}"
+        );
+        assert!(
+            (height - 839.0).abs() < 5.0,
+            "hauteur A6 attendue, eu {height}"
+        );
+
+        // Le même contenu sans l'en-tête : format par défaut, donc A4. C'est
+        // l'écart entre les deux qui prouve que l'en-tête est bien appliqué.
+        let alone = compile(&dir, &chapter_source, &[]).document.expect("rendu");
+        let (plain_width, _) = page_size(&alone, 0).expect("taille de page");
+
+        assert!(
+            (plain_width - 1191.0).abs() < 5.0,
+            "largeur A4 attendue sans en-tête, eu {plain_width}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Le contenu en mémoire prime sur le disque.
+    ///
+    /// L'assemblage `#include` les chapitres depuis le disque, alors que la
+    /// sauvegarde est différée : sans cette priorité, l'aperçu aurait jusqu'à
+    /// une seconde de retard sur la frappe.
+    #[test]
+    fn the_in_memory_version_wins_over_the_disk() {
+        let (dir, chapter) = project("override");
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+
+        // Sur le disque, le chapitre est valide.
+        assert!(
+            compile(&dir, &assembly, &[]).errors.is_empty(),
+            "aucune erreur attendue depuis le disque"
+        );
+
+        // En mémoire, une faute que le disque ignore encore.
+        let overrides = vec![(
+            chapter.clone(),
+            "= Introduction\n\n#inconnu()\n".to_string(),
+        )];
+
+        let outcome = compile(&dir, &assembly, &overrides);
+
+        assert_eq!(
+            outcome.errors.len(),
+            1,
+            "la version en mémoire doit être celle qui est compilée"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Un diagnostic dans un chapitre inclus indique ce chapitre, et la bonne
+    /// ligne.
+    ///
+    /// Calculer la position sur l'assemblage donnerait un saut au mauvais
+    /// endroit — pire que pas de saut du tout.
+    #[test]
+    fn diagnostics_inside_a_chapter_point_to_that_chapter() {
+        let (dir, chapter) = project("diag-file");
+
+        fs::write(&chapter, "= Introduction\n\nDu texte.\n\n#inconnu()\n").unwrap();
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+
+        let outcome = compile(&dir, &assembly, &[]);
+
+        assert_eq!(outcome.errors.len(), 1);
+
+        let diagnostic = &outcome.errors[0];
+
+        assert_eq!(
+            diagnostic.file.as_deref(),
+            Some(chapter.as_path()),
+            "le diagnostic doit désigner le chapitre, pas l'assemblage"
+        );
+        assert_eq!(
+            diagnostic.line,
+            Some(5),
+            "l'erreur est à la ligne 5 du chapitre"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Un diagnostic dans l'assemblage lui-même désigne l'assemblage.
+    #[test]
+    fn diagnostics_in_the_assembly_point_to_the_assembly() {
+        let dir = std::env::temp_dir().join("typst-writer-diag-main");
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let outcome = compile(&dir, "= Titre\n\n#inconnu()\n", &[]);
+
+        assert_eq!(outcome.errors.len(), 1);
+        assert_eq!(
+            outcome.errors[0].file.as_deref(),
+            Some(dir.join("main.typ").as_path())
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// L'empreinte couvre le fichier fourni en mémoire.
+    ///
+    /// Sinon l'aperçu serait sourd à la frappe : l'assemblage ne change pas
+    /// quand on écrit dans un chapitre.
+    #[test]
+    fn the_fingerprint_notices_in_memory_changes() {
+        let first = fingerprint("assemblage", &[]);
+        let same = fingerprint("assemblage", &[]);
+
+        assert_eq!(first, same, "une même entrée doit donner la même empreinte");
+
+        let with_override = fingerprint(
+            "assemblage",
+            &[(PathBuf::from("/tmp/chapitre.typ"), "un".to_string())],
+        );
+
+        assert_ne!(
+            first, with_override,
+            "un apport en mémoire change l'empreinte"
+        );
+
+        let changed_override = fingerprint(
+            "assemblage",
+            &[(PathBuf::from("/tmp/chapitre.typ"), "deux".to_string())],
+        );
+
+        assert_ne!(
+            with_override, changed_override,
+            "changer le contenu en mémoire change l'empreinte"
+        );
+    }
+
     /// L'export PDF produit un PDF valide.
     #[test]
     fn exports_valid_pdf() {
@@ -556,7 +836,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let pdf = render_pdf(&dir, "= Titre\n\nDu contenu.\n").expect("export PDF");
+        let pdf = render_pdf(&dir, "= Titre\n\nDu contenu.\n", &[]).expect("export PDF");
 
         assert!(pdf.starts_with(b"%PDF"), "le PDF doit être valide");
 
