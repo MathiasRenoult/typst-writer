@@ -1,0 +1,32 @@
+name: Intégration continue
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Rien à installer : le binaire ne réclame que la libc, les bibliothèques
+      # graphiques (Wayland, X11, Vulkan) étant chargées **à l'exécution**. Il
+      # n'y a donc pas d'en-tête dont la compilation dépende — c'est vérifié par
+      # `ldd` sur le binaire de publication.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --release
+
+      # Les épreuves qui parlent au vrai serveur de langage ne tournent pas ici :
+      # elles demandent tinymist, qu'une machine de CI n'a pas. À lancer à la
+      # main :
+      #     cargo test --release -- --ignored
+
+      - name: Tests du crate vendoré
+        run: cargo test --manifest-path vendor/iced-code-editor/Cargo.toml --lib --features two-face
