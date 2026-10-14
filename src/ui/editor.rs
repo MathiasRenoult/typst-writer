@@ -38,6 +38,16 @@ const COMPLETION_VISIBLE: usize = 8;
 /// Marge en bas : de quoi voir venir la suite sans que le texte touche le bord.
 const BOTTOM_MARGIN: f32 = 64.0;
 
+/// Combien de lignes un survol montre au plus.
+///
+/// Un survol est une réponse courte, pas une page de documentation : au-delà, il
+/// couvrirait le texte qu'on est en train d'écrire.
+const HOVER_LINES: usize = 12;
+
+/// Hauteur approximative d'une ligne de survol. Estimation, comme celle de la
+/// liste : la place calculée est bornée au panneau.
+const HOVER_ROW: f32 = 18.0;
+
 /// La zone de rédaction.
 ///
 /// Le texte est borné par la mesure et centré dans le panneau : c'est ce qui
@@ -51,25 +61,29 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // marges latérales prennent le relais.
     let editor = state.editor.editor.view().map(Message::Editor);
 
-    let page = match state.lsp.completion.as_ref() {
-        // La liste se dessine **par-dessus** le texte, à l'endroit du curseur :
-        // c'est là que le regard est déjà, et l'on choisit sans quitter la ligne
-        // qu'on écrit.
-        Some(open) if !open.shown.is_empty() => {
-            // La place disponible est la fenêtre moins les deux barres et les
-            // marges du panneau : c'est le seul cadre où le curseur peut être.
-            let panel = (state.window_size.height
-                - crate::ui::toolbar::BAR_HEIGHT
-                - crate::ui::status_bar::BAR_HEIGHT
-                - TOP_MARGIN
-                - BOTTOM_MARGIN)
-                .max(0.0);
+    // Ce qui se dessine **par-dessus** le texte, à l'endroit du curseur : c'est
+    // là que le regard est déjà, et l'on n'a pas à quitter la ligne qu'on écrit.
+    // Les deux ne s'ouvrent jamais ensemble — demander l'un ferme l'autre — donc
+    // il n'y a jamais qu'un seul cas à traiter.
+    let overlay = match state.lsp.completion.as_ref() {
+        Some(open) if !open.shown.is_empty() => Some((
+            completion_popup(open, palette),
+            open.shown.len().min(COMPLETION_VISIBLE) as f32 * COMPLETION_ROW + 2.0,
+            open.anchor,
+        )),
+        _ => state.lsp.hover.as_ref().map(|hover| {
+            let height =
+                clamp_lines(&hover.text, HOVER_LINES).lines().count() as f32 * HOVER_ROW + 2.0;
 
-            let menu = open.shown.len().min(COMPLETION_VISIBLE) as f32 * COMPLETION_ROW + 2.0;
+            (hover_popup(hover, palette), height, hover.anchor)
+        }),
+    };
 
-            let top = crate::lsp::completion::placement(open.anchor.y, panel, menu);
+    let page = match overlay {
+        Some((content, height, anchor)) => {
+            let top = crate::lsp::completion::placement(anchor.y, panel_height(state), height);
 
-            let popup = container(completion_popup(open, palette))
+            let popup = container(content)
                 .width(Fill)
                 .height(Fill)
                 .align_x(alignment::Horizontal::Left)
@@ -78,13 +92,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 // qu'un élément de pile se pose ailleurs qu'au coin.
                 .padding(Padding {
                     top,
-                    left: open.anchor.x,
+                    left: anchor.x,
                     ..Padding::default()
                 });
 
             container(iced::widget::stack![editor, popup])
         }
-        _ => container(editor),
+        None => container(editor),
     }
     .width(Fill)
     .height(Fill)
@@ -110,6 +124,60 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ..Default::default()
         })
         .into()
+}
+
+/// La place où le curseur peut se trouver : la fenêtre, moins les deux barres et
+/// les marges du panneau. C'est le seul cadre qu'une bulle doive respecter.
+fn panel_height(state: &State) -> f32 {
+    (state.window_size.height
+        - crate::ui::toolbar::BAR_HEIGHT
+        - crate::ui::status_bar::BAR_HEIGHT
+        - TOP_MARGIN
+        - BOTTOM_MARGIN)
+        .max(0.0)
+}
+
+/// Les premières lignes d'un texte, empruntées et non copiées.
+///
+/// Le survol d'un symbole de tinymist peut être long ; ce qui s'affiche ne l'est
+/// pas. Découper la chaîne pour n'en garder qu'un morceau coûterait une
+/// allocation par image — et l'application en dessine soixante par seconde.
+fn clamp_lines(text: &str, lines: usize) -> &str {
+    let mut end = text.len();
+
+    for (count, (index, _)) in text.match_indices('\n').enumerate() {
+        if count + 1 == lines {
+            end = index;
+
+            break;
+        }
+    }
+
+    &text[..end]
+}
+
+/// Ce que le serveur sait du symbole, posé près du curseur.
+///
+/// Le texte vient de tinymist, en markdown : il est montré tel quel, borné à
+/// quelques lignes.
+fn hover_popup(hover: &crate::app::state::Hover, palette: Palette) -> Element<'_, Message> {
+    container(
+        palette
+            .label(clamp_lines(&hover.text, HOVER_LINES))
+            .size(13.0)
+            .width(Length::Fixed(COMPLETION_WIDTH)),
+    )
+    .padding(8)
+    .style(move |_| container::Style {
+        background: Some(palette.surface.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 /// La liste de complétion, posée à l'endroit du curseur.
@@ -210,6 +278,19 @@ mod tests {
             (45.0..=90.0).contains(&characters),
             "{characters:.0} caractères par ligne : hors de la fourchette lisible"
         );
+    }
+
+    /// Un survol long se borne, sans rien copier et sans couper au milieu d'un
+    /// caractère.
+    #[test]
+    fn a_long_hover_is_clamped() {
+        assert_eq!(clamp_lines("une\ndeux\ntrois", 2), "une\ndeux");
+        assert_eq!(clamp_lines("une\ndeux", 5), "une\ndeux");
+        assert_eq!(clamp_lines("sans fin", 3), "sans fin");
+        assert_eq!(clamp_lines("", 3), "");
+
+        // Une ligne accentuée se coupe à sa frontière, jamais avant.
+        assert_eq!(clamp_lines("éé\nà", 1), "éé");
     }
 
     /// Les marges doivent laisser de la place au texte : une mesure plus étroite

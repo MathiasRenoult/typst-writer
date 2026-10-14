@@ -1,7 +1,9 @@
 pub mod message;
 pub mod state;
 
-use crate::app::state::{ChapterRename, Completion, Drag, LayoutState, PreviewPosition, Splitter};
+use crate::app::state::{
+    ChapterRename, Completion, Drag, Hover, LayoutState, PreviewPosition, Splitter,
+};
 pub use message::Message;
 pub use state::State;
 
@@ -10,7 +12,7 @@ use iced::keyboard;
 use iced::widget::image::Handle;
 use iced::{Subscription, Task, time};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Intervalle de recompilation automatique après la dernière frappe.
 const RENDER_INTERVAL_MS: u64 = 300;
@@ -67,6 +69,7 @@ impl State {
             // un pixel par point, la densité la plus économique.
             scale_factor: 1.0,
             renaming: None,
+            jump: None,
             render: Default::default(),
             layout: Default::default(),
             lsp: Default::default(),
@@ -474,7 +477,12 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.renaming = None;
             state.open_document(path, content);
 
-            Task::none()
+            // Le rendez-vous d'un aller à la définition : le chapitre est ouvert,
+            // il reste à y poser le curseur.
+            match state.jump.take() {
+                Some((line, column)) => state.editor.set_cursor(line, column).map(Message::Editor),
+                None => Task::none(),
+            }
         }
 
         Message::NewChapter => {
@@ -1164,6 +1172,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::done(Message::Editor(iced_code_editor::Message::MouseRelease))
         }
 
+        Message::GoToDefinition => request_definition(state),
+
+        Message::ShowHover => request_hover(state),
+
         Message::WindowResized(size) => {
             state.window_size = size;
 
@@ -1379,7 +1391,26 @@ fn handle_shortcut_inner(
 
     // Échap en sort : en mode focus il n'y a plus de barre d'outils, donc plus
     // de bouton à cliquer — sans cette sortie, l'utilisateur serait enfermé.
+    // F12 va à la définition : c'est la touche consacrée, et elle ne demande
+    // aucune combinaison — le geste reste d'une seule main.
+    if let iced::keyboard::Key::Named(iced::keyboard::key::Named::F12) = key {
+        return update(state, Message::GoToDefinition);
+    }
+
     if let iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) = key {
+        // Ce qui s'est ouvert en dernier se ferme en premier : la liste, puis le
+        // survol, et le mode focus en dernier — l'utilisateur ne doit jamais
+        // avoir à chercher par où sortir.
+        if state.lsp.completion.take().is_some() {
+            state.editor.editor.set_reserved_keys(Vec::new());
+
+            return Task::none();
+        }
+
+        if state.lsp.hover.take().is_some() {
+            return Task::none();
+        }
+
         if state.layout.focus_mode {
             return update(state, Message::ToggleFocusMode);
         }
@@ -1402,6 +1433,7 @@ fn handle_shortcut_inner(
 
             Task::none()
         }
+        "i" => update(state, Message::ShowHover),
         "n" => update(state, Message::NewFile),
         "o" => update(state, Message::OpenFile),
         "e" => update(state, Message::ExportPdf),
@@ -1756,6 +1788,87 @@ fn request_completion(state: &mut State) -> Task<Message> {
     Task::none()
 }
 
+/// Demande la définition de ce qui est sous le curseur.
+///
+/// La question porte sur le **curseur**, jamais sur la souris : le geste est une
+/// touche, donc la cible est toujours celle qu'on est en train d'écrire.
+fn request_definition(state: &mut State) -> Task<Message> {
+    let content = state.editor.content();
+    let offset = state.editor.cursor_offset();
+
+    // Une **référence** désigne une étiquette du projet : c'est notre affaire, et
+    // tinymist ne la résout pas — mesuré : sa vue s'arrête au fichier ouvert,
+    // alors qu'une étiquette vaut pour tout le document.
+    if let Some(label) = crate::lsp::completion::reference(&content, offset)
+        && let Some((path, line)) = crate::project::find_label(&state.project, &label)
+    {
+        // Toute réponse du serveur encore en vol devient périmée : elle ne doit
+        // pas remplacer le saut qu'on vient de faire.
+        state.lsp.attention += 1;
+
+        return jump_to(state, &path, line, 0);
+    }
+
+    let Some(session) = state.lsp.session.as_mut() else {
+        return Task::none();
+    };
+
+    state.lsp.attention += 1;
+
+    session.definition(
+        crate::lsp::messages::position_of(&content, offset),
+        state.lsp.attention,
+    );
+
+    Task::none()
+}
+
+/// Demande ce que le serveur sait de ce qui est sous le curseur.
+fn request_hover(state: &mut State) -> Task<Message> {
+    let content = state.editor.content();
+    let offset = state.editor.cursor_offset();
+
+    let Some(session) = state.lsp.session.as_mut() else {
+        return Task::none();
+    };
+
+    state.lsp.attention += 1;
+
+    session.hover(
+        crate::lsp::messages::position_of(&content, offset),
+        state.lsp.attention,
+    );
+
+    Task::none()
+}
+
+/// Va d'un endroit à un autre : le même document, ou un autre chapitre.
+///
+/// Un aller à la définition peut traverser le projet. Le trajet se fait donc en
+/// deux temps lorsque le fichier visé n'est pas celui qui est ouvert : on retient
+/// l'endroit, on ouvre le chapitre, et c'est son ouverture qui y pose le curseur.
+fn jump_to(state: &mut State, path: &Path, line: usize, column: usize) -> Task<Message> {
+    let current = state.editor.path.clone();
+
+    if current.is_some_and(|open| crate::project::same_file(&open, path)) {
+        state.lsp.hover = None;
+
+        return state.editor.set_cursor(line, column).map(Message::Editor);
+    }
+
+    // Ailleurs : il faut que ce soit un chapitre du projet — sinon nous n'aurions
+    // rien pour l'ouvrir.
+    if !state.project.owns(path) {
+        state.export_status = Some("La définition est hors du projet".to_string());
+
+        return Task::none();
+    }
+
+    state.jump = Some((line, column));
+
+    update(state, Message::OpenChapter(path.to_path_buf()))
+}
+
 /// Ouvre la liste, ou la remplit si elle attendait déjà.
 ///
 /// **Une seule porte** : les clés du projet comme les éléments du serveur passent
@@ -1931,7 +2044,48 @@ fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> Task<Messag
 
         // Les réponses aux questions qu'on n'a pas encore posées : la
         // navigation viendra après la liste.
-        Event::Hover { .. } | Event::Definitions { .. } => Task::none(),
+        Event::Definitions { token, locations } => {
+            if token < state.lsp.attention {
+                return Task::none();
+            }
+
+            // La première suffit : dans un éditeur de texte, « où est défini ce
+            //ci » n'a qu'une bonne réponse, et une liste n'aurait rien à montrer.
+            let Some(location) = locations.first() else {
+                state.export_status = Some("Rien à atteindre ici".to_string());
+
+                return Task::none();
+            };
+
+            let Some(path) = crate::lsp::client::Session::path_from_uri(&location.uri) else {
+                return Task::none();
+            };
+
+            let line = location.range.start.line as usize;
+            let column = crate::lsp::messages::column_in_chars(
+                &state.editor.content(),
+                location.range.start,
+            );
+
+            jump_to(state, &path, line, column)
+        }
+
+        Event::Hover { token, text } => {
+            if token < state.lsp.attention {
+                return Task::none();
+            }
+
+            state.lsp.hover = text.map(|text| Hover {
+                text,
+                anchor: state
+                    .editor
+                    .editor
+                    .cursor_screen_position()
+                    .unwrap_or(iced::Point::ORIGIN),
+            });
+
+            Task::none()
+        }
     }
 }
 

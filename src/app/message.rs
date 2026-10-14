@@ -101,6 +101,12 @@ pub enum Message {
     /// On ferme la liste sans rien accepter.
     CompletionDismiss,
 
+    /// Aller à la définition de ce qui est sous le curseur.
+    GoToDefinition,
+
+    /// Demander ce que le serveur sait de ce qui est sous le curseur.
+    ShowHover,
+
     /// La fenêtre a changé de taille : (largeur, hauteur).
     WindowResized(iced::Size),
 

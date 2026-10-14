@@ -143,6 +143,15 @@ impl EditorState {
         Task::batch(tasks)
     }
 
+    /// Amène le curseur à une ligne et une colonne.
+    ///
+    /// Les colonnes se comptent en **caractères**, comme partout dans l'éditeur.
+    /// La vue suit le curseur : c'est ce qui fait d'un saut une navigation, et
+    /// non un simple changement de position.
+    pub fn set_cursor(&mut self, line: usize, column: usize) -> Task<EditorMessage> {
+        self.editor.set_cursor(line, column)
+    }
+
     /// La position du curseur, et où il tombe dans le texte.
     ///
     /// La colonne du crate se compte en **caractères** ; tout le reste de

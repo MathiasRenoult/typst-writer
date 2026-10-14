@@ -352,9 +352,95 @@ pub fn offset_of(text: &str, position: Position) -> usize {
     line_end
 }
 
+/// La colonne, en caractères, d'une position du protocole.
+///
+/// Le pas de plus que `offset_of` ne fait pas : l'éditeur compte ses colonnes en
+/// **caractères**, le protocole en unités UTF-16, et une ligne accentuée les fait
+/// diverger. C'est cette colonne-là qu'un saut doit donner à l'éditeur.
+pub fn column_in_chars(text: &str, position: Position) -> usize {
+    let offset = offset_of(text, position);
+    let line_start = text[..offset].rfind('\n').map_or(0, |index| index + 1);
+
+    text[line_start..offset].chars().count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Une colonne accentuée : UTF-16 et caractères ne comptent pas pareil.
+    #[test]
+    fn a_column_is_counted_in_characters() {
+        let text = "a\u{1D11E}b\néé";
+
+        // Sur la première ligne : `a`, puis un caractère hors du plan de base, qui
+        // vaut **deux** unités UTF-16 et un seul caractère.
+        assert_eq!(
+            column_in_chars(
+                text,
+                Position {
+                    line: 0,
+                    character: 0
+                }
+            ),
+            0
+        );
+        assert_eq!(
+            column_in_chars(
+                text,
+                Position {
+                    line: 0,
+                    character: 1
+                }
+            ),
+            1
+        );
+        assert_eq!(
+            column_in_chars(
+                text,
+                Position {
+                    line: 0,
+                    character: 3
+                }
+            ),
+            2
+        );
+        assert_eq!(
+            column_in_chars(
+                text,
+                Position {
+                    line: 0,
+                    character: 4
+                }
+            ),
+            3
+        );
+
+        // Au-delà de la ligne, la colonne se ramène à sa longueur.
+        assert_eq!(
+            column_in_chars(
+                text,
+                Position {
+                    line: 1,
+                    character: 9
+                }
+            ),
+            2
+        );
+
+        // Ligne inexistante : ramenée à la fin du document, comme `offset_of`,
+        // et sans paniquer — un serveur peut parler d'un texte qu'on n'a pas.
+        assert_eq!(
+            column_in_chars(
+                text,
+                Position {
+                    line: 9,
+                    character: 0
+                }
+            ),
+            2
+        );
+    }
 
     /// Un aller-retour ne doit rien déplacer, même avec des accents, des
     /// caractères chinois et des émojis — c'est exactement là que se trompe une

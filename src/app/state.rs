@@ -70,6 +70,13 @@ pub struct State {
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 
+    /// L'endroit à atteindre une fois le document ouvert : ligne, puis colonne.
+    ///
+    /// Un aller à la définition peut viser un autre chapitre. Le chapitre est lu
+    /// et ouvert sans que le curseur puisse y être posé tout de suite : c'est ce
+    /// rendez-vous qui fait le trajet en deux temps.
+    pub jump: Option<(usize, usize)>,
+
     /// Thème : choix de l'utilisateur et préférence détectée du système.
     pub theme: crate::ui::theme::ThemeMode,
 
@@ -333,12 +340,30 @@ pub struct LspState {
     /// La liste de complétion ouverte, s'il y en a une.
     pub completion: Option<Completion>,
 
+    /// Ce que le serveur dit du symbole sous le curseur, tel qu'il s'affiche.
+    pub hover: Option<Hover>,
+
+    /// Numéro de la dernière demande de survol ou de définition.
+    ///
+    /// Une réponse plus ancienne que la dernière question est celle d'un endroit
+    /// que le curseur a déjà quitté : elle est ignorée.
+    pub attention: u64,
+
     /// Numéro de la dernière demande de complétion.
     ///
     /// Une réponse qui porte un numéro périmé est celle d'une frappe
     /// précédente : la garder ferait apparaître une liste qui ne correspond plus
     /// à ce qui est écrit.
     pub tokens: u64,
+}
+
+/// Ce que le serveur dit d'un symbole, prêt à être montré.
+pub struct Hover {
+    /// Le texte renvoyé par le serveur, en markdown.
+    pub text: String,
+
+    /// Où il s'accroche : la position du curseur au moment de la question.
+    pub anchor: iced::Point,
 }
 
 /// La liste de complétion, telle qu'elle s'affiche.

@@ -314,6 +314,32 @@ fn chapter_of(path: &Path, included: &[PathBuf]) -> Option<Chapter> {
 /// d'échouer sur un chemin inexistant. La comparaison porte alors sur le nom du
 /// dossier parent **et** sur celui du fichier : deux projets distincts gardent
 /// ainsi leurs `main.typ` séparés.
+/// Où une étiquette est posée, dans le projet.
+///
+/// Une étiquette Typst s'écrit `<nom>` : la chercher dans les chapitres suffit.
+/// La première ligne qui la porte est la bonne — un nom d'étiquette est unique
+/// dans un document, et une seconde occurrence serait une erreur du document, pas
+/// de la recherche.
+///
+/// Ce n'est pas un détour : tinymist **ne la résout pas** hors du fichier ouvert
+/// — c'est mesuré —, alors qu'une étiquette vaut pour tout le document qui la
+/// compile. Chercher ici rend le geste utile.
+pub fn find_label(project: &Project, label: &str) -> Option<(PathBuf, usize)> {
+    let marker = format!("<{label}>");
+
+    for chapter in &project.chapters {
+        let Ok(content) = std::fs::read_to_string(&chapter.path) else {
+            continue;
+        };
+
+        if let Some(line) = content.lines().position(|line| line.contains(&marker)) {
+            return Some((chapter.path.clone(), line));
+        }
+    }
+
+    None
+}
+
 pub fn same_file(a: &Path, b: &Path) -> bool {
     if let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize()) {
         return a == b;
@@ -733,6 +759,46 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         dir
+    }
+
+    /// Une étiquette se retrouve dans les chapitres, et c'est sa ligne qui compte.
+    #[test]
+    fn a_label_is_found_where_it_is_written() {
+        let dir = scratch("etiquettes");
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(
+            dir.join("main.typ"),
+            "#include \"chapitres/01-intro.typ\"\n#include \"chapitres/02-suite.typ\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("chapitres/01-intro.typ"),
+            "= Introduction <intro>\n\nLe début.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("chapitres/02-suite.typ"),
+            "Une phrase.\n\n== Une section <suite>\n\nEncore.\n",
+        )
+        .unwrap();
+
+        let project = load(&dir);
+
+        // Le titre qui porte l'étiquette est en tête de fichier…
+        assert_eq!(
+            find_label(&project, "intro"),
+            Some((dir.join("chapitres/01-intro.typ"), 0))
+        );
+
+        // …et une étiquette au milieu du chapitre donne sa ligne, pas la première.
+        assert_eq!(
+            find_label(&project, "suite"),
+            Some((dir.join("chapitres/02-suite.typ"), 2))
+        );
+
+        // Une étiquette qui n'existe pas ne mène nulle part.
+        assert_eq!(find_label(&project, "absente"), None);
     }
 
     #[test]

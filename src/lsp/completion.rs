@@ -14,6 +14,44 @@ use super::messages::CompletionItem;
 /// que le serveur a dit savoir faire.
 pub const TRIGGERS: [char; 2] = ['#', '@'];
 
+/// Le nom d'une référence, où que soit le curseur dans le mot.
+///
+/// C'est la différence avec `context` : celui-ci ne regarde que ce qui a été
+/// **tapé**, car c'est ce qu'il faut pour filtrer une liste. Mais on appelle un
+/// aller à la définition depuis un mot déjà écrit — souvent cliqué au milieu —,
+/// et il faut alors le nom entier.
+pub fn reference(text: &str, offset: usize) -> Option<String> {
+    let offset = offset.min(text.len());
+
+    let start = text[..offset]
+        .rfind(|character: char| !is_reference(character))
+        .map_or(0, |index| index + 1);
+
+    let end = text[offset..]
+        .find(|character: char| !is_reference(character))
+        .map_or(text.len(), |index| offset + index);
+
+    let word = &text[start..end];
+
+    // Le `@` n'est dans le mot que si le curseur est posé dessus ; partout
+    // ailleurs il est **juste avant**, et c'est lui qui fait d'un mot une
+    // référence.
+    if let Some(name) = word.strip_prefix(CITATION) {
+        return Some(name.to_string());
+    }
+
+    text[..start].ends_with(CITATION).then(|| word.to_string())
+}
+
+/// Ce qui peut composer un nom de référence.
+///
+/// Pas le point : une phrase se termine souvent juste après une référence, et
+/// « @intro. » doit donner « intro ». Une étiquette qui contient vraiment un
+/// point est rare, et le serveur reste là pour ces cas-là.
+fn is_reference(character: char) -> bool {
+    character.is_alphanumeric() || "_:-".contains(character)
+}
+
 /// Le caractère qui appelle une citation.
 pub const CITATION: char = '@';
 
@@ -394,6 +432,27 @@ mod tests {
         // Un marqueur échappé reste un caractère, et un `$` seul aussi.
         assert_eq!(expand("un \\$ dollar"), ("un $ dollar".to_string(), None));
         assert_eq!(expand("prix : 5$"), ("prix : 5$".to_string(), None));
+    }
+
+    /// Une référence se lit entière, même si le curseur est au milieu — et sans
+    /// emporter la ponctuation qui la suit.
+    #[test]
+    fn a_reference_is_read_whole() {
+        let text = "Voir @intro pour commencer, et @fig-reseau.";
+
+        for offset in [6, 8, 11] {
+            assert_eq!(reference(text, offset), Some("intro".to_string()));
+        }
+
+        assert_eq!(reference(text, 40), Some("fig-reseau".to_string()));
+        assert_eq!(
+            reference(text, text.len() - 1),
+            Some("fig-reseau".to_string())
+        );
+
+        // Ce qui n'est pas une référence n'en donne pas.
+        assert_eq!(reference("un mot simple", 5), None);
+        assert_eq!(reference("", 0), None);
     }
 
     /// Les clés du projet deviennent des éléments proposables.

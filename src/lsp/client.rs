@@ -171,6 +171,15 @@ impl Session {
         command()
     }
 
+    /// Le chemin d'une adresse du protocole. L'inverse de `uri_for`.
+    ///
+    /// Un serveur peut désigner un fichier que nous ne connaissons pas encore :
+    /// c'est le cas d'une définition qui vit dans un autre chapitre. Le chemin
+    /// est rendu tel quel, et c'est le projet qui décidera s'il lui appartient.
+    pub fn path_from_uri(uri: &str) -> Option<PathBuf> {
+        Some(PathBuf::from(percent_decode(uri.strip_prefix("file://")?)))
+    }
+
     /// L'adresse du protocole pour un chemin.
     pub fn uri_for(path: &Path) -> String {
         let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -809,6 +818,38 @@ fn percent_encode(text: &str) -> String {
     encoded
 }
 
+/// Le texte d'une chaîne pourcentage-encodée. L'inverse de `percent_encode`.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2]))
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// La valeur d'un chiffre hexadécimal.
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// La commande du serveur, d'après l'environnement.
 fn command() -> String {
     std::env::var(COMMAND_ENV)
@@ -830,6 +871,26 @@ pub fn root_of(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Une adresse se relit, accents compris.
+    #[test]
+    fn a_path_is_read_back_from_its_address() {
+        assert_eq!(
+            Session::path_from_uri("file:///tmp/caf%C3%A9%20du%20matin.typ"),
+            Some(PathBuf::from("/tmp/café du matin.typ"))
+        );
+
+        // Ce qui n'est pas une adresse de fichier n'en donne pas le chemin.
+        assert_eq!(Session::path_from_uri("https://exemple.test/a.typ"), None);
+
+        // Et l'aller-retour rend exactement le chemin canonique.
+        let path = Path::new("Cargo.toml");
+
+        assert_eq!(
+            Session::path_from_uri(&Session::uri_for(path)),
+            Some(fs::canonicalize(path).unwrap())
+        );
+    }
     use std::fs;
 
     /// Un projet minimal, choisi pour ce qu'on veut éprouver : une citation avec
@@ -859,6 +920,120 @@ mod tests {
         .expect("bibliographie");
 
         dir
+    }
+
+    /// Où mènent les endroits : une définition, et un survol.
+    ///
+    /// C'est l'épreuve du vrai serveur pour la navigation — celle qui dit si un
+    /// saut a quelque part où aller, et si le chemin rendu est bien un chapitre
+    /// du projet.
+    ///
+    ///     cargo test --release -- --ignored tinymist_gives_locations --nocapture
+    #[test]
+    #[ignore]
+    fn tinymist_gives_locations() {
+        if !Session::is_available() {
+            println!("tinymist absent : rien à éprouver");
+            return;
+        }
+
+        let dir = project("endroits");
+        let first = dir.join("chapitres/01-intro.typ");
+        let second = dir.join("chapitres/02-suite.typ");
+
+        // Les deux chapitres sont inclus par l'assemblage : c'est le seul moyen
+        // que la référence puisse mener ailleurs que dans son propre fichier.
+        fs::write(
+            dir.join("main.typ"),
+            "#set page(paper: \"a4\")\n#set text(lang: \"fr\")\n#include \"chapitres/01-intro.typ\"\n#include \"chapitres/02-suite.typ\"\n#bibliography(\"biblio.bib\")\n",
+        )
+        .expect("assemblage");
+
+        fs::write(&first, "= Introduction <intro>\n\nLe début.\n").expect("premier chapitre");
+
+        fs::write(
+            &second,
+            "= Suite\n\nVoir @intro pour commencer.\n\n#let repere = 1\n\nLe repere vaut #repere.\n",
+        )
+        .expect("second chapitre");
+
+        let text = fs::read_to_string(&second).expect("chapitre lisible");
+        let entry = dir.join("main.typ");
+
+        let mut session =
+            Session::start(&dir, Some(&entry), &second, &text).expect("démarrage du serveur");
+
+        wait_for(
+            &session,
+            |event| matches!(event, Event::Ready { .. }),
+            Duration::from_secs(40),
+        );
+
+        // 1. Une référence d'un chapitre vers un autre.
+        let offset = text.find("@intro").expect("le chapitre cite") + 1;
+        let position = crate::lsp::messages::position_of(&text, offset);
+
+        session.definition(position, 21);
+
+        match wait_for(
+            &session,
+            |event| matches!(event, Event::Definitions { token, .. } if *token == 21),
+            Duration::from_secs(30),
+        ) {
+            Some(Event::Definitions { locations, .. }) => {
+                println!("définition de `@intro` : {} endroit(s)", locations.len());
+
+                for location in &locations {
+                    let path = Session::path_from_uri(&location.uri);
+                    let known = path
+                        .as_ref()
+                        .is_some_and(|path| crate::project::same_file(path, &first));
+
+                    println!(
+                        "  ligne {} | chapitre du projet : {known} | {}",
+                        location.range.start.line + 1,
+                        location.uri
+                    );
+                }
+            }
+            _ => println!("définition de `@intro` : AUCUNE"),
+        }
+
+        // 2. Le survol d'une variable.
+        let offset = text.rfind("#repere").expect("le chapitre utilise") + 3;
+        let position = crate::lsp::messages::position_of(&text, offset);
+
+        session.hover(position, 22);
+
+        match wait_for(
+            &session,
+            |event| matches!(event, Event::Hover { token, .. } if *token == 22),
+            Duration::from_secs(30),
+        ) {
+            Some(Event::Hover { text, .. }) => println!(
+                "survol de `#repere` : {:?}",
+                text.map(|text| text.lines().take(4).collect::<Vec<_>>().join(" / "))
+            ),
+            _ => println!("survol de `#repere` : AUCUNE RÉPONSE"),
+        }
+
+        // 3. Sa définition, dans le même chapitre.
+        session.definition(position, 23);
+
+        match wait_for(
+            &session,
+            |event| matches!(event, Event::Definitions { token, .. } if *token == 23),
+            Duration::from_secs(30),
+        ) {
+            Some(Event::Definitions { locations, .. }) => println!(
+                "définition de `#repere` : {} endroit(s), ligne {:?}",
+                locations.len(),
+                locations
+                    .first()
+                    .map(|location| location.range.start.line + 1)
+            ),
+            _ => println!("définition de `#repere` : AUCUNE"),
+        }
     }
 
     /// Attend un événement, en écartant les autres.
