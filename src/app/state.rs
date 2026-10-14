@@ -1,5 +1,5 @@
 use crate::editor::EditorState;
-use crate::project::{BibliographyEntry, DocumentInfo};
+use crate::project::{BibliographyEntry, Project};
 use crate::typst::render::Diagnostic;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -7,17 +7,23 @@ use std::sync::Arc;
 use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
 
-#[derive(Default)]
+/// L'état de l'application.
+///
+/// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
+/// la séquence de démarrage sait établir.
 pub struct State {
     pub editor: EditorState,
 
     /// Statut du dernier export PDF (`None` tant qu'aucun export n'a eu lieu).
     pub export_status: Option<String>,
 
-    /// Bibliothèque personnelle : les documents du dossier de travail.
-    pub library: Vec<DocumentInfo>,
+    /// Le projet ouvert : ses chapitres, sa bibliographie, son assemblage.
+    pub project: Project,
 
-    /// Entrées de bibliographie citables (fichier `.bib` à côté du document).
+    /// Les projets disponibles, pour passer de l'un à l'autre.
+    pub projects: Vec<Project>,
+
+    /// Entrées de bibliographie citables (le `.bib` du projet).
     pub bibliography: Vec<BibliographyEntry>,
 
     /// Résultat du rendu fidèle (compilation Typst en bibliothèque).

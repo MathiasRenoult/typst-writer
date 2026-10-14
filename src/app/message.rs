@@ -11,15 +11,24 @@ pub enum Message {
     OpenFile,
     FileOpened(Option<(PathBuf, String)>),
 
-    /// Ouvre un document de la bibliothèque (clic dans la barre latérale).
-    OpenLibraryDocument(PathBuf),
-    LibraryDocumentOpened(PathBuf, String),
+    /// Ouvre un chapitre du projet (clic dans le panneau de travail).
+    OpenChapter(PathBuf),
+    ChapterOpened(PathBuf, String),
 
-    /// Rescanne le dossier de travail (après création ou suppression).
-    RefreshLibrary,
+    /// Crée un chapitre, puis l'ouvre.
+    NewChapter,
 
-    /// Supprime un document de la bibliothèque.
-    DeleteDocument(PathBuf),
+    /// Crée un projet, puis l'ouvre.
+    NewProject,
+
+    /// Ouvre un autre projet.
+    OpenProject(PathBuf),
+
+    /// Rescanne le projet (après création ou suppression).
+    RefreshProject,
+
+    /// Supprime un chapitre : retiré de l'assemblage, puis du disque.
+    DeleteChapter(PathBuf),
 
     /// Insère une citation `@clé` à la position du curseur.
     InsertCitation(String),

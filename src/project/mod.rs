@@ -1,16 +1,21 @@
-//! Gestion du projet : les documents de l'application, la session de travail
-//! et la bibliographie locale.
+//! Gestion du projet : les chapitres, la bibliographie, la session de travail.
 //!
-//! L'application travaille toujours sur des fichiers locaux appartenant à
-//! l'app : le dossier de travail (`~/.typst-writer/`) est la bibliothèque
-//! personnelle de l'utilisateur. Aucune boîte de dialogue « où
-//! sauvegarder ? » n'intervient pendant l'édition — elle ne sert qu'à
-//! l'export (PDF, partage d'un document).
+//! L'application travaille toujours sur des fichiers locaux : aucun dialogue
+//! « où sauvegarder ? » n'intervient pendant l'édition — il ne sert qu'à
+//! l'export.
+//!
+//! Un travail se présente comme un **projet** : un dossier dans
+//! `~/.typst-writer/projets/`, avec un fichier par chapitre, sa bibliographie
+//! et son assemblage. Voir [`project`] pour la structure exacte.
+
+pub mod project;
+
+pub use project::*;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Dossier de travail de l'application : tous les documents actifs y vivent.
+/// Dossier de travail de l'application : les projets y vivent.
 pub fn work_dir() -> PathBuf {
     let dir = match std::env::var("HOME") {
         Ok(home) => PathBuf::from(home).join(".typst-writer"),
@@ -22,102 +27,14 @@ pub fn work_dir() -> PathBuf {
     dir
 }
 
-/// Un document de la bibliothèque personnelle.
-#[derive(Debug, Clone)]
-pub struct DocumentInfo {
-    /// Chemin absolu du fichier.
-    pub path: PathBuf,
-
-    /// Nom du fichier (avec l'extension).
-    pub name: String,
-
-    /// Taille en octets.
-    pub size: u64,
-
-    /// Horodatage de dernière modification (secondes epoch).
-    pub modified: u64,
-}
-
-impl DocumentInfo {
-    /// Nom sans l'extension `.typ` : le titre affiché dans la bibliothèque.
-    pub fn title(&self) -> &str {
-        self.name.strip_suffix(".typ").unwrap_or(&self.name)
-    }
-}
-
-/// Liste les documents Typst du dossier de travail, du plus récemment
-/// modifié au plus ancien.
-///
-/// Renvoie une liste vide si le dossier n'existe pas ou est vide.
-pub fn list_documents() -> Vec<DocumentInfo> {
-    let Ok(entries) = std::fs::read_dir(work_dir()) else {
-        return Vec::new();
-    };
-
-    let mut documents: Vec<DocumentInfo> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .map(|extension| extension == "typ")
-                .unwrap_or(false)
-        })
-        .filter_map(|entry| {
-            let path = entry.path();
-            let metadata = entry.metadata().ok()?;
-            let name = path.file_name()?.to_str()?.to_string();
-
-            Some(DocumentInfo {
-                path,
-                name,
-                size: metadata.len(),
-                modified: metadata
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_secs())
-                    .unwrap_or(0),
-            })
-        })
-        .collect();
-
-    documents.sort_by(|a, b| b.modified.cmp(&a.modified));
-
-    documents
-}
-
-/// Crée un nouveau document dans le dossier de travail.
-///
-/// Le nom est `document-N.typ` avec N le premier entier libre, pour ne jamais
-/// écraser un travail existant.
-pub fn create_document(content: &str) -> std::io::Result<PathBuf> {
-    let dir = work_dir();
-
-    for n in 1..=1000 {
-        let path = dir.join(format!("document-{n}.typ"));
-
-        if !path.exists() {
-            std::fs::write(&path, content)?;
-
-            return Ok(path);
-        }
-    }
-
-    std::fs::write(dir.join("document.typ"), content)?;
-
-    Ok(dir.join("document.typ"))
-}
-
-/// Supprime un document de la bibliothèque.
-pub fn delete_document(path: &Path) -> std::io::Result<()> {
-    std::fs::remove_file(path)
-}
-
-/// Session de travail : le document à rouvrir au démarrage.
+/// Session de travail : ce qu'il faut rouvrir au démarrage.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Session {
-    /// Chemin du dernier document ouvert.
+    /// Dossier du projet ouvert.
+    #[serde(default)]
+    pub project: Option<PathBuf>,
+
+    /// Chemin du chapitre ouvert dans ce projet.
     #[serde(default)]
     pub last_document: Option<PathBuf>,
 }
@@ -126,7 +43,7 @@ fn session_path() -> PathBuf {
     work_dir().join("session.json")
 }
 
-/// Charge la session enregistrée (dernier document ouvert).
+/// Charge la session enregistrée.
 pub fn load_session() -> Session {
     std::fs::read_to_string(session_path())
         .ok()
@@ -134,7 +51,7 @@ pub fn load_session() -> Session {
         .unwrap_or_default()
 }
 
-/// Enregistre la session (dernier document ouvert).
+/// Enregistre la session.
 pub fn save_session(session: &Session) {
     let text = match serde_json::to_string_pretty(session) {
         Ok(text) => text,
@@ -157,18 +74,6 @@ pub struct BibliographyEntry {
 
     /// Le type BibTeX (`article`, `book`, `inproceedings`…).
     pub kind: String,
-}
-
-/// Cherche un fichier `.bib` dans le dossier du document.
-///
-/// La convention est la même que dans Typst : `#bibliography("refs.bib")`.
-pub fn find_bibliography(document_dir: &Path) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(document_dir).ok()?;
-
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| path.extension().map(|ext| ext == "bib").unwrap_or(false))
 }
 
 /// Lit les entrées d'un fichier `.bib`.
@@ -206,16 +111,125 @@ fn parse_bib_entry_line(line: &str) -> Option<BibliographyEntry> {
     })
 }
 
-/// Modèle de document : le squelette d'un nouveau devoir.
-pub const DOCUMENT_TEMPLATE: &str = r#"#set page(margin: 2cm)
-#set text(font: "New Computer Modern", size: 11pt)
+/// Le nom du projet créé lors de la reprise des documents existants.
+const MIGRATED_PROJECT: &str = "mon-travail";
 
-= Introduction
+/// Reprend les documents à plat dans un premier projet.
+///
+/// Les versions précédentes rangeaient les documents directement à la racine de
+/// `~/.typst-writer/`. Puisqu'un travail est désormais un projet, ces fichiers
+/// deviennent les chapitres d'un projet « mon-travail ».
+///
+/// Ne fait rien si un projet existe déjà, ou s'il n'y a rien à reprendre :
+/// la migration ne s'exécute qu'une fois, sur un dossier vierge de projets.
+///
+/// Renvoie le dossier du projet créé, le cas échéant.
+pub fn migrate_flat_documents() -> Option<PathBuf> {
+    // Un projet existe déjà : le dossier a été migré, ou l'utilisateur a
+    // commencé à travailler dans la nouvelle organisation.
+    if !project::list_projects().is_empty() {
+        return None;
+    }
 
-Bienvenue dans Typst Writer.
+    let flat = locate_flat_documents();
 
-Ceci est notre premier document Typst.
-"#;
+    if flat.is_empty() {
+        return None;
+    }
+
+    let dir = project::create(MIGRATED_PROJECT).ok()?;
+
+    // Une bibliographie restée à la racine doit rejoindre le projet : sans
+    // cela, un chapitre qui la cite perdrait sa référence.
+    adopt_stray_bibliography(&dir);
+
+    let chapters_dir = dir.join("chapitres");
+
+    let session = load_session();
+    let mut moved_session = session.project.is_none();
+
+    for (index, path) in flat.iter().enumerate() {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("chapitre.typ");
+
+        let destination = chapters_dir.join(format!("{:02}-{}", index + 1, name));
+
+        if std::fs::rename(path, &destination).is_err() {
+            // Un fichier qu'on n'a pas pu déplacer est laissé sur place plutôt
+            // que perdu : la migration reprendra au prochain démarrage.
+            continue;
+        }
+
+        let _ = project::add_chapter_to_assembly(&dir.join("main.typ"), &destination);
+
+        if session.last_document.as_deref() == Some(path.as_path()) {
+            moved_session = true;
+        }
+    }
+
+    // La session pointait vers un fichier à plat : elle pointe maintenant vers
+    // le projet, sinon le démarrage suivant chercherait un document disparu.
+    if moved_session {
+        save_session(&Session {
+            project: Some(dir.clone()),
+            last_document: None,
+        });
+    }
+
+    Some(dir)
+}
+
+/// Fait rejoindre au projet une bibliographie laissée à la racine.
+///
+/// Le fichier créé par `project::create` est un modèle vide : on ne le remplace
+/// que s'il est effectivement vide, pour ne jamais écraser des références
+/// existantes par un exemple commenté.
+fn adopt_stray_bibliography(project_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(work_dir()) else {
+        return;
+    };
+
+    let Some(stray) = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.is_file() && path.extension().map(|ext| ext == "bib").unwrap_or(false))
+    else {
+        return;
+    };
+
+    let destination = project_dir.join("references.bib");
+
+    let template_is_untouched = std::fs::read_to_string(&destination)
+        // Le modèle n'a que des lignes vides ou commentées : aucun `@`.
+        .map(|content| !content.contains('@'))
+        .unwrap_or(false);
+
+    if template_is_untouched {
+        let _ = std::fs::rename(&stray, &destination);
+    }
+}
+
+/// Les documents `.typ` restés à la racine du dossier de travail.
+fn locate_flat_documents() -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(work_dir()) else {
+        return Vec::new();
+    };
+
+    let mut documents: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| path.extension().map(|ext| ext == "typ").unwrap_or(false))
+        .collect();
+
+    // L'ordre de lecture du dossier n'est pas garanti : on trie pour que la
+    // numérotation des chapitres soit reproductible.
+    documents.sort();
+
+    documents
+}
 
 #[cfg(test)]
 mod tests {
@@ -253,16 +267,17 @@ mod tests {
         assert!(parse_bib_entry_line("@article{clé,").is_some());
     }
 
-    /// `DocumentInfo::title` retire l'extension pour l'affichage.
+    /// Une session d'une version précédente, qui ne connaissait que
+    /// `last_document`, doit se lire sans erreur.
     #[test]
-    fn title_strips_extension() {
-        let info = DocumentInfo {
-            path: PathBuf::from("/tmp/devoir-3.typ"),
-            name: "devoir-3.typ".to_string(),
-            size: 0,
-            modified: 0,
-        };
+    fn an_older_session_still_loads() {
+        let session: Session =
+            serde_json::from_str(r#"{"last_document": "/tmp/ancien.typ"}"#).unwrap();
 
-        assert_eq!(info.title(), "devoir-3");
+        assert_eq!(
+            session.last_document,
+            Some(PathBuf::from("/tmp/ancien.typ"))
+        );
+        assert!(session.project.is_none());
     }
 }

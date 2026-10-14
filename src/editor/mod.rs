@@ -22,7 +22,7 @@ const LINE_HEIGHT: f32 = 1.6;
 impl Default for EditorState {
     fn default() -> Self {
         let mut state = Self {
-            editor: CodeEditor::new(crate::project::DOCUMENT_TEMPLATE, "typst"),
+            editor: CodeEditor::new("", "typst"),
             path: None,
         };
 

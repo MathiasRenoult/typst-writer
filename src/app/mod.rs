@@ -19,108 +19,117 @@ const RENDER_INTERVAL_MS: u64 = 300;
 const SAVE_INTERVAL_MS: u64 = 1000;
 
 impl State {
-    /// État initial : le dernier document de la session est rouvert, ou le
-    /// plus récent de la bibliothèque, ou un premier document est créé.
+    /// État initial : le projet de la session est rouvert, ou le plus récent,
+    /// ou un premier projet est créé — puis le chapitre à reprendre est ouvert.
     pub fn new() -> Self {
+        // Reprise des documents des versions précédentes, qui vivaient à plat
+        // dans le dossier de travail. Sans effet si un projet existe déjà.
+        crate::project::migrate_flat_documents();
+
+        let mut projects = crate::project::list_projects();
+
+        // Aucun projet : c'est le premier démarrage, on en crée un.
+        if projects.is_empty() {
+            match crate::project::create(FIRST_PROJECT) {
+                Ok(dir) => projects = vec![crate::project::load(&dir)],
+                Err(error) => eprintln!("Création du premier projet : {error}"),
+            }
+        }
+
+        let session = crate::project::load_session();
+
+        // Le projet de la session s'il existe toujours, sinon le plus récent.
+        let project = session
+            .project
+            .as_ref()
+            .filter(|dir| dir.is_dir())
+            .map(|dir| crate::project::load(dir))
+            .or_else(|| projects.first().cloned())
+            .unwrap_or_else(|| crate::project::load(&crate::project::projects_dir()));
+
         let mut state = Self {
             editor: crate::editor::EditorState::default(),
             export_status: None,
-            library: Vec::new(),
             bibliography: Vec::new(),
+            project,
+            projects,
             render: Default::default(),
             layout: Default::default(),
             theme: Default::default(),
             system_theme: None,
         };
 
-        // 1. Le document de la session précédente, s'il existe toujours.
-        let session = crate::project::load_session();
+        // Le chapitre de la session, s'il appartient encore à ce projet ;
+        // sinon le premier chapitre, sinon rien — le panneau proposera d'en
+        // créer un.
+        let wanted = session.last_document.filter(|path| path.is_file());
 
-        let restored = session
-            .last_document
-            .clone()
-            .filter(|path| path.is_file())
-            .and_then(|path| {
-                std::fs::read_to_string(&path)
-                    .ok()
-                    .map(|content| (path, content))
-            });
-
-        // 2. Sinon le document le plus récent de la bibliothèque.
-        let restored = restored.or_else(|| {
-            crate::project::list_documents()
-                .into_iter()
-                .find_map(|document| {
-                    std::fs::read_to_string(&document.path)
-                        .ok()
-                        .map(|content| (document.path, content))
-                })
+        let chapter = wanted.or_else(|| {
+            state
+                .project
+                .chapters
+                .first()
+                .map(|chapter| chapter.path.clone())
         });
 
-        // 3. Sinon un premier document, créé sur place.
-        match restored {
-            Some((path, content)) => {
+        if let Some(path) = chapter {
+            if let Ok(content) = std::fs::read_to_string(&path) {
                 state.editor = crate::editor::EditorState::new_file(path, content);
-            }
-            None => {
-                let content = crate::project::DOCUMENT_TEMPLATE.to_string();
-
-                match crate::project::create_document(&content) {
-                    Ok(path) => {
-                        state.editor = crate::editor::EditorState::new_file(path, content);
-                    }
-                    Err(error) => eprintln!("Création du premier document : {error}"),
-                }
             }
         }
 
         state.refresh_context();
-
-        // La session est enregistrée dès le démarrage : le document ouvert
-        // (restauré ou créé) sera celui de la prochaine session.
-        if let Some(path) = state.editor.path.clone() {
-            crate::project::save_session(&crate::project::Session {
-                last_document: Some(path),
-            });
-        }
+        state.save_session();
 
         state
     }
 
-    /// Rescanne la bibliothèque et recharge la bibliographie du document
-    /// actif.
+    /// Rescanne le projet et recharge sa bibliographie.
+    ///
+    /// C'est ce qui met à jour le panneau de travail : les comptes de mots, les
+    /// chapitres ajoutés ou retirés, les entrées de bibliographie.
     fn refresh_context(&mut self) {
-        self.library = crate::project::list_documents();
+        self.projects = crate::project::list_projects();
+
+        // Le projet est relu depuis le disque : ses chapitres ont pu être
+        // renommés, ajoutés ou supprimés depuis le dernier scan.
+        self.project = crate::project::load(&self.project.dir);
 
         self.bibliography = self
-            .editor
-            .path
+            .project
+            .bibliography
             .as_ref()
-            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-            .and_then(|dir| crate::project::find_bibliography(&dir))
-            .map(|bib| crate::project::parse_bibliography(&bib))
+            .map(|bib| crate::project::parse_bibliography(bib))
             .unwrap_or_default();
     }
 
-    /// Charge un document dans l'éditeur, rendu vierge.
+    /// Charge un chapitre dans l'éditeur, rendu vierge.
     ///
-    /// Les images du document précédent ne doivent pas survivre au
-    /// changement : les `Handle` sont relâchés pour que le backend libère les
-    /// textures correspondantes.
+    /// Les images du chapitre précédent ne doivent pas survivre au changement :
+    /// les `Handle` sont relâchés pour que le backend libère les textures.
     fn open_document(&mut self, path: PathBuf, content: String) {
         self.editor = crate::editor::EditorState::new_file(path, content);
         self.export_status = None;
         self.render.reset();
         self.refresh_context();
+        self.save_session();
     }
 
-    /// Dossier du document actif (base des imports relatifs).
+    /// Retient le projet et le chapitre ouverts pour le prochain démarrage.
+    fn save_session(&self) {
+        crate::project::save_session(&crate::project::Session {
+            project: Some(self.project.dir.clone()),
+            last_document: self.editor.path.clone(),
+        });
+    }
+
+    /// Dossier résolu pour les imports et la bibliographie.
+    ///
+    /// C'est la racine du projet, et non le dossier du chapitre : un chapitre
+    /// écrit `#include` ou `#bibliography("references.bib")` par rapport à
+    /// l'assemblage, pas par rapport à lui-même.
     fn document_dir(&self) -> PathBuf {
-        self.editor
-            .path
-            .as_ref()
-            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-            .unwrap_or_else(crate::project::work_dir)
+        self.project.dir.clone()
     }
 
     /// Écrit le contenu courant et enregistre la session.
@@ -130,30 +139,22 @@ impl State {
                 eprintln!("Sauvegarde de {path:?} : {error}");
             }
 
-            crate::project::save_session(&crate::project::Session {
-                last_document: Some(path),
-            });
+            self.save_session();
         }
     }
 }
+
+/// Nom du projet créé au premier démarrage.
+const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::Editor(message) => state.editor.update(message).map(Message::Editor),
 
         Message::NewFile => {
-            let content = crate::project::DOCUMENT_TEMPLATE.to_string();
-
-            match crate::project::create_document(&content) {
-                Ok(path) => {
-                    state.open_document(path, content);
-                }
-                Err(error) => {
-                    state.export_status = Some(format!("Création du document : {error}"));
-                }
-            }
-
-            Task::none()
+            // Un « nouveau document » est désormais un nouveau chapitre : c'est
+            // l'unité de travail du projet.
+            update(state, Message::NewChapter)
         }
 
         Message::OpenFile => Task::perform(
@@ -181,38 +182,108 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::OpenLibraryDocument(path) => Task::perform(
+        Message::OpenChapter(path) => Task::perform(
             async move {
                 std::fs::read_to_string(&path)
                     .ok()
                     .map(|content| (path, content))
             },
             |result| match result {
-                Some((path, content)) => Message::LibraryDocumentOpened(path, content),
-                None => Message::RefreshLibrary,
+                Some((path, content)) => Message::ChapterOpened(path, content),
+                None => Message::RefreshProject,
             },
         ),
 
-        Message::LibraryDocumentOpened(path, content) => {
+        Message::ChapterOpened(path, content) => {
             state.open_document(path, content);
 
-            crate::project::save_session(&crate::project::Session {
-                last_document: state.editor.path.clone(),
-            });
+            Task::none()
+        }
+
+        Message::NewChapter => {
+            let title = default_chapter_title(&state.project);
+
+            match crate::project::create_chapter(&state.project, &title) {
+                Ok(path) => {
+                    state.refresh_context();
+
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => state.open_document(path, content),
+                        Err(error) => {
+                            state.export_status = Some(format!("Ouverture du chapitre : {error}"));
+                        }
+                    }
+                }
+                Err(error) => {
+                    state.export_status = Some(format!("Création du chapitre : {error}"));
+                }
+            }
 
             Task::none()
         }
 
-        Message::RefreshLibrary => {
+        Message::NewProject => {
+            let name = next_project_name(&state.projects);
+
+            match crate::project::create(&name) {
+                Ok(dir) => {
+                    state.project = crate::project::load(&dir);
+                    state.projects = crate::project::list_projects();
+                    state.editor = crate::editor::EditorState::default();
+                    state.render.reset();
+                    state.refresh_context();
+
+                    update(state, Message::NewChapter)
+                }
+                Err(error) => {
+                    state.export_status = Some(format!("Création du projet : {error}"));
+
+                    Task::none()
+                }
+            }
+        }
+
+        Message::OpenProject(dir) => {
+            state.project = crate::project::load(&dir);
+            state.projects = crate::project::list_projects();
+            state.render.reset();
+            state.refresh_context();
+
+            // On repart sur le premier chapitre du nouveau projet : rouvrir le
+            // chapitre d'un autre projet n'aurait pas de sens.
+            match state.project.chapters.first().map(|c| c.path.clone()) {
+                Some(path) => update(state, Message::OpenChapter(path)),
+                None => {
+                    state.editor = crate::editor::EditorState::default();
+                    state.save_session();
+
+                    Task::none()
+                }
+            }
+        }
+
+        Message::RefreshProject => {
             state.refresh_context();
 
             Task::none()
         }
 
-        Message::DeleteDocument(path) => {
-            let _ = crate::project::delete_document(&path);
+        Message::DeleteChapter(path) => {
+            let _ = crate::project::remove_chapter(&state.project, &path);
 
             state.refresh_context();
+
+            // Le chapitre ouvert vient d'être supprimé : on ouvre le suivant, ou
+            // l'éditeur reste sur un fichier qui n'existe plus.
+            if state.editor.path.as_deref() == Some(path.as_path()) {
+                match state.project.chapters.first().map(|c| c.path.clone()) {
+                    Some(next) => return update(state, Message::OpenChapter(next)),
+                    None => {
+                        state.editor = crate::editor::EditorState::default();
+                        state.save_session();
+                    }
+                }
+            }
 
             Task::none()
         }
@@ -532,6 +603,42 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+/// Titre par défaut d'un nouveau chapitre.
+///
+/// « Chapitre N » avec N après le dernier numéro utilisé : le titre est une
+/// amorce à réécrire, pas une décision à prendre avant d'écrire.
+fn default_chapter_title(project: &crate::project::Project) -> String {
+    let next = project
+        .chapters
+        .iter()
+        .map(|chapter| chapter.order)
+        .max()
+        .map(|max| max + 1)
+        .unwrap_or(1);
+
+    format!("Chapitre {next}")
+}
+
+/// Nom libre pour un nouveau projet.
+///
+/// « projet », puis « projet-2 », etc. : un nom doit exister avant d'être
+/// choisi, sinon créer un projet écraserait le précédent.
+fn next_project_name(projects: &[crate::project::Project]) -> String {
+    for n in 1..=1000 {
+        let name = if n == 1 {
+            "projet".to_string()
+        } else {
+            format!("projet-{n}")
+        };
+
+        if !projects.iter().any(|project| project.name == name) {
+            return name;
+        }
+    }
+
+    "projet-final".to_string()
 }
 
 /// Raccourcis globaux : Ctrl+S/N/O/E.
