@@ -56,6 +56,15 @@ pub struct RenderState {
     /// Pages dont la rasterisation a été demandée mais n'est pas finie.
     pub rendering: HashSet<usize>,
 
+    /// Pages dont l'image est périmée (le document a changé depuis son
+    /// dernier rendu) mais qui restent affichées en attendant la nouvelle.
+    ///
+    /// C'est le cœur du double tampon : la rasterisation n'est relancée que
+    /// pour les pages périmées *visibles*, jamais pour un défilement sur des
+    /// images déjà valides, et l'ancienne image n'est retirée du cache que
+    /// lorsque la nouvelle est arrivée — l'écran ne passe jamais par le vide.
+    pub stale: HashSet<usize>,
+
     /// Première et dernière page visibles à l'écran (inclusives), d'après le
     /// dernier scroll. `None` avant le premier rendu de la vue.
     pub visible: Option<(usize, usize)>,

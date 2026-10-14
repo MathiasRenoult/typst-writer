@@ -316,12 +316,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.persist();
             }
 
-            // Invalider le cache des pages visibles pour forcer le re-rendu
-            // après une compilation réussie (le texte a changé), tout en
-            // gardant les autres pages affichées pour éviter le flicker global.
+            // Marquer les pages visibles comme périmées : leur nouveau rendu
+            // est lancé en arrière-plan, mais l'ancienne image reste affichée
+            // jusqu'à ce que la nouvelle arrive — aucun flash, et seules les
+            // pages réellement visibles sont rasterisées.
             if let Some((first, last)) = state.render.visible {
                 for index in first..=last {
-                    state.render.page_cache.remove(&index);
+                    state.render.stale.insert(index);
                 }
             }
 
@@ -331,6 +332,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::PageRendered(index, png) => {
             state.render.rendering.remove(&index);
+            state.render.stale.remove(&index);
 
             if let Some(png) = png {
                 // Remplacement en place : l'affichage bascule de l'ancienne
@@ -343,6 +345,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ViewportChanged(first, last) => {
             state.render.visible = Some((first, last));
+
+            // Une page qui entre dans le viewport sans image valide doit
+            // être rasterisée ; une page déjà en cache et à jour ne l'est
+            // plus (c'est ce qui rendait chaque défilement coûteux).
+            for index in first..=last {
+                if !state.render.page_cache.contains_key(&index) {
+                    state.render.stale.insert(index);
+                }
+            }
 
             rasterize_visible(state)
         }
@@ -398,12 +409,13 @@ fn handle_shortcut(
     }
 }
 
-/// Lance les rasterisations des pages visibles non encore en cours.
+/// Lance les rasterisations nécessaires et rien de plus.
 ///
-/// C'est le cœur de l'optimisation : un document de 5500 mots ne coûte
-/// qu'une compilation (~15 ms) + la rasterisation des 1-2 pages affichées
-/// (~35 ms chacune). Les pages déjà rendues restent affichées (double
-/// tampon) : elles sont remplacées en place quand leur nouveau rendu arrive.
+/// Une page n'est rasterisée que si elle est visible, qu'aucun rendu n'est
+/// déjà en cours pour elle, et qu'elle est marquée périmée (document modifié
+/// ou page jamais rendue). Un document de 5500 mots ne coûte donc qu'une
+/// compilation (~15 ms) + 1-2 pages rasterisées (~35 ms chacune), et un
+/// défilement sur des images déjà à jour ne coûte rien du tout.
 fn rasterize_visible(state: &State) -> Task<Message> {
     let Some(document) = state.render.document.clone() else {
         return Task::none();
@@ -413,8 +425,8 @@ fn rasterize_visible(state: &State) -> Task<Message> {
     let total = crate::typst::render::page_count(&document);
 
     let tasks: Vec<Task<Message>> = (first..=last.min(total.saturating_sub(1)))
+        .filter(|index| state.render.stale.contains(index))
         .filter(|index| !state.render.rendering.contains(index))
-        .filter(|index| !state.render.page_cache.contains_key(index))
         .map(|index| {
             let document = document.clone();
 
