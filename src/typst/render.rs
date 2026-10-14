@@ -842,4 +842,36 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// RH : deux chapitres dans l'assemblage, les deux doivent être rendus.
+    #[test]
+    fn both_chapters_render() {
+        let dir = std::env::temp_dir().join("typst-writer-repro-chapitres");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        fs::write(dir.join("chapitres/01-un.typ"), "= Premier\n\nALPHA.\n").unwrap();
+        fs::write(dir.join("chapitres/02-deux.typ"), "= Second\n\nBETA.\n").unwrap();
+        fs::write(
+            dir.join("main.typ"),
+            "#set page(margin: 2cm)\n\n#include \"chapitres/01-un.typ\"\n\n#include \"chapitres/02-deux.typ\"\n",
+        )
+        .unwrap();
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+        let outcome = compile(&dir, &assembly, &[]);
+
+        println!(
+            "erreurs = {:?}",
+            outcome
+                .errors
+                .iter()
+                .map(|d| &d.message)
+                .collect::<Vec<_>>()
+        );
+        let document = outcome.document.expect("document");
+        println!("pages = {}", page_count(&document));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

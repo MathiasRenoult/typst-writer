@@ -116,6 +116,15 @@ pub struct Drag {
     /// Le glissement applique ensuite un delta par rapport à cette origine, ce
     /// qui suit le curseur sans avoir à connaître la taille de la fenêtre.
     pub origin: f32,
+
+    /// Largeur — ou part de hauteur — du panneau au moment de la saisie.
+    ///
+    /// Indispensable : chaque mouvement de souris est un événement séparé, et le
+    /// delta qu'il porte est mesuré **depuis l'origine**. Ajouter ce delta à la
+    /// largeur courante le réappliquerait à chaque événement, si bien qu'un
+    /// glissement de dix pixels réparti sur dix événements en déplacerait
+    /// cinquante-cinq. C'est la largeur de départ qu'il faut reprendre.
+    pub extent: f32,
 }
 
 /// Où l'aperçu se situe par rapport à l'éditeur.
@@ -203,6 +212,35 @@ impl LayoutState {
     /// Applique une part de hauteur, bornée.
     pub fn clamp_share(share: f32) -> f32 {
         share.clamp(Self::MIN_PREVIEW_SHARE, Self::MAX_PREVIEW_SHARE)
+    }
+
+    /// Hauteur d'écran de référence, pour convertir un glissement vertical en
+    /// part de hauteur.
+    ///
+    /// La hauteur réelle n'est pas connue du modèle de disposition, et
+    /// l'introduire pour un seul geste coûterait plus que ce qu'il apporte :
+    /// c'est l'ordre de grandeur du déplacement qui compte, pas le pixel.
+    pub const VERTICAL_DRAG_REFERENCE: f32 = 800.0;
+
+    /// Étendue d'un panneau après un glissement.
+    ///
+    /// `extent` est l'étendue **au début du glissement**, et `delta` le
+    /// déplacement **depuis l'origine** — pas depuis l'événement précédent.
+    /// Repartir de l'étendue de départ à chaque événement est ce qui rend le
+    /// résultat indépendant du nombre d'événements : ajouter le delta à la
+    /// valeur courante les cumulerait, et dix pixels répartis sur dix
+    /// événements en déplaceraient cinquante-cinq.
+    pub fn dragged_extent(which: Splitter, vertical: bool, extent: f32, delta: f32) -> f32 {
+        if vertical {
+            return Self::clamp_share(extent + delta / Self::VERTICAL_DRAG_REFERENCE);
+        }
+
+        match which {
+            Splitter::Sidebar => Self::clamp_width(extent + delta),
+            // L'aperçu est de l'autre côté du séparateur : s'éloigner vers la
+            // droite le rétrécit.
+            Splitter::Preview => Self::clamp_width(extent - delta),
+        }
     }
 }
 
@@ -419,10 +457,12 @@ mod tests {
             ..LayoutState::default()
         };
 
-        // La saisie reprend la position du curseur : elle n'est jamais absente.
+        // La saisie reprend la position du curseur et l'étendue courante :
+        // aucune des deux n'est absente.
         layout.dragging = Some(Drag {
             which: Splitter::Sidebar,
             origin: layout.cursor.x,
+            extent: layout.sidebar_width,
         });
 
         let drag = layout.dragging.expect("séparateur saisi");
@@ -431,6 +471,71 @@ mod tests {
         // Un déplacement d'un seul pixel doit donc déjà produire un effet.
         let delta = 301.0 - drag.origin;
         assert_eq!(delta, 1.0, "aucun mouvement n'est avalé");
+    }
+
+    /// Un glissement ne dépend pas du nombre d'événements qui le portent.
+    ///
+    /// La souris n'émet pas un mouvement continu mais une suite d'événements,
+    /// chacun portant un delta **mesuré depuis l'origine**. Repartir de
+    /// l'étendue de départ rend donc le résultat indépendant du découpage.
+    /// Ajouter le delta à la largeur courante — l'erreur commise — cumulait les
+    /// deltas : dix pixels répartis sur dix événements en déplaçaient
+    /// cinquante-cinq, ce qui donnait un redimensionnement absurde.
+    #[test]
+    fn a_drag_result_does_not_depend_on_how_many_events_carry_it() {
+        let start = 300.0;
+        let total = 40.0;
+
+        // En un seul mouvement.
+        let one_shot = LayoutState::dragged_extent(Splitter::Sidebar, false, start, total);
+
+        assert_eq!(
+            one_shot,
+            start + total,
+            "un glissement de 40 px doit déplacer de 40 px"
+        );
+
+        // Puis en dix étapes, chacune portant le delta cumulé depuis l'origine :
+        // c'est exactement ce qu'émet la souris pendant un glissement.
+        let mut width = start;
+
+        for step in 1..=10 {
+            let delta = total * step as f32 / 10.0;
+
+            width = LayoutState::dragged_extent(Splitter::Sidebar, false, start, delta);
+        }
+
+        assert_eq!(
+            width, one_shot,
+            "le résultat doit être le même, quel que soit le découpage en événements"
+        );
+    }
+
+    /// L'aperçu est de l'autre côté du séparateur : l'élargir le rétrécit.
+    #[test]
+    fn dragging_towards_the_preview_narrows_it() {
+        let start = 400.0;
+
+        assert_eq!(
+            LayoutState::dragged_extent(Splitter::Preview, false, start, 60.0),
+            start - 60.0
+        );
+        assert_eq!(
+            LayoutState::dragged_extent(Splitter::Preview, false, start, -60.0),
+            start + 60.0
+        );
+    }
+
+    /// Un glissement vertical fait grandir l'aperçu quand le curseur descend.
+    #[test]
+    fn dragging_down_enlarges_the_bottom_preview() {
+        let start = 0.5;
+
+        let deeper = LayoutState::dragged_extent(Splitter::Preview, true, start, 100.0);
+        let shallower = LayoutState::dragged_extent(Splitter::Preview, true, start, -100.0);
+
+        assert!(deeper > start, "descendre agrandit l'aperçu : {deeper}");
+        assert!(shallower < start, "monter le réduit : {shallower}");
     }
 
     /// La position du curseur est retenue même hors glissement : c'est ce qui

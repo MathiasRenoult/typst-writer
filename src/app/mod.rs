@@ -574,7 +574,23 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.layout.cursor.x
             };
 
-            state.layout.dragging = Some(Drag { which, origin });
+            // L'étendue de départ est mémorisée ici, une fois pour toutes : les
+            // mouvements suivants sont des deltas depuis cette origine, et les
+            // ajouter à la valeur courante les cumulerait.
+            let extent = if vertical {
+                state.layout.preview_height
+            } else {
+                match which {
+                    Splitter::Sidebar => state.layout.sidebar_width,
+                    Splitter::Preview => state.layout.preview_width,
+                }
+            };
+
+            state.layout.dragging = Some(Drag {
+                which,
+                origin,
+                extent,
+            });
 
             Task::none()
         }
@@ -601,22 +617,16 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.layout.cursor = at;
 
+            // Tout part de l'étendue de départ, jamais de la valeur courante :
+            // le delta est mesuré depuis l'origine.
+            let dragged = LayoutState::dragged_extent(drag.which, vertical, drag.extent, delta);
+
             if vertical {
-                // Le curseur descend vers l'aperçu : sa part grandit.
-                state.layout.preview_height =
-                    LayoutState::clamp_share(state.layout.preview_height + delta / 600.0);
+                state.layout.preview_height = dragged;
             } else {
                 match drag.which {
-                    // Le curseur s'éloigne vers la droite : la bibliothèque
-                    // grandit, l'aperçu rétrécit.
-                    Splitter::Sidebar => {
-                        state.layout.sidebar_width =
-                            LayoutState::clamp_width(state.layout.sidebar_width + delta);
-                    }
-                    Splitter::Preview => {
-                        state.layout.preview_width =
-                            LayoutState::clamp_width(state.layout.preview_width - delta);
-                    }
+                    Splitter::Sidebar => state.layout.sidebar_width = dragged,
+                    Splitter::Preview => state.layout.preview_width = dragged,
                 }
             }
 
