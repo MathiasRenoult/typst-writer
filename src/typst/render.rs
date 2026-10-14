@@ -137,14 +137,7 @@ pub struct PageImage {
 /// retard sur la frappe, puisque l'assemblage `#include` les chapitres depuis
 /// le disque.
 pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> CompileOutcome {
-    // Le chapitre en cours est celui dont `overrides` porte la version en
-    // mémoire : c'est exactement le fichier qu'on est en train d'écrire, donc
-    // celui dont on veut connaître la page. Quand l'assemblage lui-même est
-    // ouvert, `overrides` est vide et aucun repère n'est posé.
-    let marked = overrides
-        .first()
-        .and_then(|(path, _)| path.strip_prefix(root).ok())
-        .and_then(|chapter| mark_chapter(entry, chapter));
+    let marked = marked_entry(root, entry, overrides);
 
     let compiled_entry = marked.as_deref().unwrap_or(entry);
 
@@ -166,14 +159,47 @@ pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Com
     let chapter_page = document.as_ref().and_then(|doc| chapter_page(doc));
 
     CompileOutcome {
-        // L'empreinte porte l'entrée **repérée** : le repère se déplace quand on
-        // change de chapitre, et c'est bien ce qui a été compilé.
-        content: fingerprint(compiled_entry, overrides),
+        // L'empreinte est **celle** que calculera la décision de recompiler.
+        // Les faire diverger rendait toute compilation « nouvelle ».
+        content: compilation_fingerprint(root, entry, overrides),
         errors,
         warnings,
         chapter_page,
         document,
     }
+}
+
+/// L'entrée réellement compilée : l'assemblage, un repère posé devant le
+/// chapitre en cours.
+///
+/// Le chapitre en cours est celui dont `overrides` porte la version en mémoire :
+/// c'est exactement le fichier qu'on est en train d'écrire. Quand l'assemblage
+/// lui-même est ouvert, `overrides` est vide et aucun repère n'est posé.
+fn marked_entry(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Option<String> {
+    overrides
+        .first()
+        .and_then(|(path, _)| path.strip_prefix(root).ok())
+        .and_then(|chapter| mark_chapter(entry, chapter))
+}
+
+/// L'empreinte de ce qui serait compilé.
+///
+/// **C'est la même valeur que celle que [`compile`] rapporte**, et c'est le
+/// point essentiel : la décision de recompiler et le résultat d'une compilation
+/// se comparent à la même aune. Les faire diverger — l'un sur l'entrée repérée,
+/// l'autre sur l'entrée brute — rendait toute compilation « nouvelle » :
+/// l'aperçu recompilait alors à chaque tick, plus de trois fois par seconde,
+/// sans qu'on ait écrit un seul caractère, et reprenait toutes les pages
+/// visibles à chaque fois. C'est ce qui se voyait comme un clignotement
+/// permanent.
+pub fn compilation_fingerprint(
+    root: &Path,
+    entry: &str,
+    overrides: &[(PathBuf, String)],
+) -> String {
+    let marked = marked_entry(root, entry, overrides);
+
+    fingerprint(marked.as_deref().unwrap_or(entry), overrides)
 }
 
 /// Insère le repère devant l'`#include` du chapitre visé.
@@ -1387,5 +1413,342 @@ mod tests {
 
             println!("{size:>6.2}  {text:?}{mark}");
         }
+    }
+
+    /// DIAGNOSTIC : enregistre une page en PNG, pour la regarder.
+    ///
+    /// Ignoré par défaut. Un artefact d'affichage ne se déduit pas des tailles
+    /// composées : il faut voir l'image telle que l'aperçu la produit.
+    #[test]
+    #[ignore]
+    fn diagnose_save_page_png() {
+        let home = std::env::var("HOME").expect("HOME");
+        let name = std::env::var("PROJET").unwrap_or_else(|_| "mon-travail".to_string());
+        let page_wanted: usize = std::env::var("PAGE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+
+        let dir = PathBuf::from(home).join(format!(".typst-writer/projets/{name}"));
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+        let outcome = compile(&dir, &assembly, &[]);
+
+        let Some(document) = outcome.document else {
+            println!("pas de document");
+            return;
+        };
+
+        let Some(page) = document.pages().get(page_wanted) else {
+            println!("pas de page {page_wanted}");
+            return;
+        };
+
+        // Exactement les réglages de l'aperçu.
+        let options = typst_render::RenderOptions {
+            pixel_per_pt: typst_utils::Scalar::new(PIXEL_PER_PT),
+            render_bleed: false,
+        };
+
+        let pixmap = typst_render::render(page, &options);
+
+        let out = std::env::temp_dir().join(format!("typst-writer-page-{page_wanted}.png"));
+
+        match pixmap.save_png(&out) {
+            Ok(()) => println!("écrit : {}", out.display()),
+            Err(error) => println!("échec de l'écriture : {error}"),
+        }
+
+        println!(
+            "taille : {} × {} px, à {PIXEL_PER_PT} px/pt",
+            pixmap.width(),
+            pixmap.height()
+        );
+    }
+
+    /// DIAGNOSTIC : les glyphes d'un texte, un par un.
+    ///
+    /// Ignoré par défaut. L'exposant ne se voit **pas** dans la taille du texte
+    /// — qui reste celle du corps — mais dans le décalage vertical et l'avance
+    /// de chaque glyphe. C'est là qu'il faut regarder, et nulle part ailleurs.
+    #[test]
+    #[ignore]
+    fn diagnose_glyphs() {
+        fn dig(frame: &typst::layout::Frame, needle: &str, found: &mut Vec<(f32, Vec<String>)>) {
+            for (_, item) in frame.items() {
+                match item {
+                    typst::layout::FrameItem::Text(text) => {
+                        if text.text.contains(needle) {
+                            let chars: Vec<char> = text.text.chars().collect();
+
+                            let glyphs = text
+                                .glyphs
+                                .iter()
+                                .map(|glyph| {
+                                    let range = glyph.range.start as usize
+                                        ..(glyph.range.end as usize).min(chars.len());
+
+                                    let piece: String = chars[range].iter().collect();
+
+                                    format!(
+                                        "{piece:?} avance {:.3}em décalage {:+.3}em",
+                                        glyph.x_advance.get(),
+                                        glyph.y_offset.get()
+                                    )
+                                })
+                                .collect();
+
+                            found.push((text.size.to_pt() as f32, glyphs));
+                        }
+                    }
+                    typst::layout::FrameItem::Group(group) => dig(&group.frame, needle, found),
+                    _ => {}
+                }
+            }
+        }
+
+        fn probe(name: &str, content: &str) {
+            let dir = std::env::temp_dir().join("typst-writer-diag-glyphes");
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+
+            let outcome = compile(&dir, content, &[]);
+
+            let mut found = Vec::new();
+
+            if let Some(document) = outcome.document.as_ref() {
+                for page in document.pages() {
+                    dig(&page.frame, "Août", &mut found);
+                }
+            }
+
+            println!("\n=== {name}");
+
+            for (size, glyphs) in found {
+                println!("    taille du texte : {size:.2} pt");
+
+                for glyph in glyphs {
+                    println!("        {glyph}");
+                }
+            }
+
+            let _ = fs::remove_dir_all(&dir);
+        }
+
+        probe("nu", "Août 2026\n");
+        probe(
+            "avec fractions",
+            "#set text(fractions: true)\n\nAoût 2026\n",
+        );
+        probe(
+            "avec set super",
+            "#set super(baseline: -0.5em, size: 0.5em, typographic: false)\n\nAoût 2026\n",
+        );
+        probe(
+            "les deux",
+            "#set text(fractions: true)\n#set super(baseline: -0.5em, size: 0.5em, typographic: false)\n\nAoût 2026\n",
+        );
+    }
+
+    /// DIAGNOSTIC : `fractions: true` sur les chiffres, en image.
+    ///
+    /// Ignoré par défaut. Les deux réglages sur la même page, pour comparer
+    /// d'un seul coup d'œil : au-dessus avec la fonction activée, en dessous
+    /// sans.
+    #[test]
+    #[ignore]
+    fn diagnose_fractions_visually() {
+        let content = "#set text(size: 20pt)\n\
+             #set text(fractions: true)\n\
+             AVEC fractions : Août 2026, 1994, 7 et 15.\n\
+             \n\
+             #set text(fractions: false)\n\
+             SANS fractions : Août 2026, 1994, 7 et 15.\n";
+
+        let dir = std::env::temp_dir().join("typst-writer-diag-fractions");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let outcome = compile(&dir, content, &[]);
+
+        println!("erreurs : {:?}", outcome.errors.len());
+
+        let Some(document) = outcome.document else {
+            println!("pas de document");
+            return;
+        };
+
+        let options = typst_render::RenderOptions {
+            pixel_per_pt: typst_utils::Scalar::new(PIXEL_PER_PT),
+            render_bleed: false,
+        };
+
+        let pixmap = typst_render::render(&document.pages()[0], &options);
+
+        // Recadrage sur le haut de la page : c'est là qu'est le texte.
+        let out = std::env::temp_dir().join("typst-writer-fractions.png");
+
+        match pixmap.save_png(&out) {
+            Ok(()) => println!("écrit : {}", out.display()),
+            Err(error) => println!("échec : {error}"),
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// L'empreinte qui décide de recompiler doit être **celle** que la
+    /// compilation rapporte.
+    ///
+    /// Divergentes, elles rendaient toute compilation « nouvelle » : l'aperçu
+    /// recompilait à chaque tick — plus de trois fois par seconde — sans qu'on
+    /// ait écrit un seul caractère, et reprenait toutes les pages visibles à
+    /// chaque fois. C'est le défaut qui se voyait comme un clignotement
+    /// permanent, et que le repos n'arrivait pas à éteindre puisqu'il croyait
+    /// toujours qu'il venait d'y avoir un changement.
+    #[test]
+    fn the_fingerprint_that_decides_is_the_one_compilation_returns() {
+        let dir = std::env::temp_dir().join("typst-writer-empreinte");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        fs::write(dir.join("chapitres/01-un.typ"), "= Un\n\nALPHA.\n").unwrap();
+        fs::write(dir.join("chapitres/02-deux.typ"), "= Deux\n\nBETA.\n").unwrap();
+        fs::write(
+            dir.join("main.typ"),
+            "#include \"chapitres/01-un.typ\"\n\n#include \"chapitres/02-deux.typ\"\n",
+        )
+        .unwrap();
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+
+        // Les trois cas qui comptent : aucun chapitre ouvert, un chapitre
+        // inclus — donc un repère posé —, et un chapitre absent de
+        // l'assemblage, donc aucun repère.
+        let cases: Vec<(&str, Vec<(PathBuf, String)>)> = vec![
+            ("assemblage ouvert", Vec::new()),
+            (
+                "chapitre inclus",
+                vec![(
+                    dir.join("chapitres/02-deux.typ"),
+                    "= Deux\n\nBETA.\n".to_string(),
+                )],
+            ),
+            (
+                "chapitre absent de l'assemblage",
+                vec![(
+                    dir.join("chapitres/99-ailleurs.typ"),
+                    "= Ailleurs\n".to_string(),
+                )],
+            ),
+        ];
+
+        for (name, overrides) in &cases {
+            let outcome = compile(&dir, &assembly, overrides);
+
+            assert_eq!(
+                outcome.content,
+                compilation_fingerprint(&dir, &assembly, overrides),
+                "« {name} » : l'empreinte du tick doit être exactement celle que la                  compilation rapporte, sinon l'aperçu se croit toujours dépassé"
+            );
+        }
+
+        // Le piège, montré. Dès qu'un chapitre est ouvert, le repère fait
+        // partie de l'empreinte : qui la calculerait sur l'entrée **brute**
+        // verrait un changement à chaque tick, indéfiniment — c'était
+        // exactement l'état du tick. L'écrire ici rend le piège explicite,
+        // plutôt que de laisser le prochain lecteur le redécouvrir.
+        let marked = &cases[1].1;
+
+        assert_ne!(
+            fingerprint(&assembly, marked),
+            compilation_fingerprint(&dir, &assembly, marked),
+            "avec un chapitre ouvert, le repère doit entrer dans l'empreinte"
+        );
+
+        // Et sans chapitre ouvert, aucun repère : les deux écritures donnent
+        // la même empreinte, donc le piège ne se referme que dans le premier
+        // cas.
+        assert_eq!(
+            fingerprint(&assembly, &[]),
+            compilation_fingerprint(&dir, &assembly, &[]),
+            "sans chapitre ouvert, aucune divergence possible"
+        );
+
+        // Et l'empreinte du chapitre inclus porte bien le repère, sans quoi
+        // changer de chapitre ne serait pas remarqué.
+        let first = vec![(
+            dir.join("chapitres/01-un.typ"),
+            "= Un\n\nALPHA.\n".to_string(),
+        )];
+        let second = vec![(
+            dir.join("chapitres/02-deux.typ"),
+            "= Deux\n\nBETA.\n".to_string(),
+        )];
+
+        assert_ne!(
+            compilation_fingerprint(&dir, &assembly, &first),
+            compilation_fingerprint(&dir, &assembly, &second),
+            "changer de chapitre doit se remarquer"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Après une compilation, plus aucune ne doit être due — même longtemps
+    /// après, et sans qu'on ait rien écrit.
+    ///
+    /// C'est le bout de la chaîne que l'on voyait à l'usage : l'aperçu
+    /// recompilait **plusieurs fois par seconde au repos**, parce que
+    /// l'empreinte rapportée par la compilation n'était jamais celle
+    /// qu'observait le tick. Le repos n'y pouvait rien : à chaque tick, le
+    /// texte semblait avoir changé.
+    #[test]
+    fn after_compiling_nothing_more_is_due() {
+        let dir = std::env::temp_dir().join("typst-writer-repos");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("chapitres")).unwrap();
+
+        fs::write(dir.join("chapitres/01-un.typ"), "= Un\n\nALPHA.\n").unwrap();
+        fs::write(dir.join("main.typ"), "#include \"chapitres/01-un.typ\"\n").unwrap();
+
+        let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
+
+        // Un chapitre est ouvert : c'est le cas d'usage, et celui où le repère
+        // entre dans l'empreinte.
+        let overrides = vec![(
+            dir.join("chapitres/01-un.typ"),
+            "= Un\n\nALPHA.\n".to_string(),
+        )];
+
+        // 1. Ce que le tick observe, juste avant de décider.
+        let observed = compilation_fingerprint(&dir, &assembly, &overrides);
+
+        // 2. La compilation, et ce qu'elle rapporte.
+        let outcome = compile(&dir, &assembly, &overrides);
+
+        // 3. L'état retient ce que la compilation a rapporté.
+        let mut render = crate::app::state::RenderState::default();
+        render.content = outcome.content.clone();
+
+        // 4. Le tick réobserve : plus rien ne doit être dû, indéfiniment.
+        let start = std::time::Instant::now();
+
+        for tick in 0..50u64 {
+            let later = start + std::time::Duration::from_millis(tick * 300);
+
+            assert!(
+                !render.compile_due(&observed, false, later),
+                "tick {tick} : au repos, l'aperçu ne doit plus rien recompiler"
+            );
+        }
+
+        // Et la fin de paragraphe ne doit pas rouvrir la porte : le texte n'a
+        // pas changé, donc il n'y a rien à recompiler, quoi qu'il arrive.
+        assert!(
+            !render.compile_due(&observed, true, start + std::time::Duration::from_secs(5)),
+            "un paragraphe terminé ne fait pas recompiler un texte inchangé"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -202,7 +202,17 @@ impl State {
     pub fn compilation_fingerprint(&self) -> String {
         let (entry, overrides) = self.compilation_unit();
 
-        crate::typst::render::fingerprint(&entry, &overrides)
+        // La **même** fonction que celle dont `compile` tire l'empreinte qu'il
+        // rapporte, et c'est obligatoire.
+        //
+        // NE JAMAIS recalculer cette empreinte ici, par exemple avec
+        // `render::fingerprint(&entry, &overrides)`. L'entrée compilée porte un
+        // repère devant le chapitre en cours, et l'entrée brute non : les deux
+        // calculs ne se rencontrent alors jamais. L'aperçu croyait avoir affaire
+        // à un texte nouveau à chaque tick — plus de trois fois par seconde —
+        // et recompilait sans fin, même sans la moindre frappe. Aucun délai de
+        // repos ne peut corriger cela : le texte semblait toujours modifié.
+        crate::typst::render::compilation_fingerprint(&self.document_dir(), &entry, &overrides)
     }
 
     /// Dossier résolu pour les imports et la bibliographie.
