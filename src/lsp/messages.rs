@@ -3,6 +3,7 @@
 //! Décrits à la main plutôt que tirés d'une bibliothèque : nous n'en consommons
 //! qu'une poignée, et les écrire ici, c'est aussi écrire leurs tests.
 
+use std::path::PathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Une position dans un document, telle que le protocole la définit.
@@ -400,9 +401,70 @@ pub fn report(text: &str, items: &[Diagnostic]) -> Vec<Reported> {
         .collect()
 }
 
+/// Les modifications à apporter à un fichier.
+#[derive(Debug, Clone)]
+pub struct FileEdit {
+    pub path: PathBuf,
+    pub edits: Vec<TextEdit>,
+}
+
+/// Applique des remplacements à un texte.
+///
+/// Les remplacements se lisent **de la fin vers le début** : chaque application
+/// déplace tout ce qui suit, et c'est à rebours que les positions du serveur
+/// restent justes.
+pub fn apply_edits(text: &str, edits: &[TextEdit]) -> String {
+    let mut points: Vec<(usize, usize, String)> = Vec::new();
+
+    for edit in edits {
+        let debut = offset_of(text, edit.range.start);
+        let fin = offset_of(text, edit.range.end);
+
+        if debut <= fin {
+            points.push((debut, fin, edit.new_text.clone()));
+        }
+    }
+
+    points.sort_by_key(|(debut, fin, _)| (*debut, *fin));
+
+    let mut out = text.to_string();
+
+    for (debut, fin, nouveau) in points.iter().rev() {
+        out.replace_range(*debut..*fin, nouveau);
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Appliquer des remplacements ne déplace jamais ce qui les suit.
+    #[test]
+    fn edits_are_applied_from_the_end_so_the_others_stay_put() {
+        let position = |line, character| Position { line, character };
+        let edit = |start: (u32, u32), end: (u32, u32), new_text: &str| TextEdit {
+            range: Range {
+                start: position(start.0, start.1),
+                end: position(end.0, end.1),
+            },
+            new_text: new_text.to_string(),
+        };
+
+        // « le chat dort » : deux remplacements, dont l'un déplacerait l'autre
+        // s'ils se lisaient de la fin vers le début.
+        let texte = "le chat dort\n";
+        let edits = vec![edit((0, 3), (0, 7), "chien"), edit((0, 12), (0, 12), " !")];
+
+        assert_eq!(apply_edits(texte, &edits), "le chien dort !\n");
+
+        // Une insertion et une suppression, sur deux lignes.
+        let texte = "un\ndeu\n";
+        let edits = vec![edit((0, 2), (0, 2), "x"), edit((1, 0), (1, 3), "DEUX")];
+
+        assert_eq!(apply_edits(texte, &edits), "unx\nDEUX\n");
+    }
 
     /// Un émoji vaut deux unités UTF-16 et un seul caractère : la colonne du
     /// protocole ne peut pas être donnée telle quelle à l'éditeur.

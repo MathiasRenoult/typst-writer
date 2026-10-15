@@ -87,6 +87,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.layout.follow_preview,
         ));
 
+        // Renommer le symbole sous le curseur : le serveur montrera ce que
+        // cela changerait, fichier par fichier, avant que rien ne s'écrive.
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_pen_line::<Theme>(),
+            "Renommer le symbole sous le curseur",
+            Message::SymbolRenameStart,
+            palette,
+            state.renommage.is_some(),
+        ));
+
         bar = bar.push(icon_button(
             preview_position_icon(state.layout.preview_position),
             state.layout.preview_position.label(),

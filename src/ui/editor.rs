@@ -378,7 +378,7 @@ fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, M
 /// donc la teinte « active » — celle d'un élément choisi, mesurée ici à 50
 /// niveaux au-dessus du fond de l'éditeur, donc visible — et un trait qui la
 /// borde.
-fn bubble_style(palette: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+pub(super) fn bubble_style(palette: Palette) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
         background: Some(palette.surface_active.into()),
         border: iced::Border {

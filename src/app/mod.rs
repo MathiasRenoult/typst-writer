@@ -71,6 +71,7 @@ impl State {
             // L'écran se déclare dans les millisecondes qui suivent ; d'ici là,
             // un pixel par point, la densité la plus économique.
             scale_factor: 1.0,
+            renommage: None,
             renaming: None,
             jump: None,
             render: Default::default(),
@@ -351,6 +352,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::SaveAs
         | Message::FileSaved(_)
         | Message::ExportPdf
+        | Message::SymbolRenameStart
+        | Message::SymbolRenameChanged(_)
+        | Message::SymbolRenameAsk
+        | Message::SymbolRenameApply
+        | Message::SymbolRenameCancel
         | Message::PdfExported(_) => crate::app::fichiers::update(state, message),
 
         // Le domaine des thèmes a son module. Le motif ne **rien** lier : c'est
@@ -479,6 +485,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // Les épreuves peuvent piloter l'éditeur elles-mêmes : un pas par
             // tic, et elles rendent la main aussitôt.
             if let Some(tache) = crate::app::epreuves::driver(state) {
+                return tache;
+            }
+
+            if let Some(tache) = crate::app::epreuves::driver_renommage(state) {
                 return tache;
             }
 

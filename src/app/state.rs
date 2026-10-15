@@ -67,6 +67,9 @@ pub struct State {
     /// écran non dense.
     pub scale_factor: f32,
 
+    /// Renommage de symbole en cours, s'il y en a un.
+    pub renommage: Option<Renommage>,
+
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 
@@ -108,6 +111,21 @@ pub struct State {
 ///
 /// Le titre est édité dans le panneau, en place : la ligne du chapitre devient
 /// un champ de saisie, ce qui évite une boîte de dialogue pour une opération
+/// Un renommage de symbole en cours.
+///
+/// Il a deux temps : le nouveau nom est d'abord **demandé**, puis le serveur
+/// dit ce que cela changerait — et c'est montré, jamais appliqué d'autorité.
+/// Un renommage touche des fichiers que personne n'a pas ouverts : c'est à
+/// voir avant.
+pub struct Renommage {
+    /// Le nouveau nom, tel qu'il est écrit dans la case.
+    pub nom: String,
+
+    /// Ce que le serveur proposerait de modifier. `None` tant qu'il n'a pas
+    /// répondu — et tant que c'est `None`, rien ne s'applique.
+    pub changements: Option<Vec<crate::lsp::messages::FileEdit>>,
+}
+
 /// aussi courante.
 #[derive(Debug, Clone)]
 pub struct ChapterRename {

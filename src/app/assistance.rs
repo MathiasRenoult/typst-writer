@@ -163,6 +163,28 @@ pub(super) fn request_definition(state: &mut State) -> Task<Message> {
 }
 
 /// Demande ce que le serveur sait de ce qui est sous le curseur.
+/// Demande au serveur ce que renommer le symbole sous le curseur changerait.
+///
+/// Le serveur répond par des modifications **réparties sur les fichiers** ;
+/// rien ne s'écrit avant que l'utilisateur les ait vues.
+pub(super) fn request_rename(state: &mut State, new_name: &str) -> Task<Message> {
+    let content = state.editor.content();
+    let offset = state.editor.cursor_offset();
+
+    let Some(session) = state.lsp.session.as_mut() else {
+        return Task::none();
+    };
+
+    state.lsp.attention += 1;
+
+    let token = state.lsp.attention;
+    let position = crate::lsp::messages::position_of(&content, offset);
+
+    session.rename(position, new_name, token);
+
+    Task::none()
+}
+
 pub(super) fn request_hover(state: &mut State) -> Task<Message> {
     let content = state.editor.content();
     let offset = state.editor.cursor_offset();
@@ -384,6 +406,27 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
 
         // Les réponses aux questions qu'on n'a pas encore posées : la
         // navigation viendra après la liste.
+        Event::Rename { token, changes } => {
+            if token < state.lsp.attention {
+                return Task::none();
+            }
+
+            // Le serveur répond par ce qu'il changerait. Rien ne s'écrit :
+            // l'utilisateur verra les fichiers, les comptera, et confirmera.
+            if changes.is_empty() {
+                state.export_status = Some("Rien à renommer ici".to_string());
+                state.renommage = None;
+
+                return Task::none();
+            }
+
+            if let Some(renommage) = state.renommage.as_mut() {
+                renommage.changements = Some(changes);
+            }
+
+            Task::none()
+        }
+
         Event::Definitions { token, locations } => {
             if token < state.lsp.attention {
                 return Task::none();

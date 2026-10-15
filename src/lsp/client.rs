@@ -94,6 +94,12 @@ pub enum Event {
     /// La réponse à une demande de survol. `None` : rien à cet endroit.
     Hover { token: u64, text: Option<String> },
 
+    /// La réponse à une demande de renommage : les fichiers à modifier.
+    Rename {
+        token: u64,
+        changes: Vec<crate::lsp::messages::FileEdit>,
+    },
+
     /// La réponse à une demande de définition.
     Definitions {
         token: u64,
@@ -120,6 +126,7 @@ enum Pending {
     Completion(u64),
     Hover(u64),
     Definition(u64),
+    Rename(u64),
     Command(u64),
 }
 
@@ -306,6 +313,22 @@ impl Session {
                 "position": position,
             }),
             Pending::Definition(token),
+        );
+    }
+
+    /// Demande comment renommer ce qui se trouve à une position.
+    ///
+    /// Le serveur répond par des modifications réparties sur les fichiers ;
+    /// c'est à l'application de les **montrer** avant de les appliquer.
+    pub fn rename(&mut self, position: Position, new_name: &str, token: u64) {
+        self.request(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": self.uri },
+                "position": position,
+                "newName": new_name,
+            }),
+            Pending::Rename(token),
         );
     }
 
@@ -705,6 +728,12 @@ fn dispatch(
                     let _ = events.send(Event::Definitions { token, locations });
                 }
 
+                Pending::Rename(token) => {
+                    let changes = workspace_edits(&result);
+
+                    let _ = events.send(Event::Rename { token, changes });
+                }
+
                 Pending::Command(token) => {
                     let _ = events.send(Event::CommandFinished {
                         token,
@@ -769,6 +798,55 @@ fn hover_text(result: &Value) -> Option<String> {
     } else {
         Some(text)
     }
+}
+
+/// Les modifications d'un `WorkspaceEdit`, réparties par fichier.
+///
+/// Le protocole en donne deux formes — `changes`, une carte uri → remplacements,
+/// et `documentChanges`, une liste d'éditions de document — et tinymist use de
+/// la seconde. Les deux sont lues : un renommage ne doit pas dépendre de la
+/// forme choisie par le serveur.
+fn workspace_edits(result: &Value) -> Vec<crate::lsp::messages::FileEdit> {
+    let mut out = Vec::new();
+
+    if let Some(changes) = result.get("changes").and_then(Value::as_object) {
+        for (uri, edits) in changes {
+            let Some(path) = Session::path_from_uri(uri) else {
+                continue;
+            };
+
+            let edits = serde_json::from_value::<Vec<crate::lsp::messages::TextEdit>>(edits.clone())
+                .unwrap_or_default();
+
+            out.push(crate::lsp::messages::FileEdit { path, edits });
+        }
+    }
+
+    if let Some(changes) = result.get("documentChanges").and_then(Value::as_array) {
+        for change in changes {
+            let Some(uri) = change
+                .get("textDocument")
+                .and_then(|d| d.get("uri"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+
+            let Some(path) = Session::path_from_uri(uri) else {
+                continue;
+            };
+
+            let edits = change
+                .get("edits")
+                .cloned()
+                .and_then(|edits| serde_json::from_value(edits).ok())
+                .unwrap_or_default();
+
+            out.push(crate::lsp::messages::FileEdit { path, edits });
+        }
+    }
+
+    out
 }
 
 /// Les emplacements d'une définition, quel que soit leur emballage.

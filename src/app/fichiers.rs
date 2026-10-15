@@ -310,6 +310,53 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::SymbolRenameStart => {
+            // Le nom actuel n'est pas à demander : c'est le curseur qui le
+            // désigne, et le serveur sait de quoi il parle. La case ne reçoit
+            // que le **nouveau** nom.
+            state.renommage = Some(crate::app::state::Renommage {
+                nom: String::new(),
+                changements: None,
+            });
+
+            Task::none()
+        }
+
+        Message::SymbolRenameChanged(text) => {
+            if let Some(renommage) = state.renommage.as_mut() {
+                renommage.nom = text;
+            }
+
+            Task::none()
+        }
+
+        Message::SymbolRenameAsk => {
+            let Some(renommage) = state.renommage.as_mut() else {
+                return Task::none();
+            };
+
+            let nom = renommage.nom.trim().to_string();
+
+            if nom.is_empty() {
+                state.export_status = Some("Un nom vide ne renomme rien.".to_string());
+
+                return Task::none();
+            }
+
+            renommage.nom = nom.clone();
+            renommage.changements = None;
+
+            crate::app::assistance::request_rename(state, &nom)
+        }
+
+        Message::SymbolRenameApply => appliquer_renommage(state),
+
+        Message::SymbolRenameCancel => {
+            state.renommage = None;
+
+            Task::none()
+        }
+
         Message::RenameCommit => {
             let Some(renaming) = state.renaming.clone() else {
                 return Task::none();
@@ -377,4 +424,63 @@ fn save_as_task(state: &State) -> Task<Message> {
         },
         Message::FileSaved,
     )
+}
+
+/// Applique les modifications du renommage aux fichiers.
+///
+/// Chaque fichier est écrit par **remplacement** : le contenu nouveau est
+/// complet avant d'exister, jamais à moitié — une coupure au milieu laisse
+/// l'ancien ou le nouveau, jamais entre les deux. Le document ouvert, s'il est
+/// touché, est rouvert sur son contenu neuf : la même opération qu'à
+/// l'ouverture, et le même sort pour le compte de mots et le rendu.
+fn appliquer_renommage(state: &mut State) -> Task<Message> {
+    let Some(renommage) = state.renommage.take() else {
+        return Task::none();
+    };
+
+    let Some(changements) = renommage.changements else {
+        // Le serveur n'a pas répondu : tant que l'aperçu n'existe pas, rien
+        // ne s'écrit.
+        state.renommage = Some(renommage);
+
+        return Task::none();
+    };
+
+    let mut fichiers = 0usize;
+    let mut modifications = 0usize;
+
+    for fichier in &changements {
+        let Ok(texte) = std::fs::read_to_string(&fichier.path) else {
+            continue;
+        };
+
+        let nouveau = crate::lsp::messages::apply_edits(&texte, &fichier.edits);
+        let temp = fichier.path.with_file_name(".typst-writer-tmp");
+
+        if std::fs::write(&temp, &nouveau).is_err() {
+            continue;
+        }
+
+        if std::fs::rename(&temp, &fichier.path).is_err() {
+            let _ = std::fs::remove_file(&temp);
+
+            continue;
+        }
+
+        fichiers += 1;
+        modifications += fichier.edits.len();
+
+        if state.editor.path.as_deref() == Some(fichier.path.as_path()) {
+            state.editor = crate::editor::EditorState::new_file(fichier.path.clone(), nouveau);
+            state.editor.retheme(&state.resolved);
+            state.render.reset();
+            state.render.words = Some(crate::project::count_words(&state.editor.content()));
+        }
+    }
+
+    state.export_status = Some(format!(
+        "Renommage appliqué : {fichiers} fichier(s), {modifications} modification(s)"
+    ));
+
+    Task::none()
 }

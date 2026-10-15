@@ -110,6 +110,22 @@ pub enum Message {
     /// Va à un titre du sommaire (le rang dans la liste du document).
     GotoHeading(usize),
 
+    /// Ouvre le renommage du symbole sous le curseur.
+    SymbolRenameStart,
+
+    /// Le nouveau nom change dans la case.
+    SymbolRenameChanged(String),
+
+    /// Demande au serveur ce que ce renommage changerait — c'est ce qu'on
+    /// montrera avant toute écriture.
+    SymbolRenameAsk,
+
+    /// Applique ce que le serveur a proposé, que l'utilisateur a vu.
+    SymbolRenameApply,
+
+    /// Renonce au renommage.
+    SymbolRenameCancel,
+
     /// La fenêtre a changé de taille : (largeur, hauteur).
     WindowResized(iced::Size),
 

@@ -870,6 +870,30 @@ accent     = "#89b4fa"
 mod tests {
     use super::*;
 
+    /// La famille de l'éditeur vient du thème, et n'a pas d'autre source.
+    ///
+    /// Un thème qui nomme une famille doit l'obtenir ; un thème qui n'en nomme
+    /// aucune garde la chasse fixe. C'est le seul endroit où ces deux issues se
+    /// décident.
+    #[test]
+    fn the_editor_font_comes_from_the_theme() {
+        let mut fonts = Fonts::default();
+
+        assert_eq!(
+            fonts.editor_font().family,
+            iced::font::Family::Monospace,
+            "sans famille nommée, la chasse fixe reste la règle"
+        );
+
+        fonts.editor = Some("JetBrains Mono".to_string());
+
+        assert_eq!(
+            fonts.editor_font().family,
+            iced::font::Family::Name("JetBrains Mono"),
+            "une famille nommée par le thème est celle de l'éditeur"
+        );
+    }
+
     /// Ce que l'application trouve réellement dans le dossier de thèmes de
     /// l'utilisateur — et ce qu'elle reproche aux fichiers qu'elle écarte.
     ///

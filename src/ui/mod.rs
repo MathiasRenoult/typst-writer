@@ -1,6 +1,7 @@
 pub mod editor;
 pub mod layout;
 pub mod preview;
+mod rename;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;
@@ -28,6 +29,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     column![
         toolbar::view(state),
+
+        // La case de renommage, toujours en place — vide quand elle ne
+        // sert pas. La forme de la page ne change donc jamais, et rien ne
+        // s'y déplace.
+        rename::view(state),
+
         layout::view(state),
         status_bar::view(state),
     ]

@@ -136,7 +136,7 @@ fn outline(world: &PreviewWorld, document: &PagedDocument) -> Vec<OutlineEntry> 
         .query(&HeadingElem::ELEM.select())
         .iter()
         .filter_map(|content| {
-            let level = content.with::<dyn Outlinable>()?.level().get() as usize;
+            let level = content.with::<dyn Outlinable>()?.level().get();
             let location = content.location()?;
             let position = introspector.position(location)?;
 
