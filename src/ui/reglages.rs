@@ -290,16 +290,11 @@ fn choix(options: &[&'static str], valeur: &str, champ: Champ) -> Element<'stati
 }
 
 /// La pastille d'une couleur, à côté de sa saisie.
+///
+/// Elle ne se teinte que d'une couleur **valide** : une case vide est une
+/// case vide, pas un carré noir qui mentirait sur ce qui sera composé.
 fn pastille(valeur: &str) -> Element<'static, Message> {
-    let couleur = crate::mise_en_page::modele::couleur_valide(valeur)
-        .then(|| {
-            iced::Color::from_rgb8(
-                u8::from_str_radix(valeur.trim().trim_start_matches('#').get(0..2).unwrap_or("00"), 16).unwrap_or(0),
-                u8::from_str_radix(valeur.trim().trim_start_matches('#').get(2..4).unwrap_or("00"), 16).unwrap_or(0),
-                u8::from_str_radix(valeur.trim().trim_start_matches('#').get(4..6).unwrap_or("00"), 16).unwrap_or(0),
-            )
-        })
-        .unwrap_or(iced::Color::TRANSPARENT);
+    let couleur = couleur_depuis_hexa(valeur).unwrap_or(iced::Color::TRANSPARENT);
 
     container(Space::new())
         .width(Length::Fixed(18.0))
@@ -314,4 +309,22 @@ fn pastille(valeur: &str) -> Element<'static, Message> {
             ..Default::default()
         })
         .into()
+}
+
+/// Une couleur `#rrggbb` ou `#rgb`, en couleur d'écran.
+fn couleur_depuis_hexa(valeur: &str) -> Option<iced::Color> {
+    let hexa = valeur.trim().strip_prefix('#')?;
+
+    let double = |c: char| -> Option<u8> { u8::from_str_radix(&format!("{c}{c}"), 16).ok() };
+    let paire = |a: char, b: char| -> Option<u8> { u8::from_str_radix(&format!("{a}{b}"), 16).ok() };
+
+    match hexa.chars().collect::<Vec<_>>().as_slice() {
+        [r, v, b] => Some(iced::Color::from_rgb8(double(*r)?, double(*v)?, double(*b)?)),
+        [r1, r2, v1, v2, b1, b2] => Some(iced::Color::from_rgb8(
+            paire(*r1, *r2)?,
+            paire(*v1, *v2)?,
+            paire(*b1, *b2)?,
+        )),
+        _ => None,
+    }
 }
