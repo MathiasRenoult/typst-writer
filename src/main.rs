@@ -5,6 +5,7 @@ mod project;
 mod theming;
 mod typst;
 mod ui;
+mod zotero;
 
 /// Allocateur global.
 ///
