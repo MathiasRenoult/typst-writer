@@ -28,5 +28,14 @@ jobs:
       # main :
       #     cargo test --release -- --ignored
 
+      # Le crate vendoré mesure la largeur réelle des glyphes, et en déduit
+      # qu'un caractère chinois est plus large qu'un « a » — ce qui suppose une
+      # police couvrant les idéogrammes. L'ubuntu de la CI n'en a aucune : le
+      # glyphe de remplacement y fait la largeur d'un « a », et l'assertion
+      # tombe sur un défaut de la machine, pas du code. On lui donne donc la
+      # police que le test suppose.
+      - name: Polices pour les tests de métriques
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk
+
       - name: Tests du crate vendoré
         run: cargo test --manifest-path vendor/iced-code-editor/Cargo.toml --lib --features two-face
