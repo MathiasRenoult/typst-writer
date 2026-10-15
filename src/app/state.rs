@@ -599,6 +599,34 @@ impl State {
 }
 
 impl RenderState {
+    /// Le voisinage conservé autour des pages visibles.
+    ///
+    /// Une image de page pèse environ 2 Mo ; un document long parcouru
+    /// jusqu'au bout gardait ses centaines de pages en mémoire, sans aucune
+    /// borne — exactement la croissance qui a déjà fait tomber le compositeur.
+    /// Garder un voisinage évite de re-rasteriser à chaque aller-retour d'un
+    /// écran, sans pour autant accumuler le document entier.
+    pub const CACHE_MARGIN: usize = 4;
+
+    /// Les pages dont l'image reste en mémoire : celles qu'on voit, plus leur
+    /// voisinage.
+    pub fn pages_to_keep(&self) -> std::ops::RangeInclusive<usize> {
+        let (first, last) = self.visible.unwrap_or((0, 2));
+
+        first.saturating_sub(Self::CACHE_MARGIN)..=last.saturating_add(Self::CACHE_MARGIN)
+    }
+
+    /// Borner le cache d'images — et les empreintes avec lui.
+    ///
+    /// Les deux vont de pair : une page évincée dont on garderait l'empreinte
+    /// des pixels ne serait **plus jamais** redessinée, puisque l'image qui
+    /// revient aurait la même empreinte et serait tenue pour déjà affichée.
+    pub fn bound_page_cache(&mut self) {
+        let keep = self.pages_to_keep();
+
+        self.page_cache.retain(|index, _| keep.contains(index));
+        self.image_hashes.retain(|index, _| keep.contains(index));
+    }
     /// Vide l'état de rendu (changement de document ouvert).
     ///
     /// Les `Handle` mis en cache sont relâchés : le backend libère alors les
@@ -743,6 +771,55 @@ mod tests {
             handle().id(),
             "une image neuve a une identité neuve"
         );
+    }
+
+    /// Le cache d'images est borné à ce qu'on voit, plus un voisinage.
+    ///
+    /// C'est la règle qui empêche l'accumulation : un document long parcouru
+    /// jusqu'au bout gardait ses centaines de pages — deux mégaoctets chacune —
+    /// et rien ne les relâchait jamais. Ce qui est hors du voisinage part, et
+    /// sera redessiné au besoin, car son absence le fait marquer périmé.
+    #[test]
+    fn the_page_cache_is_bounded_to_what_is_visible() {
+        let mut render = RenderState {
+            visible: Some((20, 22)),
+            ..Default::default()
+        };
+
+        for index in 0..50 {
+            render.page_cache.insert(index, handle());
+            render.image_hashes.insert(index, index as u64);
+        }
+
+        render.bound_page_cache();
+
+        let kept: std::collections::BTreeSet<usize> = render.page_cache.keys().copied().collect();
+        let expected: std::collections::BTreeSet<usize> = (16..=26).collect();
+
+        assert_eq!(kept, expected, "visibles 20..22 plus quatre de voisinage");
+
+        // L'empreinte des pixels part **avec** l'image : une page dont on
+        // garderait l'empreinte après avoir jeté l'image ne serait plus jamais
+        // redessinée, puisque la nouvelle porterait la même empreinte et serait
+        // tenue pour déjà affichée.
+        let hashes: std::collections::BTreeSet<usize> =
+            render.image_hashes.keys().copied().collect();
+
+        assert_eq!(hashes, expected, "les empreintes suivent les images");
+    }
+
+    /// En haut du document, le voisinage ne descend pas sous zéro.
+    #[test]
+    fn the_page_cache_never_keeps_a_negative_range() {
+        let render = RenderState {
+            visible: Some((0, 1)),
+            ..Default::default()
+        };
+
+        let keep = render.pages_to_keep();
+
+        assert_eq!(*keep.start(), 0, "pas d'index négatif");
+        assert_eq!(*keep.end(), 1 + RenderState::CACHE_MARGIN);
     }
 
     /// Le changement de document repart d'un rendu vierge, sans conserver

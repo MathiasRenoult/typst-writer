@@ -910,6 +910,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     Handle::from_rgba(image.width, image.height, image.pixels),
                 );
 
+                // Une image peut arriver après qu'on a défilé ailleurs :
+                // la refuser tout de suite, plutôt que de la garder pour rien.
+                state.render.bound_page_cache();
             }
 
             Task::none()
@@ -948,6 +951,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             if unchanged {
                 return Task::none();
             }
+
+            // Le cache d'images est borné aux pages visibles et à leur
+            // voisinage : c'est ici, où l'on sait ce qu'on voit, qu'on retire
+            // le reste. Les `Handle` relâchés libèrent leurs textures.
+            state.render.bound_page_cache();
 
             // Une page qui entre dans le viewport sans image valide doit
             // être rasterisée ; une page déjà en cache et à jour ne l'est
