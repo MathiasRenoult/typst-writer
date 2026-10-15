@@ -1,8 +1,10 @@
 pub mod assistance;
 pub mod epreuves;
+mod fichiers;
 mod journal;
 pub mod message;
 pub mod state;
+mod themes;
 
 // Le parent garde la vue d'ensemble : les fonctions de ces deux modules sont
 // appelées ici sans prefixe, comme si elles y etaient nees.
@@ -114,7 +116,7 @@ impl State {
         state.refresh_context();
         // Les thèmes sont lus après le contexte : c'est le premier endroit où
         // l'état est complet, et la fenêtre doit s'ouvrir avec le thème retenu.
-        refresh_themes(&mut state);
+        crate::app::themes::refresh_themes(&mut state);
 
         state.save_session();
 
@@ -329,6 +331,39 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // Le domaine des fichiers et du projet a son module.
+        Message::NewFile
+        | Message::OpenFile
+        | Message::FileOpened(_)
+        | Message::OpenChapter(_)
+        | Message::ChapterOpened(_, _)
+        | Message::NewChapter
+        | Message::NewProject
+        | Message::OpenProject(_)
+        | Message::RefreshProject
+        | Message::DeleteChapter(_)
+        | Message::StartRename(_)
+        | Message::RenameChanged(_)
+        | Message::RenameCommit
+        | Message::RenameCancel
+        | Message::InsertCitation(_)
+        | Message::SaveFile
+        | Message::SaveAs
+        | Message::FileSaved(_)
+        | Message::ExportPdf
+        | Message::PdfExported(_) => crate::app::fichiers::update(state, message),
+
+        // Le domaine des thèmes a son module. Le motif ne **rien** lier : c'est
+        // ce qui permet de repasser le message entier, sans le dupliquer.
+        Message::SystemTheme(_)
+        | Message::CycleTheme
+        | Message::RefreshThemes
+        | Message::OpenThemesFolder
+        | Message::SelectTheme(_)
+        | Message::LoadTheme
+        | Message::ThemeLoaded(_)
+        | Message::DeleteTheme(_) => crate::app::themes::update(state, message),
+
         Message::Editor(message) => {
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
@@ -370,279 +405,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::CompletionDismiss => {
             close_completion(state);
-
-            Task::none()
-        }
-
-        Message::NewFile => {
-            // Un « nouveau document » est désormais un nouveau chapitre : c'est
-            // l'unité de travail du projet.
-            update(state, Message::NewChapter)
-        }
-
-        Message::OpenFile => Task::perform(
-            async {
-                rfd::AsyncFileDialog::new()
-                    .add_filter("Typst", &["typ"])
-                    .pick_file()
-                    .await
-                    .and_then(|file| {
-                        let path = file.path().to_path_buf();
-
-                        std::fs::read_to_string(&path)
-                            .ok()
-                            .map(|content| (path, content))
-                    })
-            },
-            Message::FileOpened,
-        ),
-
-        Message::FileOpened(result) => {
-            let Some((path, content)) = result else {
-                return Task::none();
-            };
-
-            // L'assemblage est le fichier du projet qui n'est pas un chapitre :
-            // l'ouvrir doit le laisser où il est, et n'ajouter aucun chapitre.
-            if crate::project::same_file(&path, &state.project.main) {
-                state.open_document(path, content);
-
-                return Task::none();
-            }
-
-            // Charger un fichier, c'est l'**ajouter au projet** : un fichier
-            // simplement affiché ne serait ni compté, ni inclus dans
-            // l'assemblage, donc jamais rendu — il n'existerait que dans
-            // l'éditeur.
-            let chapter = match crate::project::import_chapter(&state.project, &path) {
-                Ok(chapter) => chapter,
-                Err(error) => {
-                    state.export_status = Some(format!("Ajout au projet : {error}"));
-
-                    return Task::none();
-                }
-            };
-
-            // Un chapitre déjà installé dans le projet se charge avec ce qu'on
-            // vient de lire ; une copie doit se lire à sa nouvelle adresse.
-            let imported = !crate::project::same_file(&chapter, &path);
-
-            let content = if imported {
-                match std::fs::read_to_string(&chapter) {
-                    Ok(content) => content,
-                    Err(error) => {
-                        state.export_status = Some(format!("Ouverture du chapitre : {error}"));
-
-                        return Task::none();
-                    }
-                }
-            } else {
-                content
-            };
-
-            state.open_document(chapter.clone(), content);
-
-            // Le message se pose après `open_document`, qui efface le statut et
-            // relit le projet : c'est le seul moment où le titre du chapitre
-            // fraîchement importé est connu. Copier un fichier est un effet de
-            // bord qu'il faut dire, sans quoi le chapitre apparaîtrait dans le
-            // panneau sans qu'on sache pourquoi.
-            if imported {
-                let title = state
-                    .project
-                    .chapters
-                    .iter()
-                    .find(|entry| crate::project::same_file(&entry.path, &chapter))
-                    .map(|entry| entry.title.clone())
-                    .unwrap_or_else(|| {
-                        chapter
-                            .file_stem()
-                            .and_then(|stem| stem.to_str())
-                            .unwrap_or("chapitre")
-                            .to_string()
-                    });
-
-                state.export_status = Some(format!("« {title} » ajouté au projet."));
-            }
-
-            Task::none()
-        }
-
-        Message::OpenChapter(path) => Task::perform(
-            async move {
-                std::fs::read_to_string(&path)
-                    .ok()
-                    .map(|content| (path, content))
-            },
-            |result| match result {
-                Some((path, content)) => Message::ChapterOpened(path, content),
-                None => Message::RefreshProject,
-            },
-        ),
-
-        Message::ChapterOpened(path, content) => {
-            state.renaming = None;
-            state.open_document(path, content);
-
-            // Le rendez-vous d'un aller à la définition : le chapitre est ouvert,
-            // il reste à y poser le curseur.
-            match state.jump.take() {
-                Some((line, column)) => state.editor.set_cursor(line, column).map(Message::Editor),
-                None => Task::none(),
-            }
-        }
-
-        Message::NewChapter => {
-            let title = default_chapter_title(&state.project);
-
-            match crate::project::create_chapter(&state.project, &title) {
-                Ok(path) => {
-                    state.refresh_context();
-
-                    match std::fs::read_to_string(&path) {
-                        Ok(content) => state.open_document(path, content),
-                        Err(error) => {
-                            state.export_status = Some(format!("Ouverture du chapitre : {error}"));
-                        }
-                    }
-                }
-                Err(error) => {
-                    state.export_status = Some(format!("Création du chapitre : {error}"));
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::NewProject => {
-            let name = next_project_name(&state.projects);
-
-            match crate::project::create(&name) {
-                Ok(dir) => {
-                    state.project = crate::project::load(&dir);
-                    state.projects = crate::project::list_projects();
-                    state.editor = crate::editor::EditorState::default();
-                    state.render.reset();
-                    state.refresh_context();
-
-                    update(state, Message::NewChapter)
-                }
-                Err(error) => {
-                    state.export_status = Some(format!("Création du projet : {error}"));
-
-                    Task::none()
-                }
-            }
-        }
-
-        Message::OpenProject(dir) => {
-            state.project = crate::project::load(&dir);
-            state.projects = crate::project::list_projects();
-            state.render.reset();
-            state.refresh_context();
-
-            // On repart sur le premier chapitre du nouveau projet : rouvrir le
-            // chapitre d'un autre projet n'aurait pas de sens.
-            match state.project.chapters.first().map(|c| c.path.clone()) {
-                Some(path) => update(state, Message::OpenChapter(path)),
-                None => {
-                    state.editor = crate::editor::EditorState::default();
-                    state.save_session();
-
-                    Task::none()
-                }
-            }
-        }
-
-        Message::RefreshProject => {
-            state.refresh_context();
-
-            Task::none()
-        }
-
-        Message::DeleteChapter(path) => {
-            let _ = crate::project::remove_chapter(&state.project, &path);
-
-            state.refresh_context();
-
-            // Le chapitre ouvert vient d'être supprimé : on ouvre le suivant, ou
-            // l'éditeur reste sur un fichier qui n'existe plus.
-            if state.editor.path.as_deref() == Some(path.as_path()) {
-                match state.project.chapters.first().map(|c| c.path.clone()) {
-                    Some(next) => return update(state, Message::OpenChapter(next)),
-                    None => {
-                        state.editor = crate::editor::EditorState::default();
-                        state.save_session();
-                    }
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::InsertCitation(key) => state
-            .editor
-            .insert_at_cursor(&format!("@{key}"))
-            .map(Message::Editor),
-
-        Message::SaveFile => {
-            state.persist();
-            state.refresh_context();
-
-            Task::none()
-        }
-
-        Message::SaveAs => save_as_task(state),
-
-        Message::FileSaved(path) => {
-            if let Some(path) = path {
-                state.editor.path = Some(path);
-                state.editor.editor.mark_saved();
-            }
-
-            state.refresh_context();
-
-            Task::none()
-        }
-
-        Message::ExportPdf => {
-            let dir = state.document_dir();
-            let (entry, overrides) = state.compilation_unit();
-
-            Task::perform(
-                async move {
-                    let Some(bytes) = crate::typst::render::render_pdf(&dir, &entry, &overrides)
-                    else {
-                        return Err(
-                            "La compilation a échoué : corrigez les erreurs signalées dans le panneau."
-                                .to_string(),
-                        );
-                    };
-
-                    let Some(file) = rfd::AsyncFileDialog::new()
-                        .add_filter("PDF", &["pdf"])
-                        .set_file_name("export.pdf")
-                        .save_file()
-                        .await
-                    else {
-                        return Err("Export annulé".to_string());
-                    };
-
-                    let path = file.path().to_path_buf();
-
-                    std::fs::write(&path, &bytes)
-                        .map(|_| path.display().to_string())
-                        .map_err(|error| format!("Écriture du PDF : {error}"))
-                },
-                Message::PdfExported,
-            )
-        }
-
-        Message::PdfExported(result) => {
-            state.export_status = Some(match result {
-                Ok(path) => format!("PDF exporté : {path}"),
-                Err(error) => error,
-            });
 
             Task::none()
         }
@@ -939,158 +701,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::SystemTheme(mode) => {
-            state.system_theme = mode;
-            retheme(state);
-
-            Task::none()
-        }
-
-        Message::CycleTheme => {
-            state.theme = state.theme.next();
-            retheme(state);
-            state.save_session();
-
-            Task::none()
-        }
-
-        Message::RefreshThemes => {
-            refresh_themes(state);
-
-            Task::none()
-        }
-
-        Message::OpenThemesFolder => {
-            let dir = crate::theming::themes_dir();
-
-            open_folder(&dir);
-
-            // Le chemin est dit dans tous les cas : sur un système où
-            // l'ouverture n'est pas prévue, il reste au moins de quoi y aller.
-            state.export_status = Some(format!("Dossier des thèmes : {}", dir.display()));
-
-            Task::none()
-        }
-
-        Message::SelectTheme(name) => {
-            let Some(theme) = state.themes.iter().find(|theme| theme.name == name) else {
-                return Task::none();
-            };
-
-            let appearance = theme.appearance;
-            let name = theme.name.clone();
-
-            state.chosen.set(appearance, &name);
-
-            // Choisir un thème fixe le mode sur son apparence. Sans cela, en
-            // mode système, le thème clair choisi disparaîtrait dès que le
-            // système annonce une apparence sombre — on croirait que le clic
-            // n'a rien fait.
-            state.theme = match appearance {
-                crate::theming::Appearance::Light => crate::ui::theme::ThemeMode::Light,
-                crate::theming::Appearance::Dark => crate::ui::theme::ThemeMode::Dark,
-            };
-
-            retheme(state);
-            state.save_session();
-
-            Task::none()
-        }
-
-        Message::LoadTheme => Task::perform(
-            async {
-                rfd::AsyncFileDialog::new()
-                    .add_filter("Thème", &["toml"])
-                    .pick_file()
-                    .await
-                    .map(|file| file.path().to_path_buf())
-            },
-            Message::ThemeLoaded,
-        ),
-
-        Message::ThemeLoaded(result) => {
-            let Some(path) = result else {
-                return Task::none();
-            };
-
-            match crate::theming::import(&path) {
-                Ok(loaded) => {
-                    let name = loaded.meta.name.clone();
-
-                    // Un thème du même nom existait déjà : le fichier a été
-                    // remplacé, et le dire évite de croire à un doublon.
-                    let updated = state.themes.iter().any(|theme| theme.name == name);
-
-                    refresh_themes(state);
-
-                    // On applique le thème qu'on vient de charger : c'est ce
-                    // qu'on veut voir, et sans cela il faudrait le chercher
-                    // dans la liste après l'avoir chargé.
-                    if let Some(theme) = state.themes.iter().find(|theme| theme.name == name) {
-                        let appearance = theme.appearance;
-
-                        state.chosen.set(appearance, &name);
-
-                        state.theme = match appearance {
-                            crate::theming::Appearance::Light => crate::ui::theme::ThemeMode::Light,
-                            crate::theming::Appearance::Dark => crate::ui::theme::ThemeMode::Dark,
-                        };
-
-                        retheme(state);
-                        state.save_session();
-                    }
-
-                    // L'auteur, quand il s'est nommé, est une politesse qu'on
-                    // lui rend : c'est la seule raison d'écrire ce champ.
-                    let verb = if updated { "mis à jour" } else { "chargé" };
-
-                    state.export_status = Some(match loaded.meta.author.as_deref() {
-                        Some(author) => format!("Thème « {name} », par {author}, {verb}."),
-                        None => format!("Thème « {name} » {verb}."),
-                    });
-                }
-                Err(error) => {
-                    state.export_status = Some(format!("Chargement du thème : {error}"));
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::DeleteTheme(name) => {
-            match crate::theming::remove(&name) {
-                Ok(()) => {
-                    // Le thème supprimé ne doit pas rester « retenu » : on
-                    // l'oublie, sinon le repli désignerait éternellement un
-                    // fichier absent.
-                    for appearance in [
-                        crate::theming::Appearance::Light,
-                        crate::theming::Appearance::Dark,
-                    ] {
-                        if state.chosen.get(appearance) == name {
-                            let native = crate::theming::natives()
-                                .into_iter()
-                                .find(|theme| theme.appearance == appearance);
-
-                            if let Some(native) = native {
-                                state.chosen.set(appearance, &native.name);
-                            }
-                        }
-                    }
-
-                    refresh_themes(state);
-                    state.save_session();
-
-                    state.export_status = Some(format!("Thème « {name} » supprimé."));
-                }
-                Err(error) => {
-                    state.export_status = Some(format!("Suppression du thème : {error}"));
-                }
-            }
-
-            Task::none()
-        }
-
         Message::ToggleSidebar => {
             state.layout.sidebar_visible = !state.layout.sidebar_visible;
 
@@ -1249,74 +859,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 // appliquera le mode. Sans cela, la première bascule au tout
                 // début du démarrage resterait sans effet.
                 None => iced::window::latest().and_then(move |id| iced::window::set_mode(id, mode)),
-            }
-        }
-
-        Message::StartRename(path) => {
-            // Le titre actuel amorce la saisie : on corrige plus souvent qu'on
-            // ne réécrit entièrement.
-            let buffer = state
-                .project
-                .chapters
-                .iter()
-                .find(|chapter| chapter.path == path)
-                .map(|chapter| chapter.title.clone())
-                .unwrap_or_default();
-
-            state.renaming = Some(ChapterRename { path, buffer });
-
-            Task::none()
-        }
-
-        Message::RenameChanged(text) => {
-            if let Some(renaming) = state.renaming.as_mut() {
-                renaming.buffer = text;
-            }
-
-            Task::none()
-        }
-
-        Message::RenameCancel => {
-            state.renaming = None;
-
-            Task::none()
-        }
-
-        Message::RenameCommit => {
-            let Some(renaming) = state.renaming.clone() else {
-                return Task::none();
-            };
-
-            let title = renaming.buffer.trim().to_string();
-
-            // Un titre vide laisserait un nom de fichier sans signification.
-            if title.is_empty() {
-                state.export_status = Some("Le titre ne peut pas être vide.".to_string());
-
-                return Task::none();
-            }
-
-            match crate::project::rename_chapter(&state.project, &renaming.path, &title) {
-                Ok(new_path) => {
-                    state.renaming = None;
-
-                    // Le chapitre renommé peut être celui qui est ouvert : son
-                    // chemin a changé, l'éditeur doit suivre.
-                    if state.editor.path.as_deref() == Some(renaming.path.as_path()) {
-                        state.editor.path = Some(new_path.clone());
-                    }
-
-                    state.refresh_context();
-
-                    Task::none()
-                }
-                Err(error) => {
-                    // Le message reste affiché : sans lui, un renommage refusé
-                    // (titre déjà pris) serait indiscernable d'un clic perdu.
-                    state.export_status = Some(format!("Renommage : {error}"));
-
-                    Task::none()
-                }
             }
         }
 
@@ -1712,23 +1254,6 @@ fn subscription_lsp(state: &State) -> Subscription<Message> {
     time::every(std::time::Duration::from_millis(interval)).map(|_| Message::LspPoll)
 }
 
-/// Réapplique le thème aux éléments qui en dépendent mais ne le recoivent pas
-/// à chaque rendu — en l'occurrence l'éditeur, dont les couleurs sont une
-/// copie prise au moment du réglage.
-fn retheme(state: &mut State) {
-    let appearance = state.theme.appearance(state.system_theme);
-
-    let index = crate::theming::select(&state.themes, appearance, &state.chosen);
-
-    let Some(theme) = state.themes.get(index) else {
-        return;
-    };
-
-    state.resolved = crate::ui::theme::Resolved::of(theme);
-
-    state.editor.retheme(&state.resolved);
-}
-
 /// La couleur du papier, lue sur le coin supérieur gauche d'une page rendue.
 ///
 /// Le fond d'une page est en haut à gauche : c'est la seule couleur qui
@@ -1743,38 +1268,6 @@ fn paper_colour(image: &crate::typst::render::PageImage) -> Option<iced::Color> 
         pixel[2],
         f32::from(pixel[3]) / 255.0,
     ))
-}
-
-/// Ouvre un dossier dans le gestionnaire de fichiers du système.
-///
-/// Sous Linux seulement : c'est la seule plateforme où l'application est
-/// utilisée, et deviner la commande des autres serait du code jamais vérifié.
-/// L'appelant dit le chemin de toute façon, ce qui reste une issue.
-#[cfg(target_os = "linux")]
-fn open_folder(dir: &std::path::Path) {
-    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
-}
-
-#[cfg(not(target_os = "linux"))]
-fn open_folder(_dir: &std::path::Path) {}
-
-/// Relit les thèmes du disque, puis réapplique celui qui est retenu.
-///
-/// Appelé au démarrage et après tout changement dans le dossier : un thème
-/// écrit à la main pendant que l'application tourne doit pouvoir être rechargé
-/// sans la relancer.
-fn refresh_themes(state: &mut State) {
-    // Le thème d'exemple sert de documentation : il est écrit dans le dossier
-    // au premier besoin, pour que le format soit sous les yeux de qui veut en
-    // écrire un, plutôt que dans un fichier de référence à retrouver.
-    let _ = crate::theming::write_example();
-
-    let (themes, problems) = crate::theming::list();
-
-    state.themes = themes;
-    state.theme_problems = problems;
-
-    retheme(state);
 }
 
 /// Tâche de démarrage : lire le thème du système avant le premier rendu, pour
@@ -1792,27 +1285,3 @@ pub fn startup() -> Task<Message> {
     ])
 }
 
-fn save_as_task(state: &State) -> Task<Message> {
-    let content = state.editor.content().to_owned();
-
-    Task::perform(
-        async move {
-            let file = rfd::AsyncFileDialog::new()
-                .add_filter("Typst", &["typ"])
-                .set_file_name("export.typ")
-                .save_file()
-                .await?;
-
-            let path = file.path().to_path_buf();
-
-            match std::fs::write(&path, content) {
-                Ok(_) => Some(path),
-                Err(error) => {
-                    eprintln!("Erreur lors de l'export : {error}");
-                    None
-                }
-            }
-        },
-        Message::FileSaved,
-    )
-}
