@@ -110,6 +110,30 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .style(move |t, status| primary_style(t, status, palette)),
     );
 
+    // ---- Le sommaire ----
+    //
+    // Les titres du document, avec le retrait de leur niveau : c'est la table
+    // des matières qu'on consulte en écrivant, et un clic y va — dans les deux
+    // vues à la fois.
+    if !state.render.outline.is_empty() {
+        content = content.push(Space::new().height(18));
+        content = content.push(section_title("Sommaire", palette));
+
+        for (index, entry) in state.render.outline.iter().enumerate() {
+            let mut label = "    ".repeat(entry.level.saturating_sub(1));
+            label.push_str(entry.text.trim());
+
+            content = content.push(
+                button(palette.label(label).size(12))
+                    .on_press(Message::GotoHeading(index))
+                    .width(Fill)
+                    .height(Length::Fixed(ENTRY_HEIGHT))
+                    .padding([4, 8])
+                    .style(move |t, status| entry_style(t, status, palette, false)),
+            );
+        }
+    }
+
     // ---- La bibliographie ----
     content = content.push(Space::new().height(18));
     content = content.push(section_title("Bibliographie", palette));

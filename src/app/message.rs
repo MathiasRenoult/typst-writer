@@ -107,6 +107,9 @@ pub enum Message {
     /// Demander ce que le serveur sait de ce qui est sous le curseur.
     ShowHover,
 
+    /// Va à un titre du sommaire (le rang dans la liste du document).
+    GotoHeading(usize),
+
     /// La fenêtre a changé de taille : (largeur, hauteur).
     WindowResized(iced::Size),
 

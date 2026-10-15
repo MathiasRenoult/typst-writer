@@ -102,6 +102,79 @@ pub struct Diagnostic {
     pub file: Option<PathBuf>,
 }
 
+/// Un titre du document, avec l'endroit où il vit.
+///
+/// Le sommaire et le suivi de l'aperçu se lisent tous deux ici : Typst donne à
+/// chaque titre sa **page** et sa **source**, et c'est leur croisement qui
+/// permet de passer de la ligne qu'on lit à la page qu'on montre.
+#[derive(Debug, Clone)]
+pub struct OutlineEntry {
+    /// Niveau du titre (1 pour `=`, 2 pour `==`…).
+    pub level: usize,
+    /// Le titre, en texte nu.
+    pub text: String,
+    /// Le fichier où il est écrit.
+    pub file: Option<PathBuf>,
+    /// Sa ligne, à partir de un.
+    pub line: usize,
+    /// Sa page, à partir de zéro.
+    pub page: usize,
+}
+
+/// Le sommaire du document compilé.
+///
+/// Les titres viennent de l'introspection, jamais du texte : c'est la
+/// composition qui décide où ils sont, et elle seule sait quelle page les
+/// porte.
+fn outline(world: &PreviewWorld, document: &PagedDocument) -> Vec<OutlineEntry> {
+    use typst::foundations::NativeElement;
+    use typst::model::{HeadingElem, Outlinable};
+
+    let introspector = document.introspector();
+
+    introspector
+        .query(&HeadingElem::ELEM.select())
+        .iter()
+        .filter_map(|content| {
+            let level = content.with::<dyn Outlinable>()?.level().get() as usize;
+            let location = content.location()?;
+            let position = introspector.position(location)?;
+
+            // La source du titre dit le fichier et la ligne ; sans elle, la page
+            // reste juste mais rien ne serait joignable. Le `Location`, lui,
+            // n'est qu'une empreinte : c'est le `span` du contenu qui porte la
+            // source — et `locate` sait déjà les résoudre.
+            let (file, line, _) = locate(DiagSpan::from_span(content.span(), None), world);
+
+            Some(OutlineEntry {
+                level,
+                text: content.to_packed::<HeadingElem>()?.body.plain_text().into(),
+                file,
+                line: line?,
+                page: position.page.get() - 1,
+            })
+        })
+        .collect()
+}
+
+/// L'entrée du sommaire qui couvre une ligne : la dernière, dans le même
+/// fichier, à commencer à cette ligne ou avant.
+///
+/// C'est le pont entre l'éditeur et l'aperçu : la ligne du haut de la zone de
+/// rédaction désigne le titre qui la domine, et ce titre porte sa page.
+pub fn entry_covering(
+    outline: &[OutlineEntry],
+    file: &Path,
+    line: usize,
+) -> Option<usize> {
+    outline
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.file.as_deref() == Some(file) && entry.line <= line)
+        .map(|(index, _)| index)
+        .next_back()
+}
+
 /// Résultat de la compilation d'un document.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOutcome {
@@ -117,6 +190,9 @@ pub struct CompileOutcome {
     /// C'est ce qui permet d'amener l'aperçu sur le chapitre qu'on écrit plutôt
     /// que de le laisser en tête de document.
     pub chapter_page: Option<usize>,
+
+    /// Le sommaire du document : titres, sources et pages.
+    pub outline: Vec<OutlineEntry>,
 
     /// Document compilé, `None` si la compilation a échoué.
     ///
@@ -191,6 +267,13 @@ pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Com
     let document = output.ok().map(Arc::new);
     let chapter_page = document.as_ref().and_then(|doc| chapter_page(doc));
 
+    // Le sommaire se prend là, où le monde est encore sous la main : la page
+    // vient de l'introspection, le fichier et la ligne du monde.
+    let outline = document
+        .as_ref()
+        .map(|document| outline(&world, document))
+        .unwrap_or_default();
+
     CompileOutcome {
         // L'empreinte est **celle** que calculera la décision de recompiler.
         // Les faire diverger rendait toute compilation « nouvelle ».
@@ -198,6 +281,7 @@ pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Com
         errors,
         warnings,
         chapter_page,
+        outline,
         document,
     }
 }
@@ -583,6 +667,72 @@ impl World for PreviewWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ce que l'introspection donne réellement pour les titres d'un document.
+    ///
+    /// Le sommaire vide n'a pas de cause visible : la requête peut ne rien
+    /// rendre, ou ses entrées peuvent être écartées une à une. Cette sonde dit
+    /// laquelle, sur le document que `TYPST_WRITER_EPREUVE` désigne.
+    #[test]
+    #[ignore = "compile le document désigné par TYPST_WRITER_EPREUVE"]
+    fn diagnose_outline() {
+        let entry = std::env::var("TYPST_WRITER_EPREUVE").expect("TYPST_WRITER_EPREUVE=<main.typ>");
+        let entry = std::path::PathBuf::from(entry);
+        let root = crate::lsp::client::root_of(&entry);
+        let source = std::fs::read_to_string(&entry).expect("le document");
+
+        let outcome = compile(&root, &source, &[]);
+
+        println!(
+            "document : {} | pages : {:?} | titres : {} | erreurs : {}",
+            entry.display(),
+            outcome.document.as_deref().map(page_count),
+            outcome.outline.len(),
+            outcome.errors.len()
+        );
+
+        for error in outcome.errors.iter().take(5) {
+            println!("  erreur : {:?}", error.message);
+        }
+
+        for item in outcome.outline.iter().take(25) {
+            println!(
+                "  niveau {} | page {} | ligne {} | {:?} | « {} »",
+                item.level,
+                item.page + 1,
+                item.line,
+                item.file,
+                item.text
+            );
+        }
+    }
+
+    /// Le pont entre l'éditeur et l'aperçu : la ligne du haut de la zone de
+    /// rédaction désigne le titre qui la domine.
+    #[test]
+    fn the_entry_covering_a_line_is_the_last_one_above_it() {
+        let entry = |level, text: &str, file: &str, line, page| OutlineEntry {
+            level,
+            text: text.to_string(),
+            file: Some(PathBuf::from(file)),
+            line,
+            page,
+        };
+
+        let outline = vec![
+            entry(1, "Chapitre 1", "a.typ", 1, 0),
+            entry(2, "Section 1.1", "a.typ", 10, 2),
+            entry(1, "Chapitre 2", "b.typ", 1, 5),
+        ];
+
+        let a = Path::new("a.typ");
+        let b = Path::new("b.typ");
+
+        assert_eq!(entry_covering(&outline, a, 1), Some(0), "le premier titre");
+        assert_eq!(entry_covering(&outline, a, 12), Some(1), "la section domine");
+        assert_eq!(entry_covering(&outline, b, 1), Some(2), "l'autre chapitre");
+        assert_eq!(entry_covering(&outline, a, 0), None, "avant tout titre");
+    }
     use std::fs;
     use std::time::Instant;
 

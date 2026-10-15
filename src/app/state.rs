@@ -448,6 +448,18 @@ pub struct RenderState {
     /// déclencher.
     pub document: Option<Arc<PagedDocument>>,
 
+    /// Le sommaire du document : titres, sources, pages.
+    ///
+    /// Il sert deux fois : le panneau de travail le montre, et le suivi de
+    /// l'aperçu s'y lit pour savoir quelle page porte la ligne qu'on lit.
+    pub outline: Vec<crate::typst::render::OutlineEntry>,
+
+    /// Dernière page suivie par le suivi de l'aperçu.
+    ///
+    /// Sans elle, chaque défilement renverrait la même opération de défilement
+    /// à l'aperçu, soixante fois par seconde.
+    pub followed_page: Option<usize>,
+
     /// Images déjà rasterisées : index → `Handle`.
     ///
     /// **C'est le `Handle` qui est mis en cache, pas les octets.** Un

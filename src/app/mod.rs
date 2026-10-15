@@ -369,18 +369,30 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // prochain tic, et non à chaque image.
             state.render.words_pending = true;
 
+            // L'aperçu suit ce qu'on lit — mais seulement quand le suivi est
+            // demandé : le bouton de la barre d'outils en décide, et écrire
+            // ailleurs dans l'assemblage ne doit pas arracher l'aperçu.
+            let suivre = matches!(message, iced_code_editor::Message::Scrolled(_))
+                && state.layout.follow_preview;
+
             let task = state.editor.update(message).map(Message::Editor);
+
+            let suivi = if suivre {
+                follow_editor_scroll(state)
+            } else {
+                Task::none()
+            };
 
             // C'est la frappe qui décide de la liste, et elle seule : après
             // chaque message de l'éditeur, on regarde si le texte demande une
             // complétion à l'endroit du curseur.
             let completion = request_completion(state);
 
-            if std::env::var_os("TYPST_WRITER_LSP_VERBOSE").is_some() {
+            if crate::app::epreuves::actif("lsp") {
                 report_lsp(state);
             }
 
-            Task::batch(vec![task, completion])
+            Task::batch(vec![task, completion, suivi])
         }
 
         Message::CompletionMove(delta) => {
@@ -556,6 +568,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             state.render.chapter_page = chapter_page;
+            state.render.outline = outcome.outline;
 
             // Toutes les pages sont périmées, et pas seulement les visibles :
             // l'image d'une page hors écran appartient elle aussi à la
@@ -716,7 +729,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::TogglePreviewSync => {
             state.layout.follow_preview = !state.layout.follow_preview;
 
-            if std::env::var_os("TYPST_WRITER_LSP_VERBOSE").is_some() {
+            if crate::app::epreuves::actif("lsp") {
                 println!(
                     "[vue] suivi de l'aperçu : {}",
                     if state.layout.follow_preview {
@@ -825,6 +838,23 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::GoToDefinition => request_definition(state),
 
         Message::ShowHover => request_hover(state),
+
+        Message::GotoHeading(index) => {
+            let Some(entry) = state.render.outline.get(index).cloned() else {
+                return Task::none();
+            };
+
+            // Le sommaire sert à se repérer dans **les deux** vues : le curseur
+            // va à la ligne, l'aperçu à la page.
+            state.render.followed_page = Some(entry.page);
+
+            let aller = match entry.file {
+                Some(path) => crate::app::assistance::jump_to(state, &path, entry.line, 0),
+                None => Task::none(),
+            };
+
+            Task::batch([aller, scroll_preview_to_page(state, entry.page)])
+        }
 
         Message::WindowResized(size) => {
             state.window_size = size;
@@ -1081,6 +1111,74 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
     Task::batch(tasks)
 }
 
+/// L'aperçu suit la ligne qu'on lit.
+///
+/// Typst ne relie pas une ligne à une page ; il relie chaque **titre** à la
+/// sienne. La ligne du haut de la zone de rédaction désigne donc le titre qui la
+/// domine, et c'est sa page qu'on montre : exacte aux titres près, et c'est la
+/// seule correspondance que la composition donne.
+fn follow_editor_scroll(state: &mut State) -> Task<Message> {
+    let Some(path) = state.editor.path.clone() else {
+        return Task::none();
+    };
+
+    let hauteur = f64::from(state.editor.editor.line_height()).max(1.0);
+    let ligne = (f64::from(state.editor.editor.viewport_scroll()) / hauteur).ceil() as usize + 1;
+
+    let Some(index) =
+        crate::typst::render::entry_covering(&state.render.outline, &path, ligne)
+    else {
+        return Task::none();
+    };
+
+    let page = state.render.outline[index].page;
+
+    // Déjà là : ne rien faire. Sans cette garde, chaque défilement renverrait la
+    // même opération à l'aperçu, soixante fois par seconde.
+    if state.render.followed_page == Some(page) {
+        return Task::none();
+    }
+
+    state.render.followed_page = Some(page);
+
+    if crate::app::epreuves::actif("vue") {
+        println!("[vue] suivi : ligne {ligne} → page {}", page + 1);
+    }
+
+    scroll_preview_to_page(state, page)
+}
+
+/// Fait défiler l'aperçu jusqu'à une page.
+///
+/// L'opération est paramétrée par le type de message qu'elle produirait : elle
+/// n'en produit aucun, mais c'est ainsi qu'elle se raccorde à la boucle de
+/// messages.
+fn scroll_preview_to_page(state: &State, page: usize) -> Task<Message> {
+    let Some(document) = state.render.document.clone() else {
+        return Task::none();
+    };
+
+    let sizes = crate::ui::preview::sizes_of(
+        &document,
+        state
+            .render
+            .viewport
+            .unwrap_or_else(crate::ui::preview::default_viewport),
+    );
+
+    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, page);
+
+    iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
+        Message,
+    >(
+        crate::ui::preview::SCROLL_ID.into(),
+        iced::advanced::widget::operation::scrollable::AbsoluteOffset {
+            x: None,
+            y: Some(offset),
+        },
+    ))
+}
+
 /// Amène l'aperçu sur le chapitre en cours d'écriture, une fois par chapitre.
 ///
 /// Sans cela l'aperçu resterait en tête de l'assemblage : écrire le chapitre 7
@@ -1104,8 +1202,7 @@ fn follow_chapter(state: &mut State) -> Task<Message> {
         return Task::none();
     }
 
-    let (Some(document), Some(page)) = (state.render.document.clone(), state.render.chapter_page)
-    else {
+    let Some(page) = state.render.chapter_page else {
         return Task::none();
     };
 
@@ -1113,28 +1210,7 @@ fn follow_chapter(state: &mut State) -> Task<Message> {
     // si le calcul échouait, on ne redéfilerait pas indéfiniment.
     state.render.followed_chapter = state.editor.path.clone();
 
-    let sizes = crate::ui::preview::sizes_of(
-        &document,
-        state
-            .render
-            .viewport
-            .unwrap_or_else(crate::ui::preview::default_viewport),
-    );
-
-    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, page);
-
-    // L'opération est paramétrée par le type de message qu'elle produirait :
-    // elle n'en produit aucun, mais c'est ainsi qu'elle se raccorde à la
-    // boucle de messages.
-    iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
-        Message,
-    >(
-        crate::ui::preview::SCROLL_ID.into(),
-        iced::advanced::widget::operation::scrollable::AbsoluteOffset {
-            x: None,
-            y: Some(offset),
-        },
-    ))
+    scroll_preview_to_page(state, page)
 }
 
 /// Lance la compilation du document (moteur Typst en bibliothèque).
