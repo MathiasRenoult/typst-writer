@@ -321,8 +321,7 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
                 // La traduction pour l'affichage se fait **ici**, une fois :
                 // elle demande le texte du document, et la vue ne doit rien
                 // cloner.
-                state.lsp.reported =
-                    crate::lsp::messages::report(&state.editor.content(), &items);
+                state.lsp.reported = crate::lsp::messages::report(&state.editor.content(), &items);
                 state.lsp.diagnostics = items;
             }
 

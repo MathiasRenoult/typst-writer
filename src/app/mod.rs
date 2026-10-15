@@ -1,4 +1,5 @@
 pub mod assistance;
+pub mod epreuves;
 mod journal;
 pub mod message;
 pub mod state;
@@ -24,11 +25,6 @@ const RENDER_INTERVAL_MS: u64 = 300;
 
 /// Intervalle de sauvegarde automatique différée.
 const SAVE_INTERVAL_MS: u64 = 1000;
-
-/// Variable d'environnement qui demande le suivi de la mémoire.
-///
-/// Un instrument, pas un réglage : absent, l'application ne mesure rien.
-pub const MEMORY_ENV: &str = "TYPST_WRITER_MEMOIRE";
 
 /// Période du relevé de mémoire, en secondes.
 const MEMORY_INTERVAL_S: u64 = 5;
@@ -706,68 +702,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::RenderTick => {
-            // ÉPREUVE DE DÉFILEMENT (`TYPST_WRITER_EPREUVE_VUE=1`).
-            //
-            // Un banc d'épreuve graphique ne peut pas toujours frapper : ici le
-            // clavier n'atteint pas la fenêtre. L'application se pilote donc
-            // elle-même, par les messages que l'éditeur reçoit de toute façon :
-            // un clic loin sous la vue (le curseur part en fin de document, et
-            // l'éditeur défile pour le suivre), puis le caractère qui ouvre la
-            // liste de suggestions. Ce que l'on regarde est la suite des
-            // défilements publiés par la vue.
-            if std::env::var_os("TYPST_WRITER_EPREUVE_VUE").is_some() {
-                use std::sync::atomic::{AtomicU32, Ordering};
-
-                static TRAME: AtomicU32 = AtomicU32::new(0);
-
-                match TRAME.fetch_add(1, Ordering::Relaxed) {
-                    12 => {
-                        println!("[épreuve] le curseur part en fin de document");
-                        return Task::done(Message::Editor(iced_code_editor::Message::CtrlEnd));
-                    }
-                    30 => {
-                        println!(
-                            "[épreuve] défilement établi : {}",
-                            state.editor.editor.viewport_scroll()
-                        );
-                    }
-                    40 => {
-                        println!("[épreuve] ouverture de la bulle");
-                        crate::ui::editor::MENU_EPREUVE
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    50 => {
-                        println!(
-                            "[épreuve] bulle ouverte, défilement : {}",
-                            state.editor.editor.viewport_scroll()
-                        );
-                    }
-                    60 => {
-                        println!("[épreuve] fermeture de la bulle");
-                        crate::ui::editor::MENU_EPREUVE
-                            .store(false, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    70 => {
-                        println!(
-                            "[épreuve] bulle fermée, défilement : {}",
-                            state.editor.editor.viewport_scroll()
-                        );
-                    }
-                    90 => {
-                        println!(
-                            "[épreuve] curseur avant le saut : {}",
-                            state.editor.cursor_offset()
-                        );
-                        return Task::done(Message::GotoError(5, 23));
-                    }
-                    100 => {
-                        println!(
-                            "[épreuve] curseur après le saut : {}",
-                            state.editor.cursor_offset()
-                        );
-                    }
-                    _ => {}
-                }
+            // Les épreuves peuvent piloter l'éditeur elles-mêmes : un pas par
+            // tic, et elles rendent la main aussitôt.
+            if let Some(tache) = crate::app::epreuves::driver(state) {
+                return tache;
             }
 
             // Le serveur de langage suit **le document que l'éditeur tient**,

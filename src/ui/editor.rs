@@ -87,9 +87,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // paraître. Ici il a trois lignes, une bulle colorée et une place connue.
     let overlay = match overlay {
         Some(overlay) => Some(overlay),
-        None if std::env::var_os("TYPST_WRITER_EPREUVE_MENU").is_some()
-            && MENU_EPREUVE.load(std::sync::atomic::Ordering::Relaxed) =>
-        {
+        None if crate::app::epreuves::menu_ouvert() => {
             let essai = container(
                 column![
                     palette.label("premier essai").size(13),
@@ -109,6 +107,26 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
         None => None,
     };
+
+    // **L'arbre a toujours la même forme, avec ou sans bulle.**
+    //
+    // Le défilement de l'éditeur vit dans l'état de son propre ascenseur, et cet
+    // état est rattaché au *chemin des widgets* : faire d'un conteneur simple une
+    // pile le recrée, et le défilement repart de zéro. Mesuré, la nuit du
+    // rapport : défilement 7267, ouverture de la bulle, défilement **0** une
+    // image plus tard — exactement « dès que je mets # ou @, l'éditeur scroll
+    // tout en haut », et la fermeture fait de même. L'arbre invariable conserve
+    // le défilement à travers les deux transitions (17086 mesuré).
+    //
+    // Un commentaire prétendait qu'avec une forme invariable le menu ne se
+    // dessinait plus : refait, le constat était faux — les deux formes rendent
+    // des images **pixel identiques**, bulle comprise.
+    //
+    // L'enfant de remplacement a une taille nulle : présent, donc le chemin des
+    // widgets ne bouge pas ; invisible, donc la mise en page ne change pas d'un
+    // pixel. À ne pas confondre avec un remplisseur, qui s'étendrait et donnerait
+    // sa taille à la pile.
+    crate::app::epreuves::note_vue(state.editor.editor.viewport_scroll(), overlay.is_some());
 
     // **L'arbre a toujours la même forme, avec ou sans bulle.**
     //
@@ -162,12 +180,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             let panneau = panel_height(state);
             let top = crate::lsp::completion::placement(anchor.y, panneau, height);
 
-            if std::env::var_os("TYPST_WRITER_VUE").is_some() {
-                println!(
-                    "[vue] bulle construite : ancre {:?} | top {:.0} | panneau {:.0} | hauteur {:.0}",
-                    anchor, top, panneau, height
-                );
-            }
+            crate::app::epreuves::note_bulle(anchor, top, panneau, height);
 
             container(content)
                 .width(Fill)
@@ -282,15 +295,6 @@ fn hover_popup(hover: &crate::app::state::Hover, palette: Palette) -> Element<'_
     .style(bubble_style(palette))
     .into()
 }
-
-/// Bulle de l'épreuve d'arbre (`TYPST_WRITER_EPREUVE_MENU`).
-///
-/// L'épreuve a besoin de faire **ouvrir** la bulle au milieu d'un défilement :
-/// c'est la transition — et non la présence — qui met en cause l'arbre. Ce
-/// drapeau est ce que l'épreuve bascule ; le témoin de structure sert à
-/// prouver que le chemin « arbre invariable » a bien été pris.
-pub(crate) static MENU_EPREUVE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 /// La liste de complétion, posée à l'endroit du curseur.
 fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, Message> {

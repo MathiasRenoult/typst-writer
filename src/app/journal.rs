@@ -5,7 +5,7 @@
 //! d'explosion mémoire ne se diagnostique pas à l'œil, et parce que la mémoire
 //! graphique n'apparaît dans aucun profil ordinaire.
 
-use super::{MEMORY_ENV, MEMORY_INTERVAL_S, Message, State};
+use super::{MEMORY_INTERVAL_S, Message, State};
 
 use iced::{Subscription, time};
 
@@ -19,7 +19,7 @@ use iced::{Subscription, time};
 ///
 ///     TYPST_WRITER_MEMOIRE=1 cargo run --release
 pub(super) fn subscription_memory() -> Subscription<Message> {
-    if std::env::var_os(MEMORY_ENV).is_none() {
+    if !crate::app::epreuves::actif("memoire") {
         return Subscription::none();
     }
 
@@ -182,7 +182,7 @@ pub(super) fn report_lsp(state: &State) {
 
 /// Le journal détaillé est-il demandé ?
 fn verbose() -> bool {
-    std::env::var_os("TYPST_WRITER_LSP_VERBOSE").is_some()
+    crate::app::epreuves::actif("lsp")
 }
 
 /// Mémoire résidente du processus, en kilo-octets.
