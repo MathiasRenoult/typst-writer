@@ -336,7 +336,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Editor(message) => {
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
-            state.render.words = None;
+            state.render.words_pending = true;
 
             let task = state.editor.update(message).map(Message::Editor);
 
@@ -718,10 +718,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // tics, et seulement quand le texte a changé. Le calculer chez elle,
             // c'était cloner le document entier à chaque image — deux fois,
             // puisque la barre d'état et le panneau le demandent chacun.
-            if state.render.words.is_none() {
+            if state.render.words_pending {
                 let content = state.editor.content();
 
                 state.render.words = Some(crate::project::count_words(&content));
+                state.render.words_pending = false;
 
                 // C'est **le** moment où l'on sait que le texte a changé, et le
                 // seul endroit où l'on en a la preuve : le serveur de langage
@@ -1087,6 +1088,23 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::TogglePreview => {
             state.layout.preview_visible = !state.layout.preview_visible;
+
+            Task::none()
+        }
+
+        Message::TogglePreviewSync => {
+            state.layout.follow_preview = !state.layout.follow_preview;
+
+            if std::env::var_os("TYPST_WRITER_LSP_VERBOSE").is_some() {
+                println!(
+                    "[vue] suivi de l'aperçu : {}",
+                    if state.layout.follow_preview {
+                        "actif"
+                    } else {
+                        "coupé"
+                    }
+                );
+            }
 
             Task::none()
         }
@@ -1521,9 +1539,14 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
 /// au numéro arracherait l'aperçu sous les yeux du rédacteur au milieu d'une
 /// phrase.
 fn follow_chapter(state: &mut State) -> Task<Message> {
-    if !state
-        .render
-        .should_follow_chapter(state.editor.path.as_deref())
+    // Le suivi est un réglage, et non une fatalité : suivre le chapitre évite
+    // de croire qu'il n'est pas rendu, mais arrache l'aperçu sous les yeux dès
+    // qu'on écrit ailleurs dans l'assemblage. La barre d'outils porte
+    // l'interrupteur ; ici, on l'écoute.
+    if !state.layout.follow_preview
+        || !state
+            .render
+            .should_follow_chapter(state.editor.path.as_deref())
     {
         return Task::none();
     }

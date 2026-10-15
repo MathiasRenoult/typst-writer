@@ -340,7 +340,11 @@ fn editor_style(file: &crate::theming::ThemeFile) -> iced_code_editor::Style {
         declared.map(|color| color.0).unwrap_or(fallback)
     };
 
-    let background = pick(editor.background, colors.surface.0);
+    // **Le fond de la rédaction est celui de l'application.** `surface` est le
+    // ton des *panneaux* (barre latérale, bandeaux) : le donner à la zone de
+    // rédaction inversait les deux rôles, et l'éditeur paraissait appartenir à
+    // une autre fenêtre que celle qui l'entoure.
+    let background = pick(editor.background, colors.background.0);
 
     iced_code_editor::Style {
         background,
@@ -442,6 +446,44 @@ fn syntax_palette(file: &crate::theming::ThemeFile) -> iced_code_editor::SyntaxP
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un thème minimal, avec les quatre couleurs obligatoires.
+    const MINIMAL: &str = r##"
+[meta]
+name = "Essai"
+appearance = "dark"
+
+[colors]
+background = "#1e1e2e"
+surface = "#181825"
+text = "#cdd6f4"
+accent = "#89b4fa"
+"##;
+
+    /// **La zone de rédaction prend le ton de l'application**, et le tour qui
+    /// l'entoure celui des panneaux.
+    ///
+    /// Les deux rôles étaient inversés : `surface` — le ton des panneaux, dans
+    /// un thème comme dans la documentation — était donné à la rédaction, si
+    /// bien que l'éditeur paraissait appartenir à une autre fenêtre que la
+    /// sienne. Et comme c'est leur **différence** qui rend les marges de la page
+    /// visibles, les deux tons doivent rester distincts : l'invariant est donc
+    /// vérifié ici.
+    #[test]
+    fn the_writing_area_takes_the_application_tone() {
+        let file = crate::theming::ThemeFile::parse(MINIMAL, None).expect("thème valide");
+
+        assert_eq!(
+            editor_style(&file).background,
+            file.colors.background.0,
+            "la rédaction doit prendre le fond de l'application, pas celui des panneaux"
+        );
+
+        assert_ne!(
+            file.colors.background.0, file.colors.surface.0,
+            "les deux tons doivent différer, sinon les marges disparaissent"
+        );
+    }
 
     #[test]
     fn theme_mode_cycles_through_all_three() {

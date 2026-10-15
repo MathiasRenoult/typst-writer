@@ -54,7 +54,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette
             // Le compte est tenu à jour par les tics de rendu : le calculer
             // ici revenait à cloner le document entier à chaque image.
-            .label(format!("{} mots", state.render.words.unwrap_or(0)))
+            .label(format!("{} mots", state.word_count()))
             .size(12)
             .color(palette.text_muted),
     );

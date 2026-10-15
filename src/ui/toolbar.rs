@@ -67,6 +67,26 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.layout.preview_visible,
         ));
 
+        // Le suivi du chapitre évite de croire qu'un chapitre n'est pas rendu ;
+        // il arrache aussi l'aperçu sous les yeux dès qu'on écrit ailleurs dans
+        // l'assemblage. Les deux usages sont légitimes : c'est donc un
+        // interrupteur, et l'icône dit lequel des deux états est en vigueur.
+        bar = bar.push(icon_button(
+            if state.layout.follow_preview {
+                lucide_icons::iced::icon_link::<Theme>()
+            } else {
+                lucide_icons::iced::icon_unlink::<Theme>()
+            },
+            if state.layout.follow_preview {
+                "L'aperçu suit le chapitre écrit — cliquer pour couper le suivi"
+            } else {
+                "L'aperçu reste où vous le laissez — cliquer pour suivre le chapitre"
+            },
+            Message::TogglePreviewSync,
+            palette,
+            state.layout.follow_preview,
+        ));
+
         bar = bar.push(icon_button(
             preview_position_icon(state.layout.preview_position),
             state.layout.preview_position.label(),

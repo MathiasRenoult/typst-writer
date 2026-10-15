@@ -213,6 +213,15 @@ impl CodeEditor {
         });
 
         *self.resolved_syntax.borrow_mut() = None;
+
+        // Le cache de coloration garde des couleurs **résolues**, pas des
+        // portées : changer la palette sans l'invalider laissait à l'écran les
+        // couleurs de l'ancienne, et la coloration ne dépendait donc pas du
+        // thème choisi. `set_theme` fait déjà cette invalidation ; l'oubli ici
+        // rendait le réglage inopérant dès la première image.
+        self.invalidate_highlight_from(0);
+        self.content_cache.clear();
+        self.overlay_cache.clear();
     }
 
     /// Resolves the syntect syntax and theme used to color this editor's text.

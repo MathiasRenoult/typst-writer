@@ -134,6 +134,13 @@ pub struct LayoutState {
     /// L'aperçu est-il affiché ?
     pub preview_visible: bool,
 
+    /// L'aperçu suit-il le chapitre qu'on écrit ?
+    ///
+    /// Le suivi est ce qui évite de croire qu'un chapitre n'est pas rendu ; il
+    /// est aussi ce qui arrache l'aperçu sous les yeux quand on écrit ailleurs.
+    /// Les deux usages sont légitimes : c'est donc un réglage, et non un choix.
+    pub follow_preview: bool,
+
     /// Largeur de la bibliothèque.
     pub sidebar_width: f32,
 
@@ -235,6 +242,7 @@ impl Default for LayoutState {
     fn default() -> Self {
         Self {
             sidebar_visible: true,
+            follow_preview: true,
             preview_visible: true,
             sidebar_width: 260.0,
             preview_width: 420.0,
@@ -496,6 +504,14 @@ pub struct RenderState {
     /// `None` : le texte a changé depuis le dernier tic.
     pub words: Option<usize>,
 
+    /// Un recomptage est dû.
+    ///
+    /// C'est un drapeau, et non un `None` dans `words` : effacer la valeur
+    /// faisait afficher **zéro** jusqu'au tic suivant, à chaque clic et à chaque
+    /// coup de molette — car tout message de l'éditeur invalidait le compte,
+    /// même ceux qui ne touchent pas au texte.
+    pub words_pending: bool,
+
     /// Numéro du document compilé, incrémenté à chaque compilation.
     ///
     /// Un rendu de page lancé sur un document depuis dépassé se reconnaît à
@@ -555,6 +571,31 @@ pub struct RenderState {
 
     /// Le contenu a changé depuis la dernière écriture sur le disque.
     pub save_pending: bool,
+}
+
+/// Ce que l'application sait montrer de son état, sans le modifier.
+impl State {
+    /// Le nombre de mots à afficher pour la séance en cours.
+    ///
+    /// Le total du projet est relevé sur le disque, et daterait du dernier
+    /// scan ; le chapitre ouvert, lui, est compté **en direct**. Une seule
+    /// définition, pour que la barre d'état et le panneau ne puissent pas
+    /// annoncer deux chiffres différents — ni, comme ils le faisaient, effacer
+    /// le leur le temps d'un tic.
+    pub fn word_count(&self) -> usize {
+        let total = self.project.words();
+
+        let open = self
+            .project
+            .chapters
+            .iter()
+            .find(|chapter| Some(chapter.path.as_path()) == self.editor.path.as_deref());
+
+        match open {
+            Some(chapter) => total - chapter.words + self.render.words.unwrap_or(chapter.words),
+            None => total,
+        }
+    }
 }
 
 impl RenderState {
@@ -657,8 +698,11 @@ impl RenderState {
         // elle survit à un changement de chapitre.
         self.requested = 0;
         self.chapter_page = None;
-        // Le compte de mots est un fait du document qu'on quitte.
+        // Le compte de mots est un fait du document qu'on quitte : la valeur
+        // s'efface, et un recomptage est dû. Le chiffre affiché pendant ce temps
+        // vient du projet, comme pour tout chapitre non ouvert.
         self.words = None;
+        self.words_pending = true;
         // Un document qu'on ouvre doit être amené à l'écran : oublier le
         // chapitre déjà suivi évite d'hériter du précédent.
         self.followed_chapter = None;

@@ -39,7 +39,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     content = content.push(
         row![
             palette
-                .label(format!("{} mots", format_count(live_words(state))))
+                .label(format!("{} mots", format_count(state.word_count())))
                 .size(13)
                 .color(palette.text),
             Space::new().width(Length::Fill),
@@ -429,38 +429,6 @@ fn section_title(title: &str, palette: Palette) -> text::Text<'_> {
         .label(title.to_uppercase())
         .size(10)
         .color(palette.text_muted)
-}
-
-/// Compte de mots du projet, en tenant compte du chapitre en cours d'édition.
-///
-/// Les comptes relevés sur le disque datent du dernier scan ; celui du chapitre
-/// ouvert est lu en direct dans l'éditeur, sinon le total resterait figé
-/// pendant toute la séance d'écriture.
-fn live_words(state: &State) -> usize {
-    let total = state.project.words();
-
-    let active = state.editor.path.as_deref();
-
-    // Le compte du chapitre ouvert est remplacé par sa valeur en direct : la
-    // somme reste juste pendant la frappe, au lieu de dater du dernier scan.
-    let substituted = state
-        .project
-        .chapters
-        .iter()
-        .find(|chapter| Some(chapter.path.as_path()) == active);
-
-    match substituted {
-        Some(chapter) => {
-            // Le compte du chapitre ouvert vient de l'état, tenu à jour par les
-            // tics de rendu. Le recalculer ici, c'est-à-dire à chaque image,
-            // clonait tout le document soixante fois par seconde. À défaut de
-            // mesure encore fraîche — juste après l'ouverture —, le compte
-            // relevé sur le disque : un chiffre vieux de quelques secondes vaut
-            // mieux qu'un zéro.
-            total - chapter.words + state.render.words.unwrap_or(chapter.words)
-        }
-        None => total,
-    }
 }
 
 /// Nombre de mots, groupé par milliers pour rester lisible.

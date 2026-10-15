@@ -1,7 +1,7 @@
 # iced-code-editor — copie vendorisée
 
 Ce dossier est une copie de `iced-code-editor` 0.5.2, dans laquelle ce projet
-apporte **deux modifications**. Le reste du fichier est la version amont.
+apporte **cinq modifications**. Le reste du fichier est la version amont.
 
 Le raccordement se fait par `[patch.crates-io]` dans le `Cargo.toml` racine :
 
@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les deux modifications
+## Les cinq modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -83,7 +83,7 @@ peut donc se filtrer à la frappe, et un retour arrière reste un retour arrièr
 **Ce qui disparaît si l'on revient à l'amont.** La liste de complétion ne peut
 plus être pilotée au clavier ; il ne reste que la souris.
 
-## 3. Palette de coloration syntaxique fournie par l'application
+### 3. Palette de coloration syntaxique fournie par l'application
 
 `src/canvas_editor/render/highlighting.rs` et `src/canvas_editor/mod.rs`.
 
@@ -112,6 +112,18 @@ L'ordre des règles est délibérément sous la responsabilité de l'application
 syntect compare les portées **par préfixe** et retient la dernière règle qui
 correspond, si bien qu'une règle générale doit précéder une règle fine —
 `constant` avant `constant.numeric`, `keyword` avant `keyword.operator`.
+
+### 5. Changer de palette invalide la coloration déjà calculée
+
+`src/canvas_editor/render/highlighting.rs`, fonction `set_syntax_palette`.
+
+Le cache de coloration garde des couleurs **résolues**, et non les portées qui
+les ont produites : changer la palette sans vider ce cache laisse donc à
+l'écran les couleurs de l'ancienne. `set_theme` fait déjà l'invalidation ;
+`set_syntax_palette`, écrit juste après lui, l'avait oubliée — et la
+coloration ne dépendait pas du thème choisi.
+
+Le remède est la même invalidation, au même endroit que dans `set_theme`.
 
 ## La feature `two-face` est nécessaire pour tester
 

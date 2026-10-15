@@ -84,6 +84,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // Une variante « arbre invariable » — un enfant vide en second, pour que le
     // chemin des widgets ne bouge jamais — a été essayée : le menu ne s'y
     // dessinait plus du tout. Elle est partie avec la raison qu'on lui donnait.
+    // Le défilement **vu par la vue**, et non celui de l'état.
+    //
+    // Les deux ne disent pas la même chose : l'état est lu avant que l'arbre de
+    // widgets ne soit reconstruit, si bien qu'un défilement perdu pendant la
+    // reconstruction ne s'y voit jamais. C'est ici, et ici seulement, qu'on peut
+    // constater qu'un menu ouvert fait remonter l'éditeur en tête de document.
+    if std::env::var_os("TYPST_WRITER_VUE").is_some() {
+        println!(
+            "[vue] défilement {} | liste {}",
+            state.editor.editor.viewport_scroll(),
+            if overlay.is_some() {
+                "ouverte"
+            } else {
+                "fermée"
+            }
+        );
+    }
+
     let page = match overlay {
         Some((content, height, anchor)) => {
             let top = crate::lsp::completion::placement(anchor.y, panel_height(state), height);
@@ -122,10 +140,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
             bottom: BOTTOM_MARGIN,
             left: SIDE_MARGIN,
         })
-        // Le tour est au fond de l'application, la page au ton du panneau : la
-        // différence est ce qui rend la marge visible.
+        // La page garde le ton de l'application ; c'est **son tour** qui prend
+        // celui des panneaux. La différence est ce qui rend la marge visible —
+        // et c'est bien au tour de la porter, puisque c'est lui qui n'est pas de
+        // la page.
         .style(move |_| container::Style {
-            background: Some(palette.background.into()),
+            background: Some(palette.surface.into()),
             ..Default::default()
         })
         .into()

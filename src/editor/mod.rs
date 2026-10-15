@@ -45,7 +45,7 @@ fn apply_look(editor: &mut iced_code_editor::CodeEditor, resolved: &crate::ui::t
         None => {
             let mut style = iced_code_editor::from_iced_theme(&resolved.iced);
 
-            style.background = resolved.palette.surface;
+            style.background = resolved.palette.background;
 
             editor.set_theme(style);
             editor.set_syntax_palette(None);

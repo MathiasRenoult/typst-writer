@@ -134,6 +134,9 @@ pub enum Message {
     /// Affiche ou masque l'aperçu.
     TogglePreview,
 
+    /// Bascule le suivi de l'aperçu.
+    TogglePreviewSync,
+
     /// Change la position de l'aperçu.
     SetPreviewPosition(crate::app::state::PreviewPosition),
 
