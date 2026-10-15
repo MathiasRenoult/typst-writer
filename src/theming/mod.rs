@@ -870,6 +870,39 @@ accent     = "#89b4fa"
 mod tests {
     use super::*;
 
+    /// Ce que l'application trouve réellement dans le dossier de thèmes de
+    /// l'utilisateur — et ce qu'elle reproche aux fichiers qu'elle écarte.
+    ///
+    /// Un thème qui ne se charge pas est un thème qui ne se voit pas : le
+    /// réglage retombe **en silence** sur un thème natif, et le fichier fautif
+    /// reste en place. Le premier symptôme n'est pas « mon thème manque » mais
+    /// « les couleurs ne suivent pas ce que je choisis » — d'où cette sonde,
+    /// qui nomme le fichier et la raison.
+    #[test]
+    #[ignore = "lit le dossier de thèmes de l'utilisateur"]
+    fn diagnose_user_themes() {
+        let dir = themes_dir();
+        println!("dossier des thèmes : {}", dir.display());
+
+        let (themes, problems) = list();
+
+        for theme in themes.iter().filter(|theme| theme.file.is_some()) {
+            println!("  fichier : « {} » ({:?})", theme.name, theme.appearance);
+        }
+
+        for problem in &problems {
+            println!("  ÉCARTÉ  : {problem}");
+        }
+
+        println!(
+            "{} thèmes ({} natifs, {} fichiers), {} écarté(s)",
+            themes.len(),
+            themes.iter().filter(|theme| theme.file.is_none()).count(),
+            themes.iter().filter(|theme| theme.file.is_some()).count(),
+            problems.len()
+        );
+    }
+
     /// Le fichier d'exemple doit rester un thème valide.
     ///
     /// C'est lui que recopiera l'utilisateur : s'il était cassé, la première

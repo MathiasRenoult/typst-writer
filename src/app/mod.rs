@@ -706,6 +706,57 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::RenderTick => {
+            // ÉPREUVE DE DÉFILEMENT (`TYPST_WRITER_EPREUVE_VUE=1`).
+            //
+            // Un banc d'épreuve graphique ne peut pas toujours frapper : ici le
+            // clavier n'atteint pas la fenêtre. L'application se pilote donc
+            // elle-même, par les messages que l'éditeur reçoit de toute façon :
+            // un clic loin sous la vue (le curseur part en fin de document, et
+            // l'éditeur défile pour le suivre), puis le caractère qui ouvre la
+            // liste de suggestions. Ce que l'on regarde est la suite des
+            // défilements publiés par la vue.
+            if std::env::var_os("TYPST_WRITER_EPREUVE_VUE").is_some() {
+                use std::sync::atomic::{AtomicU32, Ordering};
+
+                static TRAME: AtomicU32 = AtomicU32::new(0);
+
+                match TRAME.fetch_add(1, Ordering::Relaxed) {
+                    12 => {
+                        println!("[épreuve] le curseur part en fin de document");
+                        return Task::done(Message::Editor(iced_code_editor::Message::CtrlEnd));
+                    }
+                    30 => {
+                        println!(
+                            "[épreuve] défilement établi : {}",
+                            state.editor.editor.viewport_scroll()
+                        );
+                    }
+                    40 => {
+                        println!("[épreuve] ouverture de la bulle");
+                        crate::ui::editor::MENU_EPREUVE
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    50 => {
+                        println!(
+                            "[épreuve] bulle ouverte, défilement : {}",
+                            state.editor.editor.viewport_scroll()
+                        );
+                    }
+                    60 => {
+                        println!("[épreuve] fermeture de la bulle");
+                        crate::ui::editor::MENU_EPREUVE
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    70 => {
+                        println!(
+                            "[épreuve] bulle fermée, défilement : {}",
+                            state.editor.editor.viewport_scroll()
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
             // Le serveur de langage suit **le document que l'éditeur tient**,
             // quel que soit le chemin par lequel on y est arrivé. S'accrocher
             // aux fonctions qui *ouvrent* un document laissait passer le
@@ -858,6 +909,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     index,
                     Handle::from_rgba(image.width, image.height, image.pixels),
                 );
+
             }
 
             Task::none()

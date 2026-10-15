@@ -79,11 +79,55 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }),
     };
 
-    // La forme de l'arbre change : conteneur simple quand rien ne se dessine,
-    // pile quand une bulle s'ajoute. C'est la structure où le menu a été **vu**.
-    // Une variante « arbre invariable » — un enfant vide en second, pour que le
-    // chemin des widgets ne bouge jamais — a été essayée : le menu ne s'y
-    // dessinait plus du tout. Elle est partie avec la raison qu'on lui donnait.
+    // ÉPREUVE (`TYPST_WRITER_EPREUVE_MENU=1`) : un recouvrement de forme connue,
+    // dessiné alors même que rien n'est proposé.
+    //
+    // Un menu **vide** ne prouve rien : une bulle sans ligne n'a pas de hauteur,
+    // et son absence à l'écran ne dit pas si c'est la structure qui l'empêche de
+    // paraître. Ici il a trois lignes, une bulle colorée et une place connue.
+    let overlay = match overlay {
+        Some(overlay) => Some(overlay),
+        None if std::env::var_os("TYPST_WRITER_EPREUVE_MENU").is_some()
+            && MENU_EPREUVE.load(std::sync::atomic::Ordering::Relaxed) =>
+        {
+            let essai = container(
+                column![
+                    palette.label("premier essai").size(13),
+                    palette.label("deuxieme essai").size(13),
+                    palette.label("troisieme essai").size(13),
+                ]
+                .spacing(4.0),
+            )
+            .padding(8)
+            .style(bubble_style(palette));
+
+            Some((
+                essai.into(),
+                3.0 * COMPLETION_ROW + 2.0,
+                iced::Point::new(80.0, 80.0),
+            ))
+        }
+        None => None,
+    };
+
+    // **L'arbre a toujours la même forme, avec ou sans bulle.**
+    //
+    // Le défilement de l'éditeur vit dans l'état de son propre ascenseur, et cet
+    // état est rattaché au *chemin des widgets* : faire d'un conteneur simple une
+    // pile le recrée, et le défilement repart de zéro. Mesuré, la nuit du
+    // rapport : défilement 7267, ouverture de la bulle, défilement **0** une
+    // image plus tard — exactement « dès que je mets # ou @, l'éditeur scroll
+    // tout en haut », et la fermeture fait de même. L'arbre invariable conserve
+    // le défilement à travers les deux transitions (17086 mesuré).
+    //
+    // Un commentaire prétendait qu'avec une forme invariable le menu ne se
+    // dessinait plus : refait, le constat était faux — les deux formes rendent
+    // des images **pixel identiques**, bulle comprise.
+    //
+    // L'enfant de remplacement a une taille nulle : présent, donc le chemin des
+    // widgets ne bouge pas ; invisible, donc la mise en page ne change pas d'un
+    // pixel. À ne pas confondre avec un remplisseur, qui s'étendrait et donnerait
+    // sa taille à la pile.
     // Le défilement **vu par la vue**, et non celui de l'état.
     //
     // Les deux ne disent pas la même chose : l'état est lu avant que l'arbre de
@@ -91,41 +135,71 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // reconstruction ne s'y voit jamais. C'est ici, et ici seulement, qu'on peut
     // constater qu'un menu ouvert fait remonter l'éditeur en tête de document.
     if std::env::var_os("TYPST_WRITER_VUE").is_some() {
-        println!(
-            "[vue] défilement {} | liste {}",
-            state.editor.editor.viewport_scroll(),
-            if overlay.is_some() {
-                "ouverte"
-            } else {
-                "fermée"
-            }
+        // Seulement au changement : l'image passe soixante fois par seconde, et
+        // ce qu'on cherche est exactement la *discontinuité*.
+        static DERNIERE: std::sync::Mutex<Option<(u32, bool)>> = std::sync::Mutex::new(None);
+
+        let vue = (
+            state.editor.editor.viewport_scroll().to_bits(),
+            overlay.is_some(),
         );
+
+        let mut derniere = DERNIERE.lock().unwrap();
+
+        if *derniere != Some(vue) {
+            println!(
+                "[vue] défilement {:.0} | liste {}",
+                f32::from_bits(vue.0),
+                if vue.1 { "ouverte" } else { "fermée" }
+            );
+
+            *derniere = Some(vue);
+        }
     }
 
-    let page = match overlay {
+    let bulle: Element<'_, Message> = match overlay {
         Some((content, height, anchor)) => {
-            let top = crate::lsp::completion::placement(anchor.y, panel_height(state), height);
+            let panneau = panel_height(state);
+            let top = crate::lsp::completion::placement(anchor.y, panneau, height);
 
-            let popup = container(content)
+            if std::env::var_os("TYPST_WRITER_VUE").is_some() {
+                println!(
+                    "[vue] bulle construite : ancre {:?} | top {:.0} | panneau {:.0} | hauteur {:.0}",
+                    anchor, top, panneau, height
+                );
+            }
+
+            container(content)
                 .width(Fill)
                 .height(Fill)
                 .align_x(alignment::Horizontal::Left)
                 .align_y(alignment::Vertical::Top)
-                // Le décalage se donne par une marge intérieure : c'est ainsi
-                // qu'un élément de pile se pose ailleurs qu'au coin.
                 .padding(Padding {
                     top,
                     left: anchor.x,
                     ..Padding::default()
-                });
-
-            container(iced::widget::stack![editor, popup])
+                })
+                .into()
         }
-        None => container(editor),
-    }
-    .width(Fill)
-    .height(Fill)
-    .max_width(MEASURE);
+        // **Toujours un conteneur**, même fermé : c'est le *contenu* qui
+        // apparaît, jamais la nature de l'enfant de pile. Un enfant qui change
+        // de widget est un nœud d'arbre qu'iced recrée — et on a mesuré que le
+        // recouvrement ne se peint plus après une telle mutation, fût-ce avec un
+        // aplat magenta criard.
+        None => container(
+            iced::widget::Space::new()
+                .width(Length::Fixed(0.0))
+                .height(Length::Fixed(0.0)),
+        )
+        .width(Fill)
+        .height(Fill)
+        .into(),
+    };
+
+    let page = container(iced::widget::stack![editor, bulle])
+        .width(Fill)
+        .height(Fill)
+        .max_width(MEASURE);
 
     // La zone de rédaction se détache sur le fond de l'application : sans
     // cette différence de teinte, la marge existe en géométrie mais reste
@@ -140,12 +214,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
             bottom: BOTTOM_MARGIN,
             left: SIDE_MARGIN,
         })
-        // La page garde le ton de l'application ; c'est **son tour** qui prend
-        // celui des panneaux. La différence est ce qui rend la marge visible —
-        // et c'est bien au tour de la porter, puisque c'est lui qui n'est pas de
-        // la page.
+        // **Le cadre de la rédaction est de la rédaction.** Lui donner le ton
+        // des panneaux dessinait une bande sombre tout autour du texte, et
+        // l'éditeur paraissait posé sur le fond de l'application au lieu d'y
+        // être. La zone de rédaction et son cadre portent donc la même teinte —
+        // celle du fond de l'application — et il n'y a plus de couture. Les
+        // panneaux gardent la leur : ce sont eux qui se détachent, et non le
+        // texte.
         .style(move |_| container::Style {
-            background: Some(palette.surface.into()),
+            background: Some(palette.background.into()),
             ..Default::default()
         })
         .into()
@@ -205,6 +282,15 @@ fn hover_popup(hover: &crate::app::state::Hover, palette: Palette) -> Element<'_
     .style(bubble_style(palette))
     .into()
 }
+
+/// Bulle de l'épreuve d'arbre (`TYPST_WRITER_EPREUVE_MENU`).
+///
+/// L'épreuve a besoin de faire **ouvrir** la bulle au milieu d'un défilement :
+/// c'est la transition — et non la présence — qui met en cause l'arbre. Ce
+/// drapeau est ce que l'épreuve bascule ; le témoin de structure sert à
+/// prouver que le chemin « arbre invariable » a bien été pris.
+pub(crate) static MENU_EPREUVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// La liste de complétion, posée à l'endroit du curseur.
 fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, Message> {
