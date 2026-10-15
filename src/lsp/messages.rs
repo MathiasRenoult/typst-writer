@@ -364,9 +364,79 @@ pub fn column_in_chars(text: &str, position: Position) -> usize {
     text[line_start..offset].chars().count()
 }
 
+/// Un diagnostic prêt à montrer : son libellé, et l'endroit où sauter.
+///
+/// Le libellé demande le **texte** du document : la colonne du protocole compte
+/// en unités UTF-16, l'éditeur en caractères. Cette conversion se fait donc à
+/// l'arrivée du diagnostic — une fois — et non à chaque image, où elle ferait
+/// cloner le document entier soixante fois par seconde.
+#[derive(Debug, Clone)]
+pub struct Reported {
+    pub label: String,
+    pub line: usize,
+    pub column: usize,
+    pub severity: Option<Severity>,
+}
+
+/// Traduit les diagnostics du serveur pour l'affichage.
+///
+/// Le saut est toujours proposé : le client ne garde que les diagnostics du
+/// document ouvert, le seul où l'éditeur puisse poser le curseur.
+pub fn report(text: &str, items: &[Diagnostic]) -> Vec<Reported> {
+    items
+        .iter()
+        .map(|diagnostic| {
+            let position = diagnostic.range.start;
+            let line = position.line as usize + 1;
+            let column = column_in_chars(text, position) + 1;
+
+            Reported {
+                label: format!("ligne {line}, colonne {column} — {}", diagnostic.message),
+                line,
+                column,
+                severity: diagnostic.severity,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un émoji vaut deux unités UTF-16 et un seul caractère : la colonne du
+    /// protocole ne peut pas être donnée telle quelle à l'éditeur.
+    #[test]
+    fn the_report_column_counts_characters_not_utf16_units() {
+        let text = "a😀b";
+        let diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 3,
+                },
+                end: Position {
+                    line: 0,
+                    character: 4,
+                },
+            },
+            severity: Some(Severity::Error),
+            message: "un problème".to_string(),
+            code: None,
+            source: None,
+        };
+
+        let rows = report(text, std::slice::from_ref(&diagnostic));
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].line, 1, "la ligne du protocole est 0-based");
+        assert_eq!(
+            rows[0].column, 3,
+            "3 unités UTF-16 après « a😀 » = 2 caractères, donc la colonne 3"
+        );
+        assert!(rows[0].label.contains("ligne 1, colonne 3"));
+        assert!(rows[0].label.contains("un problème"));
+    }
 
     /// Une colonne accentuée : UTF-16 et caractères ne comptent pas pareil.
     #[test]

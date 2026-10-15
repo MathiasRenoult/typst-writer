@@ -753,6 +753,19 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                             state.editor.editor.viewport_scroll()
                         );
                     }
+                    90 => {
+                        println!(
+                            "[épreuve] curseur avant le saut : {}",
+                            state.editor.cursor_offset()
+                        );
+                        return Task::done(Message::GotoError(5, 23));
+                    }
+                    100 => {
+                        println!(
+                            "[épreuve] curseur après le saut : {}",
+                            state.editor.cursor_offset()
+                        );
+                    }
                     _ => {}
                 }
             }

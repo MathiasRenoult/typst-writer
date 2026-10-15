@@ -247,6 +247,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(diagnostics_panel(&render.warnings, false, open, palette));
     }
 
+    // Diagnostics du serveur de langage : ils arrivent **au fil de la frappe**,
+    // là où notre compilation attend deux secondes de silence. Le fichier ouvert
+    // est le seul qu'on puisse rejoindre depuis l'éditeur.
+    if !state.lsp.reported.is_empty() {
+        content = content.push(server_diagnostics_panel(&state.lsp.reported, palette));
+    }
+
     if sizes.is_empty() {
         // État d'attente avant la première compilation.
         let message = if render.pending {
@@ -410,6 +417,62 @@ fn paper_style(paper: iced::Color) -> impl Fn(&iced::Theme) -> container::Style 
 /// train d'écrire. Ceux-là nomment leur fichier et ne proposent pas de saut —
 /// un saut calculé pour un autre fichier mènerait au mauvais endroit, ce qui est
 /// pire que pas de saut du tout.
+/// Les diagnostics du serveur de langage, au fil de la frappe.
+///
+/// Le compilateur a les siens : plus tard, et pour tout l'assemblage. Le serveur
+/// parle du document qu'on écrit, tout de suite. Les deux sources restent
+/// **nommées** — un même problème peut apparaître chez les deux, et ce n'est pas
+/// un doublon à taire mais deux regards à distinguer.
+fn server_diagnostics_panel<'a>(
+    diagnostics: &'a [crate::lsp::messages::Reported],
+    palette: Palette,
+) -> Element<'a, Message> {
+    use crate::lsp::messages::Severity;
+
+    let is_error = diagnostics
+        .iter()
+        .any(|diagnostic| matches!(diagnostic.severity, Some(Severity::Error) | None));
+
+    let title = format!("{} diagnostic(s) du serveur", diagnostics.len());
+    let mut list = column![palette.label(title).size(13).color(if is_error {
+        palette.danger
+    } else {
+        palette.warning
+    })]
+    .spacing(4);
+
+    for diagnostic in diagnostics {
+        // La gravité se lit à la couleur du rang : un avertissement ne doit pas
+        // prendre le rouge d'une erreur.
+        let accent = match diagnostic.severity {
+            Some(Severity::Error) | None => palette.danger,
+            Some(Severity::Warning) => palette.warning,
+            Some(Severity::Information) | Some(Severity::Hint) => palette.text_muted,
+        };
+
+        list = list.push(
+            button(
+                palette
+                    .label(diagnostic.label.clone())
+                    .size(13)
+                    .wrapping(Wrapping::Word)
+                    .width(Fill)
+                    .color(accent),
+            )
+            .on_press_maybe(Some(Message::GotoError(diagnostic.line, diagnostic.column)))
+            .padding([6, 10])
+            .width(Fill)
+            .style(button::text),
+        );
+    }
+
+    container(list)
+        .padding(10)
+        .width(Fill)
+        .style(move |_| panel_style(is_error, palette))
+        .into()
+}
+
 fn diagnostics_panel<'a>(
     diagnostics: &'a [Diagnostic],
     is_error: bool,

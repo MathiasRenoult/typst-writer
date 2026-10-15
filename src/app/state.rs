@@ -339,8 +339,14 @@ pub struct LspState {
 
     /// Ce que le serveur signale dans le document ouvert.
     ///
-    /// Résumé dans la barre d'état tant que l'éditeur ne sait pas les dessiner.
+    /// Gardé pour la gravité : la barre d'état en compte les erreurs. Le
+    /// panneau, lui, montre `reported` — les mêmes, mais déjà traduits pour
+    /// l'affichage (la colonne du protocole ne se donne pas telle quelle à
+    /// l'éditeur).
     pub diagnostics: Vec<crate::lsp::messages::Diagnostic>,
+
+    /// Les mêmes diagnostics, prêts à montrer et à sauter.
+    pub reported: Vec<crate::lsp::messages::Reported>,
 
     /// Une réponse est attendue : le battement d'écoute se resserre.
     pub awaiting: bool,

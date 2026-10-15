@@ -318,6 +318,11 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
 
         Event::Diagnostics { uri, items } => {
             if state.lsp.document.as_deref() == Some(uri.as_str()) {
+                // La traduction pour l'affichage se fait **ici**, une fois :
+                // elle demande le texte du document, et la vue ne doit rien
+                // cloner.
+                state.lsp.reported =
+                    crate::lsp::messages::report(&state.editor.content(), &items);
                 state.lsp.diagnostics = items;
             }
 
@@ -335,6 +340,7 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
             state.lsp.awaiting = false;
             state.lsp.document = None;
             state.lsp.diagnostics.clear();
+            state.lsp.reported.clear();
 
             Task::none()
         }
