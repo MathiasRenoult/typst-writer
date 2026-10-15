@@ -1,10 +1,11 @@
 [package]
 name = "typst-writer"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 description = "Un éditeur pour écrire en Typst, avec le rendu du document final"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/MathiasRenoult/typst-writer"
 keywords = ["typst", "editor", "writing", "iced"]
 categories = ["gui", "text-editors"]
 
@@ -43,3 +44,8 @@ opt-level = 2
 # par rapport à l'amont est documenté dans `vendor/iced-code-editor/PATCHES.md`.
 [patch.crates-io]
 iced-code-editor = { path = "vendor/iced-code-editor" }
+
+[profile.release]
+# Le debuginfo ne sert qu'aux débogueurs : les rapports de plantage gardent
+# leurs symboles, le binaire de publication perd le tiers de son poids.
+strip = "debuginfo"

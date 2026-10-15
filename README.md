@@ -8,6 +8,10 @@ L'ambition tient en une phrase : que la mise en page ne demande jamais d'y
 penser. On écrit, le document se compile dès que l'écriture s'arrête, et l'on voit
 ce que le lecteur verra.
 
+> **Statut : alpha fermée 0.1.** L'application est utilisable au quotidien —
+> c'est avec qu'elle s'écrit — mais elle change encore beaucoup. Les limites
+> connues sont écrites plus bas, sans fard.
+
 ## Ce que sait faire l'application
 
 **Écrire**
@@ -26,6 +30,8 @@ ce que le lecteur verra.
 - liste de complétion après `#` (commandes, fonctions, champs) **et** après `@`,
   qui propose les clés de votre bibliographie ;
 - survol (Ctrl+I) et aller à la définition (F12) ;
+- renommage d'un symbole, avec l'aperçu de **tout** ce que cela changerait,
+  fichier par fichier, avant que rien ne s'écrive ;
 - diagnostics du document, comptés dans la barre d'état ;
 - tinymist est **facultatif** : sans lui, tout le reste fonctionne, et son absence
   se dit sans alarme.
@@ -39,7 +45,12 @@ ce que le lecteur verra.
 
 ## Installation
 
-Il faut une chaîne Rust à jour (édition 2024) :
+L'alpha se télécharge dans les **publications** : un binaire Linux x86_64, à
+décompresser et à lancer tel quel. Il faut un Linux avec Wayland ou X11, et un
+pilote de carte graphique offrant Vulkan. Rien d'autre : les bibliothèques
+graphiques se chargent à l'exécution.
+
+Sinon, la chaîne Rust à jour suffit (édition 2024) :
 
 ```sh
 cargo build --release
@@ -85,8 +96,8 @@ Dans la liste de complétion : les flèches parcourent, `Entrée` ou `Tab` accep
   diff par rapport à l'amont est documenté dans
   `vendor/iced-code-editor/PATCHES.md`, et sa licence dans le même dossier. Aucun
   correctif n'y est gratuit : chacun répare une chose qu'aucun réglage ne permet
-  (le retour à la ligne au mot, les entrées tinymist, une palette de coloration,
-  et les touches réservées à la liste de complétion).
+  (le retour à la ligne au mot, les entrées tinymist, une palette de coloration
+  que son cache suit, et les touches réservées à la liste de complétion).
 - **Tout ce qui touche au serveur de langage est éprouvé contre le vrai
   tinymist**, par des épreuves qui ne tournent qu'à la demande :
 
@@ -102,7 +113,10 @@ qui se tait sur ses manques se rend inutilisable.
 - Les diagnostics de tinymist ne sont **pas** soulignés dans le texte : ils sont
   comptés dans la barre d'état. Le crate d'édition n'expose encore aucune API de
   diagnostic, et dessiner demande une retouche de plus.
-- Le renommage n'est pas implémenté.
+- Le renommage d'un symbole **écrit par remplacement** les fichiers que le
+  serveur désigne : le document ouvert est rouvert sur son contenu neuf, et son
+  histoire d'annulation part avec. Tant que l'aperçu n'a pas été montré, le
+  bouton d'application n'est pas même actif.
 - tinymist ne résout pas une référence d'un chapitre vers un **autre** chapitre :
   sa résolution s'arrête au fichier ouvert (c'est mesuré). L'application cherche
   donc elle-même les étiquettes `<nom>`, ce qui fait fonctionner le geste.
