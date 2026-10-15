@@ -41,7 +41,7 @@ pub fn installed(styles_dir: &Path) -> Vec<CslStyle> {
         })
         .collect();
 
-    styles.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    styles.sort_by_key(|style| style.title.to_lowercase());
     styles
 }
 

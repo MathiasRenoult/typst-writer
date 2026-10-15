@@ -17,6 +17,11 @@
 //! Ce qui vit ici, pour l'instant, ne parle à personne : la découverte de la
 //! bibliothèque et les styles enregistrés sont des lectures de disque.
 
+// Pièces posées avant d'être raccordées : les étapes suivantes du chantier
+// les emploient (le client, la synchronisation, le sélecteur). Cet attribut
+// partira avec le raccordement.
+#![allow(dead_code)]
+
 pub mod keys;
 pub mod styles;
 
