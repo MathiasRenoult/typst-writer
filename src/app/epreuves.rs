@@ -107,6 +107,55 @@ pub fn note_bulle(ancre: iced::Point, haut: f32, panneau: f32, hauteur: f32) {
     }
 }
 
+/// Pilote la fenêtre de mise en page : l'ouvrir, y changer des valeurs, et
+/// les appliquer — pour voir, d'un bout à l'autre, qu'un champ devient une
+/// page.
+pub fn driver_reglages(state: &State) -> Option<Task<Message>> {
+    use crate::mise_en_page::modele::Champ;
+
+    if !actif("reglages") {
+        return None;
+    }
+
+    static TRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    let _ = state;
+
+    match TRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
+        12 => {
+            println!("[épreuve] la fenêtre de mise en page s'ouvre");
+
+            Some(Task::done(Message::MiseEnPageOuvrir))
+        }
+
+        16 => {
+            println!("[épreuve] le papier passe en A5");
+
+            Some(Task::done(Message::MiseEnPageChamp(
+                Champ::PapierFormat,
+                "a5".to_string(),
+            )))
+        }
+
+        20 => {
+            println!("[épreuve] les marges gauches et droites à 4cm");
+
+            Some(Task::done(Message::MiseEnPageChamp(
+                Champ::MargeGauche,
+                "4cm".to_string(),
+            )))
+        }
+
+        60 => {
+            println!("[épreuve] application de la mise en page");
+
+            Some(Task::done(Message::MiseEnPageAppliquer))
+        }
+
+        _ => None,
+    }
+}
+
 /// Pilote le renommage d'un symbole, un pas par tic.
 ///
 /// Le document d'épreuve **finit** par une utilisation du symbole : le curseur

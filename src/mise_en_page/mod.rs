@@ -78,6 +78,13 @@ pub fn appliquer(
     Ok(Applique::AccrocheAjoutee)
 }
 
+/// Les deux lignes d'accroche manquent-elles à `main.typ` ?
+pub fn accroche_manquante(projet: &Path) -> bool {
+    std::fs::read_to_string(projet.join("main.typ"))
+        .map(|texte| !texte.contains("#show: mise-en-page"))
+        .unwrap_or(true)
+}
+
 /// `main.typ` porte-t-il déjà des règles `#set` écrites à la main ?
 ///
 /// Elles priment sur la mise en page choisie — c'est ainsi que Typst les

@@ -67,6 +67,9 @@ pub struct State {
     /// écran non dense.
     pub scale_factor: f32,
 
+    /// Le dialogue de mise en page, s'il est ouvert.
+    pub mise_en_page: Option<DialogueMiseEnPage>,
+
     /// Renommage de symbole en cours, s'il y en a un.
     pub renommage: Option<Renommage>,
 
@@ -111,6 +114,32 @@ pub struct State {
 ///
 /// Le titre est édité dans le panneau, en place : la ligne du chapitre devient
 /// un champ de saisie, ce qui évite une boîte de dialogue pour une opération
+/// Le dialogue de mise en page.
+///
+/// Ce qu'il montre est une **copie de travail** : la mise en page du projet
+/// n'est touchée qu'à l'application. Fermer la fenêtre sans appliquer laisse
+/// le document exactement ce qu'il était — la règle de tout dialogue.
+pub struct DialogueMiseEnPage {
+    /// Les réglages en cours de réglage.
+    pub reglages: crate::mise_en_page::modele::MiseEnPage,
+
+    /// Accrocher la mise en page à `main.typ` lors de l'application.
+    pub accrocher: bool,
+
+    /// Les deux lignes d'accroche manquent-elles à `main.typ` ?
+    ///
+    /// C'est ce qui décide si la case se montre : un document déjà accroché
+    /// n'a rien à quoi la cocher.
+    pub accroche_manquante: bool,
+
+    /// Combien de règles `#set` `main.typ` porte déjà, écrites à la main.
+    ///
+    /// Elles priment sur les réglages de la fenêtre — c'est ainsi que Typst
+    /// ordonne les règles — et il vaut mieux le savoir avant de croire son
+    /// réglage appliqué.
+    pub regles_main: usize,
+}
+
 /// Un renommage de symbole en cours.
 ///
 /// Il a deux temps : le nouveau nom est d'abord **demandé**, puis le serveur

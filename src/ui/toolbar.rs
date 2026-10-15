@@ -87,6 +87,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.layout.follow_preview,
         ));
 
+        // Les normes du document : papier, marges, titres, couleurs.
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_file_cog::<Theme>(),
+            "Les normes du document : papier, marges, titres, couleurs",
+            Message::MiseEnPageOuvrir,
+            palette,
+            state.mise_en_page.is_some(),
+        ));
+
         // Renommer le symbole sous le curseur : le serveur montrera ce que
         // cela changerait, fichier par fichier, avant que rien ne s'écrive.
         bar = bar.push(icon_button(

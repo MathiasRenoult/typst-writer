@@ -110,6 +110,36 @@ pub enum Message {
     /// Va à un titre du sommaire (le rang dans la liste du document).
     GotoHeading(usize),
 
+    /// Ouvre la fenêtre de mise en page.
+    MiseEnPageOuvrir,
+
+    /// La ferme sans rien appliquer.
+    MiseEnPageFermer,
+
+    /// Un champ de la mise en page change.
+    MiseEnPageChamp(crate::mise_en_page::modele::Champ, String),
+
+    /// Une case à cocher bascule.
+    MiseEnPageBascule(crate::mise_en_page::modele::Champ),
+
+    /// L'accroche à `main.typ` est demandée ou retirée.
+    MiseEnPageAccrocher(bool),
+
+    /// Applique la copie de travail au projet.
+    MiseEnPageAppliquer,
+
+    /// Importe une mise en page depuis un fichier.
+    MiseEnPageImporter,
+
+    /// Le fichier importé est arrivé.
+    MiseEnPageImportee(String),
+
+    /// Exporte la mise en page vers un fichier.
+    MiseEnPageExporter,
+
+    /// Une note pour la barre d'état : ce qui vient de se faire, ou pas.
+    MiseEnPageNote(String),
+
     /// Ouvre le renommage du symbole sous le curseur.
     SymbolRenameStart,
 

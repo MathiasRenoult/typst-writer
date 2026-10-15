@@ -1,6 +1,7 @@
 pub mod editor;
 pub mod layout;
 pub mod preview;
+mod reglages;
 mod rename;
 pub mod sidebar;
 pub mod status_bar;
@@ -27,16 +28,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .into();
     }
 
-    column![
-        toolbar::view(state),
+    // La fenêtre de mise en page est une **couche** : elle flotte au-dessus de
+    // tout, et sa place existe même quand elle est vide. La forme de la page
+    // ne change donc jamais quand elle s'ouvre — la leçon du défilement perdu
+    // à l'ouverture d'une bulle se paie encore.
+    iced::widget::stack![
+        column![
+            toolbar::view(state),
 
-        // La case de renommage, toujours en place — vide quand elle ne
-        // sert pas. La forme de la page ne change donc jamais, et rien ne
-        // s'y déplace.
-        rename::view(state),
+            // La case de renommage, toujours en place — vide quand elle ne
+            // sert pas.
+            rename::view(state),
 
-        layout::view(state),
-        status_bar::view(state),
+            layout::view(state),
+            status_bar::view(state),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
+        reglages::view(state),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

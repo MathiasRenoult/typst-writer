@@ -315,6 +315,125 @@ pub fn couleur_valide(valeur: &str) -> bool {
     (hexa.len() == 6 || hexa.len() == 3) && hexa.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Un champ de la mise en page, celui que la fenêtre gouverne.
+///
+/// Il y a une trentaine de réglages : les nommer par leur nom de champ est
+/// plus court et plus sûr que trente messages, et un champ inconnu n'est pas
+/// un accident possible — c'est le compilateur qui refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Champ {
+    PapierFormat,
+    PapierOrientation,
+    MargeHaut,
+    MargeBas,
+    MargeGauche,
+    MargeDroite,
+    NumerotationActive,
+    NumerotationForme,
+    NumerotationPosition,
+    NumerotationAlignement,
+    TextePolice,
+    TexteTaille,
+    TexteInterligne,
+    TexteEspacement,
+    TexteRetrait,
+    TexteJustification,
+    TexteCoupure,
+    TexteLangue,
+    TitresPolice,
+    TitresTaille1,
+    TitresTaille2,
+    TitresTaille3,
+    TitresGras,
+    TitresCasse,
+    TitresNumerotation,
+    TitresEspacement,
+    CouleurTexte,
+    CouleurTitres,
+    CouleurLiens,
+    CouleurFond,
+}
+
+impl MiseEnPage {
+    /// Ce qu'un champ porte, en mots de fenêtre.
+    pub fn valeur(&self, champ: Champ) -> String {
+        match champ {
+            Champ::PapierFormat => self.papier.format.clone(),
+            Champ::PapierOrientation => self.papier.orientation.clone(),
+            Champ::MargeHaut => self.marges.haut.clone(),
+            Champ::MargeBas => self.marges.bas.clone(),
+            Champ::MargeGauche => self.marges.gauche.clone(),
+            Champ::MargeDroite => self.marges.droite.clone(),
+            Champ::NumerotationActive => self.numerotation.actif.to_string(),
+            Champ::NumerotationForme => self.numerotation.forme.clone(),
+            Champ::NumerotationPosition => self.numerotation.position.clone(),
+            Champ::NumerotationAlignement => self.numerotation.alignement.clone(),
+            Champ::TextePolice => self.texte.police.clone(),
+            Champ::TexteTaille => self.texte.taille.clone(),
+            Champ::TexteInterligne => self.texte.interligne.clone(),
+            Champ::TexteEspacement => self.texte.espacement.clone(),
+            Champ::TexteRetrait => self.texte.retrait.clone(),
+            Champ::TexteJustification => self.texte.justification.to_string(),
+            Champ::TexteCoupure => self.texte.coupure.to_string(),
+            Champ::TexteLangue => self.texte.langue.clone(),
+            Champ::TitresPolice => self.titres.police.clone(),
+            Champ::TitresTaille1 => self.titres.taille_1.clone(),
+            Champ::TitresTaille2 => self.titres.taille_2.clone(),
+            Champ::TitresTaille3 => self.titres.taille_3.clone(),
+            Champ::TitresGras => self.titres.gras.to_string(),
+            Champ::TitresCasse => self.titres.casse.clone(),
+            Champ::TitresNumerotation => self.titres.numerotation.clone(),
+            Champ::TitresEspacement => self.titres.espacement.clone(),
+            Champ::CouleurTexte => self.couleurs.texte.clone(),
+            Champ::CouleurTitres => self.couleurs.titres.clone(),
+            Champ::CouleurLiens => self.couleurs.liens.clone(),
+            Champ::CouleurFond => self.couleurs.fond.clone(),
+        }
+    }
+
+    /// Change ce qu'un champ porte.
+    pub fn modifier(&mut self, champ: Champ, valeur: String) {
+        match champ {
+            Champ::PapierFormat => self.papier.format = valeur,
+            Champ::PapierOrientation => self.papier.orientation = valeur,
+            Champ::MargeHaut => self.marges.haut = valeur,
+            Champ::MargeBas => self.marges.bas = valeur,
+            Champ::MargeGauche => self.marges.gauche = valeur,
+            Champ::MargeDroite => self.marges.droite = valeur,
+            Champ::NumerotationActive => self.numerotation.actif = valeur == "true",
+            Champ::NumerotationForme => self.numerotation.forme = valeur,
+            Champ::NumerotationPosition => self.numerotation.position = valeur,
+            Champ::NumerotationAlignement => self.numerotation.alignement = valeur,
+            Champ::TextePolice => self.texte.police = valeur,
+            Champ::TexteTaille => self.texte.taille = valeur,
+            Champ::TexteInterligne => self.texte.interligne = valeur,
+            Champ::TexteEspacement => self.texte.espacement = valeur,
+            Champ::TexteRetrait => self.texte.retrait = valeur,
+            Champ::TexteJustification => self.texte.justification = valeur == "true",
+            Champ::TexteCoupure => self.texte.coupure = valeur == "true",
+            Champ::TexteLangue => self.texte.langue = valeur,
+            Champ::TitresPolice => self.titres.police = valeur,
+            Champ::TitresTaille1 => self.titres.taille_1 = valeur,
+            Champ::TitresTaille2 => self.titres.taille_2 = valeur,
+            Champ::TitresTaille3 => self.titres.taille_3 = valeur,
+            Champ::TitresGras => self.titres.gras = valeur == "true",
+            Champ::TitresCasse => self.titres.casse = valeur,
+            Champ::TitresNumerotation => self.titres.numerotation = valeur,
+            Champ::TitresEspacement => self.titres.espacement = valeur,
+            Champ::CouleurTexte => self.couleurs.texte = valeur,
+            Champ::CouleurTitres => self.couleurs.titres = valeur,
+            Champ::CouleurLiens => self.couleurs.liens = valeur,
+            Champ::CouleurFond => self.couleurs.fond = valeur,
+        }
+    }
+
+    /// Inverse une case à cocher.
+    pub fn basculer(&mut self, champ: Champ) {
+        let actuel = self.valeur(champ) == "true";
+        self.modifier(champ, (!actuel).to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

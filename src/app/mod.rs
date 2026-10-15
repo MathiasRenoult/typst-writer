@@ -1,6 +1,7 @@
 pub mod assistance;
 pub mod epreuves;
 mod fichiers;
+mod reglages;
 mod journal;
 pub mod message;
 pub mod state;
@@ -71,6 +72,7 @@ impl State {
             // L'écran se déclare dans les millisecondes qui suivent ; d'ici là,
             // un pixel par point, la densité la plus économique.
             scale_factor: 1.0,
+            mise_en_page: None,
             renommage: None,
             renaming: None,
             jump: None,
@@ -332,6 +334,19 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // Le domaine des réglages du document a son module.
+        Message::MiseEnPageOuvrir
+        | Message::MiseEnPageFermer
+        | Message::MiseEnPageChamp(_, _)
+        | Message::MiseEnPageBascule(_)
+        | Message::MiseEnPageAccrocher(_)
+        | Message::MiseEnPageAppliquer
+        | Message::MiseEnPageImporter
+        | Message::MiseEnPageImportee(_)
+        | Message::MiseEnPageExporter
+        | Message::MiseEnPageNote(_) => crate::app::reglages::update(state, message)
+            .unwrap_or_else(Task::none),
+
         // Le domaine des fichiers et du projet a son module.
         Message::NewFile
         | Message::OpenFile
@@ -489,6 +504,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             if let Some(tache) = crate::app::epreuves::driver_renommage(state) {
+                return tache;
+            }
+
+            if let Some(tache) = crate::app::epreuves::driver_reglages(state) {
                 return tache;
             }
 
