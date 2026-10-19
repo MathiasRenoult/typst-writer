@@ -325,6 +325,10 @@ fn chapter_of(path: &Path, included: &[PathBuf]) -> Option<Chapter> {
 /// — c'est mesuré —, alors qu'une étiquette vaut pour tout le document qui la
 /// compile. Chercher ici rend le geste utile.
 pub fn find_label(project: &Project, label: &str) -> Option<(PathBuf, usize)> {
+    if label.is_empty() {
+        return None;
+    }
+
     let marker = format!("<{label}>");
 
     for chapter in &project.chapters {
@@ -799,6 +803,21 @@ mod tests {
 
         // Une étiquette qui n'existe pas ne mène nulle part.
         assert_eq!(find_label(&project, "absente"), None);
+    }
+
+    /// Une étiquette vide ne doit rien matcher — le marqueur `<>` pourrait
+    /// apparaître dans du contenu sans signification.
+    #[test]
+    fn an_empty_label_matches_nothing() {
+        let project = Project {
+            dir: PathBuf::new(),
+            name: String::new(),
+            main: PathBuf::new(),
+            chapters: vec![],
+            bibliography: None,
+            bibliography_entries: 0,
+        };
+        assert_eq!(find_label(&project, ""), None);
     }
 
     #[test]
