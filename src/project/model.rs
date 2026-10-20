@@ -659,7 +659,7 @@ pub fn find_bibliography(dir: &Path) -> Option<PathBuf> {
     entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| path.extension().map(|ext| ext == "bib").unwrap_or(false))
+        .find(|path| path.is_file() && path.extension().map(|ext| ext == "bib").unwrap_or(false))
 }
 
 /// Nombre de mots d'un contenu.
@@ -991,6 +991,21 @@ mod tests {
 
         assert!(project.bibliography.is_some());
         assert_eq!(project.bibliography_entries, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un dossier nommé `.bib` n'est pas une bibliographie.
+    #[test]
+    fn a_directory_named_bib_is_ignored() {
+        let dir = scratch("bib-dir");
+
+        std::fs::create_dir_all(dir.join("references.bib")).unwrap();
+
+        let project = load(&dir);
+
+        assert!(project.bibliography.is_none());
+        assert_eq!(project.bibliography_entries, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
