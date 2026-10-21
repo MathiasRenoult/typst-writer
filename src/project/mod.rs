@@ -133,7 +133,7 @@ fn parse_bib_entry_line(line: &str) -> Option<BibliographyEntry> {
     let rest = line.strip_prefix('@')?;
     let (kind, rest) = rest.split_once('{')?;
 
-    let key = rest.split(',').next()?.trim().to_string();
+    let key = rest.split(['}', ',']).next()?.trim().to_string();
 
     if key.is_empty() {
         return None;
@@ -302,6 +302,19 @@ mod tests {
         assert!(parse_bib_entry_line("ceci n'est pas une entrée").is_none());
         assert!(parse_bib_entry_line("@article{,").is_none());
         assert!(parse_bib_entry_line("@article{clé,").is_some());
+    }
+
+    /// Une entrée sans virgule après la clé (ex. `@article{clé}`) doit
+    /// donner la clé sans l'accolade fermante.
+    #[test]
+    fn parses_a_bib_entry_without_trailing_comma() {
+        let entry = parse_bib_entry_line("@article{clé}");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().key, "clé");
+
+        let entry = parse_bib_entry_line("@book{smith2020 }");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().key, "smith2020");
     }
 
     /// Une session d'une version précédente, qui ne connaissait que

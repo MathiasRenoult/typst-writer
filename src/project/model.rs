@@ -325,6 +325,10 @@ fn chapter_of(path: &Path, included: &[PathBuf]) -> Option<Chapter> {
 /// — c'est mesuré —, alors qu'une étiquette vaut pour tout le document qui la
 /// compile. Chercher ici rend le geste utile.
 pub fn find_label(project: &Project, label: &str) -> Option<(PathBuf, usize)> {
+    if label.is_empty() {
+        return None;
+    }
+
     let marker = format!("<{label}>");
 
     for chapter in &project.chapters {
@@ -659,7 +663,7 @@ pub fn find_bibliography(dir: &Path) -> Option<PathBuf> {
     entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| path.extension().map(|ext| ext == "bib").unwrap_or(false))
+        .find(|path| path.is_file() && path.extension().map(|ext| ext == "bib").unwrap_or(false))
 }
 
 /// Nombre de mots d'un contenu.
@@ -799,6 +803,21 @@ mod tests {
 
         // Une étiquette qui n'existe pas ne mène nulle part.
         assert_eq!(find_label(&project, "absente"), None);
+    }
+
+    /// Une étiquette vide ne doit rien matcher — le marqueur `<>` pourrait
+    /// apparaître dans du contenu sans signification.
+    #[test]
+    fn an_empty_label_matches_nothing() {
+        let project = Project {
+            dir: PathBuf::new(),
+            name: String::new(),
+            main: PathBuf::new(),
+            chapters: vec![],
+            bibliography: None,
+            bibliography_entries: 0,
+        };
+        assert_eq!(find_label(&project, ""), None);
     }
 
     #[test]
@@ -991,6 +1010,21 @@ mod tests {
 
         assert!(project.bibliography.is_some());
         assert_eq!(project.bibliography_entries, 2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un dossier nommé `.bib` n'est pas une bibliographie.
+    #[test]
+    fn a_directory_named_bib_is_ignored() {
+        let dir = scratch("bib-dir");
+
+        std::fs::create_dir_all(dir.join("references.bib")).unwrap();
+
+        let project = load(&dir);
+
+        assert!(project.bibliography.is_none());
+        assert_eq!(project.bibliography_entries, 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
