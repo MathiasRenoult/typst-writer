@@ -5,6 +5,9 @@ use std::path::PathBuf;
 pub struct EditorState {
     pub editor: CodeEditor,
     pub path: Option<PathBuf>,
+
+    /// AST courant du fichier `.tw`, recalculé à chaque modification du source.
+    pub document: Option<crate::langage::Document>,
 }
 
 /// Taille du texte de rédaction.
@@ -13,17 +16,22 @@ pub struct EditorState {
 /// des identifiants.
 pub const BODY_SIZE: f32 = 17.0;
 
-/// Nom de syntaxe passé à l'éditeur.
+/// Extension de grammaire utilisée pour les fichiers Typst hérités.
 ///
-/// C'est **une extension de fichier**, pas un nom de langage : la résolution du
-/// widget cherche dans les extensions déclarées par les définitions de syntaxe,
-/// et Typst y répond à `typ`. Passer `"typst"` ne trouverait rien et
-/// l'éditeur resterait en texte brut.
-///
-/// La définition vient du jeu embarqué par `two-face` (celui de `bat`), d'où la
-/// feature du même nom sur la dépendance : le jeu par défaut de `syntect`, lui,
-/// ne contient pas Typst.
+/// Le résolveur de `iced-code-editor` attend une extension de fichier, pas un
+/// nom de langage : `typ` est déclarée par le jeu embarqué via `two-face`.
 pub const SYNTAX: &str = "typ";
+
+/// Extension de coloration Markdown utilisée par `document.tw`.
+pub const MARKDOWN_SYNTAX: &str = "md";
+
+fn syntax_for_path(path: &std::path::Path) -> &'static str {
+    if path.extension().is_some_and(|extension| extension == "tw") {
+        MARKDOWN_SYNTAX
+    } else {
+        SYNTAX
+    }
+}
 
 /// Habille l'éditeur selon un thème résolu.
 ///
@@ -75,6 +83,7 @@ impl Default for EditorState {
         let mut state = Self {
             editor: CodeEditor::new("", SYNTAX),
             path: None,
+            document: None,
         };
 
         state.apply_prose_profile();
@@ -85,18 +94,131 @@ impl Default for EditorState {
 
 impl EditorState {
     pub fn new_file(path: PathBuf, content: String) -> Self {
+        let document = path
+            .extension()
+            .is_some_and(|extension| extension == "tw")
+            .then(|| crate::langage::parse(&content));
+        let syntax = syntax_for_path(&path);
         let mut state = Self {
-            editor: CodeEditor::new(&content, SYNTAX),
+            editor: CodeEditor::new(&content, syntax),
             path: Some(path),
+            document,
         };
 
         state.apply_prose_profile();
+        if state.is_intermediate() {
+            state.apply_markdown_profile();
+        }
 
         state
     }
 
+    /// Le fichier courant utilise-t-il le langage intermédiaire ?
+    pub fn is_intermediate(&self) -> bool {
+        self.path
+            .as_deref()
+            .and_then(|path| path.extension())
+            .is_some_and(|extension| extension == "tw")
+    }
+
+    /// Change le chemin d'un document sauvegardé sous un autre nom.
+    pub fn set_path(&mut self, path: PathBuf) {
+        let syntax = syntax_for_path(&path);
+        self.editor.set_syntax(syntax);
+        self.path = Some(path);
+        if self.is_intermediate() {
+            self.apply_markdown_profile();
+        } else {
+            self.editor.set_auto_close_brackets(false);
+        }
+        self.refresh_document();
+    }
+
+    /// Met à jour l'AST après une modification du source sérialisé.
+    fn refresh_document(&mut self) {
+        self.document = self
+            .is_intermediate()
+            .then(|| crate::langage::parse(&self.editor.content()));
+    }
+
+    /// Le message peut-il modifier le texte ou sa sérialisation ?
+    pub fn message_may_change_content(message: &EditorMessage) -> bool {
+        matches!(
+            message,
+            EditorMessage::CharacterInput(_)
+                | EditorMessage::VimKey(_)
+                | EditorMessage::Backspace
+                | EditorMessage::Delete
+                | EditorMessage::Enter
+                | EditorMessage::Tab
+                | EditorMessage::Cut
+                | EditorMessage::Paste(_)
+                | EditorMessage::DeleteSelection
+                | EditorMessage::Undo
+                | EditorMessage::Redo
+                | EditorMessage::ImeCommit(_)
+                | EditorMessage::ReplaceNext
+                | EditorMessage::ReplaceAll
+                | EditorMessage::ToggleComment
+                | EditorMessage::MoveLineUp
+                | EditorMessage::MoveLineDown
+                | EditorMessage::DuplicateLineUp
+                | EditorMessage::DuplicateLineDown
+        )
+    }
+
     pub fn update(&mut self, message: EditorMessage) -> Task<EditorMessage> {
-        self.editor.update(&message)
+        if self.is_intermediate() && matches!(&message, EditorMessage::Enter) {
+            return self.markdown_enter();
+        }
+
+        let content_may_change = Self::message_may_change_content(&message);
+        let task = self.editor.update(&message);
+
+        if content_may_change {
+            self.refresh_document();
+        }
+
+        task
+    }
+
+    /// Poursuit la structure Markdown du bloc courant au retour à la ligne.
+    fn markdown_enter(&mut self) -> Task<EditorMessage> {
+        let (line, column) = self.editor.cursor_position();
+        let content = self.editor.content();
+        let current = content.lines().nth(line).unwrap_or_default();
+        let Some((marker, marker_bytes, marker_columns)) = markdown_continuation(current) else {
+            let task = self.editor.update(&EditorMessage::Enter);
+            self.refresh_document();
+            return task;
+        };
+
+        if column < marker_columns {
+            let task = self.editor.update(&EditorMessage::Enter);
+            self.refresh_document();
+            return task;
+        }
+
+        // Un marqueur vide suivi d'Entrée sort de la liste au lieu d'en créer
+        // une nouvelle ligne vide, comme dans les éditeurs Markdown usuels.
+        if column >= current.chars().count() && current[marker_bytes..].trim().is_empty() {
+            let line_len = current.chars().count();
+            let mut tasks = vec![self.editor.set_cursor(line, line_len)];
+
+            for _ in 0..line_len {
+                tasks.push(self.editor.update(&EditorMessage::Backspace));
+            }
+
+            tasks.push(self.editor.update(&EditorMessage::Enter));
+            self.refresh_document();
+            return Task::batch(tasks);
+        }
+
+        let enter = self.editor.update(&EditorMessage::Enter);
+        let continuation = self.editor.update(&EditorMessage::Paste(marker));
+        self.refresh_document();
+
+        Task::batch([enter, continuation])
     }
 
     pub fn filename(&self) -> &str {
@@ -121,7 +243,7 @@ impl EditorState {
     /// documentée au curseur (utilisée par la palette de commandes), pas un
     /// accès au presse-papiers système.
     pub fn insert_at_cursor(&mut self, text: &str) -> Task<EditorMessage> {
-        self.editor.update(&EditorMessage::Paste(text.to_string()))
+        self.update(EditorMessage::Paste(text.to_string()))
     }
 
     /// Remplace ce qui précède le curseur, puis écrit à sa place.
@@ -139,6 +261,153 @@ impl EditorState {
         }
 
         tasks.push(self.editor.update(&EditorMessage::Paste(text.to_string())));
+        self.refresh_document();
+
+        Task::batch(tasks)
+    }
+
+    /// Applique une commande de mise en forme au document `.tw` courant.
+    ///
+    /// La sélection est lue depuis l'éditeur, mais la représentation structurée
+    /// est reconstruite immédiatement après la modification et sert à produire
+    /// le rendu Typst.
+    pub fn apply_format(
+        &mut self,
+        action: crate::app::message::FormatAction,
+    ) -> Task<EditorMessage> {
+        let task = match action {
+            crate::app::message::FormatAction::Gras => self.wrap_selection("**", "**"),
+            crate::app::message::FormatAction::Italique => self.wrap_selection("*", "*"),
+            crate::app::message::FormatAction::Couleur(couleur) => {
+                self.wrap_selection(&format!("{{{couleur}:"), "}")
+            }
+            crate::app::message::FormatAction::Citation => self.insert_at_cursor("@"),
+            crate::app::message::FormatAction::Note => self.wrap_selection("^[", "]"),
+            crate::app::message::FormatAction::Titre(niveau) => {
+                self.format_heading(niveau.clamp(1, 6))
+            }
+            crate::app::message::FormatAction::ListePuce => self.format_line_prefix("- "),
+            crate::app::message::FormatAction::ListeNumero => self.format_numbered_line(),
+            crate::app::message::FormatAction::CitationBloc => self.format_line_prefix("> "),
+            crate::app::message::FormatAction::BlocTypst => self.format_raw_typst(),
+        };
+
+        self.refresh_document();
+        task
+    }
+
+    /// Entoure la sélection ; sans sélection, insère deux marqueurs et place le
+    /// curseur entre eux pour que l'écriture puisse continuer directement.
+    fn wrap_selection(&mut self, prefix: &str, suffix: &str) -> Task<EditorMessage> {
+        if let Some(selection) = self.editor.selected_text().filter(|text| !text.is_empty()) {
+            return self.editor.update(&EditorMessage::Paste(format!(
+                "{prefix}{selection}{suffix}"
+            )));
+        }
+
+        let (line, column) = self.editor.cursor_position();
+        let insert = format!("{prefix}{suffix}");
+        let inserted_prefix = prefix.chars().count();
+        let paste = self.editor.update(&EditorMessage::Paste(insert));
+        let cursor = self.editor.set_cursor(line, column + inserted_prefix);
+
+        Task::batch([paste, cursor])
+    }
+
+    /// Applique ou retire un préfixe simple de bloc sur la ligne du curseur.
+    fn format_line_prefix(&mut self, prefix: &str) -> Task<EditorMessage> {
+        let (line, column) = self.editor.cursor_position();
+        let content = self.editor.content();
+        let current = content.lines().nth(line).unwrap_or_default();
+        let old = if current.starts_with(prefix) {
+            prefix.chars().count()
+        } else {
+            0
+        };
+        let replacement = if old == 0 { prefix } else { "" };
+
+        self.replace_line_prefix(line, column, old, replacement)
+    }
+
+    /// Applique ou retire un marqueur numéroté, quelle que soit sa valeur.
+    fn format_numbered_line(&mut self) -> Task<EditorMessage> {
+        let (line, column) = self.editor.cursor_position();
+        let content = self.editor.content();
+        let current = content.lines().nth(line).unwrap_or_default();
+        let digits = current.chars().take_while(char::is_ascii_digit).count();
+        let old = if digits > 0 && current[digits..].starts_with(". ") {
+            digits + 2
+        } else {
+            0
+        };
+        let replacement = if old == 0 { "1. " } else { "" };
+
+        self.replace_line_prefix(line, column, old, replacement)
+    }
+
+    /// Applique un niveau de titre sur la ligne courante ; répéter le même
+    /// niveau le retire.
+    fn format_heading(&mut self, niveau: u8) -> Task<EditorMessage> {
+        let (line, column) = self.editor.cursor_position();
+        let content = self.editor.content();
+        let current = content.lines().nth(line).unwrap_or_default();
+        let hashes = current
+            .chars()
+            .take_while(|character| *character == '#')
+            .count();
+        let old = if (1..=6).contains(&hashes) && current[hashes..].starts_with(' ') {
+            hashes + 1
+        } else {
+            0
+        };
+        let prefix = format!("{} ", "#".repeat(niveau as usize));
+        let replacement = if old == prefix.chars().count() {
+            "".to_string()
+        } else {
+            prefix
+        };
+
+        self.replace_line_prefix(line, column, old, &replacement)
+    }
+
+    /// Insère un bloc Typst complet, en plaçant le caret dans son corps.
+    fn format_raw_typst(&mut self) -> Task<EditorMessage> {
+        if let Some(selection) = self.editor.selected_text().filter(|text| !text.is_empty()) {
+            return self.editor.update(&EditorMessage::Paste(format!(
+                "\n```typst\n{selection}\n```\n"
+            )));
+        }
+
+        let (line, _) = self.editor.cursor_position();
+        let paste = self
+            .editor
+            .update(&EditorMessage::Paste("\n```typst\n\n```\n".to_string()));
+        let cursor = self.editor.set_cursor(line + 2, 0);
+
+        Task::batch([paste, cursor])
+    }
+
+    fn replace_line_prefix(
+        &mut self,
+        line: usize,
+        column: usize,
+        old_characters: usize,
+        replacement: &str,
+    ) -> Task<EditorMessage> {
+        let mut tasks = vec![self.editor.set_cursor(line, 0)];
+
+        for _ in 0..old_characters {
+            tasks.push(self.editor.update(&EditorMessage::Delete));
+        }
+
+        tasks.push(
+            self.editor
+                .update(&EditorMessage::Paste(replacement.to_string())),
+        );
+        tasks.push(self.editor.set_cursor(
+            line,
+            column.saturating_sub(old_characters) + replacement.chars().count(),
+        ));
 
         Task::batch(tasks)
     }
@@ -158,15 +427,6 @@ impl EditorState {
             .unwrap_or(iced::Point::ORIGIN);
 
         iced::Point::new(point.x, point.y - self.editor.viewport_scroll())
-    }
-
-    /// La hauteur réellement visible de l'éditeur, en pixels.
-    ///
-    /// C'est la seule mesure qui vaille pour placer une bulle : la fenêtre moins
-    /// deux barres n'est qu'une approximation, et elle ignore les marges du
-    /// panneau.
-    pub fn visible_height(&self) -> f32 {
-        self.editor.viewport_height()
     }
 
     /// Amène le curseur à une ligne et une colonne.
@@ -270,10 +530,59 @@ impl EditorState {
         editor.set_line_height(BODY_SIZE * LINE_HEIGHT);
     }
 
+    /// Active les paires Markdown utiles sans auto-fermer l'apostrophe française.
+    fn apply_markdown_profile(&mut self) {
+        self.editor.set_auto_close_brackets(true);
+        self.editor.set_auto_close_apostrophes(false);
+    }
+
     /// Réapplique les couleurs après un changement de thème.
     pub fn retheme(&mut self, resolved: &crate::ui::theme::Resolved) {
         apply_look(&mut self.editor, resolved);
     }
+}
+
+/// Détermine le marqueur Markdown à répéter après Entrée.
+///
+/// Le préfixe déjà présent fournit les colonnes d'arrêt ; une numérotation
+/// continue au nombre suivant. Le texte et la position après ce marqueur restent
+/// dans l'éditeur, tandis que le parseur/générateur Typst gère la sémantique.
+fn markdown_continuation(line: &str) -> Option<(String, usize, usize)> {
+    let body = line.trim_start();
+    let indentation_bytes = line.len() - body.len();
+    let indentation = &line[..indentation_bytes];
+    let indentation_columns = indentation.chars().count();
+
+    if body.starts_with("- ") {
+        return Some((
+            format!("{indentation}- "),
+            indentation_bytes + 2,
+            indentation_columns + 2,
+        ));
+    }
+
+    if body.starts_with("> ") {
+        return Some((
+            format!("{indentation}> "),
+            indentation_bytes + 2,
+            indentation_columns + 2,
+        ));
+    }
+
+    let digits = body.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 && body[digits..].starts_with(". ") {
+        let number = body[..digits].parse::<usize>().unwrap_or(usize::MAX);
+        let next = number.saturating_add(1).max(1);
+        let marker = format!("{indentation}{next}. ");
+
+        return Some((
+            marker,
+            indentation_bytes + digits + 2,
+            indentation_columns + digits + 2,
+        ));
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -378,6 +687,225 @@ mod tests {
         assert!(
             editor.editor.line_height() > editor.editor.font_size(),
             "l'interligne doit dépasser la taille du texte"
+        );
+    }
+
+    /// Les fichiers `.tw` sont analysés dès l'ouverture : l'AST est disponible
+    /// à l'éditeur et au générateur avant la première frappe.
+    #[test]
+    fn intermediate_documents_open_with_their_ast() {
+        let editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "# Titre\n\nUn **mot**.\n".to_string(),
+        );
+
+        let document = editor.document.as_ref().expect("AST du document.tw");
+        assert_eq!(editor.editor.syntax(), "md");
+        assert_eq!(editor.editor.syntax_name(), "Markdown");
+        assert_eq!(document.blocs.len(), 2);
+        assert_eq!(document.texte_nu(), "Titre Un mot.");
+    }
+
+    /// Enregistrer sous `.tw` bascule aussi la grammaire, puis la quitte si
+    /// l'utilisateur choisit de nouveau un fichier Typst.
+    #[test]
+    fn changing_the_path_changes_the_surface_syntax() {
+        let mut editor = EditorState::new_file(PathBuf::from("source.typ"), "= Titre".to_string());
+        assert_eq!(editor.editor.syntax(), "typ");
+        assert!(!editor.editor.auto_close_brackets());
+
+        editor.set_path(PathBuf::from("document.tw"));
+        assert_eq!(editor.editor.syntax(), "md");
+        assert!(editor.editor.auto_close_brackets());
+        assert!(!editor.editor.auto_close_apostrophes());
+        assert!(editor.document.is_some());
+
+        editor.set_path(PathBuf::from("main.typ"));
+        assert_eq!(editor.editor.syntax(), "typ");
+        assert!(!editor.editor.auto_close_brackets());
+        assert!(editor.document.is_none());
+    }
+
+    /// Le bouton Gras enveloppe la sélection et actualise le Document AST.
+    #[test]
+    fn formatting_selection_updates_intermediate_ast() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "mot".to_string());
+        let _ = editor.update(EditorMessage::SelectAll);
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::Gras);
+
+        assert_eq!(editor.content(), "**mot**");
+        assert_eq!(
+            editor.document.as_ref().expect("AST courant").texte_nu(),
+            "mot"
+        );
+    }
+
+    /// Sans sélection, la commande Typst laisse le curseur dans le corps brut.
+    #[test]
+    fn raw_typst_format_inserts_an_editable_block() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), String::new());
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::BlocTypst);
+
+        assert_eq!(editor.editor.cursor_position(), (2, 0));
+        assert_eq!(editor.content(), "\n```typst\n\n```\n");
+        assert!(matches!(
+            editor.document.as_ref().expect("AST courant").blocs.as_slice(),
+            [crate::langage::schema::Bloc::Brut(contenu)] if contenu.is_empty()
+        ));
+    }
+
+    /// Le bouton de titre transforme la ligne entière et préserve son texte AST.
+    #[test]
+    fn heading_format_updates_the_source_and_ast() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Section".to_string());
+        let _ = editor.editor.set_cursor(0, 0);
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::Titre(2));
+
+        assert_eq!(editor.content(), "## Section");
+        assert_eq!(
+            editor.document.as_ref().expect("AST courant").texte_nu(),
+            "Section"
+        );
+    }
+
+    /// La puce bascule sur la ligne du curseur et est reconnue dans l'AST.
+    #[test]
+    fn bullet_format_toggles_the_current_line() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Élément".to_string());
+        let _ = editor.editor.set_cursor(0, 0);
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
+
+        assert_eq!(editor.content(), "- Élément");
+        assert!(matches!(
+            editor
+                .document
+                .as_ref()
+                .expect("AST courant")
+                .blocs
+                .as_slice(),
+            [crate::langage::schema::Bloc::ListePuce(_)]
+        ));
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
+        assert_eq!(editor.content(), "Élément");
+    }
+
+    /// Une ligne numérotée devient une liste AST sans modifier son contenu.
+    #[test]
+    fn numbered_list_format_updates_the_current_line() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Élément".to_string());
+        let _ = editor.editor.set_cursor(0, 0);
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::ListeNumero);
+
+        assert_eq!(editor.content(), "1. Élément");
+        assert!(matches!(
+            editor
+                .document
+                .as_ref()
+                .expect("AST courant")
+                .blocs
+                .as_slice(),
+            [crate::langage::schema::Bloc::ListeNumero(_)]
+        ));
+    }
+
+    /// Une citation de bloc est formatée sur la ligne courante.
+    #[test]
+    fn block_quote_format_updates_the_ast() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Citation".to_string());
+        let _ = editor.editor.set_cursor(0, 0);
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::CitationBloc);
+
+        assert_eq!(editor.content(), "> Citation");
+        assert!(matches!(
+            editor
+                .document
+                .as_ref()
+                .expect("AST courant")
+                .blocs
+                .as_slice(),
+            [crate::langage::schema::Bloc::Citation(_)]
+        ));
+    }
+
+    /// Entrée poursuit une liste à puces comme dans un éditeur Markdown.
+    #[test]
+    fn enter_continues_a_bullet_list() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "- premier".to_string());
+        let _ = editor.editor.set_cursor(0, "- premier".chars().count());
+
+        let _ = editor.update(EditorMessage::Enter);
+
+        assert_eq!(editor.content(), "- premier\n- ");
+        assert!(matches!(
+            editor.document.as_ref().expect("AST courant").blocs.as_slice(),
+            [crate::langage::schema::Bloc::ListePuce(items)] if items.len() == 2
+        ));
+    }
+
+    /// Entrée incrémente le numéro d'une liste ordonnée.
+    #[test]
+    fn enter_increments_a_numbered_list() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "8. étape".to_string());
+        let _ = editor.editor.set_cursor(0, "8. étape".chars().count());
+
+        let _ = editor.update(EditorMessage::Enter);
+
+        assert_eq!(editor.content(), "8. étape\n9. ");
+        assert!(matches!(
+            editor.document.as_ref().expect("AST courant").blocs.as_slice(),
+            [crate::langage::schema::Bloc::ListeNumero(items)] if items.len() == 2
+        ));
+    }
+
+    /// Entrée poursuit une citation de bloc avec son marqueur.
+    #[test]
+    fn enter_continues_a_block_quote() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "> texte".to_string());
+        let _ = editor.editor.set_cursor(0, "> texte".chars().count());
+
+        let _ = editor.update(EditorMessage::Enter);
+
+        assert_eq!(editor.content(), "> texte\n> ");
+        assert!(matches!(
+            editor
+                .document
+                .as_ref()
+                .expect("AST courant")
+                .blocs
+                .as_slice(),
+            [
+                crate::langage::schema::Bloc::Citation(_),
+                crate::langage::schema::Bloc::Citation(_)
+            ]
+        ));
+    }
+
+    /// Entrée sur un marqueur vide quitte le mode liste.
+    #[test]
+    fn enter_on_an_empty_bullet_exits_the_list() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "- ".to_string());
+        let _ = editor.editor.set_cursor(0, 2);
+
+        let _ = editor.update(EditorMessage::Enter);
+
+        assert_eq!(editor.content(), "\n");
+        assert!(
+            editor
+                .document
+                .as_ref()
+                .expect("AST courant")
+                .blocs
+                .is_empty()
         );
     }
 

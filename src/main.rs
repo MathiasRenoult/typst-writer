@@ -1,5 +1,6 @@
 mod app;
 mod editor;
+mod langage;
 mod lsp;
 mod mise_en_page;
 mod project;

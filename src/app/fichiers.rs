@@ -8,15 +8,28 @@ use iced::Task;
 pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::NewFile => {
-            // Un « nouveau document » est désormais un nouveau chapitre : c'est
-            // l'unité de travail du projet.
-            update(state, Message::NewChapter)
+            let path = match crate::project::migrate_to_document(&state.project) {
+                Ok(path) => path,
+                Err(error) => {
+                    state.export_status = Some(format!("Création de document.tw : {error}"));
+                    return Task::none();
+                }
+            };
+
+            match std::fs::read_to_string(&path) {
+                Ok(content) => state.open_document(path, content),
+                Err(error) => {
+                    state.export_status = Some(format!("Ouverture de document.tw : {error}"));
+                }
+            }
+
+            Task::none()
         }
 
         Message::OpenFile => Task::perform(
             async {
                 rfd::AsyncFileDialog::new()
-                    .add_filter("Typst", &["typ"])
+                    .add_filter("Typst Writer / Typst", &["tw", "typ"])
                     .pick_file()
                     .await
                     .and_then(|file| {
@@ -35,6 +48,38 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
 
+            if path.extension().is_some_and(|extension| extension == "tw") {
+                let document = match crate::project::import_writing_document(&state.project, &path)
+                {
+                    Ok(document) => document,
+                    Err(error) => {
+                        state.export_status = Some(format!("Ouverture du document : {error}"));
+                        return Task::none();
+                    }
+                };
+                let imported = !crate::project::same_file(&document, &path);
+                let content = if imported {
+                    match std::fs::read_to_string(&document) {
+                        Ok(content) => content,
+                        Err(error) => {
+                            state.export_status = Some(format!("Ouverture du document : {error}"));
+                            return Task::none();
+                        }
+                    }
+                } else {
+                    content
+                };
+
+                state.open_document(document, content);
+
+                if imported {
+                    state.export_status =
+                        Some("Document intermédiaire ajouté au projet.".to_string());
+                }
+
+                return Task::none();
+            }
+
             // L'assemblage est le fichier du projet qui n'est pas un chapitre :
             // l'ouvrir doit le laisser où il est, et n'ajouter aucun chapitre.
             if crate::project::same_file(&path, &state.project.main) {
@@ -43,60 +88,65 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            // Charger un fichier, c'est l'**ajouter au projet** : un fichier
-            // simplement affiché ne serait ni compté, ni inclus dans
-            // l'assemblage, donc jamais rendu — il n'existerait que dans
-            // l'éditeur.
-            let chapter = match crate::project::import_chapter(&state.project, &path) {
-                Ok(chapter) => chapter,
-                Err(error) => {
-                    state.export_status = Some(format!("Ajout au projet : {error}"));
+            // Un chapitre inclus a déjà été migré : l'ouvrir comme source
+            // éditable ferait diverger l'archive du document compilé. Un
+            // chapitre orphelin, au contraire, n'a pas été migré et doit pouvoir
+            // rejoindre le document s'il est explicitement sélectionné.
+            let archived_chapter_included = state
+                .project
+                .chapters
+                .iter()
+                .find(|chapter| crate::project::same_file(&chapter.path, &path))
+                .map(|chapter| chapter.included);
 
-                    return Task::none();
-                }
-            };
-
-            // Un chapitre déjà installé dans le projet se charge avec ce qu'on
-            // vient de lire ; une copie doit se lire à sa nouvelle adresse.
-            let imported = !crate::project::same_file(&chapter, &path);
-
-            let content = if imported {
-                match std::fs::read_to_string(&chapter) {
-                    Ok(content) => content,
+            if let Some(included) = archived_chapter_included {
+                let document = if included {
+                    crate::project::migrate_to_document(&state.project)
+                } else {
+                    crate::project::append_typst_to_document(&state.project, &content)
+                };
+                let document = match document {
+                    Ok(document) => document,
                     Err(error) => {
-                        state.export_status = Some(format!("Ouverture du chapitre : {error}"));
+                        state.export_status = Some(format!("Import du chapitre : {error}"));
+                        return Task::none();
+                    }
+                };
 
+                match std::fs::read_to_string(&document) {
+                    Ok(content) => state.open_document(document, content),
+                    Err(error) => {
+                        state.export_status = Some(format!("Ouverture de document.tw : {error}"));
                         return Task::none();
                     }
                 }
-            } else {
-                content
-            };
 
-            state.open_document(chapter.clone(), content);
-
-            // Le message se pose après `open_document`, qui efface le statut et
-            // relit le projet : c'est le seul moment où le titre du chapitre
-            // fraîchement importé est connu. Copier un fichier est un effet de
-            // bord qu'il faut dire, sans quoi le chapitre apparaîtrait dans le
-            // panneau sans qu'on sache pourquoi.
-            if imported {
-                let title = state
-                    .project
-                    .chapters
-                    .iter()
-                    .find(|entry| crate::project::same_file(&entry.path, &chapter))
-                    .map(|entry| entry.title.clone())
-                    .unwrap_or_else(|| {
-                        chapter
-                            .file_stem()
-                            .and_then(|stem| stem.to_str())
-                            .unwrap_or("chapitre")
-                            .to_string()
-                    });
-
-                state.export_status = Some(format!("« {title} » ajouté au projet."));
+                state.export_status = Some(if included {
+                    "Ce chapitre est archivé ; éditez le document unique.".to_string()
+                } else {
+                    "Chapitre hors assemblage ajouté à document.tw.".to_string()
+                });
+                return Task::none();
             }
+
+            // Tout autre `.typ` est importé comme fragment dans le document
+            // unique ; il ne devient plus un chapitre parallèle.
+            let document = match crate::project::append_typst_to_document(&state.project, &content)
+            {
+                Ok(document) => document,
+                Err(error) => {
+                    state.export_status = Some(format!("Import Typst : {error}"));
+                    return Task::none();
+                }
+            };
+            match std::fs::read_to_string(&document) {
+                Ok(content) => state.open_document(document, content),
+                Err(error) => {
+                    state.export_status = Some(format!("Ouverture de document.tw : {error}"));
+                    return Task::none();
+                }
+            }
+            state.export_status = Some("Fragment Typst converti dans document.tw.".to_string());
 
             Task::none()
         }
@@ -158,7 +208,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     state.render.reset();
                     state.refresh_context();
 
-                    update(state, Message::NewChapter)
+                    update(state, Message::NewFile)
                 }
                 Err(error) => {
                     state.export_status = Some(format!("Création du projet : {error}"));
@@ -170,13 +220,22 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::OpenProject(dir) => {
             state.project = crate::project::load(&dir);
-            state.projects = crate::project::list_projects();
             state.render.reset();
+
+            if let Err(error) = crate::project::migrate_to_document(&state.project) {
+                state.export_status = Some(format!("Ouverture du projet : {error}"));
+                return Task::none();
+            }
+
             state.refresh_context();
 
-            // On repart sur le premier chapitre du nouveau projet : rouvrir le
-            // chapitre d'un autre projet n'aurait pas de sens.
-            match state.project.chapters.first().map(|c| c.path.clone()) {
+            match state.project.document.clone().or_else(|| {
+                state
+                    .project
+                    .chapters
+                    .first()
+                    .map(|chapter| chapter.path.clone())
+            }) {
                 Some(path) => update(state, Message::OpenChapter(path)),
                 None => {
                     state.editor = crate::editor::EditorState::default();
@@ -229,7 +288,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::FileSaved(path) => {
             if let Some(path) = path {
-                state.editor.path = Some(path);
+                state.editor.set_path(path);
                 state.editor.editor.mark_saved();
             }
 

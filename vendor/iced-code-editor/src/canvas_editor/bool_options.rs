@@ -110,6 +110,10 @@ bool_options! {
         "Returns whether auto-closing of brackets and quotes is enabled.",
         "`true` if auto-closing is enabled, `false` otherwise",
         default: "Enabled by default.", "";
+    auto_close_apostrophes, set_auto_close_apostrophes,
+        "Returns whether single apostrophes are auto-paired.",
+        "`true` if apostrophes are auto-paired, `false` otherwise",
+        default: "Enabled by default.", "";
     auto_indent_enabled, set_auto_indent_enabled,
         "Returns whether auto-indentation is enabled.",
         "`true` if auto-indentation is enabled, `false` otherwise",

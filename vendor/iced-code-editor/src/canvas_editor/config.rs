@@ -711,6 +711,11 @@ impl CodeEditor {
         self.auto_close_brackets = enabled;
     }
 
+    /// Sets whether single apostrophes are auto-paired when auto-closing is on.
+    pub fn set_auto_close_apostrophes(&mut self, enabled: bool) {
+        self.auto_close_apostrophes = enabled;
+    }
+
     /// Sets the indentation style used when pressing the Tab key.
     ///
     /// # Arguments
@@ -919,6 +924,14 @@ mod tests {
     use super::*;
     use crate::canvas_editor::features::context_menu::ContextMenuItem;
     use crate::canvas_editor::features::vim;
+
+    #[test]
+    fn canvas_width_reports_the_last_drawn_bounds() {
+        let editor = CodeEditor::new("", "md");
+        editor.last_canvas_width.set(512.0);
+
+        assert_eq!(editor.canvas_width(), 512.0);
+    }
 
     #[test]
     fn test_custom_context_menu_configuration() {

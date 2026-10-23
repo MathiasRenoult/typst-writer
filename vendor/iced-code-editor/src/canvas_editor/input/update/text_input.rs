@@ -72,7 +72,11 @@ impl CodeEditor {
 
         let has_any_selection =
             self.cursors.iter().any(|cursor| cursor.has_selection());
-        let surround_close = if self.auto_close_brackets && has_any_selection {
+        let apostrophe_pairing_allowed = ch != '\'' || self.auto_close_apostrophes;
+        let surround_close = if self.auto_close_brackets
+            && apostrophe_pairing_allowed
+            && has_any_selection
+        {
             matching_close(ch)
         } else {
             None
@@ -104,6 +108,7 @@ impl CodeEditor {
                 let pos = self.cursors.as_slice()[idx].position;
 
                 if self.auto_close_brackets
+                    && apostrophe_pairing_allowed
                     && is_closing_char(ch)
                     && self.char_at(pos) == Some(ch)
                 {
@@ -115,6 +120,7 @@ impl CodeEditor {
                 }
 
                 if self.auto_close_brackets
+                    && apostrophe_pairing_allowed
                     && let Some(close) = matching_close(ch)
                     && self.should_auto_close(pos)
                 {
@@ -460,6 +466,22 @@ mod tests {
         assert_eq!(editor.buffer.line(0), "X world");
         assert_eq!(editor.cursors.primary_position(), (0, 1));
         assert!(!editor.cursors.primary().has_selection());
+    }
+
+    #[test]
+    fn markdown_pairs_do_not_double_a_french_apostrophe() {
+        let mut editor = CodeEditor::new("", "md");
+        editor.set_auto_close_brackets(true);
+        editor.set_auto_close_apostrophes(false);
+        focus_editor(&mut editor);
+
+        let _ = editor.update(&Message::CharacterInput('\''));
+        assert_eq!(editor.content(), "'");
+        assert_eq!(editor.cursor_position(), (0, 1));
+
+        let _ = editor.update(&Message::CharacterInput('('));
+        assert_eq!(editor.content(), "'()");
+        assert_eq!(editor.cursor_position(), (0, 2));
     }
 
     #[test]

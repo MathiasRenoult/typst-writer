@@ -154,6 +154,9 @@ pub struct Session {
     /// serveur refuse une modification qui ne l'a pas fait avancer.
     version: i32,
 
+    /// Le dernier URI a-t-il été annoncé par `didOpen` et reste-t-il ouvert ?
+    document_open: bool,
+
     next_id: i64,
 }
 
@@ -238,6 +241,7 @@ impl Session {
             child,
             uri,
             version: 1,
+            document_open: false,
             next_id: 1,
         };
 
@@ -338,15 +342,25 @@ impl Session {
     /// garde ouvert un document dont on ne lui parle plus continue de le
     /// compiler, de le diagnostiquer, et de consommer pour rien.
     pub fn open_document(&mut self, path: &Path, text: &str) {
-        self.notify(
-            "textDocument/didClose",
-            json!({ "textDocument": { "uri": self.uri } }),
-        );
+        self.close_document();
 
         self.uri = Self::uri_for(path);
         self.version = 1;
 
         self.did_open(text);
+    }
+
+    /// Ferme le document actif sans arrêter la session de serveur.
+    pub fn close_document(&mut self) {
+        if !self.document_open {
+            return;
+        }
+
+        self.notify(
+            "textDocument/didClose",
+            json!({ "textDocument": { "uri": self.uri } }),
+        );
+        self.document_open = false;
     }
 
     /// Demande au serveur d'exécuter une de ses commandes.
@@ -503,6 +517,7 @@ impl Session {
                 },
             }),
         );
+        self.document_open = true;
     }
 
     fn notify(&self, method: &str, params: Value) {

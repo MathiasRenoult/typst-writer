@@ -434,10 +434,24 @@ impl CodeEditor {
         );
 
         result.or_else(|| cache.spans(logical_line)).unwrap_or_else(|| {
-            Rc::new(vec![(
-                self.style.text_color,
-                self.buffer.line(logical_line).to_string(),
-            )])
+            let fallback_color = theme
+                .settings
+                .foreground
+                .map(|foreground| {
+                    color_from_style(Style {
+                        foreground,
+                        ..Style::default()
+                    })
+                })
+                .unwrap_or_else(|| {
+                    Color::from_rgb(
+                        self.style.text_color.r,
+                        self.style.text_color.g,
+                        self.style.text_color.b,
+                    )
+                });
+
+            Rc::new(vec![(fallback_color, self.buffer.line(logical_line).to_string())])
         })
     }
 }
@@ -611,6 +625,32 @@ mod tests {
             Some(2)
         );
         assert_eq!(editor.highlight_lines_remaining.get(), 0);
+    }
+
+    #[test]
+    fn plain_fallback_keeps_text_visible_when_theme_text_is_transparent() {
+        let mut editor =
+            CodeEditor::new("zero\none\ntwo\nthree\nfour", "md");
+        editor.style.text_color = Color::TRANSPARENT;
+        let text_color = Color::from_rgb8(0xee, 0xdd, 0xcc);
+        editor.set_syntax_palette(Some(SyntaxPalette {
+            text: text_color,
+            background: Color::from_rgb8(0x00, 0x00, 0x00),
+            rules: Vec::new(),
+        }));
+        editor.highlight_lines_remaining.set(0);
+
+        let (syntax_set, syntax, theme) = editor.resolve_syntax();
+        let spans = editor.highlighted_line_cached(
+            4,
+            syntax.expect("la grammaire Markdown doit exister"),
+            theme.expect("la palette doit exister"),
+            syntax_set,
+        );
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].1, "four");
+        assert_eq!(spans[0].0, text_color);
     }
 
     #[test]

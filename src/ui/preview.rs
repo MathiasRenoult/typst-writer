@@ -44,22 +44,65 @@ pub(crate) fn default_viewport() -> iced::Size {
 
 /// Rapport d'affichage d'une page : pixels logiques par point.
 ///
-/// Une page est montrée **entière**, réduite à ce que le panneau peut lui
-/// laisser : c'est ce qui distingue un aperçu d'une bande de papier. Le panneau
-/// est plus étroit qu'une page A4 — 420 px contre 595 —, donc la page est
-/// réduite, et le rendu suit cette réduction au lieu de la précéder : il ne
-/// calcule pas des pixels que l'écran ne montrera jamais.
+/// Le mode d'ajustement par défaut utilise la largeur disponible ; les modes
+/// hauteur et zoom libre sont explicites dans [`display_ratio_for_zoom`]. Le
+/// rendu suit toujours le rapport affiché au lieu de rasteriser des pixels que
+/// le panneau ne peut pas montrer.
 ///
-/// Le calcul est par page, et non global : une page en paysage n'a pas le même
-/// rapport qu'une page en portrait, et la réduire comme les autres la ferait
-/// dépasser du panneau.
+/// Le calcul est par page dans les modes d'ajustement : une page en paysage
+/// n'a pas le même rapport qu'une page en portrait.
 pub(crate) fn display_ratio(box_size: iced::Size, page: (f64, f64)) -> f64 {
+    display_ratio_for_zoom(box_size, page, crate::app::state::PreviewZoomMode::FitWidth)
+}
+
+/// Rapport d'affichage selon le mode de zoom actif.
+pub(crate) fn display_ratio_for_zoom(
+    box_size: iced::Size,
+    page: (f64, f64),
+    zoom: crate::app::state::PreviewZoomMode,
+) -> f64 {
     let width = f64::from((box_size.width - 2.0 * PANEL_PADDING).max(MIN_PAGE_BOX));
     let height = f64::from((box_size.height - 2.0 * PANEL_PADDING).max(MIN_PAGE_BOX));
 
-    (width / page.0)
-        .min(height / page.1)
-        .clamp(MIN_DISPLAY_RATIO, MAX_DISPLAY_RATIO)
+    let ratio = match zoom {
+        crate::app::state::PreviewZoomMode::FitWidth => width / page.0,
+        crate::app::state::PreviewZoomMode::FitHeight => height / page.1,
+        crate::app::state::PreviewZoomMode::Free(ratio) => ratio,
+    };
+
+    if ratio.is_finite() {
+        ratio.clamp(MIN_DISPLAY_RATIO, MAX_DISPLAY_RATIO)
+    } else {
+        1.0
+    }
+}
+
+/// Passe d'un mode d'ajustement au zoom libre avec un incrément de 10 %.
+pub(crate) fn stepped_zoom(
+    mode: crate::app::state::PreviewZoomMode,
+    step: i8,
+    box_size: iced::Size,
+    page: (f64, f64),
+) -> crate::app::state::PreviewZoomMode {
+    let ratio = display_ratio_for_zoom(box_size, page, mode);
+    let stepped = ratio * 1.1_f64.powi(i32::from(step));
+
+    crate::app::state::PreviewZoomMode::Free(stepped.clamp(MIN_DISPLAY_RATIO, MAX_DISPLAY_RATIO))
+}
+
+/// Refuse un rapport libre invalide ou hors des bornes de rendu.
+pub(crate) fn normalize_zoom(
+    zoom: crate::app::state::PreviewZoomMode,
+) -> crate::app::state::PreviewZoomMode {
+    match zoom {
+        crate::app::state::PreviewZoomMode::Free(ratio) if ratio.is_finite() => {
+            crate::app::state::PreviewZoomMode::Free(
+                ratio.clamp(MIN_DISPLAY_RATIO, MAX_DISPLAY_RATIO),
+            )
+        }
+        crate::app::state::PreviewZoomMode::Free(_) => crate::app::state::PreviewZoomMode::FitWidth,
+        other => other,
+    }
 }
 
 /// Pages rendues au-delà du viewport, de part et d'autre.
@@ -81,21 +124,47 @@ pub(crate) const SCROLL_ID: &str = "apercu";
 /// la liste de pages virtualisable.
 fn page_sizes(state: &State) -> Vec<(f32, f32)> {
     match state.render.document.as_ref() {
-        Some(document) => sizes_of(
+        Some(document) => sizes_of_with_zoom(
             document,
             state.render.viewport.unwrap_or_else(default_viewport),
+            state.render.zoom,
         ),
         None => Vec::new(),
     }
+}
+
+/// Pourcentage lisible du rapport appliqué à la première page visible.
+pub(crate) fn zoom_percent(state: &State) -> Option<String> {
+    let document = state.render.document.as_deref()?;
+    let index = state.render.visible.map_or(0, |(first, _)| first);
+    let page = crate::typst::render::page_size(document, index)?;
+    let box_size = state.render.viewport.unwrap_or_else(default_viewport);
+    let ratio = display_ratio_for_zoom(box_size, page, state.render.zoom);
+
+    Some(format!("{:.0}%", ratio * 100.0))
 }
 
 /// Dimensions logiques des pages d'un document.
 ///
 /// Distinct de [`page_sizes`] pour être appelable depuis le gestionnaire de
 /// messages, qui tient le document sans passer par la vue.
+#[cfg(test)]
 pub(crate) fn sizes_of(
     document: &typst_layout::PagedDocument,
     box_size: iced::Size,
+) -> Vec<(f32, f32)> {
+    sizes_of_with_zoom(
+        document,
+        box_size,
+        crate::app::state::PreviewZoomMode::FitWidth,
+    )
+}
+
+/// Dimensions logiques des pages selon le mode de zoom du panneau.
+pub(crate) fn sizes_of_with_zoom(
+    document: &typst_layout::PagedDocument,
+    box_size: iced::Size,
+    zoom: crate::app::state::PreviewZoomMode,
 ) -> Vec<(f32, f32)> {
     (0..crate::typst::render::page_count(document))
         .map(|index| crate::typst::render::page_size(document, index).unwrap_or((595.3, 841.9)))
@@ -105,7 +174,7 @@ pub(crate) fn sizes_of(
         // moins fin — donc de consommer plus ou moins de mémoire — sans que la
         // mise en page du panneau bouge d'un pixel.
         .map(|(width, height)| {
-            let ratio = display_ratio(box_size, (width, height));
+            let ratio = display_ratio_for_zoom(box_size, (width, height), zoom);
 
             ((width * ratio) as f32, (height * ratio) as f32)
         })
@@ -268,6 +337,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         return scrollable(content)
             .id(SCROLL_ID)
+            .direction(iced::widget::scrollable::Direction::Both {
+                vertical: iced::widget::scrollable::Scrollbar::default(),
+                horizontal: iced::widget::scrollable::Scrollbar::default(),
+            })
             .width(Fill)
             .height(Fill)
             // Aucune page : le viewport ne sert à rien, mais le message garde
@@ -319,6 +392,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     scrollable(content)
         .id(SCROLL_ID)
+        .direction(iced::widget::scrollable::Direction::Both {
+            vertical: iced::widget::scrollable::Scrollbar::default(),
+            horizontal: iced::widget::scrollable::Scrollbar::default(),
+        })
         .width(Fill)
         .height(Fill)
         .on_scroll(move |viewport| {
@@ -379,7 +456,7 @@ fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Messa
             state
                 .resolved
                 .palette
-                .label(if render.rendering.contains(&index) {
+                .label(if render.rendering.contains(&(render.revision, index)) {
                     "Rendu…"
                 } else {
                     ""
@@ -717,6 +794,66 @@ mod tests {
         let huge = display_ratio(iced::Size::new(4000.0, 4000.0), (595.3, 841.9));
 
         assert!((huge - MAX_DISPLAY_RATIO).abs() < 1e-9);
+    }
+
+    /// Les modes largeur, hauteur et zoom libre ont des rapports distincts.
+    #[test]
+    fn zoom_modes_compute_the_expected_display_ratio() {
+        let box_size = iced::Size::new(300.0, 220.0);
+        let page = (600.0, 800.0);
+
+        let width =
+            display_ratio_for_zoom(box_size, page, crate::app::state::PreviewZoomMode::FitWidth);
+        let height = display_ratio_for_zoom(
+            box_size,
+            page,
+            crate::app::state::PreviewZoomMode::FitHeight,
+        );
+        let free = display_ratio_for_zoom(
+            box_size,
+            page,
+            crate::app::state::PreviewZoomMode::Free(1.25),
+        );
+
+        assert!(
+            width > height,
+            "ajuster à la largeur utilise toute la largeur"
+        );
+        assert!((width - 268.0 / 600.0).abs() < 1e-9);
+        assert!((height - 188.0 / 800.0).abs() < 1e-9);
+        assert_eq!(free, 1.25);
+    }
+
+    /// Les incréments convertissent l'ajustement en zoom libre et respectent
+    /// les bornes qui gardent l'allocation rasterisée raisonnable.
+    #[test]
+    fn zoom_steps_switch_to_free_and_stay_bounded() {
+        let box_size = iced::Size::new(300.0, 220.0);
+        let page = (600.0, 800.0);
+
+        let stepped = stepped_zoom(
+            crate::app::state::PreviewZoomMode::FitWidth,
+            1,
+            box_size,
+            page,
+        );
+        let maximum = stepped_zoom(
+            crate::app::state::PreviewZoomMode::Free(MAX_DISPLAY_RATIO),
+            1,
+            box_size,
+            page,
+        );
+        let invalid = normalize_zoom(crate::app::state::PreviewZoomMode::Free(f64::NAN));
+
+        assert_eq!(
+            stepped,
+            crate::app::state::PreviewZoomMode::Free(268.0 / 600.0 * 1.1)
+        );
+        assert_eq!(
+            maximum,
+            crate::app::state::PreviewZoomMode::Free(MAX_DISPLAY_RATIO)
+        );
+        assert_eq!(invalid, crate::app::state::PreviewZoomMode::FitWidth);
     }
 
     /// Le défilement amène la page demandée en tête du panneau.

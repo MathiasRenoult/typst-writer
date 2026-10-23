@@ -165,14 +165,12 @@ pub(super) fn report_lsp(state: &State) {
     match state.lsp.completion.as_ref() {
         None => println!("[assistance] liste : fermée"),
         Some(open) => println!(
-            "[assistance] liste : ouverte | déclencheur `{}` | mot « {} » | {} élément(s), {} montré(s), sélection {} | ancre ({:.0}, {:.0}) | curseur dans le document : {:.0} | défilement {:.0}, vue {:.0}",
+            "[assistance] liste : ouverte | déclencheur `{}` | mot « {} » | {} élément(s), {} montré(s), sélection {} | curseur dans le document : {:.0} | défilement {:.0}, vue {:.0}",
             open.trigger,
             open.typed,
             open.items.len(),
             open.shown.len(),
             open.selected,
-            open.anchor.x,
-            open.anchor.y,
             document_y,
             editor.viewport_scroll(),
             editor.viewport_height(),

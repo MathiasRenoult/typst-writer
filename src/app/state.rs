@@ -15,6 +15,23 @@ pub const IDLE_DELAY_MS: u64 = 2000;
 use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
 
+/// Mode d'ajustement du zoom de l'aperçu.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PreviewZoomMode {
+    /// La page occupe la largeur disponible.
+    FitWidth,
+    /// La page occupe la hauteur visible.
+    FitHeight,
+    /// Rapport d'affichage libre, en pixels logiques par point Typst.
+    Free(f64),
+}
+
+impl Default for PreviewZoomMode {
+    fn default() -> Self {
+        Self::FitWidth
+    }
+}
+
 /// L'état de l'application.
 ///
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
@@ -418,6 +435,24 @@ pub struct LspState {
     pub tokens: u64,
 }
 
+impl LspState {
+    /// Accepte uniquement la réponse courante et termine son attente.
+    pub(crate) fn accept_completion_response(&mut self, token: u64) -> bool {
+        if token != self.tokens {
+            return false;
+        }
+
+        self.awaiting = false;
+        true
+    }
+
+    /// Invalide une complétion annulée et cesse d'attendre sa réponse.
+    pub(crate) fn cancel_completion_request(&mut self) {
+        self.tokens = self.tokens.wrapping_add(1);
+        self.awaiting = false;
+    }
+}
+
 /// Ce que le serveur dit d'un symbole, prêt à être montré.
 pub struct Hover {
     /// Le texte renvoyé par le serveur, en markdown.
@@ -448,11 +483,16 @@ pub struct Completion {
     /// Le décalage, en octets, du début de ce qui serait remplacé.
     pub start: usize,
 
-    /// Où la liste s'accroche, dans le repère de l'éditeur.
-    pub anchor: iced::Point,
+    /// Position source du curseur à la dernière mise à jour de la liste.
+    pub cursor_offset: usize,
 }
 
 impl Completion {
+    /// Ferme la liste si le curseur a été déplacé sans modifier le texte.
+    pub fn should_close_after(&self, cursor_offset: usize, content_changed: bool) -> bool {
+        !content_changed && cursor_offset != self.cursor_offset
+    }
+
     /// L'élément sélectionné, s'il y en a un.
     pub fn selected_item(&self) -> Option<&crate::lsp::messages::CompletionItem> {
         self.shown
@@ -524,7 +564,11 @@ pub struct RenderState {
     pub page_cache: HashMap<usize, Handle>,
 
     /// Pages dont la rasterisation est demandée mais pas terminée.
-    pub rendering: HashSet<usize>,
+    ///
+    /// La révision fait partie de la clé : l'ancienne et la nouvelle version
+    /// d'une page peuvent être en cours ensemble, sans que l'une libère par
+    /// mégarde la réservation de l'autre.
+    pub rendering: HashSet<(u64, usize)>,
 
     /// Pages dont l'image doit être (re)produite.
     ///
@@ -550,6 +594,9 @@ pub struct RenderState {
     /// `None` avant la première mesure : la géométrie part alors de la place
     /// qu'un panneau prend par défaut, et se corrige à la première image.
     pub viewport: Option<iced::Size>,
+
+    /// Mode de zoom actuellement appliqué à toutes les pages.
+    pub zoom: PreviewZoomMode,
 
     /// Nombre de rasterisations demandées depuis l'ouverture du document.
     ///
@@ -577,10 +624,11 @@ pub struct RenderState {
     /// même ceux qui ne touchent pas au texte.
     pub words_pending: bool,
 
-    /// Numéro du document compilé, incrémenté à chaque compilation.
+    /// Révision des images attendues par l'aperçu.
     ///
-    /// Un rendu de page lancé sur un document depuis dépassé se reconnaît à
-    /// ce numéro et n'écrase pas le cache avec une image obsolète.
+    /// Elle change à chaque compilation et chaque invalidation de densité
+    /// (zoom, dimensions du panneau ou écran). Une rasterisation lancée pour
+    /// l'ancienne révision ne peut ainsi valider une image devenue trop petite.
     pub revision: u64,
 
     /// Page où commence le chapitre en cours, telle que la dernière
@@ -640,15 +688,40 @@ pub struct RenderState {
 
 /// Ce que l'application sait montrer de son état, sans le modifier.
 impl State {
+    /// Nombre de mots visibles du contenu ouvert, selon son format.
+    pub fn content_word_count(&self, content: &str) -> usize {
+        let is_intermediate = self
+            .editor
+            .path
+            .as_deref()
+            .and_then(|path| path.extension())
+            .is_some_and(|extension| extension == "tw");
+
+        if is_intermediate {
+            crate::project::count_words(&crate::langage::parse(content).texte_nu())
+        } else {
+            crate::project::count_words(content)
+        }
+    }
+
     /// Le nombre de mots à afficher pour la séance en cours.
     ///
     /// Le total du projet est relevé sur le disque, et daterait du dernier
-    /// scan ; le chapitre ouvert, lui, est compté **en direct**. Une seule
+    /// scan ; le fichier ouvert, lui, est compté **en direct**. Une seule
     /// définition, pour que la barre d'état et le panneau ne puissent pas
     /// annoncer deux chiffres différents — ni, comme ils le faisaient, effacer
     /// le leur le temps d'un tic.
     pub fn word_count(&self) -> usize {
         let total = self.project.words();
+
+        if let Some(document) = self.project.document.as_deref() {
+            if self.editor.path.as_deref() == Some(document) {
+                return total.saturating_sub(self.project.document_words)
+                    + self.render.words.unwrap_or(self.project.document_words);
+            }
+
+            return total;
+        }
 
         let open = self
             .project
@@ -692,6 +765,34 @@ impl RenderState {
         self.page_cache.retain(|index, _| keep.contains(index));
         self.image_hashes.retain(|index, _| keep.contains(index));
     }
+
+    /// Réserve une rasterisation, sauf si elle est déjà en cours pour cette
+    /// révision et cette page.
+    pub fn begin_page_render(&mut self, revision: u64, index: usize) -> bool {
+        self.rendering.insert((revision, index))
+    }
+
+    /// Libère la réservation exacte d'une rasterisation terminée.
+    ///
+    /// Une tâche obsolète ne doit pas libérer celle de la nouvelle révision,
+    /// qui peut rasteriser la même page en parallèle.
+    pub fn finish_page_render(&mut self, revision: u64, index: usize) {
+        self.rendering.remove(&(revision, index));
+    }
+
+    /// Invalide les images après un changement de zoom, de viewport ou d'écran.
+    ///
+    /// Les anciens `Handle` restent affichables le temps du nouveau rendu, mais
+    /// toute tâche en vol appartient à une génération périmée. La nouvelle
+    /// densité sera rasterisée pour les seules pages visibles.
+    pub fn invalidate_rasterization(&mut self, total_pages: usize) {
+        self.revision += 1;
+        self.rendering.clear();
+        self.image_hashes.clear();
+        self.stale.retain(|index| *index < total_pages);
+        self.stale.extend(0..total_pages);
+    }
+
     /// Vide l'état de rendu (changement de document ouvert).
     ///
     /// Les `Handle` mis en cache sont relâchés : le backend libère alors les
@@ -808,6 +909,35 @@ impl RenderState {
 mod tests {
     use super::*;
 
+    #[test]
+    fn stale_completion_response_does_not_clear_current_wait() {
+        let mut lsp = LspState {
+            awaiting: true,
+            tokens: 2,
+            ..LspState::default()
+        };
+
+        assert!(!lsp.accept_completion_response(1));
+        assert!(lsp.awaiting);
+        assert!(lsp.accept_completion_response(2));
+        assert!(!lsp.awaiting);
+    }
+
+    #[test]
+    fn cancelling_completion_invalidates_its_inflight_response() {
+        let mut lsp = LspState {
+            awaiting: true,
+            tokens: 2,
+            ..LspState::default()
+        };
+
+        lsp.cancel_completion_request();
+
+        assert_eq!(lsp.tokens, 3);
+        assert!(!lsp.awaiting);
+        assert!(!lsp.accept_completion_response(2));
+    }
+
     /// Une image quelconque : seule son identité compte pour ces tests.
     fn handle() -> Handle {
         Handle::from_rgba(2, 2, vec![0u8; 16])
@@ -887,6 +1017,50 @@ mod tests {
         assert_eq!(*keep.end(), 1 + RenderState::CACHE_MARGIN);
     }
 
+    /// Une nouvelle échelle invalide les tâches et images de l'ancienne.
+    #[test]
+    fn raster_density_invalidation_starts_a_new_generation() {
+        let mut render = RenderState::default();
+        render.visible = Some((1, 2));
+        assert!(render.begin_page_render(0, 1));
+        render.image_hashes.insert(1, 42);
+
+        render.invalidate_rasterization(4);
+
+        assert_eq!(render.revision, 1);
+        assert!(render.rendering.is_empty());
+        assert!(render.image_hashes.is_empty());
+        assert_eq!(render.stale, (0..4).collect());
+    }
+
+    /// Une page n'est rasterisée qu'une fois par révision.
+    ///
+    /// Deux changements de viewport peuvent arriver pendant un rendu. Le
+    /// second doit voir la première demande en vol et ne pas lancer une autre
+    /// rasterisation de la même page — chacune alloue son tampon de pixels.
+    #[test]
+    fn a_page_render_is_reserved_once_per_revision() {
+        let mut render = RenderState::default();
+
+        assert!(render.begin_page_render(4, 7), "première demande acceptée");
+        assert!(
+            !render.begin_page_render(4, 7),
+            "la même page ne doit pas être rasterisée deux fois"
+        );
+        assert!(
+            render.begin_page_render(5, 7),
+            "une nouvelle révision doit pouvoir lancer son propre rendu"
+        );
+
+        render.finish_page_render(4, 7);
+
+        assert!(
+            !render.begin_page_render(5, 7),
+            "terminer un ancien rendu ne libère pas celui de la révision courante"
+        );
+        assert!(render.rendering.contains(&(5, 7)));
+    }
+
     /// Le changement de document repart d'un rendu vierge, sans conserver
     /// d'image ni de travail en cours.
     #[test]
@@ -895,7 +1069,7 @@ mod tests {
             content: "ancien document".to_string(),
             done: true,
             page_cache: [(0, handle())].into_iter().collect(),
-            rendering: [1].into_iter().collect(),
+            rendering: [(0, 1)].into_iter().collect(),
             stale: [2].into_iter().collect(),
             visible: Some((0, 4)),
             save_pending: true,

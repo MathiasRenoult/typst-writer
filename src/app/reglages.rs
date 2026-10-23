@@ -110,7 +110,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                 };
 
                 match std::fs::write(file.path(), texte) {
-                    Ok(()) => Message::MiseEnPageNote(format!("Exporté : {}", file.path().display())),
+                    Ok(()) => {
+                        Message::MiseEnPageNote(format!("Exporté : {}", file.path().display()))
+                    }
                     Err(erreur) => Message::MiseEnPageNote(format!("Écrire le fichier : {erreur}")),
                 }
             })

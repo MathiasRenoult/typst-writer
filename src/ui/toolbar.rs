@@ -36,6 +36,69 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .color(palette.text_muted),
     );
 
+    if state.editor.is_intermediate() {
+        bar = bar.push(format_button(
+            "B",
+            "Gras : formater la sélection",
+            crate::app::message::FormatAction::Gras,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "I",
+            "Italique : formater la sélection",
+            crate::app::message::FormatAction::Italique,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "H1",
+            "Titre de niveau 1 sur la ligne courante",
+            crate::app::message::FormatAction::Titre(1),
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "•",
+            "Basculer la ligne en liste à puces",
+            crate::app::message::FormatAction::ListePuce,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "1.",
+            "Basculer la ligne en liste numérotée",
+            crate::app::message::FormatAction::ListeNumero,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            ">",
+            "Basculer la ligne en citation de bloc",
+            crate::app::message::FormatAction::CitationBloc,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "A",
+            "Couleur rouge sur la sélection",
+            crate::app::message::FormatAction::Couleur("red".to_string()),
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "N",
+            "Note de bas de page sur la sélection",
+            crate::app::message::FormatAction::Note,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "@",
+            "Insérer une citation bibliographique",
+            crate::app::message::FormatAction::Citation,
+            palette,
+        ));
+        bar = bar.push(format_button(
+            "T",
+            "Entourer la sélection d'un bloc Typst brut",
+            crate::app::message::FormatAction::BlocTypst,
+            palette,
+        ));
+    }
+
     bar = bar.push(spacer());
 
     // Panneaux : ces trois-là gouvernent la disposition, ils vont ensemble.
@@ -87,6 +150,41 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.layout.follow_preview,
         ));
 
+        if state.layout.preview_visible {
+            bar = bar.push(toolbar_text_button(
+                "W",
+                "Ajuster l'aperçu à la largeur",
+                Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth),
+                palette,
+            ));
+            bar = bar.push(toolbar_text_button(
+                "H",
+                "Ajuster l'aperçu à la hauteur",
+                Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitHeight),
+                palette,
+            ));
+            bar = bar.push(toolbar_text_button(
+                "−",
+                "Réduire le zoom de 10 %",
+                Message::PreviewZoomStep(-1),
+                palette,
+            ));
+            bar = bar.push(
+                palette
+                    .label(
+                        crate::ui::preview::zoom_percent(state).unwrap_or_else(|| "—".to_string()),
+                    )
+                    .size(11)
+                    .color(palette.text_muted),
+            );
+            bar = bar.push(toolbar_text_button(
+                "+",
+                "Agrandir le zoom de 10 %",
+                Message::PreviewZoomStep(1),
+                palette,
+            ));
+        }
+
         // Les normes du document : papier, marges, titres, couleurs.
         bar = bar.push(icon_button(
             lucide_icons::iced::icon_file_cog::<Theme>(),
@@ -136,7 +234,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // Fichier.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_file::<Theme>(),
-        "Nouveau document",
+        "Ouvrir le document d'écriture du projet",
         Message::NewFile,
         palette,
         false,
@@ -294,6 +392,49 @@ fn icon_button<'a>(
     iced::widget::tooltip(
         button,
         container(palette.label(tooltip).size(12).color(palette.text))
+            .padding([4, 8])
+            .style(move |_| container::Style {
+                background: Some(palette.surface_hover.into()),
+                border: iced::Border {
+                    color: palette.border,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }),
+        iced::widget::tooltip::Position::Bottom,
+    )
+    .gap(6)
+    .into()
+}
+
+/// Bouton compact de mise en forme, affiché pour `document.tw`.
+fn format_button<'a>(
+    label: &'static str,
+    help: &'static str,
+    action: crate::app::message::FormatAction,
+    palette: Palette,
+) -> Element<'a, Message> {
+    toolbar_text_button(label, help, Message::Format(action), palette)
+}
+
+/// Bouton compact avec infobulle, partagé par les commandes de texte et zoom.
+fn toolbar_text_button<'a>(
+    label: &'static str,
+    help: &'static str,
+    message: Message,
+    palette: Palette,
+) -> Element<'a, Message> {
+    let button = button(palette.label(label).size(12).color(palette.text))
+        .on_press(message)
+        .padding([4, 6])
+        .width(Length::Fixed(28.0))
+        .height(Length::Fixed(28.0))
+        .style(move |_, status| button_style(status, palette));
+
+    iced::widget::tooltip(
+        button,
+        container(palette.label(help).size(12).color(palette.text))
             .padding([4, 8])
             .style(move |_| container::Style {
                 background: Some(palette.surface_hover.into()),

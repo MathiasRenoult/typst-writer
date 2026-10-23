@@ -422,10 +422,12 @@ fn syntax_palette(file: &crate::theming::ThemeFile) -> iced_code_editor::SyntaxP
         // Spécifiques : après leurs règles générales, donc.
         ("constant.numeric", pick(syntax.number, colors.warning())),
         ("keyword.operator", pick(syntax.operator, muted)),
-        // Le balisage : ce qui se voit dans de la prose Typst.
+        // Le balisage Markdown/Typst : titres, emphases, listes et citations.
         ("markup.heading", pick(syntax.heading, accent)),
         ("markup.bold", pick(syntax.strong, colors.warning())),
         ("markup.italic", pick(syntax.emphasis, accent)),
+        ("markup.list", pick(syntax.keyword, accent)),
+        ("markup.quote", pick(syntax.comment, muted)),
         ("markup.raw", pick(syntax.raw, colors.success())),
         ("markup.underline.link", pick(syntax.link, accent)),
     ];

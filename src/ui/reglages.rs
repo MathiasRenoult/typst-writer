@@ -6,7 +6,9 @@
 //! projet, et les valeurs fautives sont dites, champ par champ, avant que
 //! quoi que ce soit ne soit écrit.
 
-use iced::widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input, Space};
+use iced::widget::{
+    Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+};
 use iced::{Element, Length};
 
 use crate::app::message::Message;
@@ -51,20 +53,42 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         "Page",
         column![
-            ligne(palette, "Format",
-                choix(FORMATS, reglages.papier.format.as_str(), Champ::PapierFormat)),
-            ligne(palette, "Orientation",
-                choix(ORIENTATIONS, reglages.papier.orientation.as_str(), Champ::PapierOrientation)),
-            ligne(palette, "Marges (haut, bas)",
+            ligne(
+                palette,
+                "Format",
+                choix(
+                    FORMATS,
+                    reglages.papier.format.as_str(),
+                    Champ::PapierFormat
+                )
+            ),
+            ligne(
+                palette,
+                "Orientation",
+                choix(
+                    ORIENTATIONS,
+                    reglages.papier.orientation.as_str(),
+                    Champ::PapierOrientation
+                )
+            ),
+            ligne(
+                palette,
+                "Marges (haut, bas)",
                 row![
                     saisie(palette, &reglages.marges.haut, Champ::MargeHaut, "2cm"),
                     saisie(palette, &reglages.marges.bas, Champ::MargeBas, "2cm"),
-                ].spacing(8)),
-            ligne(palette, "Marges (gauche, droite)",
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Marges (gauche, droite)",
                 row![
                     saisie(palette, &reglages.marges.gauche, Champ::MargeGauche, "2cm"),
                     saisie(palette, &reglages.marges.droite, Champ::MargeDroite, "2cm"),
-                ].spacing(8)),
+                ]
+                .spacing(8)
+            ),
         ]
         .spacing(10),
     ));
@@ -74,24 +98,62 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         "Texte",
         column![
-            ligne(palette, "Police",
-                saisie(palette, &reglages.texte.police, Champ::TextePolice, "Nom de la police")),
-            ligne(palette, "Corps, langue",
+            ligne(
+                palette,
+                "Police",
+                saisie(
+                    palette,
+                    &reglages.texte.police,
+                    Champ::TextePolice,
+                    "Nom de la police"
+                )
+            ),
+            ligne(
+                palette,
+                "Corps, langue",
                 row![
                     saisie(palette, &reglages.texte.taille, Champ::TexteTaille, "11pt"),
                     saisie(palette, &reglages.texte.langue, Champ::TexteLangue, "fr"),
-                ].spacing(8)),
-            ligne(palette, "Interligne, espace",
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Interligne, espace",
                 row![
-                    saisie(palette, &reglages.texte.interligne, Champ::TexteInterligne, "0.65em"),
-                    saisie(palette, &reglages.texte.espacement, Champ::TexteEspacement, "1.2em"),
-                ].spacing(8)),
-            ligne(palette, "Retrait de la 1re ligne",
-                saisie(palette, &reglages.texte.retrait, Champ::TexteRetrait, "0cm")),
+                    saisie(
+                        palette,
+                        &reglages.texte.interligne,
+                        Champ::TexteInterligne,
+                        "0.65em"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages.texte.espacement,
+                        Champ::TexteEspacement,
+                        "1.2em"
+                    ),
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Retrait de la 1re ligne",
+                saisie(palette, &reglages.texte.retrait, Champ::TexteRetrait, "0cm")
+            ),
             row![
-                case("Paragraphes justifiés", reglages.texte.justification, Champ::TexteJustification),
-                case("Couper les mots", reglages.texte.coupure, Champ::TexteCoupure),
-            ].spacing(18),
+                case(
+                    "Paragraphes justifiés",
+                    reglages.texte.justification,
+                    Champ::TexteJustification
+                ),
+                case(
+                    "Couper les mots",
+                    reglages.texte.coupure,
+                    Champ::TexteCoupure
+                ),
+            ]
+            .spacing(18),
         ]
         .spacing(10),
     ));
@@ -101,20 +163,66 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         "Titres de chapitres",
         column![
-            ligne(palette, "Police (vide : celle du texte)",
-                saisie(palette, &reglages.titres.police, Champ::TitresPolice, "La même")),
-            ligne(palette, "Numérotation des chapitres",
-                saisie(palette, &reglages.titres.numerotation, Champ::TitresNumerotation, "1.1")),
-            ligne(palette, "Corps des titres 1, 2, 3",
+            ligne(
+                palette,
+                "Police (vide : celle du texte)",
+                saisie(
+                    palette,
+                    &reglages.titres.police,
+                    Champ::TitresPolice,
+                    "La même"
+                )
+            ),
+            ligne(
+                palette,
+                "Numérotation des chapitres",
+                saisie(
+                    palette,
+                    &reglages.titres.numerotation,
+                    Champ::TitresNumerotation,
+                    "1.1"
+                )
+            ),
+            ligne(
+                palette,
+                "Corps des titres 1, 2, 3",
                 row![
-                    saisie(palette, &reglages.titres.taille_1, Champ::TitresTaille1, "16pt"),
-                    saisie(palette, &reglages.titres.taille_2, Champ::TitresTaille2, "14pt"),
-                    saisie(palette, &reglages.titres.taille_3, Champ::TitresTaille3, "12pt"),
-                ].spacing(8)),
-            ligne(palette, "Casse",
-                choix(CASSES, reglages.titres.casse.as_str(), Champ::TitresCasse)),
-            ligne(palette, "Espace autour d'un titre",
-                saisie(palette, &reglages.titres.espacement, Champ::TitresEspacement, "1.2em")),
+                    saisie(
+                        palette,
+                        &reglages.titres.taille_1,
+                        Champ::TitresTaille1,
+                        "16pt"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages.titres.taille_2,
+                        Champ::TitresTaille2,
+                        "14pt"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages.titres.taille_3,
+                        Champ::TitresTaille3,
+                        "12pt"
+                    ),
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Casse",
+                choix(CASSES, reglages.titres.casse.as_str(), Champ::TitresCasse)
+            ),
+            ligne(
+                palette,
+                "Espace autour d'un titre",
+                saisie(
+                    palette,
+                    &reglages.titres.espacement,
+                    Champ::TitresEspacement,
+                    "1.2em"
+                )
+            ),
             case("Titres en gras", reglages.titres.gras, Champ::TitresGras),
         ]
         .spacing(10),
@@ -125,15 +233,38 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         "Numéros de page",
         column![
-            row![
-                case("Numéroter les pages", reglages.numerotation.actif, Champ::NumerotationActive),
-            ],
-            ligne(palette, "Forme",
-                choix(FORMES, reglages.numerotation.forme.as_str(), Champ::NumerotationForme)),
-            ligne(palette, "Position",
-                choix(POSITIONS, reglages.numerotation.position.as_str(), Champ::NumerotationPosition)),
-            ligne(palette, "Alignement",
-                choix(ALIGNEMENTS, reglages.numerotation.alignement.as_str(), Champ::NumerotationAlignement)),
+            row![case(
+                "Numéroter les pages",
+                reglages.numerotation.actif,
+                Champ::NumerotationActive
+            ),],
+            ligne(
+                palette,
+                "Forme",
+                choix(
+                    FORMES,
+                    reglages.numerotation.forme.as_str(),
+                    Champ::NumerotationForme
+                )
+            ),
+            ligne(
+                palette,
+                "Position",
+                choix(
+                    POSITIONS,
+                    reglages.numerotation.position.as_str(),
+                    Champ::NumerotationPosition
+                )
+            ),
+            ligne(
+                palette,
+                "Alignement",
+                choix(
+                    ALIGNEMENTS,
+                    reglages.numerotation.alignement.as_str(),
+                    Champ::NumerotationAlignement
+                )
+            ),
         ]
         .spacing(10),
     ));
@@ -143,14 +274,62 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         "Couleurs",
         column![
-            ligne(palette, "Texte",
-                row![pastille(&reglages.couleurs.texte), saisie(palette, &reglages.couleurs.texte, Champ::CouleurTexte, "#000000")].spacing(8)),
-            ligne(palette, "Titres",
-                row![pastille(&reglages.couleurs.titres), saisie(palette, &reglages.couleurs.titres, Champ::CouleurTitres, "#000000")].spacing(8)),
-            ligne(palette, "Liens",
-                row![pastille(&reglages.couleurs.liens), saisie(palette, &reglages.couleurs.liens, Champ::CouleurLiens, "#0000ff")].spacing(8)),
-            ligne(palette, "Papier",
-                row![pastille(&reglages.couleurs.fond), saisie(palette, &reglages.couleurs.fond, Champ::CouleurFond, "#ffffff")].spacing(8)),
+            ligne(
+                palette,
+                "Texte",
+                row![
+                    pastille(&reglages.couleurs.texte),
+                    saisie(
+                        palette,
+                        &reglages.couleurs.texte,
+                        Champ::CouleurTexte,
+                        "#000000"
+                    )
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Titres",
+                row![
+                    pastille(&reglages.couleurs.titres),
+                    saisie(
+                        palette,
+                        &reglages.couleurs.titres,
+                        Champ::CouleurTitres,
+                        "#000000"
+                    )
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Liens",
+                row![
+                    pastille(&reglages.couleurs.liens),
+                    saisie(
+                        palette,
+                        &reglages.couleurs.liens,
+                        Champ::CouleurLiens,
+                        "#0000ff"
+                    )
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Papier",
+                row![
+                    pastille(&reglages.couleurs.fond),
+                    saisie(
+                        palette,
+                        &reglages.couleurs.fond,
+                        Champ::CouleurFond,
+                        "#ffffff"
+                    )
+                ]
+                .spacing(8)
+            ),
         ]
         .spacing(10),
     ));
@@ -164,11 +343,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         let mut liste = column![].spacing(4);
 
         for (champ, probleme) in &problemes {
-            liste = liste.push(
-                palette
-                    .label(format!("{champ} : {probleme}"))
-                    .size(11),
-            );
+            liste = liste.push(palette.label(format!("{champ} : {probleme}")).size(11));
         }
 
         pied = pied.push(liste);
@@ -213,11 +388,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
     );
 
-    let fenetre = container(column![entete, scrollable(corps).height(Length::Fill), pied].spacing(16))
-        .padding(18)
-        .style(bubble_style(palette))
-        .width(Length::Fixed(760.0))
-        .height(Length::Fixed(640.0));
+    let fenetre =
+        container(column![entete, scrollable(corps).height(Length::Fill), pied].spacing(16))
+            .padding(18)
+            .style(bubble_style(palette))
+            .width(Length::Fixed(760.0))
+            .height(Length::Fixed(640.0));
 
     container(fenetre)
         .width(Length::Fill)
@@ -233,12 +409,9 @@ fn section<'a>(
     titre: &'a str,
     corps: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    column![
-        palette.label(titre.to_uppercase()).size(11),
-        corps.into(),
-    ]
-    .spacing(8)
-    .into()
+    column![palette.label(titre.to_uppercase()).size(11), corps.into(),]
+        .spacing(8)
+        .into()
 }
 
 /// Une ligne : son libellé et son contrôle.
@@ -266,7 +439,12 @@ fn case<'a>(libelle: &'a str, valeur: bool, champ: Champ) -> Element<'a, Message
 }
 
 /// Une saisie de texte.
-fn saisie(palette: Palette, valeur: &str, champ: Champ, exemple: &str) -> Element<'static, Message> {
+fn saisie(
+    palette: Palette,
+    valeur: &str,
+    champ: Champ,
+    exemple: &str,
+) -> Element<'static, Message> {
     let _ = palette;
 
     text_input(exemple, valeur)
@@ -316,10 +494,15 @@ fn couleur_depuis_hexa(valeur: &str) -> Option<iced::Color> {
     let hexa = valeur.trim().strip_prefix('#')?;
 
     let double = |c: char| -> Option<u8> { u8::from_str_radix(&format!("{c}{c}"), 16).ok() };
-    let paire = |a: char, b: char| -> Option<u8> { u8::from_str_radix(&format!("{a}{b}"), 16).ok() };
+    let paire =
+        |a: char, b: char| -> Option<u8> { u8::from_str_radix(&format!("{a}{b}"), 16).ok() };
 
     match hexa.chars().collect::<Vec<_>>().as_slice() {
-        [r, v, b] => Some(iced::Color::from_rgb8(double(*r)?, double(*v)?, double(*b)?)),
+        [r, v, b] => Some(iced::Color::from_rgb8(
+            double(*r)?,
+            double(*v)?,
+            double(*b)?,
+        )),
         [r1, r2, v1, v2, b1, b2] => Some(iced::Color::from_rgb8(
             paire(*r1, *r2)?,
             paire(*v1, *v2)?,

@@ -1,19 +1,18 @@
-//! Le projet : un dossier de travail contenant un fichier par chapitre, une
-//! bibliographie et un fichier d'assemblage.
+//! Le projet : un dossier de travail avec un document d'écriture unique, son
+//! en-tête Typst et sa bibliographie. Les chapitres ne subsistent que comme
+//! archives de compatibilité.
 //!
 //! ```text
 //! ~/.typst-writer/projets/<nom>/
-//!   main.typ              l'assemblage : inclut les chapitres, cite la biblio
-//!   chapitres/
-//!     01-introduction.typ
-//!     02-....
-//!   references.bib
+//!   main.typ              l'assemblage et les normes
+//!   document.tw           source d'écriture unique
+//!   references.bib        références du projet
+//!   chapitres/*.typ       anciens fichiers conservés après migration
 //! ```
 //!
-//! Un chapitre est un fichier comme un autre : Typst n'a pas besoin de plus
-//! pour `#include`. La structure existe pour deux raisons — s'y retrouver en
-//! écrivant, et pouvoir constater où en est le travail sans ouvrir chaque
-//! fichier.
+//! Le rendu compile `main.typ` et y inclut en mémoire le corps Typst généré
+//! depuis `document.tw`. Les sources de chapitres héritées ne sont donc ni
+//! nécessaires à l'assemblage courant, ni supprimées lors de la migration.
 
 use std::path::{Path, PathBuf};
 
@@ -58,7 +57,13 @@ pub struct Project {
     /// Le fichier d'assemblage.
     pub main: PathBuf,
 
-    /// Les chapitres, dans l'ordre de numérotation.
+    /// Le fichier d'écriture intermédiaire, s'il a déjà été créé.
+    pub document: Option<PathBuf>,
+
+    /// Nombre de mots visibles dans `document.tw`.
+    pub document_words: usize,
+
+    /// Les sources de chapitre héritées, conservées pour compatibilité.
     pub chapters: Vec<Chapter>,
 
     /// La bibliographie, si un fichier `.bib` est présent.
@@ -71,11 +76,14 @@ pub struct Project {
 impl Project {
     /// Nombre total de mots du projet.
     ///
-    /// La somme des chapitres, et non celle de `main.typ` : compter
-    /// l'assemblage reviendrait à compter deux fois, puisque son contenu est
-    /// fait des `#include`.
+    /// Le document unique est compté depuis son AST ; les chapitres hérités ne
+    /// servent de repli que tant qu'aucun `document.tw` n'est présent.
     pub fn words(&self) -> usize {
-        self.chapters.iter().map(|chapter| chapter.words).sum()
+        if self.document.is_some() {
+            self.document_words
+        } else {
+            self.chapters.iter().map(|chapter| chapter.words).sum()
+        }
     }
 
     /// Les chapitres qui ne sont pas inclus dans l'assemblage.
@@ -92,6 +100,10 @@ impl Project {
     /// est dedans.
     pub fn owns(&self, path: &Path) -> bool {
         same_file(path, &self.main)
+            || self
+                .document
+                .as_deref()
+                .is_some_and(|document| same_file(document, path))
             || self
                 .chapters
                 .iter()
@@ -127,12 +139,26 @@ pub fn list_projects() -> Vec<Project> {
 
 /// Horodatage de la modification la plus récente d'un projet.
 fn last_modified(project: &Project) -> u64 {
-    project
+    let chapter_modified = project
         .chapters
         .iter()
         .map(|chapter| chapter.modified)
         .max()
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let document_modified = project
+        .document
+        .as_deref()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .and_then(|metadata| metadata.modified().ok())
+        .map(|modified| {
+            modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        })
+        .unwrap_or(0);
+
+    chapter_modified.max(document_modified)
 }
 
 /// Charge la description d'un projet depuis son dossier.
@@ -147,6 +173,13 @@ pub fn load(dir: &Path) -> Project {
         .to_string();
 
     let main = dir.join("main.typ");
+    let document_path = dir.join("document.tw");
+    let document = document_path.is_file().then_some(document_path);
+    let document_words = document
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|source| count_words(&crate::langage::parse(&source).texte_nu()))
+        .unwrap_or(0);
 
     let included = read_includes(&main);
 
@@ -163,10 +196,129 @@ pub fn load(dir: &Path) -> Project {
         dir: dir.to_path_buf(),
         name,
         main,
+        document,
+        document_words,
         chapters,
         bibliography,
         bibliography_entries,
     }
+}
+
+/// Reprend les chapitres d'un ancien projet dans son fichier `document.tw`.
+///
+/// Les includes sont lus dans l'ordre de `main.typ`, non dans l'ordre du
+/// dossier. Les fichiers d'origine et l'assemblage restent intacts : la
+/// migration crée une copie éditable, sans rendre l'ancien projet illisible.
+/// Les constructions Typst non reconnues sont conservées en blocs bruts.
+pub fn migrate_to_document(project: &Project) -> std::io::Result<PathBuf> {
+    let path = project.dir.join("document.tw");
+
+    // Un document déjà rempli est la source de vérité. Un fichier vide,
+    // en revanche, peut être le résidu d'une création antérieure et ne doit pas
+    // empêcher la migration des chapitres qui contiennent le travail.
+    if path.exists() && !std::fs::read_to_string(&path)?.trim().is_empty() {
+        return Ok(path);
+    }
+
+    let mut document = crate::langage::Document::vide();
+
+    for include in read_includes(&project.main) {
+        let Some(chapter) = project
+            .chapters
+            .iter()
+            .find(|chapter| relative_to_chapters(&chapter.path) == include)
+        else {
+            continue;
+        };
+
+        let source = std::fs::read_to_string(&chapter.path)?;
+        document
+            .blocs
+            .extend(crate::langage::migration::importer_typst(&source).blocs);
+    }
+
+    let serialized = crate::langage::serialiser(&document);
+    let temporary = project.dir.join(".document.tw.tmp");
+
+    std::fs::write(&temporary, serialized)?;
+
+    if let Err(error) = std::fs::rename(&temporary, &path) {
+        let _ = std::fs::remove_file(&temporary);
+
+        return Err(error);
+    }
+
+    Ok(path)
+}
+
+/// Importe un fichier `.tw` dans le projet sans écraser un texte existant.
+pub fn import_writing_document(project: &Project, source: &Path) -> std::io::Result<PathBuf> {
+    let destination = project.dir.join("document.tw");
+
+    if same_file(source, &destination) {
+        return Ok(destination);
+    }
+
+    if destination.exists()
+        && std::fs::read_to_string(&destination)
+            .map(|content| !content.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "le projet contient déjà un document non vide",
+        ));
+    }
+
+    std::fs::copy(source, &destination)?;
+
+    Ok(destination)
+}
+
+/// Convertit un fragment Typst pris en charge et l'ajoute au document unique.
+///
+/// Le fichier d'origine n'est pas supprimé ni modifié. Le document du projet
+/// est sérialisé dans un fichier temporaire puis remplacé atomiquement, afin
+/// qu'une erreur d'écriture ne laisse pas un texte partiel.
+pub fn append_typst_to_document(project: &Project, source: &str) -> std::io::Result<PathBuf> {
+    let destination = migrate_to_document(project)?;
+    let current = std::fs::read_to_string(&destination)?;
+    let mut document = crate::langage::parse(&current);
+    let imported = crate::langage::migration::importer_typst(source);
+
+    document.blocs.extend(imported.blocs);
+
+    let temporary = project.dir.join(".document.tw.import.tmp");
+    std::fs::write(&temporary, crate::langage::serialiser(&document))?;
+
+    if let Err(error) = std::fs::rename(&temporary, &destination) {
+        let _ = std::fs::remove_file(&temporary);
+
+        return Err(error);
+    }
+
+    Ok(destination)
+}
+
+/// Assemblage de compilation du document unique, sans les includes des anciens
+/// chapitres. `main.typ` lui-même n'est jamais réécrit.
+pub fn assembly_without_chapters(project: &Project, main: &str) -> String {
+    let mut assembly = String::with_capacity(main.len());
+
+    for ligne in main.split_inclusive('\n') {
+        let is_chapter = parse_include_line(ligne).is_some_and(|include| {
+            project
+                .chapters
+                .iter()
+                .any(|chapter| relative_to_chapters(&chapter.path) == include)
+        });
+
+        if !is_chapter {
+            assembly.push_str(ligne);
+        }
+    }
+
+    assembly
 }
 
 /// Crée un projet vide : ses dossiers, son assemblage et sa bibliographie.
@@ -182,6 +334,12 @@ pub fn create(name: &str) -> std::io::Result<PathBuf> {
 
     if !main.exists() {
         std::fs::write(&main, MAIN_TEMPLATE)?;
+    }
+
+    let document = dir.join("document.tw");
+
+    if !document.exists() {
+        std::fs::write(&document, "")?;
     }
 
     let bibliography = dir.join("references.bib");
@@ -338,6 +496,23 @@ pub fn find_label(project: &Project, label: &str) -> Option<(PathBuf, usize)> {
     }
 
     None
+}
+
+/// Retrouve une clé de citation dans `references.bib`, à sa ligne.
+///
+/// Comme une étiquette, une citation vaut pour tout le document qui la compile,
+/// mais elle vit dans un fichier à part. Sauter d'un `@clé` du texte à son
+/// entrée dans le `.bib` est ce qui rend la bibliographie atteignable — sans
+/// quoi la référence reste un nom qu'on ne peut jamais voir.
+pub fn find_bibliography_entry(project: &Project, key: &str) -> Option<(PathBuf, usize)> {
+    let path = project.bibliography.as_ref()?;
+    let content = std::fs::read_to_string(path).ok()?;
+
+    let line = content
+        .lines()
+        .position(|line| super::parse_bib_entry_line(line).is_some_and(|entry| entry.key == key))?;
+
+    Some((path.clone(), line))
 }
 
 pub fn same_file(a: &Path, b: &Path) -> bool {
@@ -509,6 +684,7 @@ pub fn add_chapter_to_assembly(main: &Path, chapter: &Path) -> std::io::Result<(
 /// légitimement être identiques — un fichier vide, par exemple. Mieux vaut un
 /// doublon visible, qu'on supprime, qu'un ajout silencieusement ignoré, qui
 /// laisserait croire à une panne.
+#[cfg(test)]
 pub fn import_chapter(project: &Project, source: &Path) -> std::io::Result<PathBuf> {
     let chapters_dir = project.dir.join("chapitres");
 
@@ -548,6 +724,7 @@ pub fn import_chapter(project: &Project, source: &Path) -> std::io::Result<PathB
 /// doit annoncer ce que le texte annonce. Le préfixe numérique du nom de
 /// fichier n'est pas un titre, et le reprendre tel quel donnerait « 03-mon
 /// article » dans le panneau.
+#[cfg(test)]
 fn imported_title(source: &Path, content: &str) -> String {
     let heading = content.lines().find_map(|line| {
         // Un titre de niveau 1 seulement : `==` est un sous-titre, et
@@ -571,6 +748,7 @@ fn imported_title(source: &Path, content: &str) -> String {
 /// Le numéro est déjà le premier libre, donc une collision suppose un fichier
 /// que l'analyse n'a pas su lire comme un chapitre. On ne veut pas pour autant
 /// écraser un fichier existant parce qu'il porte le même nom.
+#[cfg(test)]
 fn free_chapter_path(dir: &Path, order: u32, slug: &str) -> PathBuf {
     let mut path = dir.join(format!("{order:02}-{slug}.typ"));
 
@@ -594,21 +772,63 @@ fn add_include(main: &Path, chapter: &Path) -> std::io::Result<()> {
     }
 
     let mut content = std::fs::read_to_string(main).unwrap_or_else(|_| MAIN_TEMPLATE.to_string());
+    let include = format!("#include \"{}\"", relative.display());
 
-    if !content.ends_with('\n') {
-        content.push('\n');
+    if let Some(offset) = bibliography_offset(&content) {
+        let mut updated = String::with_capacity(content.len() + include.len() + 3);
+        let header = &content[..offset];
+        updated.push_str(header);
+
+        if !header.is_empty() && !header.ends_with('\n') {
+            updated.push('\n');
+        }
+
+        updated.push_str(&include);
+        updated.push_str("\n\n");
+        updated.push_str(&content[offset..]);
+        content = updated;
+    } else {
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+
+        content.push_str(&format!("\n{include}\n"));
     }
-
-    content.push_str(&format!("\n#include \"{}\"\n", relative.display()));
 
     std::fs::write(main, content)
 }
 
+/// Renvoie le début de la directive bibliographique non commentée, s'il y en a
+/// une, afin que les nouveaux chapitres restent avant elle dans l'assemblage.
+fn bibliography_offset(main: &str) -> Option<usize> {
+    let mut offset = 0;
+
+    for source_line in main.split_inclusive('\n') {
+        if is_bibliography_line(source_line) {
+            return Some(offset);
+        }
+
+        offset += source_line.len();
+    }
+
+    None
+}
+
+/// Une ligne porte-t-elle une directive bibliographique Typst, hors commentaire ?
+fn is_bibliography_line(source_line: &str) -> bool {
+    let line = source_line.trim_start();
+
+    !line.starts_with("//")
+        && line
+            .strip_prefix("#bibliography")
+            .is_some_and(|remainder| remainder.trim_start().starts_with('('))
+}
+
 /// Retire le `#include` correspondant à un chapitre.
 ///
-/// Retire aussi la ligne vide qui le précédait : c'est celle qu'`add_include`
-/// avait insérée comme séparateur. Sans cela, chaque ajout suivi d'un retrait
-/// laisserait une ligne blanche de plus dans l'assemblage.
+/// Retire aussi le séparateur posé par `add_include` — avant l'include dans les
+/// anciens assemblages, après lui lorsqu'il est placé avant la bibliographie —
+/// pour qu'un ajout suivi d'un retrait restaure le fichier à l'identique.
 fn remove_include(main: &Path, chapter: &Path) -> std::io::Result<()> {
     let Ok(content) = std::fs::read_to_string(main) else {
         return Ok(());
@@ -619,11 +839,27 @@ fn remove_include(main: &Path, chapter: &Path) -> std::io::Result<()> {
     let lines: Vec<&str> = content.lines().collect();
 
     let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut skip_bibliography_separator = false;
 
     for (index, line) in lines.iter().enumerate() {
+        if skip_bibliography_separator {
+            skip_bibliography_separator = false;
+            continue;
+        }
+
         if parse_include_line(line).as_ref() == Some(&wanted) {
-            // Le séparateur inséré juste avant l'include part avec lui.
-            if index > 0 && lines[index - 1].trim().is_empty() {
+            let bibliography_follows = lines
+                .get(index + 1)
+                .is_some_and(|line| line.trim().is_empty())
+                && lines
+                    .get(index + 2)
+                    .is_some_and(|line| is_bibliography_line(line));
+
+            if bibliography_follows {
+                // `add_include` a placé ce séparateur après l'include.
+                skip_bibliography_separator = true;
+            } else if index > 0 && lines[index - 1].trim().is_empty() {
+                // Dans l'assemblage historique, le séparateur précédait l'include.
                 let _ = kept.pop();
             }
 
@@ -734,6 +970,7 @@ pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 
 // L'assemblage : les chapitres sont inclus ici, dans l'ordre.
 // Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
+#bibliography("references.bib", style: "chicago-notes")
 "#;
 
 /// Bibliographie d'un nouveau projet.
@@ -812,6 +1049,31 @@ mod tests {
         assert_eq!(slug(""), "chapitre");
     }
 
+    /// Une clé de citation se retrouve dans `references.bib`, à sa ligne.
+    #[test]
+    fn a_bibliography_key_is_found_at_its_line() {
+        let dir = scratch("bibliographie");
+        let bib = dir.join("references.bib");
+
+        std::fs::write(
+            &bib,
+            "@article{dupont2023,\n  title = {Un titre},\n  author = {Dupont, Alice},\n}\n\n@book{intro,\n  title = {Introduction},\n}\n",
+        )
+        .unwrap();
+
+        let project = load(&dir);
+
+        assert_eq!(
+            find_bibliography_entry(&project, "dupont2023"),
+            Some((bib.clone(), 0))
+        );
+        assert_eq!(
+            find_bibliography_entry(&project, "intro"),
+            Some((bib.clone(), 5))
+        );
+        assert_eq!(find_bibliography_entry(&project, "absente"), None);
+    }
+
     /// Un identifiant de fichier ne doit jamais contenir d'espace ni de
     /// ponctuation : c'est ce qui évite les caractères à échapper dans
     /// l'assemblage.
@@ -887,6 +1149,194 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Le document intermédiaire est rattaché au projet, compté sans balisage
+    /// et reconnu comme un fichier appartenant au projet.
+    #[test]
+    fn a_project_loads_and_counts_its_writing_document() {
+        let dir = scratch("writing-document");
+        let path = dir.join("document.tw");
+        std::fs::write(&path, "# Titre\n\nDu **gras**.\n").unwrap();
+
+        let project = load(&dir);
+
+        assert_eq!(project.document.as_deref(), Some(path.as_path()));
+        assert_eq!(project.document_words, 3);
+        assert_eq!(project.words(), 3);
+        assert!(project.owns(&path));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une compilation du document unique omet les anciens includes de
+    /// chapitres, mais conserve les includes qui ne sont pas des chapitres.
+    #[test]
+    fn assembly_for_the_writing_document_skips_legacy_chapters() {
+        let dir = scratch("assembly-with-document");
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("chapitres/01-intro.typ"), "= Ancien\n").unwrap();
+        std::fs::write(dir.join("main.typ"), "").unwrap();
+
+        let project = load(&dir);
+        let main = "#include \"entete.typ\"\n#include \"chapitres/01-intro.typ\"\n#bibliography(\"references.bib\")\n";
+        let result = assembly_without_chapters(&project, main);
+
+        assert_eq!(
+            result,
+            "#include \"entete.typ\"\n#bibliography(\"references.bib\")\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un fichier `.tw` externe rejoint un projet vide, mais ne remplace jamais
+    /// un document qui contient déjà du texte.
+    #[test]
+    fn importing_a_writing_document_never_overwrites_work() {
+        let project_dir = scratch("import-writing-document");
+        let source_dir = scratch("source-writing-document");
+        let source = source_dir.join("source.tw");
+        std::fs::write(&source, "# Importé\n").unwrap();
+        let project = load(&project_dir);
+
+        let destination = import_writing_document(&project, &source).unwrap();
+
+        assert_eq!(destination, project_dir.join("document.tw"));
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "# Importé\n"
+        );
+
+        std::fs::write(&source, "# Remplacement\n").unwrap();
+        assert_eq!(
+            import_writing_document(&load(&project_dir), &source)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "# Importé\n"
+        );
+
+        let _ = std::fs::remove_dir_all(project_dir);
+        let _ = std::fs::remove_dir_all(source_dir);
+    }
+
+    /// Un fichier Typst importé est converti et ajouté au document unique,
+    /// sans remplacer le texte déjà rédigé.
+    #[test]
+    fn importing_typst_appends_to_the_writing_document() {
+        let dir = scratch("import-typst-into-document");
+        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).unwrap();
+        std::fs::write(dir.join("document.tw"), "Texte déjà présent.\n").unwrap();
+
+        let destination =
+            append_typst_to_document(&load(&dir), "= Section importée\n\nTexte *important*.\n")
+                .unwrap();
+        let document = crate::langage::parse(&std::fs::read_to_string(destination).unwrap());
+
+        assert_eq!(
+            document.texte_nu(),
+            "Texte déjà présent. Section importée Texte important."
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Les anciens chapitres simples sont réunis en respectant l'ordre de
+    /// l'assemblage, sans modifier les sources originales.
+    #[test]
+    fn migrate_chapters_into_one_writing_document() {
+        let dir = scratch("migrate-to-document");
+        let main = "#set text(lang: \"fr\")\n\n#include \"chapitres/02-suite.typ\"\n\n#include \"chapitres/01-intro.typ\"\n";
+        let first = "= Première partie\n\nTexte *important*.\n";
+        let second = "== Suite\n\nEncore du texte.\n";
+
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("main.typ"), main).unwrap();
+        std::fs::write(dir.join("chapitres/01-intro.typ"), first).unwrap();
+        std::fs::write(dir.join("chapitres/02-suite.typ"), second).unwrap();
+
+        let project = load(&dir);
+        let document_path = migrate_to_document(&project).unwrap();
+        let content = std::fs::read_to_string(&document_path).unwrap();
+        let document = crate::langage::parse(&content);
+
+        assert_eq!(
+            document
+                .blocs
+                .iter()
+                .filter_map(|bloc| match bloc {
+                    crate::langage::schema::Bloc::Titre { contenu, .. } => {
+                        Some(crate::langage::schema::inline_texte_nu(contenu))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec!["Suite", "Première partie"]
+        );
+        assert_eq!(std::fs::read_to_string(dir.join("main.typ")).unwrap(), main);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("chapitres/01-intro.typ")).unwrap(),
+            first
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("chapitres/02-suite.typ")).unwrap(),
+            second
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une destination vide n'empêche pas de récupérer les chapitres d'un
+    /// ancien projet ; seul un document non vide est conservé tel quel.
+    #[test]
+    fn migration_fills_an_existing_empty_writing_document() {
+        let dir = scratch("migrate-empty-writing-document");
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(
+            dir.join("main.typ"),
+            "#include \"chapitres/01-introduction.typ\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("chapitres/01-introduction.typ"),
+            "= Introduction\n\nTexte déjà écrit.\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("document.tw"), "\n").unwrap();
+
+        let path = migrate_to_document(&load(&dir)).unwrap();
+        let document = crate::langage::parse(&std::fs::read_to_string(path).unwrap());
+
+        assert_eq!(document.texte_nu(), "Introduction Texte déjà écrit.");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// La migration ne remplace jamais un document unique déjà rédigé.
+    #[test]
+    fn migration_preserves_a_nonempty_writing_document() {
+        let dir = scratch("migrate-nonempty-writing-document");
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(
+            dir.join("main.typ"),
+            "#include \"chapitres/01-ancien.typ\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("chapitres/01-ancien.typ"), "= Archive\n").unwrap();
+        std::fs::write(dir.join("document.tw"), "# Source actuelle\n").unwrap();
+
+        let path = migrate_to_document(&load(&dir)).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "# Source actuelle\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Un chapitre absent de l'assemblage doit être signalé : sans quoi il
     /// n'atteindrait jamais le PDF, et l'oubli ne se verrait qu'à l'export.
     #[test]
@@ -924,6 +1374,13 @@ mod tests {
 
         let with_chapter = std::fs::read_to_string(dir.join("main.typ")).unwrap();
         assert!(with_chapter.contains("#include \"chapitres/01-introduction.typ\""));
+        assert!(
+            with_chapter
+                .find("#include \"chapitres/01-introduction.typ\"")
+                .unwrap()
+                < with_chapter.find("#bibliography(").unwrap(),
+            "le chapitre doit être inclus avant la bibliographie"
+        );
         assert_eq!(load(&dir).chapters.len(), 1);
 
         remove_chapter(&project, &chapter).unwrap();

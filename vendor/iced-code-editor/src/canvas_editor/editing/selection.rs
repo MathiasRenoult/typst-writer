@@ -4,6 +4,11 @@ use crate::buffer::text_utils::{char_range_to_byte_range, char_to_byte_index};
 use crate::canvas_editor::CodeEditor;
 
 impl CodeEditor {
+    /// Returns the selected text of the primary cursor for host-side formatting.
+    pub fn selected_text(&self) -> Option<String> {
+        self.get_selected_text()
+    }
+
     /// Clears the current selection on all cursors.
     pub(crate) fn clear_selection(&mut self) {
         self.cursors.clear_all_selections();
@@ -13,9 +18,7 @@ impl CodeEditor {
     }
 
     /// Returns the primary cursor's selected text range in normalized order (start before end).
-    pub(crate) fn get_selection_range(
-        &self,
-    ) -> Option<((usize, usize), (usize, usize))> {
+    pub(crate) fn get_selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
         self.cursors.primary().selection_range()
     }
 
@@ -31,18 +34,13 @@ impl CodeEditor {
     }
 
     /// Extracts text between two positions from the buffer.
-    pub(crate) fn extract_text_range(
-        &self,
-        start: (usize, usize),
-        end: (usize, usize),
-    ) -> String {
+    pub(crate) fn extract_text_range(&self, start: (usize, usize), end: (usize, usize)) -> String {
         let mut result = String::new();
 
         if start.0 == end.0 {
             // Single line selection
             let line = self.buffer.line(start.0);
-            let (start_byte, end_byte) =
-                char_range_to_byte_range(line, start.1, end.1);
+            let (start_byte, end_byte) = char_range_to_byte_range(line, start.1, end.1);
             result.push_str(&line[start_byte..end_byte]);
         } else {
             // Multi-line selection
@@ -80,6 +78,15 @@ mod tests {
 
         let text = editor.get_selected_text();
         assert_eq!(text, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn selected_text_is_available_to_host_toolbars() {
+        let mut editor = CodeEditor::new("hello world", "txt");
+        editor.cursors.primary_mut().anchor = Some((0, 0));
+        editor.cursors.primary_mut().position = (0, 5);
+
+        assert_eq!(editor.selected_text(), Some("hello".to_string()));
     }
 
     #[test]

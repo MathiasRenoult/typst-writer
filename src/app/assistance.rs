@@ -31,12 +31,23 @@ pub(super) fn reserved_keys() -> Vec<iced::keyboard::Key> {
 
 /// Demande la liste au serveur, si le texte la demande à l'endroit du curseur.
 ///
-/// C'est la **frappe** qui décide, et rien d'autre : après chaque message de
-/// l'éditeur, on regarde le mot en cours. Le serveur répond plus tard, et la
-/// liste s'ouvre à ce moment-là — une réponse est un événement comme un autre.
-pub(super) fn request_completion(state: &mut State) -> Task<Message> {
+/// La frappe ouvre et filtre la liste ; un déplacement du curseur sans édition
+/// la ferme. Les événements de défilement et les autres messages sans effet sur
+/// le curseur gardent la liste ancrée à l'endroit courant.
+pub(super) fn request_completion(state: &mut State, content_changed: bool) -> Task<Message> {
     let content = state.editor.content();
     let offset = state.editor.cursor_offset();
+
+    let cursor_moved = state
+        .lsp
+        .completion
+        .as_ref()
+        .is_some_and(|open| open.should_close_after(offset, content_changed));
+    if cursor_moved {
+        close_completion(state);
+
+        return Task::none();
+    }
 
     let Some(context) = crate::lsp::completion::context(&content, offset) else {
         // Plus de déclencheur sous le curseur : la liste n'a plus lieu d'être.
@@ -46,10 +57,23 @@ pub(super) fn request_completion(state: &mut State) -> Task<Message> {
     };
 
     // Rien de neuf à demander : même déclencheur, même mot déjà tapé.
-    if let Some(open) = state.lsp.completion.as_ref()
+    if let Some(open) = state.lsp.completion.as_mut()
         && open.trigger == context.trigger
         && open.typed == context.typed
     {
+        // Un défilement ne change pas le curseur : garder la liste sans la
+        // redemander, en rafraîchissant seulement sa position de référence.
+        open.start = context.start;
+        open.cursor_offset = offset;
+
+        return Task::none();
+    }
+
+    // En Markdown, `#` est le marqueur saisi directement pour un titre, pas une
+    // commande à compléter. Réserver l'assistance locale aux vraies extensions
+    // du langage ; ainsi écrire `# ` ne fait pas clignoter une liste inutile.
+    if state.editor.is_intermediate() && context.trigger != crate::lsp::completion::CITATION {
+        close_completion(state);
         return Task::none();
     }
 
@@ -65,7 +89,9 @@ pub(super) fn request_completion(state: &mut State) -> Task<Message> {
                 .map(|entry| (entry.key.as_str(), entry.kind.as_str())),
         );
 
-        if !items.is_empty() {
+        if !items.is_empty() || state.editor.is_intermediate() {
+            // Le résultat local remplace toute réponse tinymist encore en vol.
+            close_completion(state);
             open_completion(state, items, &context);
 
             return Task::none();
@@ -89,7 +115,6 @@ pub(super) fn request_completion(state: &mut State) -> Task<Message> {
 
     let token = state.lsp.tokens;
     let position = crate::lsp::messages::position_of(&content, offset);
-    let anchor = state.editor.cursor_view_position();
 
     session.completion(
         position,
@@ -107,7 +132,7 @@ pub(super) fn request_completion(state: &mut State) -> Task<Message> {
             open.typed = context.typed;
             open.trigger = context.trigger;
             open.start = context.start;
-            open.anchor = anchor;
+            open.cursor_offset = offset;
         }
         None => {
             state.lsp.completion = Some(Completion {
@@ -117,7 +142,7 @@ pub(super) fn request_completion(state: &mut State) -> Task<Message> {
                 typed: context.typed,
                 trigger: context.trigger,
                 start: context.start,
-                anchor,
+                cursor_offset: offset,
             });
 
             state.editor.editor.set_reserved_keys(reserved_keys());
@@ -138,11 +163,25 @@ pub(super) fn request_definition(state: &mut State) -> Task<Message> {
     // Une **référence** désigne une étiquette du projet : c'est notre affaire, et
     // tinymist ne la résout pas — mesuré : sa vue s'arrête au fichier ouvert,
     // alors qu'une étiquette vaut pour tout le document.
-    if let Some(label) = crate::lsp::completion::reference(&content, offset)
-        && let Some((path, line)) = crate::project::find_label(&state.project, &label)
+    let reference = crate::lsp::completion::reference(&content, offset);
+
+    if let Some(label) = reference.as_deref()
+        && let Some((path, line)) = crate::project::find_label(&state.project, label)
     {
         // Toute réponse du serveur encore en vol devient périmée : elle ne doit
         // pas remplacer le saut qu'on vient de faire.
+        state.lsp.attention += 1;
+
+        return jump_to(state, &path, line, 0);
+    }
+
+    // Une **citation** `@clé` désigne une entrée de la bibliographie : le même
+    // geste qu'une étiquette, mais vers `references.bib`. C'est ce qui rend la
+    // référence atteignable — sans quoi la clé reste un nom qu'on ne peut jamais
+    // voir ni corriger.
+    if let Some(key) = reference.as_deref()
+        && let Some((path, line)) = crate::project::find_bibliography_entry(&state.project, key)
+    {
         state.lsp.attention += 1;
 
         return jump_to(state, &path, line, 0);
@@ -233,8 +272,8 @@ pub(super) fn jump_to(state: &mut State, path: &Path, line: usize, column: usize
 /// Ouvre la liste, ou la remplit si elle attendait déjà.
 ///
 /// **Une seule porte** : les clés du projet comme les éléments du serveur passent
-/// par ici, ce qui évite que les deux chemins divergent. Et une liste qui ne
-/// montrerait rien se ferme, plutôt que de retenir les touches pour rien.
+/// par ici, ce qui évite que les deux chemins divergent. Une recherche sans
+/// résultat reste affichée avec son état vide tant que le curseur n'a pas bougé.
 pub(super) fn open_completion(
     state: &mut State,
     items: Vec<crate::lsp::messages::CompletionItem>,
@@ -242,13 +281,7 @@ pub(super) fn open_completion(
 ) {
     let shown = crate::lsp::completion::matching(&items, &context.typed);
 
-    if shown.is_empty() {
-        close_completion(state);
-
-        return;
-    }
-
-    let anchor = state.editor.cursor_view_position();
+    let cursor_offset = state.editor.cursor_offset();
 
     match state.lsp.completion.as_mut() {
         Some(open) => {
@@ -258,7 +291,7 @@ pub(super) fn open_completion(
             open.typed = context.typed.clone();
             open.trigger = context.trigger;
             open.start = context.start;
-            open.anchor = anchor;
+            open.cursor_offset = cursor_offset;
         }
         None => {
             state.lsp.completion = Some(Completion {
@@ -268,7 +301,7 @@ pub(super) fn open_completion(
                 typed: context.typed.clone(),
                 trigger: context.trigger,
                 start: context.start,
-                anchor,
+                cursor_offset,
             });
 
             state.editor.editor.set_reserved_keys(reserved_keys());
@@ -280,6 +313,7 @@ pub(super) fn open_completion(
 pub(super) fn close_completion(state: &mut State) {
     if state.lsp.completion.take().is_some() {
         state.editor.editor.set_reserved_keys(Vec::new());
+        state.lsp.cancel_completion_request();
     }
 }
 
@@ -367,11 +401,10 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
         }
 
         Event::Completions { token, items } => {
-            state.lsp.awaiting = false;
-
             // Une réponse à une demande périmée : la frappe a continué depuis, et
-            // afficher cette liste-là montrerait ce qui n'est plus écrit.
-            if token != state.lsp.tokens {
+            // afficher cette liste-là montrerait ce qui n'est plus écrit. Elle ne
+            // termine pas non plus l'attente d'une réponse plus récente.
+            if !state.lsp.accept_completion_response(token) {
                 return Task::none();
             }
 
@@ -465,5 +498,29 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
 
             Task::none()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// La complétion reste tant que le curseur reste sur la même position ;
+    /// une édition continue le mot, mais une navigation ferme la liste.
+    #[test]
+    fn completion_closes_on_cursor_move_but_not_while_typing() {
+        let completion = Completion {
+            items: Vec::new(),
+            shown: Vec::new(),
+            selected: 0,
+            typed: "dupont".to_string(),
+            trigger: '@',
+            start: 4,
+            cursor_offset: 10,
+        };
+
+        assert!(!completion.should_close_after(10, false));
+        assert!(completion.should_close_after(9, false));
+        assert!(!completion.should_close_after(11, true));
     }
 }

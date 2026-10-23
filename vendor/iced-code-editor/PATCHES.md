@@ -1,7 +1,7 @@
 # iced-code-editor — copie vendorisée
 
 Ce dossier est une copie de `iced-code-editor` 0.5.2, dans laquelle ce projet
-apporte **cinq modifications**. Le reste du fichier est la version amont.
+apporte **neuf modifications**. Le reste du fichier est la version amont.
 
 Le raccordement se fait par `[patch.crates-io]` dans le `Cargo.toml` racine :
 
@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les cinq modifications
+## Les neuf modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -125,6 +125,48 @@ coloration ne dépendait pas du thème choisi.
 
 Le remède est la même invalidation, au même endroit que dans `set_theme`.
 
+### 6. Texte sélectionné exposé à la barre de mise en forme
+
+`src/canvas_editor/editing/selection.rs`, méthode `CodeEditor::selected_text`.
+
+L'éditeur sait extraire le texte sélectionné pour ses propres commandes, mais ne
+l'exposait qu'à l'intérieur du crate. La barre de mise en forme du projet doit
+pouvoir entourer la sélection avec le balisage de l'AST ; cette méthode publique
+renvoie donc le texte du curseur primaire, ou `None` sans sélection. Elle
+réutilise l'extraction Unicode existante, sans dupliquer les calculs d'octets.
+
+### 7. Auto-pairage des apostrophes configurable indépendamment
+
+`src/canvas_editor/mod.rs`, `src/canvas_editor/bool_options.rs`,
+`src/canvas_editor/config.rs` et `src/canvas_editor/input/update/text_input.rs`.
+
+Le réglage historique traitait les apostrophes comme les parenthèses. En français,
+`l'` devenait `l''`, ce qui obligeait l'utilisateur à franchir un caractère
+fantôme ; désactiver toutes les paires rendait en revanche les liens Markdown,
+notes et couleurs plus pénibles à écrire. Le nouveau booléen indépendant permet
+aux documents `.tw` d'auto-fermer les crochets, parenthèses et accolades tout en
+laissant `'` littéral. Les autres formats gardent leur comportement existant.
+
+### 8. Le texte de secours du surligneur reste opaque
+
+`src/canvas_editor/render/highlighting.rs`.
+
+Pour borner le temps de rendu des gros fichiers, syntect ne traite qu'un nombre
+limité de lignes par image. Une ligne profonde pas encore colorée retombait sur
+`style.text_color` ; avec un thème où cette couleur est transparente, le texte
+était sélectionnable mais invisible. Le secours prend maintenant la couleur de
+texte de la palette syntaxique (et force son opacité), comme les lignes déjà
+colorées. Un test épuisant le budget vérifie ce cas.
+
+### 9. Largeur réelle du canvas exposée à l'interface hôte
+
+`src/canvas_editor/metrics.rs`, méthode `CodeEditor::canvas_width`.
+
+`viewport_width` ne reçoit parfois sa mesure réelle qu'au premier événement de
+défilement. L'interface hôte en a besoin plus tôt pour borner ses bulles au
+panneau et pouvait donc les placer hors écran dans une fenêtre étroite. La
+nouvelle lecture renvoie la dernière largeur observée par le dessin du canvas.
+
 ## La feature `two-face` est nécessaire pour tester
 
 Les tests de ce crate **doivent** être lancés avec la feature, sinon il n'y a
@@ -145,12 +187,12 @@ texte brut sans le dire.
 
 ## Reprendre une nouvelle version amont
 
-Les trois modifications sont localisées dans quatre fichiers, à des endroits
-identifiables par les commentaires qui les entourent. Pour passer à une
+Les neuf modifications sont localisées dans les fichiers concernés, à des
+endroits identifiables par les commentaires qui les entourent. Pour passer à une
 version `N+1` :
 
 1. remplacer le contenu de ce dossier par la nouvelle version amont ;
-2. réappliquer les trois modifications ci-dessus ;
+2. réappliquer les neuf modifications ci-dessus ;
 3. vérifier que les tests ajoutés passent depuis ce dossier :
    `cargo test --lib --features two-face`.
 

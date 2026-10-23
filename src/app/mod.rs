@@ -1,9 +1,9 @@
 pub mod assistance;
 pub mod epreuves;
 mod fichiers;
-mod reglages;
 mod journal;
 pub mod message;
+mod reglages;
 pub mod state;
 mod themes;
 
@@ -61,6 +61,12 @@ impl State {
             .or_else(|| projects.first().cloned())
             .unwrap_or_else(|| crate::project::load(&crate::project::projects_dir()));
 
+        if let Err(error) = crate::project::migrate_to_document(&project) {
+            eprintln!("Migration vers document.tw : {error}");
+        }
+
+        let project = crate::project::load(&project.dir);
+
         let mut state = Self {
             editor: crate::editor::EditorState::default(),
             export_status: None,
@@ -100,9 +106,10 @@ impl State {
         let wanted = session
             .last_document
             .filter(|path| path.is_file())
-            .filter(|path| state.project.owns(path));
+            .filter(|path| state.project.document.as_deref() == Some(path.as_path()));
 
-        let chapter = wanted.or_else(|| {
+        let document = wanted.or_else(|| state.project.document.clone());
+        let chapter = document.or_else(|| {
             state
                 .project
                 .chapters
@@ -172,7 +179,7 @@ impl State {
         // Le compte de mots du document qu'on ouvre, tout de suite : la barre
         // d'état et le panneau le lisent, et attendre le prochain tic
         // afficherait un zéro entre-temps.
-        self.render.words = Some(crate::project::count_words(&self.editor.content()));
+        self.render.words = Some(self.content_word_count(&self.editor.content()));
         self.refresh_context();
         self.save_session();
     }
@@ -199,6 +206,24 @@ impl State {
         let Some(path) = self.editor.path.clone() else {
             return;
         };
+
+        if path.extension().is_some_and(|extension| extension == "tw") {
+            if self.lsp.document.take().is_some() {
+                if let Some(session) = self.lsp.session.as_mut() {
+                    session.close_document();
+                }
+            }
+
+            self.lsp.diagnostics.clear();
+            self.lsp.reported.clear();
+            if self.lsp.completion.take().is_some() {
+                self.editor.editor.set_reserved_keys(Vec::new());
+            }
+            self.lsp.hover = None;
+            self.lsp.awaiting = false;
+
+            return;
+        }
 
         let wanted = crate::lsp::client::Session::uri_for(&path);
 
@@ -276,13 +301,44 @@ impl State {
             std::fs::read_to_string(&self.project.main).unwrap_or_default()
         };
 
+        // `document.tw` est la source d'écriture unique même quand l'utilisateur
+        // édite `main.typ` : les anciens includes de chapitres sont écartés et le
+        // corps structuré est réinjecté en mémoire avant la bibliographie.
+        let is_intermediate = open
+            .as_deref()
+            .and_then(|path| path.extension())
+            .is_some_and(|extension| extension == "tw");
+        let writing_document = if is_intermediate {
+            self.editor.document.clone()
+        } else if assembly_is_open {
+            self.project
+                .document
+                .as_deref()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .map(|source| crate::langage::parse(&source))
+        } else {
+            None
+        };
+
+        if let Some(document) = writing_document {
+            let entry = crate::project::assembly_without_chapters(&self.project, &entry);
+
+            return crate::langage::pipeline::compilation_unit_document(
+                &self.project.dir,
+                &entry,
+                &document,
+            );
+        }
+
+        if is_intermediate {
+            let entry = crate::project::assembly_without_chapters(&self.project, &entry);
+
+            return crate::langage::pipeline::compilation_unit(&self.project.dir, &entry, &buffer);
+        }
+
         let overrides = match open {
             // L'assemblage est l'entrée : il n'a pas à figurer aussi en mémoire.
-            Some(path) if assembly_is_open => {
-                let _ = path;
-
-                Vec::new()
-            }
+            Some(_) if assembly_is_open => Vec::new(),
             Some(path) => vec![(path, buffer)],
             None => Vec::new(),
         };
@@ -344,8 +400,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::MiseEnPageImporter
         | Message::MiseEnPageImportee(_)
         | Message::MiseEnPageExporter
-        | Message::MiseEnPageNote(_) => crate::app::reglages::update(state, message)
-            .unwrap_or_else(Task::none),
+        | Message::MiseEnPageNote(_) => {
+            crate::app::reglages::update(state, message).unwrap_or_else(Task::none)
+        }
 
         // Le domaine des fichiers et du projet a son module.
         Message::NewFile
@@ -386,6 +443,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::DeleteTheme(_) => crate::app::themes::update(state, message),
 
         Message::Editor(message) => {
+            let content_changed = crate::editor::EditorState::message_may_change_content(&message);
+
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
             state.render.words_pending = true;
@@ -404,16 +463,27 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             };
 
-            // C'est la frappe qui décide de la liste, et elle seule : après
-            // chaque message de l'éditeur, on regarde si le texte demande une
-            // complétion à l'endroit du curseur.
-            let completion = request_completion(state);
+            // La frappe filtre la liste ; la navigation au curseur la ferme.
+            // Le défilement, lui, la garde ouverte et met à jour son ancre.
+            let completion = request_completion(state, content_changed);
 
             if crate::app::epreuves::actif("lsp") {
                 report_lsp(state);
             }
 
             Task::batch(vec![task, completion, suivi])
+        }
+
+        Message::Format(action) => {
+            if !state.editor.is_intermediate() {
+                return Task::none();
+            }
+
+            state.render.words_pending = true;
+            let edit = state.editor.apply_format(action).map(Message::Editor);
+            let completion = request_completion(state, true);
+
+            Task::batch([edit, completion])
         }
 
         Message::CompletionMove(delta) => {
@@ -458,15 +528,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // l'ancienne densité reste juste à l'écran, simplement remise à
             // l'échelle, jusqu'à l'arrivée de la nouvelle. Changer d'écran ne
             // doit pas faire disparaître le document.
-            state.render.image_hashes.clear();
-
             let total = state
                 .render
                 .document
                 .as_deref()
                 .map_or(0, crate::typst::render::page_count);
 
-            state.render.stale.extend(0..total);
+            state.render.invalidate_rasterization(total);
 
             rasterize_visible(state)
         }
@@ -526,7 +594,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             if state.render.words_pending {
                 let content = state.editor.content();
 
-                state.render.words = Some(crate::project::count_words(&content));
+                state.render.words = Some(state.content_word_count(&content));
                 state.render.words_pending = false;
 
                 // C'est **le** moment où l'on sait que le texte a changé, et le
@@ -579,13 +647,16 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // les pages visibles seront rasterisées à nouveau.
             state.render.revision += 1;
 
-            // Les entrées de pages qui n'existent plus sont retirées, pour ne
-            // pas retenir des images inutilisées.
+            // Les tâches de l'ancienne révision peuvent encore finir, mais
+            // chacune porte sa propre clé et ne réserve plus de place pour la
+            // nouvelle. Le cache et les pages périmées, eux, sont bornés au
+            // nombre de pages actuel.
+            state.render.rendering.clear();
+
             if let Some(document) = state.render.document.as_deref() {
                 let total = crate::typst::render::page_count(document);
 
                 state.render.page_cache.retain(|index, _| *index < total);
-                state.render.rendering.retain(|index| *index < total);
                 state.render.stale.retain(|index| *index < total);
             }
 
@@ -597,7 +668,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             state.render.chapter_page = chapter_page;
-            state.render.outline = outcome.outline;
+            state.render.outline = source_outline(state, outcome.outline);
 
             // Toutes les pages sont périmées, et pas seulement les visibles :
             // l'image d'une page hors écran appartient elle aussi à la
@@ -620,7 +691,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::PageRendered(revision, index, image) => {
-            state.render.rendering.remove(&index);
+            state.render.finish_page_render(revision, index);
 
             // Une compilation est arrivée pendant le rendu : cette image
             // appartient à un document dépassé, on la jette plutôt que de
@@ -686,7 +757,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // l'échelle, jusqu'à l'arrivée des nouvelles.
             if state.render.viewport != Some(bounds) {
                 state.render.viewport = Some(bounds);
-                state.render.image_hashes.clear();
 
                 let total = state
                     .render
@@ -694,7 +764,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     .as_deref()
                     .map_or(0, crate::typst::render::page_count);
 
-                state.render.stale.extend(0..total);
+                // Une rasterisation lancée à l'ancienne taille ne satisfait
+                // pas le nouveau viewport, même si elle porte sur la même page.
+                state.render.invalidate_rasterization(total);
             }
 
             // **Rien de neuf : ne rien faire.** C'est la garde qui empêche un
@@ -722,6 +794,27 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             rasterize_visible(state)
+        }
+
+        Message::PreviewZoom(zoom) => set_preview_zoom(state, zoom),
+
+        Message::PreviewZoomStep(step) => {
+            let box_size = state
+                .render
+                .viewport
+                .unwrap_or_else(crate::ui::preview::default_viewport);
+            let page = state
+                .render
+                .document
+                .as_deref()
+                .and_then(|document| {
+                    let index = state.render.visible.map_or(0, |(first, _)| first);
+                    crate::typst::render::page_size(document, index)
+                })
+                .unwrap_or((595.3, 841.9));
+            let zoom = crate::ui::preview::stepped_zoom(state.render.zoom, step, box_size, page);
+
+            set_preview_zoom(state, zoom)
         }
 
         Message::SaveTick => {
@@ -878,7 +971,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.render.followed_page = Some(entry.page);
 
             let aller = match entry.file {
-                Some(path) => crate::app::assistance::jump_to(state, &path, entry.line, 0),
+                Some(path) => {
+                    crate::app::assistance::jump_to(state, &path, entry.line.saturating_sub(1), 0)
+                }
                 None => Task::none(),
             };
 
@@ -1105,9 +1200,16 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
         .unwrap_or_else(crate::ui::preview::default_viewport);
     let scale_factor = state.scale_factor;
 
-    let wanted: Vec<usize> = (first..=last.min(total.saturating_sub(1)))
+    let candidates: Vec<usize> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| state.render.stale.contains(index))
-        .filter(|index| !state.render.rendering.contains(index))
+        .collect();
+
+    // Réserver avant de construire les tâches : deux changements de viewport
+    // qui arrivent avant la réponse ne doivent pas rasteriser deux fois la
+    // même page. Chaque tâche conserve ainsi un seul tampon RGBA en mémoire.
+    let wanted: Vec<usize> = candidates
+        .into_iter()
+        .filter(|index| state.render.begin_page_render(revision, *index))
         .collect();
 
     state.render.requested += wanted.len() as u64;
@@ -1123,9 +1225,10 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
             // calcule page par page, parce qu'une page en paysage n'a pas le
             // même rapport qu'une page en portrait.
             let density = crate::typst::render::pixel_per_pt(
-                crate::ui::preview::display_ratio(
+                crate::ui::preview::display_ratio_for_zoom(
                     box_size,
                     crate::typst::render::page_size(&document, index).unwrap_or((595.3, 841.9)),
+                    state.render.zoom,
                 ),
                 scale_factor,
             );
@@ -1154,8 +1257,7 @@ fn follow_editor_scroll(state: &mut State) -> Task<Message> {
     let hauteur = f64::from(state.editor.editor.line_height()).max(1.0);
     let ligne = (f64::from(state.editor.editor.viewport_scroll()) / hauteur).ceil() as usize + 1;
 
-    let Some(index) =
-        crate::typst::render::entry_covering(&state.render.outline, &path, ligne)
+    let Some(index) = crate::typst::render::entry_covering(&state.render.outline, &path, ligne)
     else {
         return Task::none();
     };
@@ -1187,12 +1289,13 @@ fn scroll_preview_to_page(state: &State, page: usize) -> Task<Message> {
         return Task::none();
     };
 
-    let sizes = crate::ui::preview::sizes_of(
+    let sizes = crate::ui::preview::sizes_of_with_zoom(
         &document,
         state
             .render
             .viewport
             .unwrap_or_else(crate::ui::preview::default_viewport),
+        state.render.zoom,
     );
 
     let offset = crate::ui::preview::scroll_offset_for_page(&sizes, page);
@@ -1240,6 +1343,103 @@ fn follow_chapter(state: &mut State) -> Task<Message> {
     state.render.followed_chapter = state.editor.path.clone();
 
     scroll_preview_to_page(state, page)
+}
+
+/// Applique un mode de zoom et invalide les images rasterisées à l'ancienne
+/// échelle, sans élargir le cache au-delà du voisinage visible.
+fn set_preview_zoom(state: &mut State, zoom: crate::app::state::PreviewZoomMode) -> Task<Message> {
+    let zoom = crate::ui::preview::normalize_zoom(zoom);
+
+    if state.render.zoom == zoom {
+        return Task::none();
+    }
+
+    state.render.zoom = zoom;
+    let total = state
+        .render
+        .document
+        .as_deref()
+        .map_or(0, crate::typst::render::page_count);
+    state.render.invalidate_rasterization(total);
+    state.render.bound_page_cache();
+
+    rasterize_visible(state)
+}
+
+/// Relie les titres composés par Typst aux lignes du `document.tw` canonique.
+///
+/// L'assemblage peut aussi être ouvert pour régler ses normes : les destinations
+/// du sommaire restent alors le document unique, pas les anciens chapitres
+/// inclus par l'archive Typst. Les titres bruts sans équivalent dans l'AST sont
+/// écartés puisqu'ils n'ont pas de ligne `.tw` à ouvrir.
+fn source_outline(
+    state: &State,
+    outline: Vec<crate::typst::render::OutlineEntry>,
+) -> Vec<crate::typst::render::OutlineEntry> {
+    if state.editor.is_intermediate() {
+        let Some(path) = state.editor.path.clone() else {
+            return Vec::new();
+        };
+        let Some(document) = state.editor.document.as_ref() else {
+            return Vec::new();
+        };
+
+        return map_outline_to_source(path, &state.editor.content(), document, outline);
+    }
+
+    let assembly_is_open = state
+        .editor
+        .path
+        .as_deref()
+        .is_some_and(|path| crate::project::same_file(path, &state.project.main));
+    if !assembly_is_open {
+        return outline;
+    }
+
+    let Some(path) = state.project.document.clone() else {
+        return outline;
+    };
+    let Ok(source) = std::fs::read_to_string(&path) else {
+        return outline;
+    };
+    let document = crate::langage::parse(&source);
+
+    map_outline_to_source(path, &source, &document, outline)
+}
+
+fn map_outline_to_source(
+    path: std::path::PathBuf,
+    source: &str,
+    document: &crate::langage::Document,
+    outline: Vec<crate::typst::render::OutlineEntry>,
+) -> Vec<crate::typst::render::OutlineEntry> {
+    let source_headings = crate::langage::parse::titres_source(source, document);
+    let mut next_heading = 0;
+
+    outline
+        .into_iter()
+        .filter_map(|mut entry| {
+            let found =
+                source_headings
+                    .iter()
+                    .enumerate()
+                    .skip(next_heading)
+                    .find(|(_, heading)| {
+                        heading.level as usize == entry.level
+                            && heading
+                                .text
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                                == entry.text.split_whitespace().collect::<Vec<_>>().join(" ")
+                    });
+            let (index, heading) = found?;
+            next_heading = index + 1;
+            entry.file = Some(path.clone());
+            entry.line = heading.line;
+            Some(entry)
+        })
+        .collect()
 }
 
 /// Lance la compilation du document (moteur Typst en bibliothèque).
@@ -1390,3 +1590,49 @@ pub fn startup() -> Task<Message> {
     ])
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Le sommaire Typst pointe vers la ligne source `.tw`, pas vers le fichier
+    /// généré en mémoire ; les titres sans équivalent source sont écartés.
+    #[test]
+    fn intermediate_outline_targets_editable_source_lines() {
+        let source = "# Introduction\n\n## Section\n";
+        let document = crate::langage::parse(source);
+        let generated = std::path::PathBuf::from("document.generated.typ");
+        let outline = vec![
+            crate::typst::render::OutlineEntry {
+                level: 1,
+                text: "Introduction".to_string(),
+                file: Some(generated.clone()),
+                line: 1,
+                page: 0,
+            },
+            crate::typst::render::OutlineEntry {
+                level: 1,
+                text: "Titre Typst brut".to_string(),
+                file: Some(generated.clone()),
+                line: 4,
+                page: 1,
+            },
+            crate::typst::render::OutlineEntry {
+                level: 2,
+                text: "Section".to_string(),
+                file: Some(generated),
+                line: 8,
+                page: 2,
+            },
+        ];
+
+        let path = std::path::PathBuf::from("document.tw");
+        let mapped = map_outline_to_source(path.clone(), source, &document, outline);
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].file.as_deref(), Some(path.as_path()));
+        assert_eq!(mapped[0].line, 1);
+        assert_eq!(mapped[0].page, 0);
+        assert_eq!(mapped[1].line, 3);
+        assert_eq!(mapped[1].page, 2);
+    }
+}

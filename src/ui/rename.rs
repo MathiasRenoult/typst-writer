@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text, text_input, Space};
+use iced::widget::{Space, button, column, container, row, text, text_input};
 use iced::{Element, Length};
 
 use crate::app::message::Message;
@@ -58,7 +58,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
             for fichier in changements {
                 col = col.push(
                     palette
-                        .label(format!("{} — {}", fichier.path.display(), fichier.edits.len()))
+                        .label(format!(
+                            "{} — {}",
+                            fichier.path.display(),
+                            fichier.edits.len()
+                        ))
                         .size(11),
                 );
             }
@@ -71,7 +75,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         button(text("Demander").size(12))
             .on_press(Message::SymbolRenameAsk)
             .padding([6, 10]),
-
         button(text("Appliquer").size(12))
             .on_press_maybe(
                 renommage

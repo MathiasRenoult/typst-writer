@@ -44,7 +44,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .color(palette.text),
             Space::new().width(Length::Fill),
             palette
-                .label(format!("{} chapitre(s)", project.chapters.len()))
+                .label(if project.document.is_some() {
+                    "1 document".to_string()
+                } else {
+                    format!("{} chapitre(s)", project.chapters.len())
+                })
                 .size(11)
                 .color(palette.text_muted),
         ]
@@ -53,62 +57,127 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     content = content.push(Space::new().height(14));
 
-    // ---- Les chapitres ----
-    content = content.push(section_title("Chapitres", palette));
+    // Le jalon 2 réduit le projet à un document d'écriture unique. Les anciens
+    // chapitres restent conservés sur disque ; ils ne sont plus la navigation
+    // principale après leur migration.
+    if let Some(document) = project.document.as_ref() {
+        content = content.push(section_title("Document", palette));
 
-    if project.chapters.is_empty() {
-        content = content.push(
+        let active = state.editor.path.as_deref() == Some(document.as_path());
+        let line = row![
+            theme::icon(
+                lucide_icons::iced::icon_file_text::<Theme>(),
+                14.0,
+                if active {
+                    palette.accent
+                } else {
+                    palette.text_muted
+                },
+            ),
+            palette.label("document.tw").size(13).color(if active {
+                palette.accent
+            } else {
+                palette.text
+            }),
+            Space::new().width(Length::Fill),
             palette
-                .label("Aucun chapitre.")
-                .size(12)
+                .label(format_count(state.word_count()))
+                .size(11)
                 .color(palette.text_muted),
+        ]
+        .spacing(7)
+        .align_y(Alignment::Center);
+
+        // La liaison du bouton à l'éditeur fait de ce fichier l'unique point
+        // d'entrée pour écrire ; les anciens chapitres ne sont plus édités par
+        // erreur depuis la liste.
+        content = content.push(
+            button(line)
+                .on_press(Message::OpenChapter(document.clone()))
+                .width(Fill)
+                .height(Length::Fixed(ENTRY_HEIGHT))
+                .padding([4, 8])
+                .style(move |t, status| entry_style(t, status, palette, active)),
         );
-    }
 
-    let active = state.editor.path.clone();
+        if !project.chapters.is_empty() {
+            content = content.push(
+                palette
+                    .label(format!(
+                        "{} ancien(s) chapitre(s) conservé(s) en archive",
+                        project.chapters.len()
+                    ))
+                    .size(10)
+                    .color(palette.text_muted),
+            );
+        }
 
-    for chapter in &project.chapters {
-        content = content.push(chapter_row(
-            chapter,
-            state.renaming.as_ref(),
-            active.as_deref() == Some(chapter.path.as_path()),
-            palette,
-        ));
-    }
+        let orphan_count = project.orphan_chapters().count();
+        if orphan_count > 0 {
+            content = content.push(
+                palette
+                    .label(format!(
+                        "{orphan_count} archive(s) hors assemblage — importez-les via Ouvrir"
+                    ))
+                    .size(10)
+                    .color(palette.warning),
+            );
+        }
+    } else {
+        // Projet ancien en cours de migration : il reste navigable tant que le
+        // document unique n'a pas pu être créé.
+        content = content.push(section_title("Chapitres", palette));
 
-    // Un chapitre absent de l'assemblage ne finira pas dans le PDF. C'est le
-    // seul avertissement que ce panneau se permette, parce que l'oubli serait
-    // invisible autrement.
-    let orphans = project.orphan_chapters().count();
+        if project.chapters.is_empty() {
+            content = content.push(
+                palette
+                    .label("Aucun chapitre.")
+                    .size(12)
+                    .color(palette.text_muted),
+            );
+        }
 
-    if orphans > 0 {
+        let active = state.editor.path.clone();
+
+        for chapter in &project.chapters {
+            content = content.push(chapter_row(
+                chapter,
+                state.renaming.as_ref(),
+                active.as_deref() == Some(chapter.path.as_path()),
+                palette,
+            ));
+        }
+
+        let orphans = project.orphan_chapters().count();
+
+        if orphans > 0 {
+            content = content.push(Space::new().height(8));
+            content = content.push(
+                palette
+                    .label(format!(
+                        "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
+                    ))
+                    .size(11)
+                    .color(palette.warning),
+            );
+        }
+
         content = content.push(Space::new().height(8));
         content = content.push(
-            palette
-                .label(format!(
-                    "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
-                ))
-                .size(11)
-                .color(palette.warning),
+            button(
+                row![
+                    theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
+                    palette.label("Nouveau chapitre").size(13),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::NewChapter)
+            .width(Fill)
+            .padding([7, 10])
+            .style(move |t, status| primary_style(t, status, palette)),
         );
     }
-
-    content = content.push(Space::new().height(8));
-
-    content = content.push(
-        button(
-            row![
-                theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
-                palette.label("Nouveau chapitre").size(13),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .on_press(Message::NewChapter)
-        .width(Fill)
-        .padding([7, 10])
-        .style(move |t, status| primary_style(t, status, palette)),
-    );
 
     // ---- Le sommaire ----
     //

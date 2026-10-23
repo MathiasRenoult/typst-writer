@@ -3,8 +3,12 @@ use crate::app::{Message, State};
 use crate::app::state::Completion;
 use crate::ui::theme::Palette;
 
+use iced::advanced::layout::{self, Limits};
+use iced::advanced::overlay;
+use iced::advanced::widget::Tree;
+use iced::advanced::{Clipboard, Layout, Shell, Widget};
 use iced::widget::{button, column, container, row, space};
-use iced::{Element, Fill, Length, Padding, alignment};
+use iced::{Element, Event, Fill, Length, Padding, Rectangle, Size, Vector, alignment, mouse};
 
 /// Mesure de lecture : la largeur maximale du texte, en pixels.
 ///
@@ -35,6 +39,24 @@ const COMPLETION_ROW: f32 = 28.0;
 /// Combien d'éléments la liste montre d'un coup.
 const COMPLETION_VISIBLE: usize = 8;
 
+fn empty_completion_message(trigger: char, items_empty: bool, awaiting: bool) -> &'static str {
+    if awaiting {
+        return "Recherche des suggestions…";
+    }
+
+    if trigger == crate::lsp::completion::CITATION {
+        if items_empty {
+            "Aucune référence dans le projet"
+        } else {
+            "Aucune référence correspondante"
+        }
+    } else if items_empty {
+        "Aucune suggestion disponible"
+    } else {
+        "Aucune suggestion correspondante"
+    }
+}
+
 /// Marge en bas : de quoi voir venir la suite sans que le texte touche le bord.
 const BOTTOM_MARGIN: f32 = 64.0;
 
@@ -44,9 +66,297 @@ const BOTTOM_MARGIN: f32 = 64.0;
 /// couvrirait le texte qu'on est en train d'écrire.
 const HOVER_LINES: usize = 12;
 
-/// Hauteur approximative d'une ligne de survol. Estimation, comme celle de la
-/// liste : la place calculée est bornée au panneau.
-const HOVER_ROW: f32 = 18.0;
+/// Ce qui flotte au-dessus de l'éditeur : liste de complétion ou survol.
+struct Bulle<'a> {
+    contenu: Element<'a, Message>,
+    /// Coin haut-gauche, en coordonnées de la vue de l'éditeur.
+    position: iced::Point,
+}
+
+/// L'éditeur, et ce qui flotte au-dessus de lui.
+///
+/// Le recouvrement est un véritable `overlay` iced, pas un enfant de pile.
+/// Deux conséquences, mesurées l'une contre l'autre :
+///
+/// - il ne participe pas à la mise en page : ouvrir la liste ne fait pas
+///   repartir le défilement de l'éditeur de zéro, et l'arbre n'a plus à garder
+///   une forme invariable pour préserver ce défilement ;
+/// - iced lui donne les événements d'abord, mais ne les retire à la base que là
+///   où la bulle est réellement interactive (ses boutons). Un clic hors de la
+///   bulle tombe donc dans l'éditeur, et le placement du curseur reste, de bout
+///   en bout, l'affaire de l'éditeur.
+struct EditorOverlay<'a> {
+    editor: Element<'a, Message>,
+    bulle: Option<Bulle<'a>>,
+}
+
+/// Ce que la bulle doit montrer, et où.
+///
+/// Elle ne sert plus qu'au **survol** (tinymist) : la complétion s'affiche
+/// désormais dans une fenêtre fixe au centre, pas près du curseur.
+fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
+    if let Some(hover) = state.lsp.hover.as_ref() {
+        return Some(Bulle {
+            contenu: hover_popup(hover, palette),
+            position: hover.anchor,
+        });
+    }
+
+    // ÉPREUVE : une bulle de forme connue, sans rien à proposer.
+    if crate::app::epreuves::menu_ouvert() {
+        let essai = container(
+            column![
+                palette.label("premier essai").size(13),
+                palette.label("deuxieme essai").size(13),
+                palette.label("troisieme essai").size(13),
+            ]
+            .spacing(4.0),
+        )
+        .padding(8)
+        .style(bubble_style(palette));
+
+        return Some(Bulle {
+            contenu: essai.into(),
+            position: iced::Point::new(80.0, 80.0),
+        });
+    }
+
+    None
+}
+
+impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
+    fn size(&self) -> Size<Length> {
+        self.editor.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.editor.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &Limits,
+    ) -> layout::Node {
+        self.editor
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        let vide: Element<'_, Message> = iced::widget::Space::new()
+            .width(Length::Fixed(0.0))
+            .height(Length::Fixed(0.0))
+            .into();
+
+        let bulle = match &self.bulle {
+            Some(bulle) => &bulle.contenu,
+            None => &vide,
+        };
+
+        vec![Tree::new(&self.editor), Tree::new(bulle)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        let vide: Element<'_, Message> = iced::widget::Space::new()
+            .width(Length::Fixed(0.0))
+            .height(Length::Fixed(0.0))
+            .into();
+
+        let bulle = match &self.bulle {
+            Some(bulle) => &bulle.contenu,
+            None => &vide,
+        };
+
+        tree.diff_children(&[self.editor.as_widget(), bulle.as_widget()]);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.editor.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.editor.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.editor.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        self.editor
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        _renderer: &iced::Renderer,
+        _viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        let bulle = self.bulle.as_mut()?;
+
+        Some(overlay::Element::new(Box::new(BulleRecouvrement {
+            contenu: &mut bulle.contenu,
+            arbre: &mut tree.children[1],
+            position: layout.position()
+                + translation
+                + Vector::new(bulle.position.x, bulle.position.y),
+        })))
+    }
+}
+
+impl<'a> From<EditorOverlay<'a>> for Element<'a, Message> {
+    fn from(widget: EditorOverlay<'a>) -> Self {
+        Element::new(widget)
+    }
+}
+
+/// Le recouvrement lui-même : la bulle, dessinée à une place absolue.
+struct BulleRecouvrement<'a, 'b> {
+    contenu: &'b mut Element<'a, Message>,
+    arbre: &'b mut Tree,
+    /// Coin haut-gauche, en coordonnées absolues de la fenêtre.
+    position: iced::Point,
+}
+
+impl overlay::Overlay<Message, iced::Theme, iced::Renderer> for BulleRecouvrement<'_, '_> {
+    fn layout(&mut self, renderer: &iced::Renderer, bounds: Size) -> layout::Node {
+        let contenu = self.contenu.as_widget_mut().layout(
+            self.arbre,
+            renderer,
+            &Limits::new(Size::ZERO, bounds),
+        );
+
+        let size = contenu.bounds().size();
+
+        // La bulle reste dans la fenêtre, quoi qu'il arrive.
+        let x = self
+            .position
+            .x
+            .clamp(0.0, (bounds.width - size.width).max(0.0));
+        let y = self
+            .position
+            .y
+            .clamp(0.0, (bounds.height - size.height).max(0.0));
+
+        layout::Node::with_children(size, vec![contenu]).translate(Vector::new(x, y))
+    }
+
+    fn draw(
+        &self,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+    ) {
+        self.contenu.as_widget().draw(
+            self.arbre,
+            renderer,
+            theme,
+            style,
+            layout.children().next().unwrap(),
+            cursor,
+            &Rectangle::with_size(Size::INFINITE),
+        );
+    }
+
+    fn update(
+        &mut self,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        self.contenu.as_widget_mut().update(
+            self.arbre,
+            event,
+            layout.children().next().unwrap(),
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            &Rectangle::with_size(Size::INFINITE),
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.contenu.as_widget().mouse_interaction(
+            self.arbre,
+            layout.children().next().unwrap(),
+            cursor,
+            &Rectangle::with_size(Size::INFINITE),
+            renderer,
+        )
+    }
+}
 
 /// La zone de rédaction.
 ///
@@ -56,160 +366,13 @@ const HOVER_ROW: f32 = 18.0;
 pub fn view(state: &State) -> Element<'_, Message> {
     let palette = state.resolved.palette;
 
-    // La largeur demandée est fixe, mais iced la borne à l'espace disponible :
-    // sur une fenêtre étroite le texte se réduit au lieu de déborder, et les
-    // marges latérales prennent le relais.
     let editor = state.editor.editor.view().map(Message::Editor);
 
-    // Ce qui se dessine **par-dessus** le texte, à l'endroit du curseur : c'est
-    // là que le regard est déjà, et l'on n'a pas à quitter la ligne qu'on écrit.
-    // Les deux ne s'ouvrent jamais ensemble — demander l'un ferme l'autre — donc
-    // il n'y a jamais qu'un seul cas à traiter.
-    let overlay = match state.lsp.completion.as_ref() {
-        Some(open) if !open.shown.is_empty() => Some((
-            completion_popup(open, palette),
-            open.shown.len().min(COMPLETION_VISIBLE) as f32 * COMPLETION_ROW + 2.0,
-            open.anchor,
-        )),
-        _ => state.lsp.hover.as_ref().map(|hover| {
-            let height =
-                clamp_lines(&hover.text, HOVER_LINES).lines().count() as f32 * HOVER_ROW + 2.0;
+    let bulle = bulle(state, palette);
 
-            (hover_popup(hover, palette), height, hover.anchor)
-        }),
-    };
+    crate::app::epreuves::note_vue(state.editor.editor.viewport_scroll(), bulle.is_some());
 
-    // ÉPREUVE (`TYPST_WRITER_EPREUVE_MENU=1`) : un recouvrement de forme connue,
-    // dessiné alors même que rien n'est proposé.
-    //
-    // Un menu **vide** ne prouve rien : une bulle sans ligne n'a pas de hauteur,
-    // et son absence à l'écran ne dit pas si c'est la structure qui l'empêche de
-    // paraître. Ici il a trois lignes, une bulle colorée et une place connue.
-    let overlay = match overlay {
-        Some(overlay) => Some(overlay),
-        None if crate::app::epreuves::menu_ouvert() => {
-            let essai = container(
-                column![
-                    palette.label("premier essai").size(13),
-                    palette.label("deuxieme essai").size(13),
-                    palette.label("troisieme essai").size(13),
-                ]
-                .spacing(4.0),
-            )
-            .padding(8)
-            .style(bubble_style(palette));
-
-            Some((
-                essai.into(),
-                3.0 * COMPLETION_ROW + 2.0,
-                iced::Point::new(80.0, 80.0),
-            ))
-        }
-        None => None,
-    };
-
-    // **L'arbre a toujours la même forme, avec ou sans bulle.**
-    //
-    // Le défilement de l'éditeur vit dans l'état de son propre ascenseur, et cet
-    // état est rattaché au *chemin des widgets* : faire d'un conteneur simple une
-    // pile le recrée, et le défilement repart de zéro. Mesuré, la nuit du
-    // rapport : défilement 7267, ouverture de la bulle, défilement **0** une
-    // image plus tard — exactement « dès que je mets # ou @, l'éditeur scroll
-    // tout en haut », et la fermeture fait de même. L'arbre invariable conserve
-    // le défilement à travers les deux transitions (17086 mesuré).
-    //
-    // Un commentaire prétendait qu'avec une forme invariable le menu ne se
-    // dessinait plus : refait, le constat était faux — les deux formes rendent
-    // des images **pixel identiques**, bulle comprise.
-    //
-    // L'enfant de remplacement a une taille nulle : présent, donc le chemin des
-    // widgets ne bouge pas ; invisible, donc la mise en page ne change pas d'un
-    // pixel. À ne pas confondre avec un remplisseur, qui s'étendrait et donnerait
-    // sa taille à la pile.
-    crate::app::epreuves::note_vue(state.editor.editor.viewport_scroll(), overlay.is_some());
-
-    // **L'arbre a toujours la même forme, avec ou sans bulle.**
-    //
-    // Le défilement de l'éditeur vit dans l'état de son propre ascenseur, et cet
-    // état est rattaché au *chemin des widgets* : faire d'un conteneur simple une
-    // pile le recrée, et le défilement repart de zéro. Mesuré, la nuit du
-    // rapport : défilement 7267, ouverture de la bulle, défilement **0** une
-    // image plus tard — exactement « dès que je mets # ou @, l'éditeur scroll
-    // tout en haut », et la fermeture fait de même. L'arbre invariable conserve
-    // le défilement à travers les deux transitions (17086 mesuré).
-    //
-    // Un commentaire prétendait qu'avec une forme invariable le menu ne se
-    // dessinait plus : refait, le constat était faux — les deux formes rendent
-    // des images **pixel identiques**, bulle comprise.
-    //
-    // L'enfant de remplacement a une taille nulle : présent, donc le chemin des
-    // widgets ne bouge pas ; invisible, donc la mise en page ne change pas d'un
-    // pixel. À ne pas confondre avec un remplisseur, qui s'étendrait et donnerait
-    // sa taille à la pile.
-    // Le défilement **vu par la vue**, et non celui de l'état.
-    //
-    // Les deux ne disent pas la même chose : l'état est lu avant que l'arbre de
-    // widgets ne soit reconstruit, si bien qu'un défilement perdu pendant la
-    // reconstruction ne s'y voit jamais. C'est ici, et ici seulement, qu'on peut
-    // constater qu'un menu ouvert fait remonter l'éditeur en tête de document.
-    if std::env::var_os("TYPST_WRITER_VUE").is_some() {
-        // Seulement au changement : l'image passe soixante fois par seconde, et
-        // ce qu'on cherche est exactement la *discontinuité*.
-        static DERNIERE: std::sync::Mutex<Option<(u32, bool)>> = std::sync::Mutex::new(None);
-
-        let vue = (
-            state.editor.editor.viewport_scroll().to_bits(),
-            overlay.is_some(),
-        );
-
-        let mut derniere = DERNIERE.lock().unwrap();
-
-        if *derniere != Some(vue) {
-            println!(
-                "[vue] défilement {:.0} | liste {}",
-                f32::from_bits(vue.0),
-                if vue.1 { "ouverte" } else { "fermée" }
-            );
-
-            *derniere = Some(vue);
-        }
-    }
-
-    let bulle: Element<'_, Message> = match overlay {
-        Some((content, height, anchor)) => {
-            let panneau = panel_height(state);
-            let top = crate::lsp::completion::placement(anchor.y, panneau, height);
-
-            crate::app::epreuves::note_bulle(anchor, top, panneau, height);
-
-            container(content)
-                .width(Fill)
-                .height(Fill)
-                .align_x(alignment::Horizontal::Left)
-                .align_y(alignment::Vertical::Top)
-                .padding(Padding {
-                    top,
-                    left: anchor.x,
-                    ..Padding::default()
-                })
-                .into()
-        }
-        // **Toujours un conteneur**, même fermé : c'est le *contenu* qui
-        // apparaît, jamais la nature de l'enfant de pile. Un enfant qui change
-        // de widget est un nœud d'arbre qu'iced recrée — et on a mesuré que le
-        // recouvrement ne se peint plus après une telle mutation, fût-ce avec un
-        // aplat magenta criard.
-        None => container(
-            iced::widget::Space::new()
-                .width(Length::Fixed(0.0))
-                .height(Length::Fixed(0.0)),
-        )
-        .width(Fill)
-        .height(Fill)
-        .into(),
-    };
-
-    let page = container(iced::widget::stack![editor, bulle])
+    let page = container(EditorOverlay { editor, bulle })
         .width(Fill)
         .height(Fill)
         .max_width(MEASURE);
@@ -239,26 +402,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ..Default::default()
         })
         .into()
-}
-
-/// La place où le curseur peut se trouver : la fenêtre, moins les deux barres et
-/// les marges du panneau. C'est le seul cadre qu'une bulle doive respecter.
-fn panel_height(state: &State) -> f32 {
-    // La hauteur **réellement vue** par l'éditeur quand il la connaît : c'est
-    // elle qui donne le seul cadre où le curseur peut être. Le calcul par la
-    // fenêtre reste en secours, pour la première image.
-    let visible = state.editor.visible_height();
-
-    if visible > 0.0 {
-        return visible;
-    }
-
-    (state.window_size.height
-        - crate::ui::toolbar::BAR_HEIGHT
-        - crate::ui::status_bar::BAR_HEIGHT
-        - TOP_MARGIN
-        - BOTTOM_MARGIN)
-        .max(0.0)
 }
 
 /// Les premières lignes d'un texte, empruntées et non copiées.
@@ -296,8 +439,13 @@ fn hover_popup(hover: &crate::app::state::Hover, palette: Palette) -> Element<'_
     .into()
 }
 
-/// La liste de complétion, posée à l'endroit du curseur.
-fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, Message> {
+/// La liste de complétion, posée dans la fenêtre centrale.
+pub(super) fn completion_popup<'a>(
+    open: &'a Completion,
+    palette: Palette,
+    width: f32,
+    awaiting: bool,
+) -> Element<'a, Message> {
     let total = open.shown.len();
 
     // La fenêtre suit la sélection : on doit pouvoir choisir au clavier plus bas
@@ -307,9 +455,21 @@ fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, M
         .saturating_sub(COMPLETION_VISIBLE.saturating_sub(1))
         .min(total.saturating_sub(COMPLETION_VISIBLE));
 
-    let mut list = column![]
-        .spacing(0.0)
-        .width(Length::Fixed(COMPLETION_WIDTH));
+    if open.shown.is_empty() {
+        let message = empty_completion_message(open.trigger, open.items.is_empty(), awaiting);
+
+        return container(
+            container(palette.label(message).size(13).color(palette.text_muted))
+                .width(Fill)
+                .height(Length::Fixed(COMPLETION_ROW))
+                .padding([5, 8]),
+        )
+        .width(Length::Fixed(width))
+        .style(bubble_style(palette))
+        .into();
+    }
+
+    let mut list = column![].spacing(0.0).width(Length::Fixed(width));
 
     for (position, index) in open
         .shown
@@ -365,7 +525,7 @@ fn completion_popup<'a>(open: &'a Completion, palette: Palette) -> Element<'a, M
     }
 
     container(list)
-        .width(Length::Fixed(COMPLETION_WIDTH))
+        .width(Length::Fixed(width))
         .style(bubble_style(palette))
         .into()
 }
@@ -419,6 +579,23 @@ mod tests {
 
         // Une ligne accentuée se coupe à sa frontière, jamais avant.
         assert_eq!(clamp_lines("éé\nà", 1), "éé");
+    }
+
+    /// Même sans résultat, la fenêtre annonce ce qu'elle attend.
+    #[test]
+    fn empty_completion_message_matches_its_trigger_and_wait_state() {
+        assert_eq!(
+            empty_completion_message(crate::lsp::completion::CITATION, true, false),
+            "Aucune référence dans le projet"
+        );
+        assert_eq!(
+            empty_completion_message('#', true, true),
+            "Recherche des suggestions…"
+        );
+        assert_eq!(
+            empty_completion_message('#', true, false),
+            "Aucune suggestion disponible"
+        );
     }
 
     /// Les marges doivent laisser de la place au texte, et le texte ne doit

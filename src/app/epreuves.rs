@@ -79,34 +79,6 @@ pub fn note_vue(defilement: f32, liste_ouverte: bool) {
     }
 }
 
-/// Les dimensions d'une bulle construite : ancre, place choisie, cadre.
-pub fn note_bulle(ancre: iced::Point, haut: f32, panneau: f32, hauteur: f32) {
-    if !actif("vue") {
-        return;
-    }
-
-    static DERNIERE: std::sync::Mutex<Option<(u32, u32, u32, u32)>> = std::sync::Mutex::new(None);
-
-    let vue = (
-        ancre.x.to_bits(),
-        haut.to_bits(),
-        panneau.to_bits(),
-        hauteur.to_bits(),
-    );
-    let mut derniere = DERNIERE.lock().unwrap();
-
-    // Au changement : la bulle se reconstruit à chaque image, et ce qu'on
-    // cherche est le moment où sa place change.
-    if *derniere != Some(vue) {
-        println!(
-            "[vue] bulle : ancre x {:.0} y {:.0} | top {:.0} | panneau {:.0} | hauteur {:.0}",
-            ancre.x, ancre.y, haut, panneau, hauteur
-        );
-
-        *derniere = Some(vue);
-    }
-}
-
 /// Pilote la fenêtre de mise en page : l'ouvrir, y changer des valeurs, et
 /// les appliquer — pour voir, d'un bout à l'autre, qu'un champ devient une
 /// page.
@@ -173,7 +145,9 @@ pub fn driver_renommage(state: &State) -> Option<Task<Message>> {
             // curseur doit être pour que le serveur sache de quoi il parle.
             println!("[épreuve] le curseur part en fin de document");
 
-            Some(Task::done(Message::Editor(iced_code_editor::Message::CtrlEnd)))
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::CtrlEnd,
+            )))
         }
 
         12 => {
@@ -185,7 +159,9 @@ pub fn driver_renommage(state: &State) -> Option<Task<Message>> {
         14 => {
             println!("[épreuve] le nouveau nom : repere2");
 
-            Some(Task::done(Message::SymbolRenameChanged("repere2".to_string())))
+            Some(Task::done(Message::SymbolRenameChanged(
+                "repere2".to_string(),
+            )))
         }
 
         16 => {
@@ -197,7 +173,11 @@ pub fn driver_renommage(state: &State) -> Option<Task<Message>> {
         60 => {
             // L'aperçu : c'est lui que l'utilisateur verrait, et c'est lui
             // qui décide si l'application est permise.
-            match state.renommage.as_ref().and_then(|r| r.changements.as_ref()) {
+            match state
+                .renommage
+                .as_ref()
+                .and_then(|r| r.changements.as_ref())
+            {
                 Some(changements) => {
                     println!("[épreuve] aperçu reçu :");
 

@@ -2,9 +2,25 @@ use crate::typst::render::{CompileOutcome, PageImage};
 use iced_code_editor::Message as EditorMessage;
 use std::path::PathBuf;
 
+/// Mise en forme appliquée à la sélection ou au bloc courant du `document.tw`.
+#[derive(Debug, Clone)]
+pub enum FormatAction {
+    Gras,
+    Italique,
+    Couleur(String),
+    Titre(u8),
+    ListePuce,
+    ListeNumero,
+    CitationBloc,
+    Citation,
+    Note,
+    BlocTypst,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Editor(EditorMessage),
+    Format(FormatAction),
 
     NewFile,
 
@@ -75,6 +91,12 @@ pub enum Message {
     /// ne changent qu'au redimensionnement : un défilement les retransmet
     /// identiques, et c'est cette égalité qui permet de ne rien refaire.
     ViewportChanged(usize, usize, iced::Size),
+
+    /// Ajuste l'aperçu à la largeur ou à la hauteur, ou choisit un zoom libre.
+    PreviewZoom(crate::app::state::PreviewZoomMode),
+
+    /// Modifie le zoom libre par incréments de 10 %.
+    PreviewZoomStep(i8),
 
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,

@@ -174,6 +174,8 @@ pub struct CodeEditor {
     pub(crate) auto_indent_enabled: bool,
     /// Auto-closing of brackets/quotes and surround-selection enabled
     pub(crate) auto_close_brackets: bool,
+    /// Whether single apostrophes are auto-paired (useful to disable for prose).
+    pub(crate) auto_close_apostrophes: bool,
     /// Indentation style (spaces or tab)
     pub(crate) indent_style: IndentStyle,
     /// Wrap column (None = wrap at viewport width)
@@ -676,6 +678,7 @@ impl CodeEditor {
             wrap_enabled: true,
             auto_indent_enabled: true,
             auto_close_brackets: true,
+            auto_close_apostrophes: true,
             indent_style: IndentStyle::Spaces(4),
             wrap_column: None,
             folding_enabled: true,

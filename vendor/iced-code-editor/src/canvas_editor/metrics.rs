@@ -136,8 +136,8 @@ pub(crate) const CACHE_WINDOW_MARGIN_MULTIPLIER: usize = 2;
 ///
 /// Syntax state is sequential, so jumping far into a large file can otherwise
 /// parse every line from the start in one blocking draw call. Lines beyond this
-/// budget temporarily use the editor's plain text color and will be highlighted
-/// as later content redraws advance the cached parser state.
+/// budget use the syntax palette's opaque base text color until a later content
+/// redraw advances the cached parser state.
 pub(crate) const HIGHLIGHT_LINES_PER_FRAME: usize = 2_000;
 
 /// Compares two floating point numbers with a small epsilon tolerance.
@@ -441,6 +441,14 @@ impl CodeEditor {
     /// ```
     pub fn viewport_width(&self) -> f32 {
         self.viewport_width
+    }
+
+    /// Returns the last canvas width observed during drawing.
+    ///
+    /// Unlike `viewport_width`, this tracks the real bounds even when the
+    /// document does not overflow vertically and no scroll notification fires.
+    pub fn canvas_width(&self) -> f32 {
+        self.last_canvas_width.get()
     }
 
     /// Returns the current vertical scroll offset in pixels.
