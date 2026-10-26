@@ -118,6 +118,8 @@ fn fenetre_composeur<'a>(
         .padding(6)
         .width(Length::Fixed(LARGEUR));
 
+    let note = lignes_note(composeur, palette);
+
     let corps = match composeur.etape {
         Etape::Reference => liste_references(composeur, palette),
         Etape::Page => container(
@@ -153,16 +155,89 @@ fn fenetre_composeur<'a>(
         .size(11)
         .color(palette.text_muted);
 
-    let fenetre = container(column![entete, champ, corps, apercu, pied].spacing(10))
-        .width(Length::Fixed(LARGEUR + 32.0))
-        .padding(16)
-        .style(bubble_style(palette));
+    let fenetre = container(
+        column![entete, champ, note, corps, apercu, pied].spacing(10),
+    )
+    .width(Length::Fixed(LARGEUR + 32.0))
+    .padding(16)
+    .style(bubble_style(palette));
 
     container(fenetre)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
+        .into()
+}
+
+/// Les lignes de la note : chacune se reprend, à son rang.
+///
+/// Cliquer une ligne remet sa clé et sa page sous les doigts — c'est la
+/// première, la deuxième, ou celle qu'on veut — et la réécriture la remet à
+/// sa place. L'ordre de la note ne bouge jamais.
+fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Message> {
+    let mut liste = column![].spacing(0.0).width(Length::Fixed(LARGEUR));
+
+    for (index, reference) in composeur.references.iter().enumerate() {
+        let tenue = composeur.rang == Some(index);
+        let page = reference.page.as_deref().unwrap_or("");
+
+        let mut ligne = row![]
+            .width(Length::Fill)
+            .padding([4, 8])
+            .spacing(8)
+            .align_y(Alignment::Center);
+
+        ligne = ligne.push(
+            palette
+                .label(format!("{}", index + 1))
+                .size(11)
+                .color(if tenue { palette.background } else { palette.text_muted }),
+        );
+
+        ligne = ligne.push(palette.label(&reference.cle).size(12).color(if tenue {
+            palette.background
+        } else {
+            palette.text
+        }));
+
+        ligne = ligne.push(Space::new().width(Length::Fill));
+
+        if !page.is_empty() {
+            ligne = ligne.push(palette.label(page).size(11).color(if tenue {
+                palette.background
+            } else {
+                palette.text_muted
+            }));
+        }
+
+        liste = liste.push(
+            button(ligne)
+                .width(Length::Fill)
+                .padding(0)
+                .style(move |_, _| button::Style {
+                    background: tenue.then(|| palette.accent.into()),
+                    text_color: if tenue {
+                        palette.background
+                    } else {
+                        palette.text
+                    },
+                    ..Default::default()
+                })
+                .on_press(Message::ComposeurChoisir(index)),
+        );
+    }
+
+    if composeur.references.is_empty() {
+        return Space::new()
+            .width(Length::Fixed(LARGEUR))
+            .height(Length::Fixed(0.0))
+            .into();
+    }
+
+    container(liste)
+        .width(Length::Fixed(LARGEUR))
+        .style(bubble_style(palette))
         .into()
 }
 

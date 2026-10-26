@@ -546,7 +546,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeurTerminer
         | Message::ComposeurFermer
         | Message::ComposeurDeplacer(_)
-        | Message::ComposeurPrendre(_) => composeur_update(state, message),
+        | Message::ComposeurPrendre(_)
+        | Message::ComposeurChoisir(_) => composeur_update(state, message),
 
         Message::ScaleFactor(scale_factor) => {
             // La densité du rendu en découle, et elle décide de la mémoire d'une

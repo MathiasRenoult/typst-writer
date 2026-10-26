@@ -490,6 +490,11 @@ pub(super) fn composeur_update(state: &mut State, message: Message) -> Task<Mess
 
             Task::none()
         }
+        Message::ComposeurChoisir(index) => {
+            composeur.choisir(index);
+
+            Task::none()
+        }
         Message::ComposeurAvancer => {
             composeur.avancer();
 

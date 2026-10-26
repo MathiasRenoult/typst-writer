@@ -348,8 +348,8 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
         80 => match state.composeur.as_ref() {
             Some(composeur) => {
                 println!(
-                    "[épreuve] composeur d'édition — plage {:?}, clé {:?}, page {:?}",
-                    composeur.edition, composeur.saisie, composeur.page_en_attente
+                    "[épreuve] composeur d'édition — plage {:?}, clé {:?}, rang {:?}",
+                    composeur.edition, composeur.saisie, composeur.rang
                 );
                 println!("[épreuve] aperçu : {}", composeur.apercu(true));
 
@@ -361,6 +361,20 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
                 None
             }
         },
+        82 => {
+            println!("[épreuve] on choisit la **première** référence de la note");
+            Some(Task::done(Message::ComposeurChoisir(0)))
+        }
+        83 => {
+            if let Some(composeur) = state.composeur.as_ref() {
+                println!(
+                    "[épreuve] sous les doigts : {:?} (rang {:?})",
+                    composeur.saisie, composeur.rang
+                );
+            }
+
+            None
+        }
         84 => {
             println!("[épreuve] Entrée : la citation est réécrite");
             Some(Task::done(Message::ComposeurTerminer))
@@ -368,7 +382,7 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
         88 => {
             let contenu = state.editor.content();
 
-            if contenu.contains("martin2020x") {
+            if contenu.contains("martin202") {
                 println!("[épreuve] la citation réécrite tient sa place : {contenu:?}");
             } else {
                 println!("[épreuve] LA RÉÉCRITURE A PERDU LA CITATION : {contenu:?}");

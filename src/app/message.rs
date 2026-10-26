@@ -142,6 +142,10 @@ pub enum Message {
     /// Un clic sur une ligne de la liste : la prendre, comme Tab.
     ComposeurPrendre(usize),
 
+    /// Un clic sur une ligne de la note : la remettre sous les doigts, à son
+    /// rang — première, deuxième référence, laquelle on veut.
+    ComposeurChoisir(usize),
+
     /// Aller à la définition de ce qui est sous le curseur.
     GoToDefinition,
 

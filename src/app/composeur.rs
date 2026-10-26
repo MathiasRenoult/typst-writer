@@ -6,6 +6,10 @@
 //! et ainsi de suite. Le document ne reçoit la note qu'à la fin, d'un seul
 //! tenant. Échap ne laisse rien.
 //!
+//! Une note peut réunir plusieurs références, et chacune se reprend : la
+//! fenêtre montre la note, et choisir une de ses lignes remet sa clé et sa
+//! page sous les doigts — **à son rang**, sans jamais déranger l'ordre.
+//!
 //! Tout ce qui décide vit ici, en pur : les touches arrivent en transitions,
 //! et rien n'y touche à l'interface. C'est ce qui rend la boucle
 //! « référence → page → autre référence » éprouvable sans écran.
@@ -31,25 +35,27 @@ pub struct Composeur {
     /// à l'ouverture : le composeur n'écoute personne, il filtre sa liste.
     pub cles: Vec<(String, String)>,
 
-    /// Les références de la note, dans l'ordre où elles s'inscriront. La
-    /// dernière est celle dont on attend la page, à l'étape « page ».
+    /// La note, entière, dans l'ordre où elle s'écrira.
     pub references: Vec<Reference>,
 
-    /// Ce qui a été tapé dans le champ de l'étape : le filtre des clés à
+    /// La référence qu'on tient : sa clé au champ de l'étape « référence »,
+    /// sa page à celle de l'étape « page ».
+    pub brouillon: Reference,
+
+    /// Où le brouillon se rangera : l'index qu'il **remplace** dans la note,
+    /// ou `None` pour une référence de plus, en bout.
+    pub rang: Option<usize>,
+
+    /// Ce qui est tapé dans le champ de l'étape : le filtre des clés à
     /// l'étape « référence », la mention de page à l'étape « page ».
     pub saisie: String,
 
-    /// La ligne surlignée dans la liste.
+    /// La ligne surlignée dans la liste des clés.
     pub selection: usize,
 
     /// L'offset, dans le document, où la note s'insérera : celui du `@`
     /// déclencheur, que le composeur a mangé.
     pub ancre: usize,
-
-    /// La page de la référence en cours d'édition, à réafficher à l'étape
-    /// « page ». Chargée depuis une note déjà écrite, et consommée à la
-    /// première prise.
-    pub page_en_attente: String,
 
     /// La fin de la plage que la note remplacera, en édition d'une citation
     /// déjà écrite.
@@ -77,34 +83,51 @@ impl Composeur {
             etape: Etape::Reference,
             cles,
             references: Vec::new(),
+            brouillon: Reference::new(""),
+            rang: None,
             saisie: String::new(),
             selection: 0,
             ancre,
-            page_en_attente: String::new(),
             edition: None,
         }
     }
 
     /// Charge une note déjà écrite, pour la rééditer.
     ///
-    /// La dernière référence devient celle qu'on tient : sa clé dans le champ,
-    /// sa page en attente. Les autres restent dans la note, et l'aperçu montre
-    /// le tout — c'est la même machine qu'en création, seulement pré-remplie.
-    pub fn charger(&mut self, mut references: Vec<Reference>) {
-        if let Some(derniere) = references.pop() {
-            self.saisir(derniere.cle);
-            self.page_en_attente = derniere.page.unwrap_or_default();
-
-            // La sélection doit retomber sur la clé existante, même si le
-            // filtre en montre d'autres devant elle.
-            if let Some(position) = self.visibles().iter().position(|index| {
-                self.cles[*index].0 == self.saisie
-            }) {
-                self.selection = position;
-            }
-        }
-
+    /// La note entière se tient dans la fenêtre, et sa **dernière** référence
+    /// est celle qu'on regarde d'abord — la plus fréquemment reprise. Choisir
+    /// une autre ligne la remettra sous les doigts.
+    pub fn charger(&mut self, references: Vec<Reference>) {
         self.references = references;
+
+        if let Some(dernier) = self.references.len().checked_sub(1) {
+            self.choisir(dernier);
+        }
+    }
+
+    /// Remet sous les doigts la référence d'une ligne de la note.
+    ///
+    /// Elle reste **à son rang** : c'est sa clé et sa page qui reviennent au
+    /// champ, et la réécriture la remettra à la même place.
+    pub fn choisir(&mut self, index: usize) {
+        let Some(reference) = self.references.get(index).cloned() else {
+            return;
+        };
+
+        self.brouillon = reference;
+        self.rang = Some(index);
+        self.etape = Etape::Reference;
+        self.saisir(self.brouillon.cle.clone());
+
+        // La sélection retombe sur la clé elle-même, même si le filtre en
+        // montre d'autres devant elle.
+        if let Some(position) = self
+            .visibles()
+            .iter()
+            .position(|cle| self.cles[*cle].0 == self.saisie)
+        {
+            self.selection = position;
+        }
     }
 
     /// Les indices des clés qui correspondent à ce qui est tapé.
@@ -142,6 +165,16 @@ impl Composeur {
             .map(|index| self.cles[*index].0.as_str())
     }
 
+    /// La clé que prendrait la prise : la ligne surlignée affine, le texte du
+    /// champ sert de recours — une clé absente de la bibliographie ne se perd
+    /// jamais en silence.
+    fn cle_tenue(&self) -> Option<String> {
+        self.choisie().map(str::to_string).or_else(|| {
+            let tape = self.saisie.trim();
+            (!tape.is_empty()).then(|| tape.to_string())
+        })
+    }
+
     /// Ce qui est tapé dans le champ de l'étape courante.
     pub fn saisir(&mut self, texte: String) {
         self.saisie = texte;
@@ -156,7 +189,7 @@ impl Composeur {
         self.selection = suivant as usize;
     }
 
-    /// Tab : prendre la référence choisie, ou valider la page saisie.
+    /// Tab : prendre la clé tenue, ou valider la page saisie.
     ///
     /// La boucle est celle du composeur : référence → page → référence → …
     pub fn avancer(&mut self) {
@@ -166,62 +199,57 @@ impl Composeur {
         }
     }
 
-    /// La clé que prendrait la prise : la ligne surlignée affine, le texte du
-    /// champ sert de recours — une clé absente de la bibliographie ne se perd
-    /// jamais en silence.
-    fn cle_tenue(&self) -> Option<String> {
-        self.choisie().map(str::to_string).or_else(|| {
-            let tape = self.saisie.trim();
-            (!tape.is_empty()).then(|| tape.to_string())
-        })
-    }
-
     /// Prend la clé tenue dans le champ, et propose son numéro de page.
     fn prendre(&mut self) {
         let Some(cle) = self.cle_tenue() else {
             return;
         };
 
-        // La page déjà portée par une citation en cours de réécriture rejoint
-        // la référence d'emblée : Entrée sans passer par l'étape page ne la
-        // perd pas.
-        let page = std::mem::take(&mut self.page_en_attente);
-        let mut reference = Reference::new(cle);
-
-        if !page.is_empty() {
-            reference = reference.avec_page(page);
-        }
-
-        self.saisie = reference.page.clone().unwrap_or_default();
-        self.references.push(reference);
+        self.brouillon.cle = cle;
+        self.saisie = self.brouillon.page.clone().unwrap_or_default();
         self.etape = Etape::Page;
     }
 
     /// Valide la mention de page — même vide, une page n'est pas obligatoire
-    /// — et propose une autre référence dans la même note.
+    /// — range la référence à son rang, et propose une autre référence dans la
+    /// même note.
     fn valider_page(&mut self) {
         let page = self.saisie.trim().to_string();
 
-        if let Some(reference) = self.references.last_mut() {
-            reference.page = (!page.is_empty()).then_some(page);
-        }
+        self.brouillon.page = (!page.is_empty()).then_some(page);
+        self.ranger();
 
+        self.brouillon = Reference::new("");
+        self.rang = None;
         self.etape = Etape::Reference;
         self.saisie.clear();
         self.selection = 0;
     }
 
+    /// Range le brouillon dans la note, à la place qu'il s'est choisie.
+    fn ranger(&mut self) {
+        match self.rang {
+            Some(index) if index < self.references.len() => {
+                self.references[index] = self.brouillon.clone();
+            }
+            _ => self.references.push(self.brouillon.clone()),
+        }
+    }
+
     /// Entrée : terminer, et dire ce qui s'insère.
     ///
     /// À l'étape « page », la page saisie valide la référence en cours. À
-    /// l'étape « référence », la clé **tenue dans le champ** — tapée, ou celle
-    /// d'une citation en cours de réécriture — rejoint la note ; un champ vide,
-    /// lui, ne prend rien : la dernière liste n'était qu'une proposition. C'est
-    /// le geste d'hier : `@dup` + Entrée insère `@dupont2023`.
+    /// l'étape « référence », la clé **tenue dans le champ** rejoint la note à
+    /// son rang ; un champ vide, lui, ne prend rien : la dernière liste
+    /// n'était qu'une proposition. C'est le geste d'hier : `@dup` + Entrée
+    /// insère `@dupont2023`.
     pub fn terminer(&mut self, intermediaire: bool) -> Option<String> {
         match self.etape {
             Etape::Page => self.valider_page(),
-            Etape::Reference if !self.saisie.is_empty() => self.prendre(),
+            Etape::Reference if !self.saisie.is_empty() => {
+                self.prendre();
+                self.valider_page();
+            }
             Etape::Reference => {}
         }
 
@@ -239,35 +267,29 @@ impl Composeur {
         texte_des(&self.references, intermediaire)
     }
 
-    /// La note telle qu'elle se compose, page en cours comprise.
+    /// La note telle qu'elle se compose, brouillon tenu compris.
     ///
     /// C'est ce que la fenêtre montre : exactement ce que le document
-    /// recevra — la clé tenue dans le champ y figure comme Entrée la prendrait.
+    /// recevra — la référence tenue y figure comme Entrée la rangerait, à son
+    /// rang.
     pub fn apercu(&self, intermediaire: bool) -> String {
-        let mut references = self.references.clone();
+        let mut etat = self.clone();
 
         match self.etape {
-            Etape::Reference => {
-                if let Some(cle) = self.cle_tenue() {
-                    let mut reference = Reference::new(cle);
-
-                    if !self.page_en_attente.is_empty() {
-                        reference = reference.avec_page(self.page_en_attente.clone());
-                    }
-
-                    references.push(reference);
-                }
+            Etape::Reference if self.cle_tenue().is_some() => {
+                etat.prendre();
+                etat.valider_page();
             }
             Etape::Page => {
                 let page = self.saisie.trim().to_string();
 
-                if let Some(derniere) = references.last_mut() {
-                    derniere.page = (!page.is_empty()).then_some(page);
-                }
+                etat.brouillon.page = (!page.is_empty()).then_some(page);
+                etat.ranger();
             }
+            _ => {}
         }
 
-        texte_des(&references, intermediaire)
+        texte_des(&etat.references, intermediaire)
     }
 }
 
@@ -302,25 +324,25 @@ mod tests {
     /// référence, et la note entière s'écrit à la fin.
     #[test]
     fn la_boucle_compose_une_note_a_plusieurs_references() {
-        let mut composeur = composeur();
+        let mut note = composeur();
 
-        composeur.saisir("dup".to_string());
-        composeur.avancer(); // prendre dupont2023 → étape page
+        note.saisir("dup".to_string());
+        note.avancer(); // prendre dupont2023 → étape page
 
-        assert_eq!(composeur.etape, Etape::Page);
+        assert_eq!(note.etape, Etape::Page);
 
-        composeur.saisir("p. 45".to_string());
-        composeur.avancer(); // valider la page → étape référence
+        note.saisir("p. 45".to_string());
+        note.avancer(); // valider la page → étape référence
 
-        assert_eq!(composeur.etape, Etape::Reference);
-        assert_eq!(composeur.saisie, "");
+        assert_eq!(note.etape, Etape::Reference);
+        assert_eq!(note.saisie, "");
 
-        composeur.saisir("mar".to_string());
-        composeur.avancer(); // prendre martin2020 → étape page
+        note.saisir("mar".to_string());
+        note.avancer(); // prendre martin2020 → étape page
 
-        assert_eq!(composeur.etape, Etape::Page);
+        assert_eq!(note.etape, Etape::Page);
 
-        let texte = composeur.terminer(true); // la page reste vide, on insère
+        let texte = note.terminer(true); // la page reste vide, on insère
 
         assert_eq!(
             texte.as_deref(),
@@ -332,11 +354,11 @@ mod tests {
     /// Le geste d'hier survit : `@dup` + Entrée insère la clé choisie.
     #[test]
     fn entree_avec_une_note_vide_prend_la_reference() {
-        let mut composeur = composeur();
-        composeur.saisir("martin".to_string());
+        let mut note = composeur();
+        note.saisir("martin".to_string());
 
         assert_eq!(
-            composeur.terminer(true).as_deref(),
+            note.terminer(true).as_deref(),
             Some("@martin2020"),
             "la première référence se prend d'Entrée, sans passer par la page"
         );
@@ -346,14 +368,14 @@ mod tests {
     /// note **sans** prendre la ligne surlignée.
     #[test]
     fn entree_apres_une_note_commencee_ne_prend_plus_rien() {
-        let mut composeur = composeur();
+        let mut note = composeur();
 
-        composeur.avancer(); // prendre dupont2023
-        composeur.avancer(); // valider sa page (vide)
+        note.avancer(); // prendre dupont2023
+        note.avancer(); // valider sa page (vide)
 
-        assert_eq!(composeur.etape, Etape::Reference);
+        assert_eq!(note.etape, Etape::Reference);
         assert_eq!(
-            composeur.terminer(true).as_deref(),
+            note.terminer(true).as_deref(),
             Some("@dupont2023"),
             "la dernière liste n'était qu'une proposition"
         );
@@ -362,35 +384,52 @@ mod tests {
     /// Échap ne laisse rien : rien n'est jamais écrit sans `terminer`.
     #[test]
     fn rien_ne_s_ecrit_sans_terminer() {
-        let composeur = composeur();
+        let note = composeur();
 
         // Le composeur ne porte aucune tâche d'écriture : c'est son absence
         // de méthode d'insertion qui le garantit, et l'appelant referme.
-        assert!(composeur.references.is_empty());
+        assert!(note.references.is_empty());
     }
 
     /// Le filtre garde ce qui commence par la saisie devant ce qui la contient,
     /// et la sélection ne sort jamais de la liste.
     #[test]
     fn le_filtre_et_la_selection_restent_bornes() {
-        let mut composeur = composeur();
+        let mut note = composeur();
 
-        composeur.saisir("2020".to_string());
-        assert_eq!(composeur.visibles(), vec![1]);
+        note.saisir("2020".to_string());
+        assert_eq!(note.visibles(), vec![1]);
 
-        composeur.deplacer(1);
-        assert_eq!(composeur.selection, 0, "pas au-delà de la liste");
+        note.deplacer(1);
+        assert_eq!(note.selection, 0, "pas au-delà de la liste");
 
-        composeur.saisir(String::new());
-        composeur.deplacer(1);
-        composeur.deplacer(1);
-        composeur.deplacer(1);
-        assert_eq!(composeur.selection, 2, "dernière ligne, pas plus");
+        note.saisir(String::new());
+        note.deplacer(1);
+        note.deplacer(1);
+        note.deplacer(1);
+        assert_eq!(note.selection, 2, "dernière ligne, pas plus");
     }
 
-    /// Revenir sur une citation déjà écrite : elle se charge entière — clé
-    /// sélectionnée, page réaffichée — et sa page survit même à une Entrée
-    /// immédiate.
+    /// Un fichier Typst brut reçoit les appels qui rendent la même note.
+    #[test]
+    fn un_fichier_brut_recoit_les_appels_de_cite() {
+        let mut note = composeur();
+
+        note.avancer(); // prendre dupont2023 → étape page
+        note.saisir("p. 45".to_string());
+        note.avancer(); // valider la page → étape référence
+        note.saisir("mar".to_string());
+        note.avancer(); // prendre martin2020 → étape page
+
+        // C'est Entrée qui range : le texte lu est celui qu'elle écrirait.
+        assert_eq!(
+            note.terminer(false).as_deref(),
+            Some("#cite(<dupont2023>, supplement: [p. 45]) #cite(<martin2020>)")
+        );
+    }
+
+    /// Revenir sur une citation déjà écrite : sa dernière référence se tient
+    /// sous les doigts, et sa page survit même à une Entrée immédiate.
     #[test]
     fn une_citation_ecrite_se_recharge_pour_etre_reecrite() {
         let mut note = composeur();
@@ -400,9 +439,9 @@ mod tests {
             Reference::new("martin2020").avec_page("pp. 12-15"),
         ]);
 
-        assert_eq!(note.references.len(), 1, "les autres restent la note");
-        assert_eq!(note.saisie, "martin2020", "la clé tient dans le champ");
-        assert_eq!(note.choisie(), Some("martin2020"), "et elle est choisie");
+        assert_eq!(note.references.len(), 2, "la note entière est là");
+        assert_eq!(note.rang, Some(1), "et l'on tient la dernière");
+        assert_eq!(note.saisie, "martin2020", "sa clé tient dans le champ");
 
         // Entrée tout de suite : la page existe déjà, elle ne se perd pas.
         assert_eq!(
@@ -410,38 +449,34 @@ mod tests {
             Some("@dupont2023[p. 45]; @martin2020[pp. 12-15]"),
             "la note ressort entière, inchangée"
         );
-
-        // Et l'étape page l'aurait montrée toute prête.
-        let mut recharge = composeur();
-        recharge.charger(vec![Reference::new("dupont2023").avec_page("p. 45")]);
-        recharge.avancer();
-
-        assert_eq!(recharge.etape, Etape::Page);
-        assert_eq!(recharge.saisie, "p. 45", "la page est sous les doigts");
-
-        recharge.saisir("p. 47".to_string());
-
-        assert_eq!(
-            recharge.terminer(true).as_deref(),
-            Some("@dupont2023[p. 47]"),
-            "et sa correction réécrit la citation"
-        );
     }
 
-    /// Un fichier Typst brut reçoit les appels qui rendent la même note.
+    /// Choisir une référence de la note la remet sous les doigts **à son
+    /// rang** : la réécriture ne dérange pas l'ordre de la note.
     #[test]
-    fn un_fichier_brut_recoit_les_appels_de_cite() {
-        let mut composeur = composeur();
+    fn choisir_une_reference_garde_sa_place() {
+        let mut note = composeur();
 
-        composeur.avancer(); // prendre dupont2023 → étape page
-        composeur.saisir("p. 45".to_string());
-        composeur.avancer(); // valider la page → étape référence
-        composeur.saisir("mar".to_string());
-        composeur.avancer(); // prendre martin2020 → étape page
+        note.charger(vec![
+            Reference::new("dupont2023").avec_page("p. 1"),
+            Reference::new("martin2020"),
+        ]);
+
+        note.choisir(0); // la première, pas la dernière
+
+        assert_eq!(note.saisie, "dupont2023");
+        assert_eq!(note.etape, Etape::Reference);
+
+        note.avancer(); // → étape page, sa page sous les doigts
+        assert_eq!(note.saisie, "p. 1");
+
+        note.saisir("p. 9".to_string());
+        note.avancer(); // valider : rang 0, l'ordre tient
 
         assert_eq!(
-            composeur.texte_insere(false),
-            "#cite(<dupont2023>, supplement: [p. 45]) #cite(<martin2020>)"
+            note.terminer(true).as_deref(),
+            Some("@dupont2023[p. 9]; @martin2020"),
+            "la première corrigée, la seconde à sa suite — rien n'a bougé"
         );
     }
 }
