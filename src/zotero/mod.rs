@@ -71,6 +71,27 @@ fn data_dir_from_profiles(home: &std::path::Path) -> Option<PathBuf> {
     None
 }
 
+/// D'où vient la bibliothèque affichée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Source {
+    /// Une bibliothèque locale, non synchronisée : elle s'écrit.
+    #[default]
+    Locale,
+    /// La collection Zotero pointée : elle se lit, et la synchronisation la
+    /// reprend — jamais d'édition par ici.
+    Zotero,
+}
+
+/// L'état de la collaboration avec Zotero.
+#[derive(Debug, Clone, Default)]
+pub struct Etat {
+    /// D'où viennent les références montrées.
+    pub source: Source,
+    /// Zotero est-il lié ? Sa collection est pointée, sauf décision
+    /// contraire : on peut toujours revenir à une bibliothèque locale.
+    pub lie: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -82,6 +82,8 @@ impl State {
             mise_en_page: None,
             renommage: None,
             composeur: None,
+            edition_reference: None,
+            zotero: crate::zotero::Etat::default(),
             renaming: None,
             jump: None,
             render: Default::default(),
@@ -425,6 +427,93 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::SymbolRenameApply
         | Message::SymbolRenameCancel
         | Message::PdfExported(_) => crate::app::fichiers::update(state, message),
+
+        // L'édition d'une référence : une fenêtre, des champs, et une
+        // bibliothèque locale à écrire — jamais une notice Zotero.
+        Message::ModifierReference(cle) => {
+            let entree = state
+                .bibliography
+                .iter()
+                .find(|entree| entree.key == cle)
+                .cloned();
+
+            let Some(entree) = entree else {
+                return Task::none();
+            };
+
+            let (nom, prenom) = entree
+                .auteurs
+                .first()
+                .cloned()
+                .unwrap_or((String::new(), String::new()));
+
+            // La bibliographie vient-elle de Zotero ? Seule une bibliothèque
+            // locale s'écrit : la règle tient dans le champ lui-même.
+            let locale = state.zotero.source == crate::zotero::Source::Locale;
+
+            state.edition_reference = Some(crate::app::state::EditionReference {
+                cle: entree.key,
+                nom,
+                prenom,
+                titre: entree.titre,
+                annee: entree.annee.unwrap_or_default(),
+                locale,
+            });
+
+            Task::none()
+        }
+        Message::EditionReferenceChamp(champ, valeur) => {
+            if let Some(edition) = state.edition_reference.as_mut() {
+                match champ.as_str() {
+                    "nom" => edition.nom = valeur,
+                    "prenom" => edition.prenom = valeur,
+                    "titre" => edition.titre = valeur,
+                    "annee" => edition.annee = valeur,
+                    _ => {}
+                }
+            }
+
+            Task::none()
+        }
+        Message::EditionReferenceFermer => {
+            state.edition_reference = None;
+
+            Task::none()
+        }
+        Message::EditionReferenceEnregistrer => {
+            let Some(edition) = state.edition_reference.clone() else {
+                return Task::none();
+            };
+
+            if !edition.locale {
+                // Une notice Zotero est à Zotero : on ne l'écrit pas ici.
+                state.edition_reference = None;
+
+                return Task::none();
+            }
+
+            let Some(chemin) = state.project.bibliography.clone() else {
+                state.edition_reference = None;
+
+                return Task::none();
+            };
+
+            if let Err(erreur) = crate::project::maj_reference(
+                &chemin,
+                &edition.cle,
+                &edition.nom,
+                &edition.prenom,
+                &edition.titre,
+                &edition.annee,
+            ) {
+                eprintln!("Enregistrement de la référence : {erreur}");
+            }
+
+            state.edition_reference = None;
+            state.bibliography = crate::project::parse_bibliography(&chemin);
+
+            Task::none()
+        }
 
         // Le domaine des thèmes a son module. Le motif ne **rien** lier : c'est
         // ce qui permet de repasser le message entier, sans le dupliquer.

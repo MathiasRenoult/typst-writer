@@ -104,36 +104,276 @@ pub fn save_session_to(path: &Path, session: &Session) {
 }
 
 /// Une entrée de bibliographie (fichier `.bib`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BibliographyEntry {
     /// La clé de citation, celle qui suit `@type{`.
     pub key: String,
 
     /// Le type BibTeX (`article`, `book`, `inproceedings`…).
     pub kind: String,
+
+    /// Les auteurs, `(nom, prénom)` dans l'ordre du fichier.
+    ///
+    /// BibTeX écrit « Dupont, Jean » ou « Jean Dupont » : les deux formes
+    /// sont ramenées au même couple, nom d'abord.
+    pub auteurs: Vec<(String, String)>,
+
+    /// Le titre de l'œuvre.
+    pub titre: String,
+
+    /// L'année de parution, si le fichier la donne.
+    pub annee: Option<String>,
+}
+
+impl BibliographyEntry {
+    /// La ligne de liste : « Dupont, Jean — Le titre… ».
+    ///
+    /// C'est ce que l'onglet des références montre à la place de la clé : la
+    /// clé est une machine, un nom et un titre se lisent.
+    pub fn libelle(&self) -> String {
+        let auteur = match self.auteurs.first() {
+            Some((nom, prenom)) if !prenom.is_empty() => format!("{nom}, {prenom}"),
+            Some((nom, _)) => nom.clone(),
+            None => String::new(),
+        };
+
+        let corps = if self.titre.is_empty() {
+            self.key.clone()
+        } else {
+            self.titre.clone()
+        };
+
+        if auteur.is_empty() {
+            corps
+        } else {
+            format!("{auteur} — {corps}")
+        }
+    }
 }
 
 /// Lit les entrées d'un fichier `.bib`.
 ///
-/// Parseur volontairement tolérant : il ne cherche que les débuts d'entrée
-/// (`@type{clé,`), ce qui suffit pour lister les clés citables. Un fichier
+/// Parseur volontairement tolérant : il cherche les entrées (`@type{clé,`),
+/// puis les champs qu'elles portent — auteur, titre, année. Un fichier
 /// malformé renvoie les entrées reconnues jusqu'au problème.
 pub fn parse_bibliography(path: &Path) -> Vec<BibliographyEntry> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
 
-    content.lines().filter_map(parse_bib_entry_line).collect()
+    parse_bibliography_text(&content)
 }
 
-/// Analyse une ligne de fichier BibTeX : `@article{clé,` → entrée.
-fn parse_bib_entry_line(line: &str) -> Option<BibliographyEntry> {
-    let line = line.trim();
+/// Met à jour une référence dans un fichier `.bib`.
+///
+/// Les champs connus — auteur, titre, année — sont remplacés ou ajoutés **dans
+/// le bloc de l'entrée** ; tout le reste du fichier ne bouge pas, et la clé
+/// reste la sienne : elle est citée dans les documents.
+pub fn maj_reference(
+    chemin: &std::path::Path,
+    cle: &str,
+    nom: &str,
+    prenom: &str,
+    titre: &str,
+    annee: &str,
+) -> std::io::Result<()> {
+    let contenu = std::fs::read_to_string(chemin)?;
+    let octets = contenu.as_bytes();
+    let mut sortie = String::with_capacity(contenu.len() + 64);
+    let mut curseur = 0usize;
 
-    let rest = line.strip_prefix('@')?;
-    let (kind, rest) = rest.split_once('{')?;
+    while curseur < contenu.len() {
+        let Some(relatif) = contenu[curseur..].find('@') else {
+            sortie.push_str(&contenu[curseur..]);
+            break;
+        };
 
-    let key = rest.split(',').next()?.trim().to_string();
+        let debut = curseur + relatif;
+        sortie.push_str(&contenu[curseur..debut]);
+
+        let fin = fin_d_entree(octets, debut).unwrap_or(contenu.len());
+        let bloc = &contenu[debut..fin];
+
+        if entree_de(bloc).is_some_and(|entree| entree.key == cle) {
+            let auteur = if prenom.is_empty() {
+                nom.to_string()
+            } else {
+                format!("{nom}, {prenom}")
+            };
+
+            let mut maj = bloc.to_string();
+            maj = remplacer_champ(&maj, "author", &auteur);
+            maj = remplacer_champ(&maj, "title", titre);
+
+            if annee.is_empty() {
+                maj = retirer_champ(&maj, "year");
+            } else {
+                maj = remplacer_champ(&maj, "year", annee);
+            }
+
+            sortie.push_str(&maj);
+        } else {
+            sortie.push_str(bloc);
+        }
+
+        curseur = fin;
+    }
+
+    std::fs::write(chemin, sortie)
+}
+
+/// Remplace la valeur d'un champ dans un bloc d'entrée, ou l'y ajoute.
+fn remplacer_champ(bloc: &str, nom: &str, valeur: &str) -> String {
+    let trouve = champ_plage(bloc, nom);
+
+    match trouve {
+        Some((debut, fin)) => {
+            let mut sortie = String::with_capacity(bloc.len() + valeur.len());
+            sortie.push_str(&bloc[..debut]);
+            sortie.push_str(valeur);
+            sortie.push_str(&bloc[fin..]);
+
+            sortie
+        }
+        None => {
+            // Avant l'accolade fermante : la dernière du bloc.
+            let Some(fin) = bloc.rfind('}') else {
+                return bloc.to_string();
+            };
+
+            let mut sortie = String::with_capacity(bloc.len() + valeur.len() + 16);
+            sortie.push_str(&bloc[..fin]);
+            sortie.push_str(&format!(",\n  {nom} = {{{valeur}}}"));
+            sortie.push_str(&bloc[fin..]);
+
+            sortie
+        }
+    }
+}
+
+/// Retire un champ d'un bloc d'entrée, s'il y est.
+fn retirer_champ(bloc: &str, nom: &str) -> String {
+    let Some((debut_valeur, fin_valeur)) = champ_plage(bloc, nom) else {
+        return bloc.to_string();
+    };
+
+    // Le champ entier : sa virgule précédente jusqu'à la fin de la valeur.
+    let avant = bloc[..debut_valeur].rfind(',').map_or(0, |index| index);
+    let mut sortie = String::with_capacity(bloc.len());
+    sortie.push_str(&bloc[..avant]);
+    sortie.push_str(&bloc[fin_valeur..]);
+
+    sortie
+}
+
+/// La plage de la **valeur** d'un champ : entre accolades, sans elles.
+fn champ_plage(bloc: &str, nom: &str) -> Option<(usize, usize)> {
+    let mut base = 0usize;
+
+    while let Some(relatif) = bloc[base..].find('=') {
+        let egal = base + relatif;
+        let debut_valeur = egal + 1 + bloc[egal + 1..].len() - bloc[egal + 1..].trim_start().len();
+        let avant = bloc[..egal].trim();
+        let nom_du_champ = avant.rsplit(',').next().unwrap_or(avant).trim();
+
+        if nom_du_champ.eq_ignore_ascii_case(nom) {
+            let valeur = &bloc[debut_valeur..];
+
+            if let Some(ouvrante) = valeur.find('{') {
+                let mut profondeur = 1usize;
+
+                for (relatif, caractere) in valeur[ouvrante + 1..].char_indices() {
+                    match caractere {
+                        '{' => profondeur += 1,
+                        '}' => {
+                            profondeur -= 1;
+
+                            if profondeur == 0 {
+                                return Some((
+                                    debut_valeur + ouvrante + 1,
+                                    debut_valeur + ouvrante + 1 + relatif,
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if let Some(ouvrante) = valeur.find('"')
+                && let Some(fermante) = valeur[ouvrante + 1..].find('"')
+            {
+                return Some((
+                    debut_valeur + ouvrante + 1,
+                    debut_valeur + ouvrante + 1 + fermante,
+                ));
+            }
+
+            // Valeur nue : jusqu'à la virgule ou l'accolade.
+            let fin = valeur
+                .find([',', '}'])
+                .map_or(valeur.len(), |index| debut_valeur + index);
+
+            return Some((debut_valeur, fin));
+        }
+
+        base = egal + 1;
+    }
+
+    None
+}
+
+/// Les entrées d'un texte BibTeX.
+pub fn parse_bibliography_text(content: &str) -> Vec<BibliographyEntry> {
+    let mut entrees = Vec::new();
+    let octets = content.as_bytes();
+    let mut curseur = 0usize;
+
+    while let Some(debut) = content[curseur..].find('@') {
+        let debut = curseur + debut;
+
+        let Some(fin) = fin_d_entree(octets, debut) else {
+            break;
+        };
+
+        if let Some(entree) = entree_de(&content[debut..fin]) {
+            entrees.push(entree);
+        }
+
+        curseur = fin;
+    }
+
+    entrees
+}
+
+/// La fin d'une entrée : l'accolade qui referme celle ouverte en `debut`.
+fn fin_d_entree(octets: &[u8], debut: usize) -> Option<usize> {
+    let mut profondeur = 0usize;
+
+    for (relatif, octet) in octets[debut..].iter().enumerate() {
+        match octet {
+            b'{' => profondeur += 1,
+            b'}' => {
+                profondeur = profondeur.saturating_sub(1);
+
+                if profondeur == 0 {
+                    return Some(debut + relatif + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Une entrée, lue dans son bloc entier : `@type{clé, champs… }`.
+fn entree_de(bloc: &str) -> Option<BibliographyEntry> {
+    let reste = bloc.trim().strip_prefix('@')?;
+    let (kind, reste) = reste.split_once('{')?;
+
+    let (cle, champs) = reste.split_once(',').unwrap_or((reste, ""));
+    let key = cle.trim().to_string();
 
     if key.is_empty() {
         return None;
@@ -142,7 +382,93 @@ fn parse_bib_entry_line(line: &str) -> Option<BibliographyEntry> {
     Some(BibliographyEntry {
         kind: kind.trim().to_string(),
         key,
+        auteurs: auteurs_de(champ(champs, "author")),
+        titre: champ(champs, "title").unwrap_or_default(),
+        annee: champ(champs, "year"),
     })
+}
+
+/// La valeur d'un champ BibTeX, sans ses accolades ni ses guillemets.
+fn champ(champs: &str, nom: &str) -> Option<String> {
+    let mut reste = champs;
+
+    while let Some(egal) = reste.find('=') {
+        let avant = reste[..egal].trim();
+        let apres = &reste[egal + 1..];
+
+        // Le nom du champ est ce qui suit la virgule précédente.
+        let nom_du_champ = avant.rsplit(',').next().unwrap_or(avant).trim();
+
+        if nom_du_champ.eq_ignore_ascii_case(nom) {
+            return Some(valeur_de(apres));
+        }
+
+        reste = apres;
+    }
+
+    None
+}
+
+/// La valeur qui suit un `=` : entre accolades, entre guillemets, ou jusqu'à
+/// la virgule suivante.
+fn valeur_de(texte: &str) -> String {
+    let texte = texte.trim_start();
+
+    if let Some(reste) = texte.strip_prefix('{') {
+        let mut profondeur = 1usize;
+
+        for (index, caractere) in reste.char_indices() {
+            match caractere {
+                '{' => profondeur += 1,
+                '}' => {
+                    profondeur -= 1;
+
+                    if profondeur == 0 {
+                        return reste[..index].trim().to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        return reste.trim().to_string();
+    }
+
+    if let Some(reste) = texte.strip_prefix('"') {
+        return reste
+            .split_once('"')
+            .map(|(valeur, _)| valeur.trim().to_string())
+            .unwrap_or_else(|| reste.trim().to_string());
+    }
+
+    texte.split(',').next().unwrap_or(texte).trim().to_string()
+}
+
+/// Les auteurs d'un champ `author` : « et » sépare, la virgule dit le nom.
+fn auteurs_de(champ: Option<String>) -> Vec<(String, String)> {
+    let Some(texte) = champ else {
+        return Vec::new();
+    };
+
+    texte
+        .replace(" AND ", " and ")
+        .split(" and ")
+        .filter(|auteur| !auteur.trim().is_empty())
+        .map(|auteur| {
+            let auteur = auteur.trim();
+
+            if let Some((nom, prenom)) = auteur.split_once(',') {
+                (nom.trim().to_string(), prenom.trim().to_string())
+            } else {
+                // « Jean Dupont » : le nom est le dernier mot.
+                let mut mots = auteur.rsplitn(2, ' ');
+                let nom = mots.next().unwrap_or(auteur).to_string();
+                let prenom = mots.next().unwrap_or("").to_string();
+
+                (nom, prenom)
+            }
+        })
+        .collect()
 }
 
 /// Le nom du projet créé lors de la reprise des documents existants.
@@ -272,6 +598,57 @@ fn locate_flat_documents() -> Vec<PathBuf> {
 mod tests {
     use super::*;
 
+    /// Les entrées se lisent avec leurs auteurs, leur titre, leur année —
+    /// c'est ce que l'onglet des références montrera à la place des clés.
+    #[test]
+    fn la_bibliographie_lit_les_auteurs_et_les_titres() {
+        let texte = r#"
+@article{dupont2023,
+  author = {Dupont, Jean and Curie, Marie},
+  title = {Une {étude} des notes},
+  year = {2023},
+}
+@book{martin2020,
+  author = "Paul Martin",
+  title = "Le grand traité",
+  year = "2020"
+}
+"#;
+        let entrees = parse_bibliography_text(texte);
+
+        assert_eq!(entrees.len(), 2, "deux entrées, même sur plusieurs lignes");
+        assert_eq!(entrees[0].key, "dupont2023");
+        assert_eq!(
+            entrees[0].auteurs,
+            vec![
+                ("Dupont".to_string(), "Jean".to_string()),
+                ("Curie".to_string(), "Marie".to_string())
+            ],
+            "« et » sépare les auteurs, la virgule dit le nom"
+        );
+        assert_eq!(entrees[0].titre, "Une {étude} des notes");
+        assert_eq!(entrees[0].annee.as_deref(), Some("2023"));
+
+        assert_eq!(
+            entrees[1].libelle(),
+            "Martin, Paul — Le grand traité",
+            "la ligne de liste se lit : nom, prénom, titre"
+        );
+    }
+
+    /// Sans auteur, la ligne montre le titre seul ; sans titre, la clé.
+    #[test]
+    fn le_libelle_tient_debout_sans_auteur() {
+        let entree = BibliographyEntry {
+            key: "anonyme".to_string(),
+            kind: "book".to_string(),
+            titre: "L'œuvre anonyme".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(entree.libelle(), "L'œuvre anonyme");
+    }
+
     #[test]
     fn parses_bib_entries() {
         let dir = std::env::temp_dir().join("typst-writer-bib");
@@ -296,12 +673,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Une ligne sans `@` ou sans clé est ignorée, pas une erreur.
+    /// Une entrée sans `@` ou sans clé est ignorée, pas une erreur ; une
+    /// entrée jamais refermée est le « problème » où s'arrête la lecture.
     #[test]
     fn ignores_malformed_bib_lines() {
-        assert!(parse_bib_entry_line("ceci n'est pas une entrée").is_none());
-        assert!(parse_bib_entry_line("@article{,").is_none());
-        assert!(parse_bib_entry_line("@article{clé,").is_some());
+        assert!(parse_bibliography_text("ceci n'est pas une entrée").is_empty());
+        assert!(parse_bibliography_text("@article{,}").is_empty());
+        assert!(parse_bibliography_text("@article{clé,").is_empty());
+        assert_eq!(parse_bibliography_text("@article{clé,}").len(), 1);
+    }
+
+    /// Modifier une référence réécrit ses champs, sans toucher au reste du
+    /// fichier — et la clé ne bouge pas, elle est citée dans les documents.
+    #[test]
+    fn modifier_une_reference_ne_reecrit_que_ses_champs() {
+        let dir = std::env::temp_dir().join(format!("tw-maj-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let bib = dir.join("refs.bib");
+        std::fs::write(
+            &bib,
+            "@article{dupont2023,\n  author = {Dupont, Jean},\n  title = {Un titre},\n  journal = {Revue},\n}\n@book{martin2020,\n  author = {Martin},\n  title = {L'autre},\n}\n",
+        )
+        .unwrap();
+
+        maj_reference(&bib, "dupont2023", "Curie", "Marie", "Un autre titre", "2024").unwrap();
+
+        let entrees = parse_bibliography(&bib);
+
+        assert_eq!(entrees.len(), 2, "les deux entrées sont là");
+        assert_eq!(entrees[0].key, "dupont2023", "la clé ne bouge pas");
+        assert_eq!(
+            entrees[0].auteurs,
+            vec![("Curie".to_string(), "Marie".to_string())]
+        );
+        assert_eq!(entrees[0].titre, "Un autre titre");
+        assert_eq!(entrees[0].annee.as_deref(), Some("2024"));
+        assert_eq!(
+            entrees[1].titre, "L'autre",
+            "la seconde entrée n'a pas bougé"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Une session d'une version précédente, qui ne connaissait que

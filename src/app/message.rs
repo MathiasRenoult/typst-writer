@@ -61,6 +61,18 @@ pub enum Message {
     /// Insère une citation `@clé` à la position du curseur.
     InsertCitation(String),
 
+    /// Ouvre la fenêtre d'édition d'une référence.
+    ModifierReference(String),
+
+    /// Un champ de la fenêtre d'édition a changé.
+    EditionReferenceChamp(String, String),
+
+    /// Enregistre la référence éditée dans la bibliothèque locale.
+    EditionReferenceEnregistrer,
+
+    /// Ferme la fenêtre d'édition sans rien écrire.
+    EditionReferenceFermer,
+
     SaveFile,
     SaveAs,
     FileSaved(Option<PathBuf>),

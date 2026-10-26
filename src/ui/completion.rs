@@ -192,10 +192,10 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
             palette
                 .label(format!("{}", index + 1))
                 .size(11)
-                .color(if tenue { palette.background } else { palette.text_muted }),
+                .color(if tenue { palette.background } else { palette.text }),
         );
 
-        ligne = ligne.push(palette.label(&reference.cle).size(12).color(if tenue {
+        ligne = ligne.push(palette.label(&reference.cle).size(13).color(if tenue {
             palette.background
         } else {
             palette.text
@@ -207,16 +207,20 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
             ligne = ligne.push(palette.label(page).size(11).color(if tenue {
                 palette.background
             } else {
-                palette.text_muted
+                palette.text
             }));
         }
 
         liste = liste.push(
             button(ligne)
                 .width(Length::Fill)
-                .padding(0)
+                .padding([6, 10])
                 .style(move |_, _| button::Style {
-                    background: tenue.then(|| palette.accent.into()),
+                    background: Some(if tenue {
+                        palette.accent.into()
+                    } else {
+                        palette.surface_hover.into()
+                    }),
                     text_color: if tenue {
                         palette.background
                     } else {
@@ -289,15 +293,19 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
         ligne = ligne.push(palette.label(genre).size(11).color(if selected {
             palette.background
         } else {
-            palette.text_muted
+            palette.text
         }));
 
         liste = liste.push(
             button(ligne)
                 .width(Length::Fill)
-                .padding(0)
+                .padding([6, 10])
                 .style(move |_, _| button::Style {
-                    background: selected.then(|| palette.accent.into()),
+                    background: Some(if selected {
+                        palette.accent.into()
+                    } else {
+                        palette.surface_hover.into()
+                    }),
                     text_color: if selected {
                         palette.background
                     } else {

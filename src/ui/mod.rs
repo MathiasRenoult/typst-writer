@@ -2,6 +2,7 @@ pub mod completion;
 pub mod editor;
 pub mod layout;
 pub mod preview;
+pub mod reference;
 mod reglages;
 mod rename;
 pub mod sidebar;
@@ -49,6 +50,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill),
         completion::view(state),
+        reference::view(state),
         reglages::view(state),
     ]
     .width(Length::Fill)

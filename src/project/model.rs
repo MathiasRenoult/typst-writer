@@ -508,9 +508,17 @@ pub fn find_bibliography_entry(project: &Project, key: &str) -> Option<(PathBuf,
     let path = project.bibliography.as_ref()?;
     let content = std::fs::read_to_string(path).ok()?;
 
-    let line = content
-        .lines()
-        .position(|line| super::parse_bib_entry_line(line).is_some_and(|entry| entry.key == key))?;
+    let line = content.lines().position(|ligne| {
+        let ligne = ligne.trim();
+        let Some(reste) = ligne.strip_prefix('@') else {
+            return false;
+        };
+        let Some((_, reste)) = reste.split_once('{') else {
+            return false;
+        };
+
+        reste.split(',').next().map(str::trim) == Some(key)
+    })?;
 
     Some((path.clone(), line))
 }

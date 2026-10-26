@@ -489,31 +489,47 @@ fn info_row<'a>(
     .into()
 }
 
-/// Une clé citable : un clic insère `@clé` au curseur.
+/// Une référence citable : un clic insère `@clé`, l'icône l'ouvre pour la
+/// modifier — dans une bibliothèque locale seulement.
 fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'a, Message> {
-    // Le type BibTeX va dans l'infobulle : `@clé` suffit à citer, le type n'est
-    // qu'une aide à la reconnaissance.
-    let kind = container(
-        palette
-            .label(entry.kind.clone())
-            .size(11)
-            .color(palette.text_muted),
-    )
-    .padding([4, 8])
-    .style(move |_| tooltip_style(palette));
+    // La ligne se lit : « Dupont, Jean — Le titre… ». La clé reste dans
+    // l'infobulle, avec son type — une machine, pas un nom.
+    let libelle = tronquer(&entry.libelle(), 42);
+    let info = format!("@{} · {}", entry.key, entry.kind);
 
-    tooltip(
-        button(palette.label(format!("@{}", entry.key)).size(12))
+    let ligne = row![
+        button(palette.label(libelle).size(12))
             .on_press(Message::InsertCitation(entry.key.clone()))
             .width(Fill)
             .height(Length::Fixed(ENTRY_HEIGHT))
             .padding([4, 8])
             .style(move |t, status| entry_style(t, status, palette, false)),
-        kind,
-        tooltip::Position::Right,
-    )
-    .gap(6)
-    .into()
+        button(theme::icon(
+            lucide_icons::iced::icon_pencil::<Theme>(),
+            12.0,
+            palette.text_muted,
+        ))
+        .on_press(Message::ModifierReference(entry.key.clone()))
+        .padding(6)
+        .style(move |t, status| entry_style(t, status, palette, false)),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
+
+    tooltip(ligne, palette.label(info).size(11), tooltip::Position::Right)
+        .gap(6)
+        .into()
+}
+
+/// Raccourcit un libellé trop long : « … » marque la coupure.
+fn tronquer(texte: &str, largeur: usize) -> String {
+    if texte.chars().count() <= largeur {
+        return texte.to_string();
+    }
+
+    let coupe: String = texte.chars().take(largeur.saturating_sub(1)).collect();
+
+    format!("{coupe}…")
 }
 
 /// Titre de section, en petites capitales discrètes.

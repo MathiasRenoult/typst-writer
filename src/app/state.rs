@@ -46,6 +46,10 @@ pub struct State {
     /// Entrées de bibliographie citables (le `.bib` du projet).
     pub bibliography: Vec<BibliographyEntry>,
 
+    /// La collaboration avec Zotero : liée ou non, et d'où viennent les
+    /// références montrées.
+    pub zotero: crate::zotero::Etat,
+
     /// Résultat du rendu fidèle (compilation Typst en bibliothèque).
     pub render: RenderState,
 
@@ -90,6 +94,12 @@ pub struct State {
     /// Il tient le clavier tant qu'il est là : le document ne reçoit la note
     /// qu'à la fin, et Échap ne laisse rien.
     pub composeur: Option<crate::app::composeur::Composeur>,
+
+    /// La fenêtre d'édition d'une référence, si elle est ouverte.
+    ///
+    /// Seule une **bibliothèque locale** s'édite : une notice Zotero est à
+    /// Zotero, et la synchronisation la reprendrait de toute façon.
+    pub edition_reference: Option<EditionReference>,
 
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
@@ -174,6 +184,27 @@ pub struct Renommage {
 }
 
 /// aussi courante.
+/// L'édition d'une référence en cours.
+///
+/// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
+/// bouge pas : elle est citée dans les documents, la changer les casserait.
+#[derive(Debug, Clone)]
+pub struct EditionReference {
+    /// La clé de citation, immuable.
+    pub cle: String,
+    /// Le nom de l'auteur.
+    pub nom: String,
+    /// Son prénom.
+    pub prenom: String,
+    /// Le titre de l'œuvre.
+    pub titre: String,
+    /// L'année, si elle est là.
+    pub annee: String,
+    /// La bibliographie est-elle locale ? Seule une bibliothèque locale
+    /// s'écrit ; une notice Zotero se lit, jamais.
+    pub locale: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChapterRename {
     /// Le chapitre visé.
