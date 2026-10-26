@@ -30,6 +30,28 @@ pub(super) fn reserved_keys() -> Vec<iced::keyboard::Key> {
     ]
 }
 
+/// Repose les glyphes de notes : le document change, les numéros suivent.
+///
+/// C'est ici que « dynamique » a lieu — à chaque frappe, à chaque déplacement
+/// du curseur : les notes sont rebalayées, renumérotées, et repoussées au
+/// rendu. La note sous le curseur se déplie quand c'est un pied de page :
+/// son texte s'écrit là, pas dans le composeur. Une citation, elle, reste un
+/// glyphe — c'est le composeur qui la tient.
+pub(super) fn actualiser_marques(state: &mut State) {
+    use crate::langage::marques::Nature;
+
+    let contenu = state.editor.content();
+    let offset = state.editor.cursor_offset();
+    let notes = crate::langage::marques::notes(&contenu)
+        .into_iter()
+        .filter(|note| {
+            !(note.nature == Nature::PiedDePage && note.contient(offset))
+        })
+        .collect::<Vec<_>>();
+
+    state.editor.set_marques(&notes);
+}
+
 /// Demande la liste au serveur, si le texte la demande à l'endroit du curseur.
 ///
 /// La frappe ouvre et filtre la liste ; un déplacement du curseur sans édition
@@ -40,6 +62,10 @@ pub(super) fn request_completion(
     content_changed: bool,
     declencheur_tape: bool,
 ) -> Task<Message> {
+    // Les glyphes suivent le document : chaque frappe peut créer, défaire ou
+    // déplacer une note, et ses rangs avec elle.
+    actualiser_marques(state);
+
     // Le composeur de notes est ouvert : il tient le clavier, et rien de ce
     // qui arrive ici ne le concerne. C'est aussi ce qui l'empêche de se
     // refermer tout seul — son `@` déclencheur, une fois mangé, n'est plus

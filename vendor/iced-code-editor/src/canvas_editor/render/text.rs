@@ -18,7 +18,9 @@ use crate::canvas_editor::features::{
     bracket_match, color_preview, indent_guides,
 };
 use crate::canvas_editor::{
-    CodeEditor, TAB_WIDTH, measure_char_width, measure_text_width,
+    CodeEditor, TAB_WIDTH, measure_text_width,
+    marques::{Bout, MarquesLigne, bouts_du_troncon, largeur_caractere,
+        largeur_marque},
 };
 
 /// Width in pixels of a single indentation guide line.
@@ -79,6 +81,7 @@ fn swatch_belongs_to_segment(
 /// This function handles CJK character widths correctly to keep highlights accurate.
 pub(super) fn calculate_segment_geometry(
     line_content: &str,
+    marques: &MarquesLigne<'_>,
     visual_start_col: usize,
     segment_start_col: usize,
     segment_end_col: usize,
@@ -101,7 +104,7 @@ pub(super) fn calculate_segment_geometry(
             break;
         }
 
-        let w = measure_char_width(c, full_char_width, char_width);
+        let w = largeur_caractere(c, i, marques, full_char_width, char_width);
 
         if i >= visual_start_col && i < segment_start_col {
             prefix_width += w;
@@ -209,6 +212,101 @@ pub(super) struct RenderContext<'a> {
 }
 
 impl CodeEditor {
+    /// Dessine un tronçon de ligne bout par bout : le texte qui se lit, et
+    /// les glyphes qui prennent la place du texte fondu.
+    ///
+    /// Renvoie l'avancement final en x — celui de la règle de largeur, où le
+    /// texte fondu ne tient pas et le glyphe tient sa place. C'est le même
+    /// chiffre que l'habillage et les clics ont suivi, et c'est ce qui tient
+    /// tout ensemble.
+    fn dessiner_bouts(
+        &self,
+        frame: &mut canvas::Frame,
+        ctx: &RenderContext,
+        y: f32,
+        debut_x: f32,
+        texte: &str,
+        col_premier: usize,
+        marques: &MarquesLigne<'_>,
+        couleur: iced::Color,
+        couleur_espace: Option<iced::Color>,
+    ) -> f32 {
+        let mut x = debut_x;
+
+        for bout in bouts_du_troncon(texte, col_premier, marques) {
+            match bout {
+                Bout::Glyphe(marque) => {
+                    // Le numéro de la note, en exposant : petit, relevé, et
+                    // teinté à part — il tient lieu de tout le texte fondu.
+                    frame.fill_text(canvas::Text {
+                        content: marque.label.clone(),
+                        position: Point::new(x, y + 2.0 - ctx.font_size * 0.32),
+                        color: self.style.mark_color,
+                        size: (ctx.font_size * 0.62).into(),
+                        font: ctx.font,
+                        ..canvas::Text::default()
+                    });
+
+                    x += largeur_marque(marque, ctx.char_width);
+                }
+                Bout::Texte(troncon) => {
+                    let display_text = if self.show_whitespace {
+                        expand_tabs_visible(troncon, TAB_WIDTH)
+                    } else {
+                        expand_tabs(troncon, TAB_WIDTH).into_owned()
+                    };
+
+                    match couleur_espace {
+                        Some(ws_color) if self.show_whitespace => {
+                            for (is_ws, seg) in
+                                split_whitespace_segments(&display_text)
+                            {
+                                let seg_color =
+                                    if is_ws { ws_color } else { couleur };
+                                let seg_width = measure_text_width(
+                                    seg,
+                                    ctx.full_char_width,
+                                    ctx.char_width,
+                                );
+
+                                frame.fill_text(canvas::Text {
+                                    content: seg.to_string(),
+                                    position: Point::new(x, y + 2.0),
+                                    color: seg_color,
+                                    size: ctx.font_size.into(),
+                                    font: ctx.font,
+                                    ..canvas::Text::default()
+                                });
+
+                                x += seg_width;
+                            }
+                        }
+                        _ => {
+                            let largeur = measure_text_width(
+                                &display_text,
+                                ctx.full_char_width,
+                                ctx.char_width,
+                            );
+
+                            frame.fill_text(canvas::Text {
+                                content: display_text,
+                                position: Point::new(x, y + 2.0),
+                                color: couleur,
+                                size: ctx.font_size.into(),
+                                font: ctx.font,
+                                ..canvas::Text::default()
+                            });
+
+                            x += largeur;
+                        }
+                    }
+                }
+            }
+        }
+
+        x
+    }
+
     /// Draws text content with syntax highlighting or plain text fallback.
     ///
     /// # Arguments
@@ -231,6 +329,8 @@ impl CodeEditor {
         syntax_set: &SyntaxSet,
         syntax_theme: Option<&syntect::highlighting::Theme>,
     ) {
+        let marques = MarquesLigne::new(&self.marques, visual_line.logical_line);
+
         if let (Some(syntax), Some(syntax_theme)) = (syntax_ref, syntax_theme) {
             // Reuse the memoized full-line spans; only the visible segment of
             // the (possibly wrapped) line is positioned and drawn here.
@@ -269,52 +369,22 @@ impl CodeEditor {
                     );
 
                     let segment_text = &text[start_byte..end_byte];
-                    let display_text = if self.show_whitespace {
-                        expand_tabs_visible(segment_text, TAB_WIDTH)
-                    } else {
-                        expand_tabs(segment_text, TAB_WIDTH).into_owned()
-                    };
-                    let display_width = measure_text_width(
-                        &display_text,
-                        ctx.full_char_width,
-                        ctx.char_width,
+
+                    // Bout à bout : le texte qui se lit, et les glyphes qui
+                    // tiennent la place du texte fondu. L'avancement est
+                    // celui de la règle de largeur, pas celui du dessin.
+                    x_offset = self.dessiner_bouts(
+                        frame,
+                        ctx,
+                        y,
+                        x_offset,
+                        segment_text,
+                        segment_start,
+                        &marques,
+                        *color,
+                        self.show_whitespace
+                            .then_some(self.style.whitespace_color),
                     );
-
-                    if self.show_whitespace {
-                        let ws_color = self.style.whitespace_color;
-                        let mut seg_x = x_offset;
-                        for (is_ws, seg) in
-                            split_whitespace_segments(&display_text)
-                        {
-                            let seg_color =
-                                if is_ws { ws_color } else { *color };
-                            let seg_width = measure_text_width(
-                                seg,
-                                ctx.full_char_width,
-                                ctx.char_width,
-                            );
-                            frame.fill_text(canvas::Text {
-                                content: seg.to_string(),
-                                position: Point::new(seg_x, y + 2.0),
-                                color: seg_color,
-                                size: ctx.font_size.into(),
-                                font: ctx.font,
-                                ..canvas::Text::default()
-                            });
-                            seg_x += seg_width;
-                        }
-                    } else {
-                        frame.fill_text(canvas::Text {
-                            content: display_text,
-                            position: Point::new(x_offset, y + 2.0),
-                            color: *color,
-                            size: ctx.font_size.into(),
-                            font: ctx.font,
-                            ..canvas::Text::default()
-                        });
-                    }
-
-                    x_offset += display_width;
                 }
 
                 char_pos = text_end;
@@ -328,43 +398,20 @@ impl CodeEditor {
                 visual_line.end_col,
             );
             let line_segment = &full_line_content[start_byte..end_byte];
-            let display_text = if self.show_whitespace {
-                expand_tabs_visible(line_segment, TAB_WIDTH)
-            } else {
-                expand_tabs(line_segment, TAB_WIDTH).into_owned()
-            };
             let base_x = ctx.gutter_width + 5.0 - ctx.horizontal_scroll_offset;
-            if self.show_whitespace {
-                let ws_color = self.style.whitespace_color;
-                let text_color = self.style.text_color;
-                let mut seg_x = base_x;
-                for (is_ws, seg) in split_whitespace_segments(&display_text) {
-                    let seg_color = if is_ws { ws_color } else { text_color };
-                    let seg_width = measure_text_width(
-                        seg,
-                        ctx.full_char_width,
-                        ctx.char_width,
-                    );
-                    frame.fill_text(canvas::Text {
-                        content: seg.to_string(),
-                        position: Point::new(seg_x, y + 2.0),
-                        color: seg_color,
-                        size: ctx.font_size.into(),
-                        font: ctx.font,
-                        ..canvas::Text::default()
-                    });
-                    seg_x += seg_width;
-                }
-            } else {
-                frame.fill_text(canvas::Text {
-                    content: display_text,
-                    position: Point::new(base_x, y + 2.0),
-                    color: self.style.text_color,
-                    size: ctx.font_size.into(),
-                    font: ctx.font,
-                    ..canvas::Text::default()
-                });
-            }
+
+            self.dessiner_bouts(
+                frame,
+                ctx,
+                y,
+                base_x,
+                line_segment,
+                visual_line.start_col,
+                &marques,
+                self.style.text_color,
+                self.show_whitespace
+                    .then_some(self.style.whitespace_color),
+            );
         }
     }
 
@@ -472,6 +519,7 @@ impl CodeEditor {
 
             let (x, _width) = calculate_segment_geometry(
                 line_content,
+                &MarquesLigne::new(&self.marques, visual_line.logical_line),
                 visual_line.start_col,
                 literal.end_col,
                 literal.end_col,
@@ -550,6 +598,7 @@ impl CodeEditor {
 
             let (x, _width) = calculate_segment_geometry(
                 line_content,
+                &MarquesLigne::new(&self.marques, visual_line.logical_line),
                 visual_line.start_col,
                 col,
                 col + 1,
@@ -629,7 +678,8 @@ mod tests {
         // width("World") = 5 * CHAR_WIDTH
         let content = "Hello World";
         let (x, w) = calculate_segment_geometry(
-            content, 0, 6, 11, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 6, 11, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
 
         let expected_x = CHAR_WIDTH * 6.0;
@@ -656,7 +706,8 @@ mod tests {
         // width("世界") = 2 * FONT_SIZE
         let content = "你好世界";
         let (x, w) = calculate_segment_geometry(
-            content, 0, 2, 4, 10.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 2, 4, 10.0, FONT_SIZE, CHAR_WIDTH,
         );
 
         let expected_x = 10.0 + FONT_SIZE * 2.0;
@@ -683,7 +734,8 @@ mod tests {
         // width("你好") = 2 * FONT_SIZE
         let content = "Hi你好";
         let (x, w) = calculate_segment_geometry(
-            content, 0, 2, 4, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 2, 4, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
 
         let expected_x = CHAR_WIDTH * 2.0;
@@ -705,7 +757,8 @@ mod tests {
     fn test_calculate_segment_geometry_empty_range() {
         let content = "Hello";
         let (x, w) = calculate_segment_geometry(
-            content, 0, 0, 0, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 0, 0, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
         assert!((x - 0.0).abs() < f32::EPSILON);
         assert!((w - 0.0).abs() < f32::EPSILON);
@@ -721,7 +774,8 @@ mod tests {
         // segment width: 2 * CHAR_WIDTH
         let content = "0123456789";
         let (x, w) = calculate_segment_geometry(
-            content, 2, 3, 5, 5.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 2, 3, 5, 5.0, FONT_SIZE, CHAR_WIDTH,
         );
 
         let expected_x = 5.0 + CHAR_WIDTH * 1.0;
@@ -748,7 +802,8 @@ mod tests {
         // Segment should be empty.
         let content = "Hello";
         let (x, w) = calculate_segment_geometry(
-            content, 0, 10, 15, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 10, 15, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
 
         let expected_x = CHAR_WIDTH * 5.0; // Width of "Hello"
@@ -775,7 +830,8 @@ mod tests {
 
         // Segment covering Emoji
         let (x, w) = calculate_segment_geometry(
-            content, 0, 1, 2, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 1, 2, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
         let expected_x_emoji = CHAR_WIDTH; // 'A'
         let expected_w_emoji = FONT_SIZE; // '👋'
@@ -793,7 +849,8 @@ mod tests {
 
         // Segment covering Tab
         let (x_tab, w_tab) = calculate_segment_geometry(
-            content, 0, 2, 3, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 2, 3, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
         let expected_x_tab = CHAR_WIDTH + FONT_SIZE; // 'A' + '👋'
         let expected_w_tab =
@@ -817,7 +874,8 @@ mod tests {
         // Should result in empty segment at start 5
         let content = "0123456789";
         let (x, w) = calculate_segment_geometry(
-            content, 0, 5, 3, 0.0, FONT_SIZE, CHAR_WIDTH,
+            content,
+            &MarquesLigne::vide(), 0, 5, 3, 0.0, FONT_SIZE, CHAR_WIDTH,
         );
 
         let expected_x = CHAR_WIDTH * 5.0;

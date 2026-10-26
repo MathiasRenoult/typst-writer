@@ -83,6 +83,7 @@ pub(crate) struct VisualLinesKey {
     wrap_column: Option<usize>,
     folding_enabled: bool,
     fold_revision: u64,
+    marques_revision: u64,
     full_char_width_bits: u32,
     char_width_bits: u32,
 }
@@ -363,6 +364,7 @@ impl CodeEditor {
             wrap_column: self.wrap_column,
             folding_enabled: self.folding_enabled,
             fold_revision: self.fold_revision,
+            marques_revision: self.marques_revision,
             full_char_width_bits: self.full_char_width.to_bits(),
             char_width_bits: self.char_width.to_bits(),
         };
@@ -386,6 +388,7 @@ impl CodeEditor {
             viewport_width,
             self.gutter_width(),
             &hidden,
+            &self.marques,
         );
         let visual_lines = Rc::new(visual_lines);
 
@@ -468,6 +471,7 @@ impl CodeEditor {
             f32::from_bits(cache.key.gutter_width_bits),
             &HashSet::new(),
             start_line..new_end_line,
+            &self.marques,
         );
 
         let old_segment_count = suffix_start.saturating_sub(prefix_end);

@@ -421,6 +421,7 @@ mod tests {
             800.0,
             editor.gutter_width(),
             &HashSet::new(),
+            &editor.marques,
         );
 
         assert_eq!(incremental.as_ref(), &expected);

@@ -123,6 +123,7 @@ impl State {
             && let Ok(content) = std::fs::read_to_string(&path)
         {
             state.editor = crate::editor::EditorState::new_file(path, content);
+            crate::app::assistance::actualiser_marques(&mut state);
         }
 
         state.refresh_context();
@@ -176,6 +177,7 @@ impl State {
         // Le chapitre neuf reçoit le thème courant : sans cela il garderait
         // celui du widget de la bibliothèque jusqu'au prochain changement.
         self.editor.retheme(&self.resolved);
+        crate::app::assistance::actualiser_marques(self);
         self.export_status = None;
         self.render.reset();
         // Le compte de mots du document qu'on ouvre, tout de suite : la barre

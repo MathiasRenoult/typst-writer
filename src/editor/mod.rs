@@ -25,6 +25,69 @@ pub const SYNTAX: &str = "typ";
 /// Extension de coloration Markdown utilisée par `document.tw`.
 pub const MARKDOWN_SYNTAX: &str = "md";
 
+/// Traduit les plages d'octets des notes en marques de lignes.
+///
+/// Une note qui s'étire sur plusieurs lignes devient une marque par ligne
+/// touchée : le glyphe n'apparaît qu'au premier rangon, la suite se tait
+/// sans se signer deux fois.
+fn marques_du_contenu(
+    contenu: &str,
+    notes: &[crate::langage::marques::Note],
+) -> Vec<iced_code_editor::Marque> {
+    use crate::langage::marques::Note;
+
+    // Les bases d'octets de chaque ligne, et la fin du texte en sentinelle.
+    let mut bases = Vec::new();
+    let mut base = 0usize;
+
+    for ligne in contenu.split_inclusive('\n') {
+        bases.push(base);
+        base += ligne.len();
+    }
+
+    bases.push(base);
+
+    let translate = |octet: usize| -> (usize, usize) {
+        let ligne = bases.partition_point(|b| *b <= octet).saturating_sub(1);
+        let colonne = contenu[bases[ligne]..octet].chars().count();
+
+        (ligne, colonne)
+    };
+
+    let mut marques = Vec::new();
+
+    for Note { debut, fin, numero, .. } in notes {
+        let mut premiere = true;
+        let mut ligne = translate(*debut).0;
+
+        while ligne + 1 < bases.len() && bases[ligne] < *fin {
+            let base_ligne = bases[ligne];
+            let fin_ligne = bases[ligne + 1];
+            let couvert_debut = (*debut).max(base_ligne);
+            let couvert_fin = (*fin).min(fin_ligne);
+
+            if couvert_debut < couvert_fin {
+                let (_, debut_col) = translate(couvert_debut);
+                let (_, fin_col) = translate(couvert_fin);
+                let label =
+                    if premiere { numero.to_string() } else { String::new() };
+
+                marques.push(iced_code_editor::Marque::new(
+                    ligne,
+                    debut_col,
+                    fin_col,
+                    label,
+                ));
+                premiere = false;
+            }
+
+            ligne += 1;
+        }
+    }
+
+    marques
+}
+
 fn syntax_for_path(path: &std::path::Path) -> &'static str {
     if path.extension().is_some_and(|extension| extension == "tw") {
         MARKDOWN_SYNTAX
@@ -498,6 +561,16 @@ impl EditorState {
         }
 
         content.len()
+    }
+
+    /// Pose les glyphes de notes : les plages que l'éditeur fond en un numéro.
+    ///
+    /// Les plages viennent en octets du document ; elles sont traduites en
+    /// colonnes de lignes, la seule monnaie que le moteur de rendu connaît.
+    pub fn set_marques(&mut self, notes: &[crate::langage::marques::Note]) {
+        let contenu = self.content();
+
+        self.editor.set_marques(marques_du_contenu(&contenu, notes));
     }
 
     /// Écrit le contenu courant sur le disque.

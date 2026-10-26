@@ -14,7 +14,8 @@ use crate::buffer::TextBuffer;
 use crate::canvas_editor::features::vim::VimMotion;
 use crate::canvas_editor::render::wrapping::{VisualLine, WrappingCalculator};
 use crate::canvas_editor::{
-    ArrowDirection, CodeEditor, Message, measure_char_width, measure_text_width,
+    ArrowDirection, CodeEditor, Message,
+    marques::{MarquesLigne, largeur_caractere, largeur_troncon},
 };
 /// Maps a cursor's column onto the visual row it is moving to.
 ///
@@ -501,14 +502,23 @@ impl CodeEditor {
         let mut current_width = 0.0;
         let mut col_offset = 0;
 
+        // La règle de largeur tient les marques : le texte fondu ne pèse
+        // rien, et le clic sur son glyphe tombe au bord de la note.
+        let marques = MarquesLigne::new(&self.marques, visual_line.logical_line);
+
         // Iterate the visual slice directly to avoid allocating a temporary String.
         for c in line_content
             .chars()
             .skip(visual_line.start_col)
             .take(visual_line.end_col - visual_line.start_col)
         {
-            let char_width =
-                measure_char_width(c, self.full_char_width, self.char_width);
+            let char_width = largeur_caractere(
+                c,
+                visual_line.start_col + col_offset,
+                &marques,
+                self.full_char_width,
+                self.char_width,
+            );
 
             if current_width + char_width / 2.0 > x_in_text {
                 break;
@@ -670,8 +680,10 @@ impl CodeEditor {
                     .collect();
                 self.gutter_width()
                     + 5.0
-                    + measure_text_width(
+                    + largeur_troncon(
                         &prefix,
+                        vl.start_col,
+                        &MarquesLigne::new(&self.marques, vl.logical_line),
                         self.full_char_width,
                         self.char_width,
                     )
@@ -818,8 +830,10 @@ impl CodeEditor {
             .collect();
         let x = self.gutter_width()
             + 5.0
-            + measure_text_width(
+            + largeur_troncon(
                 &prefix_text,
+                visual_line.start_col,
+                &MarquesLigne::new(&self.marques, visual_line.logical_line),
                 self.full_char_width,
                 self.char_width,
             );

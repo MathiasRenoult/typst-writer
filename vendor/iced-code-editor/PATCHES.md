@@ -1,7 +1,7 @@
 # iced-code-editor — copie vendorisée
 
 Ce dossier est une copie de `iced-code-editor` 0.5.2, dans laquelle ce projet
-apporte **neuf modifications**. Le reste du fichier est la version amont.
+apporte **dix modifications**. Le reste du fichier est la version amont.
 
 Le raccordement se fait par `[patch.crates-io]` dans le `Cargo.toml` racine :
 
@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les neuf modifications
+## Les dix modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -166,6 +166,28 @@ colorées. Un test épuisant le budget vérifie ce cas.
 défilement. L'interface hôte en a besoin plus tôt pour borner ses bulles au
 panneau et pouvait donc les placer hors écran dans une fenêtre étroite. La
 nouvelle lecture renvoie la dernière largeur observée par le dessin du canvas.
+
+### 10. Les notes fondues en un glyphe
+
+`src/canvas_editor/marques.rs` (nouveau), `render/text.rs`,
+`render/wrapping.rs`, `editing/cursor.rs`, `render/overlays.rs`, `caches.rs`,
+`theme.rs`.
+
+Une citation groupée est **une** note, une note libre `^[…]` en est une
+autre : l'application demande qu'elles s'écrivent d'un petit numéro en
+exposant, à la place du texte qu'elles portent. Le texte reste le vrai —
+c'est la mise en page qui le tait.
+
+Une *marque* est une plage de colonnes de sa ligne logique. Sous elle, les
+caractères ne pèsent rien, et le premier porte la largeur du glyphe : cette
+seule règle de largeur (`largeur_caractere`) réfracte l'habillage, la
+géométrie des surlignages, la position du curseur et la conversion des clics,
+qui passent tous par là. Le dessin marche en *bouts* — ce qui se lit, puis le
+glyphe — pour que le texte fondu sorte du tracé sans laisser de trou.
+
+La prise `set_marques(Vec<Marque>)` porte les plages et fait monter une
+révision qui invalide le cache d'habillage. La couleur des glyphes est
+`Style::mark_color`. Les tests du module prouvent la règle de largeur.
 
 ## La feature `two-face` est nécessaire pour tester
 

@@ -56,6 +56,9 @@ pub struct Style {
     pub bracket_match_color: Color,
     /// Background fill color for the IME preedit (composition) region
     pub ime_preedit_background_color: Color,
+    /// Color for the note glyphs: the superscript numbers that stand for the
+    /// citations and footnotes the layout folds away.
+    pub mark_color: Color,
 }
 
 /// The theme catalog of a code editor.
@@ -221,6 +224,15 @@ pub fn from_iced_theme(theme: &iced::Theme) -> Style {
     let ime_preedit_background_color =
         Color { r: 1.0, g: 1.0, b: 1.0, a: 0.08 };
 
+    // Note glyphs: the small superscript numbers that stand for the citations
+    // and footnotes the layout folds away. Fixed values, like the search
+    // colors, so a marker always reads as a marker.
+    let mark_color = if is_dark {
+        Color { r: 0.55, g: 0.65, b: 0.95, a: 1.0 }
+    } else {
+        Color { r: 0.25, g: 0.35, b: 0.72, a: 1.0 }
+    };
+
     Style {
         background,
         text_color,
@@ -237,6 +249,7 @@ pub fn from_iced_theme(theme: &iced::Theme) -> Style {
         selection_color,
         bracket_match_color,
         ime_preedit_background_color,
+        mark_color,
     }
 }
 

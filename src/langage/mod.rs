@@ -13,6 +13,7 @@
 //! Voir `docs/design/langage-intermediaire.md` pour la conception complète.
 
 pub mod generer;
+pub mod marques;
 pub mod migration;
 pub mod parse;
 pub mod pipeline;

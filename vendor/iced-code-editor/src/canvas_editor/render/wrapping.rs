@@ -9,7 +9,10 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::ops::Range;
 
-use crate::canvas_editor::{compare_floats, measure_char_width};
+use crate::canvas_editor::marques::{
+    Marque, MarquesLigne, largeur_caractere,
+};
+use crate::canvas_editor::compare_floats;
 
 /// Represents a visual line segment in the editor.
 ///
@@ -117,6 +120,7 @@ impl WrappingCalculator {
         viewport_width: f32,
         gutter_width: f32,
         hidden: &HashSet<usize>,
+        marques: &[Marque],
     ) -> Vec<VisualLine> {
         self.calculate_visual_lines_range(
             text_buffer,
@@ -124,6 +128,7 @@ impl WrappingCalculator {
             gutter_width,
             hidden,
             0..text_buffer.line_count(),
+            marques,
         )
     }
 
@@ -138,6 +143,7 @@ impl WrappingCalculator {
         gutter_width: f32,
         hidden: &HashSet<usize>,
         logical_range: Range<usize>,
+        marques: &[Marque],
     ) -> Vec<VisualLine> {
         let logical_range = logical_range.start.min(text_buffer.line_count())
             ..logical_range.end.min(text_buffer.line_count());
@@ -170,6 +176,10 @@ impl WrappingCalculator {
 
             let line_content = text_buffer.line(logical_line);
 
+            // Les marques de cette ligne : le texte fondu en tient dans un
+            // glyphe, et la ligne se referme dessus.
+            let marques_ligne = MarquesLigne::new(marques, logical_line);
+
             if line_content.is_empty() {
                 visual_lines.push(VisualLine::new(logical_line, 0, 0, 0));
                 continue;
@@ -187,8 +197,10 @@ impl WrappingCalculator {
                 let mut width = 0.0;
 
                 while segment_end < chars.len() {
-                    let char_width = measure_char_width(
+                    let char_width = largeur_caractere(
                         chars[segment_end],
+                        segment_end,
+                        &marques_ligne,
                         self.full_char_width,
                         self.char_width,
                     );
@@ -298,7 +310,7 @@ mod tests {
         let buffer = TextBuffer::new("line 1\nline 2\nline 3");
         let calc = WrappingCalculator::new(false, None, FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         assert_eq!(visual_lines.len(), 3);
         assert_eq!(visual_lines[0].logical_line, 0);
@@ -313,7 +325,7 @@ mod tests {
         // Hide logical lines 1 and 2 (e.g. a collapsed fold).
         let hidden: HashSet<usize> = [1, 2].into_iter().collect();
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &hidden);
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &hidden, &[]);
 
         // Only lines 0 and 3 remain visible.
         assert_eq!(visual_lines.len(), 2);
@@ -328,7 +340,7 @@ mod tests {
             WrappingCalculator::new(true, Some(80), FONT_SIZE, CHAR_WIDTH);
         let hidden: HashSet<usize> = [1].into_iter().collect();
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &hidden);
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &hidden, &[]);
 
         assert_eq!(visual_lines.len(), 2);
         assert_eq!(visual_lines[0].logical_line, 0);
@@ -348,7 +360,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(10), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         // La rupture recule jusqu'à l'espace, au lieu de trancher le mot.
         assert_eq!(visual_lines.len(), 3);
@@ -382,7 +394,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(9), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         assert!(visual_lines.len() > 1, "la ligne doit être découpée");
 
@@ -430,7 +442,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(8), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         assert_eq!(visual_lines.len(), 3);
         assert_eq!(visual_lines[0].end_col, 8);
@@ -444,7 +456,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(10), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         // Line is 47 chars, should wrap into 5 segments (10+10+10+10+7)
         assert_eq!(visual_lines.len(), 5);
@@ -463,7 +475,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(15), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         // First line (short) - no wrap
         assert_eq!(
@@ -508,6 +520,7 @@ mod tests {
             60.0,
             &HashSet::new(),
             1..3,
+            &[],
         );
 
         assert_eq!(
@@ -525,7 +538,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(10), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         assert_eq!(visual_lines.len(), 3);
         assert_eq!(visual_lines[1].logical_line, 1);
@@ -539,7 +552,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(20), FONT_SIZE, CHAR_WIDTH);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         // 100 chars / 20 per line = 5 lines
         assert_eq!(visual_lines.len(), 5);
@@ -567,7 +580,7 @@ mod tests {
         let calc =
             WrappingCalculator::new(true, Some(10), FONT_SIZE, CHAR_WIDTH); // 84.0 px
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         assert_eq!(visual_lines.len(), 1);
         assert_eq!(visual_lines[0].len(), 6);
@@ -579,7 +592,7 @@ mod tests {
         let text = "你好世界你好世"; // 7 chars
         let buffer = TextBuffer::new(text);
         let visual_lines =
-            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new());
+            calc.calculate_visual_lines(&buffer, 800.0, 60.0, &HashSet::new(), &[]);
 
         assert_eq!(visual_lines.len(), 2);
         assert_eq!(visual_lines[0].len(), 6); // First 6 fit

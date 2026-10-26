@@ -49,6 +49,7 @@ mod editing;
 pub(crate) mod features;
 mod focus;
 mod input;
+pub mod marques;
 pub mod lsp;
 mod metrics;
 mod render;
@@ -189,6 +190,14 @@ pub struct CodeEditor {
     /// Bumped whenever the collapsed set or the folding toggle changes, so that
     /// derived layout caches (visual lines) are invalidated.
     pub(crate) fold_revision: u64,
+    /// Plages de texte fondues en un glyphe : les notes du document.
+    ///
+    /// C'est l'appelant qui les connaît — lui seul lit la langue —, et le
+    /// rendu ne reçoit qu'une règle de largeur. La révision suit, pour que
+    /// les caches d'habillage sachent que la ligne a changé de forme.
+    pub(crate) marques: Vec<marques::Marque>,
+    /// Monotonic revision counter for the annotation marks.
+    pub(crate) marques_revision: u64,
     /// Cached foldable regions, keyed by `buffer_revision`.
     pub(crate) foldable_regions_cache:
         RefCell<Option<(u64, Rc<Vec<folding::FoldRegion>>)>>,
@@ -684,6 +693,8 @@ impl CodeEditor {
             folding_enabled: true,
             collapsed_folds: HashSet::new(),
             fold_revision: 0,
+            marques: Vec::new(),
+            marques_revision: 0,
             foldable_regions_cache: RefCell::new(None),
             search_state: search::SearchState::new(),
             custom_context_menu_entries: Vec::new(),

@@ -6,6 +6,7 @@ use iced::widget::canvas;
 use iced::{Color, Point, Rectangle, Size};
 
 use super::text::{RenderContext, calculate_segment_geometry};
+use crate::canvas_editor::marques::MarquesLigne;
 use super::wrapping::{VisualLine, WrappingCalculator};
 use crate::canvas_editor::features::vim::VimMode;
 use crate::canvas_editor::features::{bracket_match, search};
@@ -67,6 +68,7 @@ impl CodeEditor {
         let line_content = self.buffer.line(vl.logical_line);
         let (x_start, width) = calculate_segment_geometry(
             line_content,
+            &MarquesLigne::new(&self.marques, vl.logical_line),
             vl.start_col,
             cols.0,
             cols.1,
@@ -432,6 +434,7 @@ impl CodeEditor {
                 // Use calculate_segment_geometry to ensure correct CJK width handling
                 let (cursor_x_content, _) = calculate_segment_geometry(
                     line_content,
+                    &MarquesLigne::new(&self.marques, vl.logical_line),
                     vl.start_col,
                     self.cursors.primary_position().1,
                     self.cursors.primary_position().1,
@@ -611,6 +614,7 @@ impl CodeEditor {
             // Compute exact caret X position
             let (cursor_x_content, _) = calculate_segment_geometry(
                 line_content,
+                &MarquesLigne::new(&self.marques, vl.logical_line),
                 vl.start_col,
                 position.1,
                 position.1,
@@ -684,6 +688,7 @@ impl CodeEditor {
                     if seg_start < seg_end {
                         let (x, width) = calculate_segment_geometry(
                             line_content,
+                            &MarquesLigne::vide(),
                             visual_line.start_col,
                             seg_start,
                             seg_end,
