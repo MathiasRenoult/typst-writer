@@ -544,7 +544,7 @@ pub(super) fn bubble_style(palette: Palette) -> impl Fn(&iced::Theme) -> contain
         border: iced::Border {
             color: palette.border,
             width: 1.0,
-            radius: 4.0.into(),
+            radius: crate::ui::theme::jetons::RAYON.into(),
         },
         ..Default::default()
     }

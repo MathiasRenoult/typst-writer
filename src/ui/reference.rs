@@ -5,9 +5,9 @@
 //! locale s'écrit**. Une notice Zotero appartient à Zotero, qui la reprendrait
 //! à la prochaine synchronisation : ici, elle se lit, jamais.
 
-use crate::app::Message;
 use crate::app::state::EditionReference;
-use crate::ui::theme::Palette;
+use crate::app::Message;
+use crate::ui::theme::{self, Palette};
 use iced::widget::{Space, button, column, container, row, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -29,14 +29,14 @@ fn fenetre<'a>(
     palette: Palette,
 ) -> Element<'a, Message> {
     let entete = row![
-        palette.label("Modifier la référence").size(15),
+        palette.label("Modifier la référence").size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         palette
             .label(format!("@{}", edition.cle))
-            .size(11)
+            .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
     ]
-    .spacing(8)
+    .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
     let champ = |invite: &str, valeur: &str, nom: &'static str| {
@@ -46,12 +46,12 @@ fn fenetre<'a>(
             .width(Length::Fill)
     };
 
-    let mut formulaire = column![].spacing(8);
+    let mut formulaire = column![].spacing(theme::jetons::PAS);
 
     formulaire = formulaire.push(row![
         champ("Nom", &edition.nom, "nom").width(Length::Fill),
         champ("Prénom", &edition.prenom, "prenom").width(Length::Fill),
-    ].spacing(8));
+    ].spacing(theme::jetons::PAS));
 
     formulaire = formulaire.push(champ("Titre", &edition.titre, "titre"));
     formulaire = formulaire.push(champ("Année", &edition.annee, "annee"));
@@ -60,43 +60,35 @@ fn fenetre<'a>(
         row![
             palette
                 .label("Entrée : enregistrer · Échap : fermer")
-                .size(11)
+                .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
             Space::new().width(Length::Fill),
-            button(palette.label("Enregistrer").size(12))
+            button(palette.label("Enregistrer").size(theme::jetons::CORPS))
                 .on_press(Message::EditionReferenceEnregistrer)
                 .padding([6, 12]),
         ]
-        .spacing(8)
+        .spacing(theme::jetons::PAS)
         .align_y(Alignment::Center)
     } else {
         // Zotero : la notice se lit, et c'est tout.
         row![
             palette
                 .label("Bibliothèque Zotero — lecture seule")
-                .size(11)
+                .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
             Space::new().width(Length::Fill),
-            button(palette.label("Fermer").size(12))
+            button(palette.label("Fermer").size(theme::jetons::CORPS))
                 .on_press(Message::EditionReferenceFermer)
                 .padding([6, 12]),
         ]
-        .spacing(8)
+        .spacing(theme::jetons::PAS)
         .align_y(Alignment::Center)
     };
 
-    let fenetre = container(column![entete, formulaire, pied].spacing(12))
+    let fenetre = container(column![entete, formulaire, pied].spacing(theme::jetons::GRAND_PAS))
         .width(Length::Fixed(LARGEUR))
         .padding(16)
-        .style(move |_| container::Style {
-            background: Some(palette.surface.into()),
-            border: iced::Border {
-                color: palette.accent,
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            ..Default::default()
-        });
+        .style(theme::panneau(palette));
 
     container(fenetre)
         .width(Length::Fill)

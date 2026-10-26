@@ -32,7 +32,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     content = content.push(
         palette
             .label(project.name.to_uppercase())
-            .size(10)
+            .size(theme::jetons::CHAPEAU)
             .color(palette.text_muted),
     );
 
@@ -40,7 +40,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         row![
             palette
                 .label(format!("{} mots", format_count(state.word_count())))
-                .size(13)
+                .size(theme::jetons::SAILLANT)
                 .color(palette.text),
             Space::new().width(Length::Fill),
             palette
@@ -49,7 +49,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 } else {
                     format!("{} chapitre(s)", project.chapters.len())
                 })
-                .size(11)
+                .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
         ]
         .align_y(Alignment::Center),
@@ -74,7 +74,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     palette.text_muted
                 },
             ),
-            palette.label("document.tw").size(13).color(if active {
+            palette.label("document.tw").size(theme::jetons::SAILLANT).color(if active {
                 palette.accent
             } else {
                 palette.text
@@ -82,7 +82,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             Space::new().width(Length::Fill),
             palette
                 .label(format_count(state.word_count()))
-                .size(11)
+                .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
         ]
         .spacing(7)
@@ -107,7 +107,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                         "{} ancien(s) chapitre(s) conservé(s) en archive",
                         project.chapters.len()
                     ))
-                    .size(10)
+                    .size(theme::jetons::CHAPEAU)
                     .color(palette.text_muted),
             );
         }
@@ -119,7 +119,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .label(format!(
                         "{orphan_count} archive(s) hors assemblage — importez-les via Ouvrir"
                     ))
-                    .size(10)
+                    .size(theme::jetons::CHAPEAU)
                     .color(palette.warning),
             );
         }
@@ -132,7 +132,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             content = content.push(
                 palette
                     .label("Aucun chapitre.")
-                    .size(12)
+                    .size(theme::jetons::CORPS)
                     .color(palette.text_muted),
             );
         }
@@ -157,7 +157,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .label(format!(
                         "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
                     ))
-                    .size(11)
+                    .size(theme::jetons::DETAIL)
                     .color(palette.warning),
             );
         }
@@ -167,7 +167,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             button(
                 row![
                     theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
-                    palette.label("Nouveau chapitre").size(13),
+                    palette.label("Nouveau chapitre").size(theme::jetons::SAILLANT),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -193,7 +193,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             label.push_str(entry.text.trim());
 
             content = content.push(
-                button(palette.label(label).size(12))
+                button(palette.label(label).size(theme::jetons::CORPS))
                     .on_press(Message::GotoHeading(index))
                     .width(Fill)
                     .height(Length::Fixed(ENTRY_HEIGHT))
@@ -240,7 +240,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         let is_current = other.dir == project.dir;
 
         content = content.push(
-            button(palette.label(other.name.clone()).size(12))
+            button(palette.label(other.name.clone()).size(theme::jetons::CORPS))
                 .on_press(Message::OpenProject(other.dir.clone()))
                 .width(Fill)
                 .height(Length::Fixed(ENTRY_HEIGHT))
@@ -257,7 +257,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     13.0,
                     palette.text_muted
                 ),
-                palette.label("Nouveau projet").size(12),
+                palette.label("Nouveau projet").size(theme::jetons::CORPS),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -315,7 +315,7 @@ fn chapter_row<'a>(
     label = label.push(
         palette
             .label(format!("{:02}", chapter.order))
-            .size(11)
+            .size(theme::jetons::DETAIL)
             .color(if chapter.included {
                 palette.text_muted
             } else {
@@ -326,7 +326,7 @@ fn chapter_row<'a>(
     label = label.push(
         palette
             .label(chapter.title.clone())
-            .size(13)
+            .size(theme::jetons::SAILLANT)
             .color(palette.text),
     );
 
@@ -347,7 +347,7 @@ fn chapter_row<'a>(
         container(
             palette
                 .label(format_count(chapter.words))
-                .size(12)
+                .size(theme::jetons::CORPS)
                 .color(palette.text_muted)
         )
         .width(Length::Fixed(COUNT_WIDTH))
@@ -382,12 +382,12 @@ fn renaming_row<'a>(
     row![
         palette
             .label(format!("{:02}", chapter.order))
-            .size(11)
+            .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
         text_input::TextInput::new("Titre du chapitre", &buffer)
             .on_input(Message::RenameChanged)
             .on_submit(Message::RenameCommit)
-            .size(13)
+            .size(theme::jetons::SAILLANT)
             .padding([4, 8])
             .width(Fill),
         icon_action(
@@ -423,7 +423,7 @@ fn icon_action<'a>(
             .height(Length::Fixed(ENTRY_HEIGHT))
             .padding([4, 4])
             .style(move |t, status| delete_style(t, status, palette)),
-        container(palette.label(tooltip_text).size(11).color(palette.text))
+        container(palette.label(tooltip_text).size(theme::jetons::DETAIL).color(palette.text))
             .padding([4, 8])
             .style(move |_| tooltip_style(palette)),
         tooltip::Position::Right,
@@ -445,11 +445,11 @@ fn chapter_details<'a>(chapter: &'a Chapter, palette: Palette) -> Element<'a, Me
 
     container(
         column![
-            palette.label(chapter.title.clone()).size(12),
-            palette.label(status).size(11).color(color),
+            palette.label(chapter.title.clone()).size(theme::jetons::CORPS),
+            palette.label(status).size(theme::jetons::DETAIL).color(color),
             palette
                 .label(format_path(&chapter.path))
-                .size(10)
+                .size(theme::jetons::CHAPEAU)
                 .color(palette.text_muted),
         ]
         .spacing(2),
@@ -475,9 +475,9 @@ fn info_row<'a>(
 
     row![
         container(glyph).padding([0, 4]).center_y(ENTRY_HEIGHT),
-        palette.label(name).size(13).color(color),
+        palette.label(name).size(theme::jetons::SAILLANT).color(color),
         Space::new().width(Length::Fill),
-        palette.label(detail).size(11).color(if missing {
+        palette.label(detail).size(theme::jetons::DETAIL).color(if missing {
             palette.warning
         } else {
             palette.text_muted
@@ -498,7 +498,7 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'
     let info = format!("@{} · {}", entry.key, entry.kind);
 
     let ligne = row![
-        button(palette.label(libelle).size(12))
+        button(palette.label(libelle).size(theme::jetons::CORPS))
             .on_press(Message::InsertCitation(entry.key.clone()))
             .width(Fill)
             .height(Length::Fixed(ENTRY_HEIGHT))
@@ -516,7 +516,7 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'
     .spacing(2)
     .align_y(Alignment::Center);
 
-    tooltip(ligne, palette.label(info).size(11), tooltip::Position::Right)
+    tooltip(ligne, palette.label(info).size(theme::jetons::DETAIL), tooltip::Position::Right)
         .gap(6)
         .into()
 }
@@ -536,7 +536,7 @@ fn tronquer(texte: &str, largeur: usize) -> String {
 fn section_title(title: &str, palette: Palette) -> text::Text<'_> {
     palette
         .label(title.to_uppercase())
-        .size(10)
+        .size(theme::jetons::CHAPEAU)
         .color(palette.text_muted)
 }
 
@@ -588,7 +588,7 @@ fn primary_style(t: &Theme, status: button::Status, palette: Palette) -> button:
         // couleur de contraste plutôt que d'en choisir une à la main.
         text_color: t.extended_palette().primary.base.text,
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: crate::ui::theme::jetons::RAYON.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -618,7 +618,7 @@ fn entry_style(
         background: background.map(Into::into),
         text_color: palette.text,
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: crate::ui::theme::jetons::RAYON.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -637,7 +637,7 @@ fn delete_style(_t: &Theme, status: button::Status, palette: Palette) -> button:
         background: background.map(Into::into),
         text_color,
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: crate::ui::theme::jetons::RAYON.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -651,7 +651,7 @@ fn tooltip_style(palette: Palette) -> container::Style {
         border: iced::Border {
             color: palette.border,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: crate::ui::theme::jetons::RAYON.into(),
         },
         ..Default::default()
     }

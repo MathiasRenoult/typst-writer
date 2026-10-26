@@ -38,19 +38,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
     };
 
     let entete = row![
-        palette.label("Choisir une référence").size(15),
+        palette.label("Choisir une référence").size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         palette
             .label("Échap pour fermer")
-            .size(11)
+            .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
     ]
-    .spacing(8)
+    .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
     let pied = palette
         .label("↑↓ naviguer · Tab ou Entrée insérer")
-        .size(11)
+        .size(theme::jetons::DETAIL)
         .color(palette.text_muted);
 
     let fenetre = container(
@@ -100,14 +100,14 @@ fn fenetre_composeur<'a>(
     };
 
     let entete = row![
-        palette.label(titre).size(15),
+        palette.label(titre).size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         palette
             .label("Échap pour fermer")
-            .size(11)
+            .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
     ]
-    .spacing(8)
+    .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
     // Un seul champ pour les deux étapes : la forme de la fenêtre ne change
@@ -126,7 +126,7 @@ fn fenetre_composeur<'a>(
             container(
                 palette
                     .label("La page s'écrit comme elle apparaîtra dans la note.")
-                    .size(12)
+                    .size(theme::jetons::CORPS)
                     .color(palette.text_muted),
             )
             .width(Length::Fill)
@@ -141,18 +141,18 @@ fn fenetre_composeur<'a>(
     // La note telle qu'elle se compose : c'est exactement ce que le document
     // recevra, et c'est ce qui rend le composeur honnête.
     let apercu = row![
-        palette.label("Note").size(11).color(palette.text_muted),
+        palette.label("Note").size(theme::jetons::DETAIL).color(palette.text_muted),
         palette
             .label(composeur.apercu(intermediaire))
-            .size(12)
+            .size(theme::jetons::CORPS)
             .color(palette.text),
     ]
-    .spacing(8)
+    .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
     let pied = palette
         .label(raccourcis)
-        .size(11)
+        .size(theme::jetons::DETAIL)
         .color(palette.text_muted);
 
     let fenetre = container(
@@ -185,17 +185,17 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
         let mut ligne = row![]
             .width(Length::Fill)
             .padding([4, 8])
-            .spacing(8)
+            .spacing(theme::jetons::PAS)
             .align_y(Alignment::Center);
 
         ligne = ligne.push(
             palette
                 .label(format!("{}", index + 1))
-                .size(11)
+                .size(theme::jetons::DETAIL)
                 .color(if tenue { theme::lisible_sur(palette.accent) } else { palette.text }),
         );
 
-        ligne = ligne.push(palette.label(&reference.cle).size(13).color(if tenue {
+        ligne = ligne.push(palette.label(&reference.cle).size(theme::jetons::SAILLANT).color(if tenue {
             theme::lisible_sur(palette.accent)
         } else {
             palette.text
@@ -204,7 +204,7 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
         ligne = ligne.push(Space::new().width(Length::Fill));
 
         if !page.is_empty() {
-            ligne = ligne.push(palette.label(page).size(11).color(if tenue {
+            ligne = ligne.push(palette.label(page).size(theme::jetons::DETAIL).color(if tenue {
                 theme::lisible_sur(palette.accent)
             } else {
                 palette.text
@@ -258,7 +258,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
                     } else {
                         "Aucune référence correspondante"
                     })
-                    .size(13)
+                    .size(theme::jetons::SAILLANT)
                     .color(palette.text_muted),
             )
             .width(Length::Fill)
@@ -279,10 +279,10 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
         let mut ligne = row![]
             .width(Length::Fill)
             .padding([5, 8])
-            .spacing(8)
+            .spacing(theme::jetons::PAS)
             .align_y(Alignment::Center);
 
-        ligne = ligne.push(palette.label(cle).size(13).color(if selected {
+        ligne = ligne.push(palette.label(cle).size(theme::jetons::SAILLANT).color(if selected {
             theme::lisible_sur(palette.accent)
         } else {
             palette.text
@@ -290,7 +290,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
 
         ligne = ligne.push(Space::new().width(Length::Fill));
 
-        ligne = ligne.push(palette.label(genre).size(11).color(if selected {
+        ligne = ligne.push(palette.label(genre).size(theme::jetons::DETAIL).color(if selected {
             theme::lisible_sur(palette.accent)
         } else {
             palette.text

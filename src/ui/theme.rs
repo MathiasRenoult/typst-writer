@@ -225,6 +225,44 @@ pub fn lisible_sur(fond: Color) -> Color {
     }
 }
 
+/// Les jetons de dessin : le même rayon, les mêmes espacements, partout.
+///
+/// Une interface moderne est d'abord une interface **répétée** : un panneau,
+/// un bouton, une rangée partagent un rayon, un pas, une échelle de corps.
+/// Ce que les yeux appellent « épuré » est souvent cette seule régularité.
+pub mod jetons {
+    /// Le rayon des surfaces : panneaux, boutons, champs, infobulles.
+    pub const RAYON: f32 = 8.0;
+
+    /// Le pas de l'entre-deux : entre des rangées, des blocs, des champs.
+    pub const PAS: f32 = 8.0;
+
+    /// Le pas large : entre les grandes sections d'une fenêtre.
+    pub const GRAND_PAS: f32 = 12.0;
+
+    /// L'échelle des corps de texte, du plus discret au titre.
+    pub const CHAPEAU: f32 = 10.0;
+    pub const DETAIL: f32 = 11.0;
+    pub const CORPS: f32 = 12.0;
+    pub const SAILLANT: f32 = 13.0;
+    pub const TITRE: f32 = 15.0;
+}
+
+/// Le fond d'un panneau flottant : surface, lisière, rayon commun.
+pub fn panneau(
+    palette: Palette,
+) -> impl Fn(&iced::Theme) -> iced::widget::container::Style {
+    move |_| iced::widget::container::Style {
+        background: Some(palette.surface.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: jetons::RAYON.into(),
+        },
+        ..Default::default()
+    }
+}
+
 /// Les polices résolues d'un thème.
 #[derive(Debug, Clone, Copy)]
 pub struct Typography {
