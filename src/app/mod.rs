@@ -208,19 +208,10 @@ impl State {
         };
 
         if path.extension().is_some_and(|extension| extension == "tw") {
-            if self.lsp.document.take().is_some() {
-                if let Some(session) = self.lsp.session.as_mut() {
-                    session.close_document();
-                }
-            }
-
-            self.lsp.diagnostics.clear();
-            self.lsp.reported.clear();
-            if self.lsp.completion.take().is_some() {
-                self.editor.editor.set_reserved_keys(Vec::new());
-            }
-            self.lsp.hover = None;
-            self.lsp.awaiting = false;
+            // Le serveur ne s'applique pas au langage intermédiaire : ce qu'il
+            // a pu laisser n'a plus lieu d'être. La complétion de citation, elle,
+            // reste la nôtre — `purge_server` ne la touche pas.
+            self.lsp.purge_server();
 
             return;
         }

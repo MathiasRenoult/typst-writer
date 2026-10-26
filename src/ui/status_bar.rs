@@ -62,12 +62,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // L'assistance à la frappe. Son absence se dit **sans alarme** : une
     // application qui fonctionne sans elle ne doit pas présenter son manque
     // comme une panne, mais rien dire du tout laisserait croire qu'elle est là.
-    bar = bar.push(
-        palette
-            .label(lsp_status(state).0)
-            .size(12)
-            .color(lsp_status(state).1),
-    );
+    let lsp = lsp_status(state);
+
+    bar = bar.push(palette.label(lsp.0).size(12).color(lsp.1));
 
     if !render.is_empty() {
         bar = bar.push(palette.label(render).size(12).color(render_color));

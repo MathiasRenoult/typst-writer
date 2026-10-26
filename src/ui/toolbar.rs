@@ -17,6 +17,24 @@ const BUTTON: f32 = 30.0;
 /// Hauteur de la barre.
 pub(crate) const BAR_HEIGHT: f32 = 42.0;
 
+/// Les couleurs proposées pour teinter du texte, avec leur nom Typst.
+///
+/// Ce sont des noms reconnus par Typst : le générateur les passe tels quels
+/// dans `#text(fill: …)`, donc aucun choix ici ne peut produire une couleur
+/// inconnue du compilateur.
+const COULEURS: [(&str, &str); 7] = [
+    ("Rouge", "red"),
+    ("Bleu", "blue"),
+    ("Vert", "green"),
+    ("Orange", "orange"),
+    ("Violet", "purple"),
+    ("Noir", "black"),
+    ("Gris", "gray"),
+];
+
+/// Les niveaux de titre proposés, du plus haut au plus bas.
+const TITRES: [(&str, u8); 3] = [("H1", 1), ("H2", 2), ("H3", 3)];
+
 /// La barre d'outils : des icônes, pas des mots.
 ///
 /// Chaque bouton porte une infobulle — sans elle une icône seule est une
@@ -49,11 +67,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::Italique,
             palette,
         ));
-        bar = bar.push(format_button(
-            "H1",
-            "Titre de niveau 1 sur la ligne courante",
-            crate::app::message::FormatAction::Titre(1),
+        bar = bar.push(format_picker(
+            TITRES
+                .iter()
+                .map(|(libelle, _)| (*libelle).to_string())
+                .collect(),
+            "Titre",
+            |choisi| {
+                Message::Format(crate::app::message::FormatAction::Titre(
+                    niveau_titre(&choisi).unwrap_or(1),
+                ))
+            },
             palette,
+            64.0,
         ));
         bar = bar.push(format_button(
             "•",
@@ -73,11 +99,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::CitationBloc,
             palette,
         ));
-        bar = bar.push(format_button(
-            "A",
-            "Couleur rouge sur la sélection",
-            crate::app::message::FormatAction::Couleur("red".to_string()),
+        bar = bar.push(format_picker(
+            COULEURS
+                .iter()
+                .map(|(libelle, _)| (*libelle).to_string())
+                .collect(),
+            "Couleur",
+            |choisi| {
+                Message::Format(crate::app::message::FormatAction::Couleur(
+                    couleur_typst(&choisi).unwrap_or("red").to_string(),
+                ))
+            },
             palette,
+            96.0,
         ));
         bar = bar.push(format_button(
             "N",
@@ -418,6 +452,44 @@ fn format_button<'a>(
     toolbar_text_button(label, help, Message::Format(action), palette)
 }
 
+/// Le nom Typst de la couleur désignée par son libellé français.
+fn couleur_typst(label: &str) -> Option<&'static str> {
+    COULEURS
+        .iter()
+        .find(|(libelle, _)| *libelle == label)
+        .map(|(_, nom)| *nom)
+}
+
+/// Le niveau du titre désigné par son libellé.
+fn niveau_titre(label: &str) -> Option<u8> {
+    TITRES
+        .iter()
+        .find(|(libelle, _)| *libelle == label)
+        .map(|(_, niveau)| *niveau)
+}
+
+/// Une liste déroulante qui applique une mise en forme au choix.
+///
+/// Contrairement à un bouton, elle **montre** les possibilités avant le clic :
+/// c'est ce qui rend le choix d'un niveau de titre ou d'une couleur immédiat,
+/// au lieu d'une suite de clics à l'aveugle. Comme c'est une action et non un
+/// état, rien n'y est présélectionné : le libellé vide dit ce qu'elle propose.
+fn format_picker<'a>(
+    options: Vec<String>,
+    placeholder: &'static str,
+    map: impl Fn(String) -> Message + 'a,
+    palette: Palette,
+    width: f32,
+) -> Element<'a, Message> {
+    pick_list(options, None::<String>, map)
+        .placeholder(placeholder)
+        .text_size(12)
+        .font(palette.interface)
+        .padding([4, 8])
+        .width(Length::Fixed(width))
+        .into()
+}
+
 /// Bouton compact avec infobulle, partagé par les commandes de texte et zoom.
 fn toolbar_text_button<'a>(
     label: &'static str,
@@ -491,5 +563,26 @@ fn theme_icon(mode: theme::ThemeMode) -> iced::widget::Text<'static, Theme> {
         theme::ThemeMode::System => lucide_icons::iced::icon_sun_moon::<Theme>(),
         theme::ThemeMode::Light => lucide_icons::iced::icon_sun::<Theme>(),
         theme::ThemeMode::Dark => lucide_icons::iced::icon_moon::<Theme>(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Chaque libellé de couleur donne son nom Typst, et rien d'autre.
+    #[test]
+    fn colour_labels_map_to_typst_names() {
+        assert_eq!(couleur_typst("Rouge"), Some("red"));
+        assert_eq!(couleur_typst("Violet"), Some("purple"));
+        assert_eq!(couleur_typst("Inexistant"), None);
+    }
+
+    /// Chaque libellé de titre donne son niveau.
+    #[test]
+    fn heading_labels_map_to_levels() {
+        assert_eq!(niveau_titre("H1"), Some(1));
+        assert_eq!(niveau_titre("H3"), Some(3));
+        assert_eq!(niveau_titre("H4"), None);
     }
 }

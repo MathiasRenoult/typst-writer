@@ -451,6 +451,25 @@ impl LspState {
         self.tokens = self.tokens.wrapping_add(1);
         self.awaiting = false;
     }
+
+    /// Purge tout ce que le serveur a pu laisser : document ouvert, diagnostics,
+    /// survol, demande en vol.
+    ///
+    /// **Pas** la complétion : pour un fichier intermédiaire elle est la nôtre —
+    /// les `@` tirés de la bibliographie — et la prendre à chaque tic refermait
+    /// la fenêtre de suggestions trois dixièmes de seconde après son ouverture.
+    pub(crate) fn purge_server(&mut self) {
+        if self.document.take().is_some()
+            && let Some(session) = self.session.as_mut()
+        {
+            session.close_document();
+        }
+
+        self.diagnostics.clear();
+        self.reported.clear();
+        self.hover = None;
+        self.awaiting = false;
+    }
 }
 
 /// Ce que le serveur dit d'un symbole, prêt à être montré.
@@ -936,6 +955,38 @@ mod tests {
         assert_eq!(lsp.tokens, 3);
         assert!(!lsp.awaiting);
         assert!(!lsp.accept_completion_response(2));
+    }
+
+    /// Purger le serveur ne ferme pas la complétion de citation : elle est la
+    /// nôtre, tirée de la bibliographie, et non une réponse du serveur. La
+    /// prendre à chaque tic refermait la fenêtre dès qu'on cessait de taper.
+    #[test]
+    fn purging_the_server_keeps_the_local_citation_completion() {
+        let mut lsp = LspState {
+            completion: Some(Completion {
+                items: Vec::new(),
+                shown: Vec::new(),
+                selected: 0,
+                typed: String::new(),
+                trigger: '@',
+                start: 0,
+                cursor_offset: 0,
+            }),
+            awaiting: true,
+            ..LspState::default()
+        };
+
+        lsp.purge_server();
+
+        assert!(
+            lsp.completion.is_some(),
+            "la complétion de citation doit survivre à la purge du serveur"
+        );
+        assert!(
+            !lsp.awaiting,
+            "la demande en vol du serveur, elle, s'éteint"
+        );
+        assert!(lsp.hover.is_none());
     }
 
     /// Une image quelconque : seule son identité compte pour ces tests.
