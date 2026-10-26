@@ -53,6 +53,13 @@ pub struct Composeur {
     /// La ligne surlignée dans la liste des clés.
     pub selection: usize,
 
+    /// La rangée tenue par les flèches, dans l'ordre de la fenêtre : les
+    /// lignes de la note d'abord, puis les clés filtrées.
+    ///
+    /// Poser les flèches sur une ligne de note la **remet sous les doigts** ;
+    /// poser sur une clé la surligne. Une seule liste, un seul geste.
+    pub position: usize,
+
     /// L'offset, dans le document, où la note s'insérera : celui du `@`
     /// déclencheur, que le composeur a mangé.
     pub ancre: usize,
@@ -87,6 +94,7 @@ impl Composeur {
             rang: None,
             saisie: String::new(),
             selection: 0,
+            position: 0,
             ancre,
             edition: None,
         }
@@ -118,6 +126,7 @@ impl Composeur {
         self.rang = Some(index);
         self.etape = Etape::Reference;
         self.saisir(self.brouillon.cle.clone());
+        self.position = index;
 
         // La sélection retombe sur la clé elle-même, même si le filtre en
         // montre d'autres devant elle.
@@ -179,14 +188,35 @@ impl Composeur {
     pub fn saisir(&mut self, texte: String) {
         self.saisie = texte;
         self.selection = 0;
+        self.position = self.references.len();
     }
 
-    /// Déplace la sélection, sans jamais sortir de la liste filtrée.
-    pub fn deplacer(&mut self, delta: isize) {
-        let dernier = self.visibles().len().saturating_sub(1) as isize;
-        let suivant = (self.selection as isize + delta).clamp(0, dernier);
+    /// La sélection des flèches est-elle sur les clés, plutôt que sur une
+    /// ligne de la note ?
+    pub fn sur_palette(&self) -> bool {
+        self.position >= self.references.len()
+    }
 
-        self.selection = suivant as usize;
+    /// Déplace la sélection, sans jamais sortir de la fenêtre.
+    ///
+    /// Les flèches parcourent **les rangées de la fenêtre** dans leur ordre :
+    /// les lignes de la note d'abord — et poser sur l'une d'elles la remet
+    /// sous les doigts, prête à s'éditer — puis les clés filtrées.
+    pub fn deplacer(&mut self, delta: isize) {
+        let total = (self.references.len() + self.visibles().len()) as isize;
+
+        if total == 0 {
+            return;
+        }
+
+        let suivant = (self.position as isize + delta).clamp(0, total - 1) as usize;
+
+        if suivant < self.references.len() {
+            self.choisir(suivant);
+        } else {
+            self.selection = suivant - self.references.len();
+            self.position = suivant;
+        }
     }
 
     /// Tab : prendre la clé tenue, ou valider la page saisie.
@@ -224,6 +254,7 @@ impl Composeur {
         self.etape = Etape::Reference;
         self.saisie.clear();
         self.selection = 0;
+        self.position = self.references.len();
     }
 
     /// Range le brouillon dans la note, à la place qu'il s'est choisie.
@@ -348,6 +379,65 @@ mod tests {
             texte.as_deref(),
             Some("@dupont2023[p. 45]; @martin2020"),
             "une seule note, ses deux références, la page de la première"
+        );
+    }
+
+    /// Les flèches parcourent les lignes de la note, puis les clés : poser
+    /// sur une ligne la remet sous les doigts.
+    #[test]
+    fn les_fleches_parcourent_la_note_puis_les_cles() {
+        let mut note = composeur();
+        note.saisir("dup".to_string());
+        note.avancer();
+        note.saisir("p. 45".to_string());
+        note.avancer();
+        note.saisir("mar".to_string());
+        note.avancer();
+        note.saisir("p. 7".to_string());
+        note.avancer(); // la note tient deux références
+
+        assert_eq!(note.references.len(), 2);
+        assert!(
+            note.sur_palette(),
+            "après la page, la sélection attend sur les clés"
+        );
+
+        note.deplacer(-1); // remonte sur la dernière ligne de la note
+
+        assert_eq!(note.rang, Some(1), "la deuxième référence est sous les doigts");
+        assert_eq!(note.brouillon.cle, "martin2020");
+
+        note.deplacer(-1); // puis la première
+
+        assert_eq!(note.rang, Some(0));
+        assert_eq!(
+            note.saisie, "dupont2023",
+            "sa clé revient au champ, prête à s'éditer"
+        );
+
+        note.deplacer(1);
+        note.deplacer(1); // au-delà des lignes, les clés
+
+        assert!(note.sur_palette(), "la sélection est sur les clés");
+    }
+
+    /// Les flèches ne sortent jamais de la fenêtre.
+    #[test]
+    fn les_fleches_ne_sortent_pas_de_la_fenetre() {
+        let mut note = composeur();
+
+        note.deplacer(-1);
+        assert_eq!(note.position, 0, "pas au-dessus de la première rangée");
+
+        note.deplacer(1);
+        note.deplacer(1);
+        note.deplacer(1);
+        note.deplacer(1);
+        note.deplacer(1);
+        assert_eq!(
+            note.position,
+            note.visibles().len().saturating_sub(1),
+            "pas sous la dernière rangée"
         );
     }
 

@@ -270,7 +270,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
 
     for (position, index) in visibles.iter().enumerate() {
         let (cle, genre) = &composeur.cles[*index];
-        let selected = position == composeur.selection;
+        let selected = composeur.sur_palette() && position == composeur.selection;
 
         let mut ligne = row![]
             .width(Length::Fill)
