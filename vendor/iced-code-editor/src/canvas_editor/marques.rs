@@ -79,6 +79,16 @@ impl<'a> MarquesLigne<'a> {
         self.marques.iter().copied().find(|m| m.couvre(col))
     }
 
+    /// La marque qui **commence** à cette colonne.
+    pub(crate) fn commençant_a(&self, col: usize) -> Option<&'a Marque> {
+        self.marques.iter().copied().find(|m| m.debut == col)
+    }
+
+    /// La marque qui **finit** à cette colonne.
+    pub(crate) fn finissant_a(&self, col: usize) -> Option<&'a Marque> {
+        self.marques.iter().copied().find(|m| m.fin == col)
+    }
+
     /// Les marques de la ligne, dans l'ordre.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &'a Marque> {
         self.marques.iter().copied()
@@ -225,6 +235,12 @@ impl CodeEditor {
     pub fn set_marques(&mut self, marques: Vec<Marque>) {
         self.marques = marques;
         self.marques_revision = self.marques_revision.wrapping_add(1);
+    }
+
+    /// La marque touchée par le dernier clic, s'il a visé un glyphe :
+    /// (ligne, début, fin) de la plage, ou `None`.
+    pub fn dernier_clic_sur_marque(&self) -> Option<(usize, usize, usize)> {
+        self.dernier_clic_marque
     }
 }
 

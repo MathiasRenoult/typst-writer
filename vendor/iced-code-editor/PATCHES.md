@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les dix modifications
+## Les onze modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -166,6 +166,21 @@ colorées. Un test épuisant le budget vérifie ce cas.
 défilement. L'interface hôte en a besoin plus tôt pour borner ses bulles au
 panneau et pouvait donc les placer hors écran dans une fenêtre étroite. La
 nouvelle lecture renvoie la dernière largeur observée par le dessin du canvas.
+
+### 11. La note est un caractère entier, et le clic est sa seule porte
+Une note fondu en un glyphe ne doit pas rester un **fantôme** : on la
+touchait par derrière, au clavier, et son texte invisible se copiait, se
+remplaçait, s'éditait au fil de la frappe. Elle est devenue un caractère
+entier. Le curseur **la saute d'un bond** (flèches) et **atterrit sur ses
+bords** (haut/bas, clic) ; la sélection la couvre d'un bloc ; Backspace et
+Suppr **l'emportent entière** au lieu de la grignoter. Et un clic dessus est
+**la seule porte d'édition** d'une citation — la frappe n'ouvre plus jamais le
+composeur — pendant que le pointeur, sur le glyphe, devient **cliquable**
+(`mouse::Interaction::Pointer`). Au moteur : `Marque::commençant_a` /
+`finissant_a`, `CodeEditor::marque_au_point(Point)`, `dernier_clic_marque` —
+un clic sur un glyphe est mémorisé, l'hôte décide seul d'ouvrir quoi. Le
+pied de page, lui, se déplie sous le curseur pour s'y écrire, et replie dès
+qu'on le quitte.
 
 ### 10. Les notes fondues en un glyphe
 

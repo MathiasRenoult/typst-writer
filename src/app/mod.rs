@@ -472,15 +472,37 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     return Task::batch([task, fermer_composeur(state, None)]);
                 }
 
-                // Un clic **sur une citation** ouvre sa fenêtre d'édition :
-                // c'est le geste du signe en exposant, en attendant le signe.
-                let content = state.editor.content();
-                let offset = state.editor.cursor_offset();
+                // **Le clic sur un glyphe est la seule porte d'édition d'une
+                // note.** Une citation ouvre son composeur ; un pied de page se
+                // déplie sous le curseur. Ailleurs, rien ne bouge — et surtout
+                // plus jamais l'édition d'une citation au fil de la frappe.
+                let contenu = state.editor.content();
+                let notes = crate::langage::marques::notes(&contenu);
 
-                if let Some((references, debut, fin)) =
-                    crate::langage::parse::appel_autour(&content, offset)
-                {
-                    return Task::batch([task, ouvrir_edition(state, references, debut, fin)]);
+                if let Some(rang) = state.editor.note_au_clic(&notes) {
+                    let note = notes[rang].clone();
+
+                    return match note.nature {
+                        crate::langage::marques::Nature::Appel => {
+                            let ouverture = crate::langage::parse::appel_autour(
+                                &contenu,
+                                note.debut + 1,
+                            )
+                            .map(|(references, debut, fin)| {
+                                ouvrir_edition(state, references, debut, fin)
+                            })
+                            .unwrap_or_else(Task::none);
+
+                            Task::batch([task, ouverture])
+                        }
+                        crate::langage::marques::Nature::PiedDePage => Task::batch([
+                            task,
+                            state
+                                .editor
+                                .set_cursor_offset(note.debut + 1)
+                                .map(Message::Editor),
+                        ]),
+                    };
                 }
             }
 
@@ -619,6 +641,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             if let Some(tache) = crate::app::epreuves::driver_composeur(state) {
+                return tache;
+            }
+
+            if let Some(tache) = crate::app::epreuves::driver_glyphe(state) {
                 return tache;
             }
 

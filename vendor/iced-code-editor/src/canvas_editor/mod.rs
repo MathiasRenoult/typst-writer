@@ -198,6 +198,11 @@ pub struct CodeEditor {
     pub(crate) marques: Vec<marques::Marque>,
     /// Monotonic revision counter for the annotation marks.
     pub(crate) marques_revision: u64,
+    /// La marque touchée par le dernier clic, s'il a visé un glyphe.
+    ///
+    /// (ligne, début, fin) de la plage : l'hôte y retrouve sa note, et lui
+    /// seul décide de l'ouvrir. `None` quand le clic ailleurs.
+    pub(crate) dernier_clic_marque: Option<(usize, usize, usize)>,
     /// Cached foldable regions, keyed by `buffer_revision`.
     pub(crate) foldable_regions_cache:
         RefCell<Option<(u64, Rc<Vec<folding::FoldRegion>>)>>,
@@ -695,6 +700,7 @@ impl CodeEditor {
             fold_revision: 0,
             marques: Vec::new(),
             marques_revision: 0,
+            dernier_clic_marque: None,
             foldable_regions_cache: RefCell::new(None),
             search_state: search::SearchState::new(),
             custom_context_menu_entries: Vec::new(),

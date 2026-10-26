@@ -402,6 +402,109 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
 }
 
 /// Pilote l'éditeur tout seul, un pas par tic ; `None` quand rien à faire.
+/// Pilote les glyphes : de vrais clics sur les signes, et ce que
+/// l'application en fait — la note visée, la fenêtre qui s'ouvre, le pied de
+/// page qui se déplie. C'est l'épreuve du **geste**, pas du rendu.
+pub fn driver_glyphe(state: &mut State) -> Option<Task<Message>> {
+    use crate::langage::marques::Nature;
+
+    if !actif("glyphe") {
+        return None;
+    }
+
+    static TRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    match TRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
+        5 => {
+            let contenu = state.editor.content();
+            let notes = crate::langage::marques::notes(&contenu);
+
+            println!("[glyphe] {} notes balayées", notes.len());
+            for note in &notes {
+                let extrait = &contenu[note.debut..note.fin.min(note.debut + 28)];
+                println!(
+                    "[glyphe]   n°{} {:?} : {extrait:?}",
+                    note.numero, note.nature
+                );
+            }
+
+            None
+        }
+        15 => {
+            let contenu = state.editor.content();
+            let notes = crate::langage::marques::notes(&contenu);
+            let premier = notes.first()?;
+
+            println!("[glyphe] le curseur va au premier glyphe");
+            Some(state.editor.set_cursor_offset(premier.debut).map(Message::Editor))
+        }
+        25 => {
+            let point = state.editor.cursor_view_position();
+            println!("[glyphe] clic réel au point {point:?}");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::MouseClick(point),
+            )))
+        }
+        35 => {
+            let contenu = state.editor.content();
+            let notes = crate::langage::marques::notes(&contenu);
+            let visee = state.editor.note_au_clic(&notes);
+
+            println!(
+                "[glyphe] note visée par le clic : {:?} — composeur {}",
+                visee.map(|rang| notes[rang].numero),
+                if state.composeur.is_some() {
+                    "OUVERT"
+                } else {
+                    "fermé"
+                }
+            );
+
+            Some(Task::done(Message::ComposeurFermer))
+        }
+        50 => {
+            let contenu = state.editor.content();
+            let notes = crate::langage::marques::notes(&contenu);
+            let pied = notes.iter().find(|n| n.nature == Nature::PiedDePage)?;
+
+            println!("[glyphe] le curseur va au glyphe du pied de page");
+            Some(
+                state
+                    .editor
+                    .set_cursor_offset(pied.debut)
+                    .map(Message::Editor),
+            )
+        }
+        60 => {
+            let point = state.editor.cursor_view_position();
+            println!("[glyphe] clic réel au point {point:?}");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::MouseClick(point),
+            )))
+        }
+        70 => {
+            let contenu = state.editor.content();
+            let offset = state.editor.cursor_offset();
+            let notes = crate::langage::marques::notes(&contenu);
+            let pliees = notes
+                .iter()
+                .filter(|n| {
+                    !(n.nature == Nature::PiedDePage
+                        && n.debut < offset
+                        && offset < n.fin)
+                })
+                .count();
+
+            println!(
+                "[glyphe] curseur à l'octet {offset} — {pliees} glyphes pliés sur {}",
+                notes.len()
+            );
+            None
+        }
+        _ => None,
+    }
+}
+
 pub fn driver(state: &State) -> Option<Task<Message>> {
     if !actif("defilement") {
         return None;

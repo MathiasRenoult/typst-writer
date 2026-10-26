@@ -34,9 +34,10 @@ pub(super) fn reserved_keys() -> Vec<iced::keyboard::Key> {
 ///
 /// C'est ici que « dynamique » a lieu — à chaque frappe, à chaque déplacement
 /// du curseur : les notes sont rebalayées, renumérotées, et repoussées au
-/// rendu. La note sous le curseur se déplie quand c'est un pied de page :
-/// son texte s'écrit là, pas dans le composeur. Une citation, elle, reste un
-/// glyphe — c'est le composeur qui la tient.
+/// rendu. Une note est un caractère entier, jamais un texte qu'on entre à la
+/// main : seul un clic sur son glyphe l'ouvre — le composeur pour une
+/// citation, le dépliage pour un pied de page, qui se replie dès que le
+/// curseur le quitte.
 pub(super) fn actualiser_marques(state: &mut State) {
     use crate::langage::marques::Nature;
 
@@ -45,7 +46,11 @@ pub(super) fn actualiser_marques(state: &mut State) {
     let notes = crate::langage::marques::notes(&contenu)
         .into_iter()
         .filter(|note| {
-            !(note.nature == Nature::PiedDePage && note.contient(offset))
+            // Le pied de page sous le curseur est ouvert : son texte se voit,
+            // et s'écrit là. À ses bords, il reste un glyphe.
+            !(note.nature == Nature::PiedDePage
+                && note.debut < offset
+                && offset < note.fin)
         })
         .collect::<Vec<_>>();
 
@@ -120,20 +125,12 @@ pub(super) fn request_completion(
     // connaît ses clés. Deux portes, et elles ne se ressemblent pas.
     //
     // Un `@` qui vient d'être **tapé** ouvre la création : le déclencheur est
-    // mangé, et le document ne revoit la note qu'à la fin. Le curseur qui se
-    // pose sur une citation déjà là, lui, n'ouvre rien — c'est le clic sur elle
-    // qui ouvrira sa fenêtre d'édition. Seul un remaniement **en cours**
-    // (frappe dedans) l'ouvre aussi : on est en train de l'éditer.
+    // mangé, et le document ne revoit la note qu'à la fin. Pour une citation
+    // déjà là, il n'y a plus qu'**une** porte : le clic sur son glyphe — la
+    // frappe n'édite plus jamais une citation en cachette.
     if context.trigger == crate::lsp::completion::CITATION {
         if declencheur_tape {
             return ouvrir_composeur(state, &context);
-        }
-
-        if content_changed
-            && let Some((references, debut, fin)) =
-                crate::langage::parse::appel_autour(&content, offset)
-        {
-            return ouvrir_edition(state, references, debut, fin);
         }
 
         return Task::none();

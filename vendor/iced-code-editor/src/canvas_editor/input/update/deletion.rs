@@ -6,9 +6,38 @@ use super::{EditType, adjust_other_cursors};
 use crate::canvas_editor::editing::command::{
     Command, DeleteCharCommand, DeleteForwardCommand,
 };
+use crate::canvas_editor::marques::MarquesLigne;
 use crate::canvas_editor::{CodeEditor, Message};
 
 impl CodeEditor {
+    /// Sélectionne les notes dont le curseur occupe le bord, pour qu'une
+    /// suppression les emporte entières.
+    ///
+    /// Une note est un seul caractère : on ne ronge pas son texte caché
+    /// lettre à lettre. Sur son bord, Backspace ou Delete emporte toute la
+    /// note — c'est même le seul geste qui en débarrasse, le clic étant
+    /// réservé à son édition.
+    fn selectionner_les_notes_au_bord(&mut self, avant: bool) {
+        for curseur in self.cursors.as_mut_slice() {
+            if curseur.anchor.is_some() {
+                continue;
+            }
+
+            let (ligne, col) = curseur.position;
+            let marques = MarquesLigne::new(&self.marques, ligne);
+            let cible = if avant {
+                marques.finissant_a(col)
+            } else {
+                marques.commençant_a(col)
+            };
+
+            if let Some(marque) = cible {
+                curseur.anchor = Some((ligne, marque.debut));
+                curseur.position = (ligne, marque.fin);
+            }
+        }
+    }
+
     /// Handles Backspace key press.
     ///
     /// If there's a selection, deletes the selection. Otherwise, deletes the
@@ -22,6 +51,9 @@ impl CodeEditor {
         if !self.keep_vim_insert_group() {
             self.end_grouping_if_active();
         }
+
+        // Une note sur le bord gauche se sélectionne, pour partir entière.
+        self.selectionner_les_notes_au_bord(true);
 
         // If any cursor has a selection, delete all selections first
         if self.delete_selection_if_present() {
@@ -83,6 +115,9 @@ impl CodeEditor {
         if !self.keep_vim_insert_group() {
             self.end_grouping_if_active();
         }
+
+        // Une note sur le bord droit se sélectionne, pour partir entière.
+        self.selectionner_les_notes_au_bord(false);
 
         // If any cursor has a selection, delete all selections first
         if self.delete_selection_if_present() {

@@ -33,7 +33,7 @@ pub const MARKDOWN_SYNTAX: &str = "md";
 fn marques_du_contenu(
     contenu: &str,
     notes: &[crate::langage::marques::Note],
-) -> Vec<iced_code_editor::Marque> {
+) -> Vec<(iced_code_editor::Marque, usize)> {
     use crate::langage::marques::Note;
 
     // Les bases d'octets de chaque ligne, et la fin du texte en sentinelle.
@@ -54,9 +54,9 @@ fn marques_du_contenu(
         (ligne, colonne)
     };
 
-    let mut marques = Vec::new();
+    let mut marques: Vec<(iced_code_editor::Marque, usize)> = Vec::new();
 
-    for Note { debut, fin, numero, .. } in notes {
+    for (rang, Note { debut, fin, numero, .. }) in notes.iter().enumerate() {
         let mut premiere = true;
         let mut ligne = translate(*debut).0;
 
@@ -72,11 +72,14 @@ fn marques_du_contenu(
                 let label =
                     if premiere { numero.to_string() } else { String::new() };
 
-                marques.push(iced_code_editor::Marque::new(
-                    ligne,
-                    debut_col,
-                    fin_col,
-                    label,
+                marques.push((
+                    iced_code_editor::Marque::new(
+                        ligne,
+                        debut_col,
+                        fin_col,
+                        label,
+                    ),
+                    rang,
                 ));
                 premiere = false;
             }
@@ -569,8 +572,29 @@ impl EditorState {
     /// colonnes de lignes, la seule monnaie que le moteur de rendu connaît.
     pub fn set_marques(&mut self, notes: &[crate::langage::marques::Note]) {
         let contenu = self.content();
+        let marques = marques_du_contenu(&contenu, notes)
+            .into_iter()
+            .map(|(marque, _)| marque)
+            .collect::<Vec<_>>();
 
-        self.editor.set_marques(marques_du_contenu(&contenu, notes));
+        self.editor.set_marques(marques);
+    }
+
+    /// La note que le dernier clic a visée, s'il a touché un glyphe.
+    ///
+    /// C'est la **seule** porte d'édition d'une note : l'hôte retrouve sa
+    /// note dans la liste des siennes, et décide seul de l'ouvrir.
+    pub fn note_au_clic(
+        &self,
+        notes: &[crate::langage::marques::Note],
+    ) -> Option<usize> {
+        let (ligne, debut, _fin) = self.editor.dernier_clic_sur_marque()?;
+        let contenu = self.content();
+
+        marques_du_contenu(&contenu, notes)
+            .into_iter()
+            .find(|(marque, _)| marque.ligne == ligne && marque.debut == debut)
+            .map(|(_, rang)| rang)
     }
 
     /// Écrit le contenu courant sur le disque.

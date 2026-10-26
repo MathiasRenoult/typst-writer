@@ -15,7 +15,7 @@ use crate::canvas_editor::features::vim::VimMotion;
 use crate::canvas_editor::render::wrapping::{VisualLine, WrappingCalculator};
 use crate::canvas_editor::{
     ArrowDirection, CodeEditor, Message,
-    marques::{MarquesLigne, largeur_caractere, largeur_troncon},
+    marques::{MarquesLigne, largeur_caractere, largeur_marque, largeur_troncon},
 };
 /// Maps a cursor's column onto the visual row it is moving to.
 ///
@@ -65,6 +65,7 @@ fn compute_next_position(
     direction: ArrowDirection,
     buffer: &TextBuffer,
     visual_lines: &[VisualLine],
+    marques: &[crate::canvas_editor::marques::Marque],
 ) -> Option<(usize, usize)> {
     let (line, col) = pos;
     match direction {
@@ -88,14 +89,38 @@ fn compute_next_position(
             let target_vl = &visual_lines[target_visual];
             let current_vl = &visual_lines[current_visual];
 
-            Some((
+            let (ligne, colonne) = (
                 target_vl.logical_line,
                 column_on_visual_row(pos, current_vl, target_vl, buffer),
-            ))
+            );
+
+            // Une note est un seul caractère : la montée et la descente
+            // s'arrêtent sur son bord le plus proche, jamais dedans.
+            let bord = MarquesLigne::new(marques, ligne)
+                .sous(colonne)
+                .map(|m| {
+                    if colonne - m.debut < m.fin - colonne {
+                        m.debut
+                    } else {
+                        m.fin
+                    }
+                });
+
+            Some((ligne, bord.unwrap_or(colonne)))
         }
         ArrowDirection::Left => {
+            let ligne = MarquesLigne::new(marques, line);
+
             if col > 0 {
-                Some((line, col - 1))
+                // Une note est un seul caractère : sur son bord, ou dedans
+                // par mégarde, un bond la franchit d'un coup. Le curseur
+                // n'entre jamais dans son texte caché.
+                let saut = ligne
+                    .finissant_a(col)
+                    .or_else(|| ligne.sous(col))
+                    .map(|m| m.debut);
+
+                Some((line, saut.unwrap_or(col - 1)))
             } else if line > 0 {
                 Some((line - 1, buffer.line_len(line - 1)))
             } else {
@@ -104,8 +129,15 @@ fn compute_next_position(
         }
         ArrowDirection::Right => {
             let line_len = buffer.line_len(line);
+            let ligne = MarquesLigne::new(marques, line);
+
             if col < line_len {
-                Some((line, col + 1))
+                let saut = ligne
+                    .commençant_a(col)
+                    .or_else(|| ligne.sous(col))
+                    .map(|m| m.fin);
+
+                Some((line, saut.unwrap_or(col + 1)))
             } else if line + 1 < buffer.line_count() {
                 Some((line + 1, 0))
             } else {
@@ -212,6 +244,7 @@ impl CodeEditor {
                         direction,
                         &self.buffer,
                         &visual_lines,
+                        &self.marques,
                     ) else {
                         break;
                     };
@@ -448,6 +481,7 @@ impl CodeEditor {
                 direction,
                 &self.buffer,
                 &visual_lines,
+                &self.marques,
             ) {
                 cursor.position = new_pos;
             }
@@ -512,9 +546,26 @@ impl CodeEditor {
             .skip(visual_line.start_col)
             .take(visual_line.end_col - visual_line.start_col)
         {
+            let col_abs = visual_line.start_col + col_offset;
+
+            // Une note est un seul caractère : le clic y tombe sur son bord —
+            // gauche sous le milieu du glyphe, droit au-delà. Jamais dedans.
+            if let Some(marque) = marques.sous(col_abs) {
+                let largeur = largeur_marque(marque, self.char_width);
+
+                col_offset = if x_in_text < current_width + largeur / 2.0 {
+                    marque.debut
+                } else {
+                    marque.fin
+                }
+                .saturating_sub(visual_line.start_col);
+
+                break;
+            }
+
             let char_width = largeur_caractere(
                 c,
-                visual_line.start_col + col_offset,
+                col_abs,
                 &marques,
                 self.full_char_width,
                 self.char_width,
@@ -531,10 +582,72 @@ impl CodeEditor {
         Some((visual_line.logical_line, col))
     }
 
+    /// La marque sous un point — la note que le clic vise.
+    ///
+    /// Une note est un signe cliquable : le pointeur le dit, et l'hôte reçoit
+    /// (ligne, début, fin) de la plage touchée pour savoir quelle note
+    /// ouvrir. Rien n'est décidé ici — seul l'hôte sait ce qu'est une note.
+    pub fn marque_au_point(
+        &self,
+        point: Point,
+    ) -> Option<(usize, usize, usize)> {
+        if point.x < self.gutter_width() + 5.0 {
+            return None;
+        }
+
+        let visual_line_idx = (point.y / self.line_height) as usize;
+        let visual_lines = self.visual_lines_cached(self.viewport_width);
+        let visual_line = visual_lines.get(visual_line_idx)?;
+
+        let x_in_text =
+            point.x - self.gutter_width() - 5.0 + self.horizontal_scroll_offset;
+        let marques = MarquesLigne::new(&self.marques, visual_line.logical_line);
+        let line_content = self.buffer.line(visual_line.logical_line);
+        let mut avancee = 0.0;
+
+        for (i, c) in line_content
+            .chars()
+            .skip(visual_line.start_col)
+            .take(visual_line.end_col - visual_line.start_col)
+            .enumerate()
+        {
+            let col_abs = visual_line.start_col + i;
+
+            if let Some(marque) = marques.sous(col_abs) {
+                if marque.debut != col_abs {
+                    continue; // La suite d'une marque déjà mesurée.
+                }
+
+                let largeur = largeur_marque(marque, self.char_width);
+
+                if x_in_text >= avancee && x_in_text < avancee + largeur {
+                    return Some((marque.ligne, marque.debut, marque.fin));
+                }
+
+                avancee += largeur;
+                continue;
+            }
+
+            avancee += largeur_caractere(
+                c,
+                col_abs,
+                &marques,
+                self.full_char_width,
+                self.char_width,
+            );
+        }
+
+        None
+    }
+
     /// Handles mouse clicks to position the cursor.
     ///
     /// Reuses `calculate_cursor_from_point` to compute the position and updates the cache.
     pub(crate) fn handle_mouse_click(&mut self, point: Point) {
+        // Ce que le clic touche est mémorisé : une note est un signe
+        // cliquable, et l'hôte attend de savoir laquelle vient de l'être.
+        self.dernier_clic_marque = self.marque_au_point(point);
+
         let before = self.cursors.primary_position();
         if let Some(pos) = self.calculate_cursor_from_point(point) {
             self.cursors.primary_mut().position = pos;

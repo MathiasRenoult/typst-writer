@@ -277,6 +277,9 @@ impl canvas::Program<Message> for CodeEditor {
 
         if self.fold_header_at_point(position).is_some() {
             mouse::Interaction::Pointer
+        } else if self.marque_au_point(position).is_some() {
+            // Un glyphe de note est un signe cliquable : le pointeur le dit.
+            mouse::Interaction::Pointer
         } else if position.x >= self.gutter_width() {
             mouse::Interaction::Text
         } else {
@@ -302,6 +305,24 @@ mod tests {
             bounds,
             cursor,
         )
+    }
+
+    #[test]
+    fn un_glyphe_de_note_rend_le_pointeur_cliquable() {
+        let mut editor = CodeEditor::new("@a note", "tw");
+        editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
+            0, 0, 2, "1",
+        )]);
+
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let x = editor.gutter_width() + 5.0 + 1.0;
+        let cursor = mouse::Cursor::Available(Point::new(x, 10.0));
+
+        assert_eq!(
+            editor_mouse_interaction(&editor, bounds, cursor),
+            mouse::Interaction::Pointer,
+            "le glyphe est un signe cliquable, et le pointeur le dit"
+        );
     }
 
     #[test]

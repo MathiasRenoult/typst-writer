@@ -34,13 +34,6 @@ pub struct Note {
     pub nature: Nature,
 }
 
-impl Note {
-    /// La plage couvre-t-elle cet offset ?
-    pub fn contient(&self, offset: usize) -> bool {
-        self.debut <= offset && offset < self.fin
-    }
-}
-
 /// Les notes d'un document, dans l'ordre, numérotées ensemble.
 pub fn notes(texte: &str) -> Vec<Note> {
     let mut trouvees: Vec<(usize, usize, Nature)> = Vec::new();
