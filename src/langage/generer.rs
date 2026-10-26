@@ -13,7 +13,7 @@
 //! astérisque, elle n'ouvre pas de gras. C'est la contrepartie du texte nu que
 //! le sérialiseur produit.
 
-use super::schema::{Bloc, Document, Inline};
+use super::schema::{Bloc, Document, Inline, Reference};
 
 /// Génère le corps Typst d'un document.
 pub fn generer(document: &Document) -> String {
@@ -117,9 +117,8 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
                 out.push(']');
                 en_tete = false;
             }
-            Inline::Citation(cle) => {
-                out.push('@');
-                out.push_str(cle);
+            Inline::Citation(references) => {
+                generer_citation(references, out);
                 en_tete = false;
             }
             Inline::Note(contenu) => {
@@ -137,6 +136,48 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
                 en_tete = false;
             }
         }
+    }
+}
+
+/// Génère un appel de citation.
+///
+/// Une seule référence s'écrit `@clé[p. 45]` : elle rend elle-même sa note.
+/// Plusieurs références partagent **une** note, et c'est là que tout se joue :
+/// le style de notes regroupe les appels `#cite` **qui se suivent, séparés par
+/// un espace** — un point-virgule entre eux serait avalé —, alors que des
+/// `@clé` juxtaposés donneraient autant de notes que de références. Mesuré sur
+/// le compilateur : c'est toute la raison de cette forme.
+fn generer_citation(references: &[Reference], out: &mut String) {
+    if references.len() == 1 {
+        let reference = &references[0];
+        out.push('@');
+        out.push_str(&reference.cle);
+
+        if let Some(page) = &reference.page {
+            out.push('[');
+            echapper_texte(page, out, false);
+            out.push(']');
+        }
+
+        return;
+    }
+
+    for (index, reference) in references.iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+
+        out.push_str("#cite(<");
+        out.push_str(&reference.cle);
+        out.push('>');
+
+        if let Some(page) = &reference.page {
+            out.push_str(", supplement: [");
+            echapper_texte(page, out, false);
+            out.push(']');
+        }
+
+        out.push(')');
     }
 }
 
@@ -163,6 +204,8 @@ mod tests {
     use super::*;
     use crate::langage::parse::parse;
     use std::path::PathBuf;
+    use typst::foundations::NativeElement;
+    use typst::introspection::Introspector;
 
     /// Compile un texte généré par le vrai moteur Typst.
     ///
@@ -263,5 +306,136 @@ mod tests {
         assert!(!typst.contains("#import"), "{typst}");
         assert!(!typst.contains("#show"), "{typst}");
         assert!(!typst.contains("#bibliography"), "{typst}");
+    }
+
+    /// Un appel groupé s'écrit en appels `#cite` qui se suivent, séparés par
+    /// un espace — la seule forme que le style de notes réunit en une note.
+    #[test]
+    fn un_appel_groupe_genere_les_appels_qui_se_suivent() {
+        let typst = generer(&parse("Voir @dupont2023[p. 45]; @martin2020.\n"));
+
+        assert!(
+            typst.contains("#cite(<dupont2023>, supplement: [p. 45]) #cite(<martin2020>)"),
+            "{typst}"
+        );
+    }
+
+    /// Un appel groupé rend **une** note de bas de page qui les réunit.
+    ///
+    /// C'est la preuve décisive, lue sur le rendu : deux `@clé` juxtaposés
+    /// donneraient deux notes, et une note explicite imbriquerait les notes
+    /// dans les notes. Le texte composé sur la page dit ce que le lecteur
+    /// verra — les deux références, et la page, dans une seule note.
+    #[test]
+    fn un_appel_groupe_devient_une_seule_note() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-groupe-note-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(root.join("references.bib"), BIB).expect("bibliographie d'essai");
+
+        let entree = "#bibliography(\"references.bib\", style: \"chicago-notes\")\n#include \"chapitre.typ\"\n";
+        let genere = generer(&parse("Voir @dupont2023[p. 45]; @martin2020.\n"));
+        let outcome =
+            crate::typst::render::compile(&root, entree, &[(root.join("chapitre.typ"), genere)]);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "le groupe doit compiler : {:?}",
+            outcome
+                .errors
+                .iter()
+                .map(|erreur| erreur.message.clone())
+                .collect::<Vec<_>>()
+        );
+
+        let document = outcome.document.as_deref().expect("document compilé");
+        let notes = document
+            .introspector()
+            .query(&typst::model::FootnoteElem::ELEM.select());
+
+        assert_eq!(notes.len(), 1, "un seul appel groupé = une seule note");
+
+        let page = composed_text(document);
+
+        assert!(page.contains("p. 45"), "la page se lit dans la note : {page}");
+        assert!(
+            page.contains("Dupont") && page.contains("Martin"),
+            "les deux références s'y retrouvent : {page}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Une seule référence avec sa page rend une seule note, avec sa page —
+    /// la forme courte `@clé[p. 45]`, sans les appels groupés.
+    #[test]
+    fn une_reference_avec_sa_page_rend_sa_note() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-note-page-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(root.join("references.bib"), BIB).expect("bibliographie d'essai");
+
+        let entree = "#bibliography(\"references.bib\", style: \"chicago-notes\")\n#include \"chapitre.typ\"\n";
+        let genere = generer(&parse("Voir @dupont2023[p. 45].\n"));
+        let outcome =
+            crate::typst::render::compile(&root, entree, &[(root.join("chapitre.typ"), genere)]);
+
+        assert!(outcome.errors.is_empty(), "la page doit compiler");
+
+        let document = outcome.document.as_deref().expect("document compilé");
+        let notes = document
+            .introspector()
+            .query(&typst::model::FootnoteElem::ELEM.select());
+
+        assert_eq!(notes.len(), 1, "une référence = une note");
+
+        let page = composed_text(document);
+
+        assert!(page.contains("p. 45"), "la page se lit dans la note : {page}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// La bibliographie d'essai des deux tests ci-dessus.
+    const BIB: &str = "@article{dupont2023,
+      title = {Un ouvrage de référence},
+      author = {Dupont, Alice},
+      year = {2023},
+    }
+    @book{martin2020,
+      title = {Un autre ouvrage},
+      author = {Martin, Bernard},
+      year = {2020},
+    }
+    ";
+
+    /// Le texte réellement composé sur les pages d'un document.
+    ///
+    /// Descend dans les groupes : le texte d'une page est rangé dans des
+    /// sous-cadres, et s'arrêter au premier niveau ne lirait rien.
+    fn composed_text(document: &typst_layout::PagedDocument) -> String {
+        fn frame_text(frame: &typst::layout::Frame, out: &mut String) {
+            for (_, item) in frame.items() {
+                match item {
+                    typst::layout::FrameItem::Text(text) => out.push_str(&text.text),
+                    typst::layout::FrameItem::Group(group) => frame_text(&group.frame, out),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut texte = String::new();
+
+        for page in document.pages() {
+            frame_text(&page.frame, &mut texte);
+        }
+
+        texte
     }
 }

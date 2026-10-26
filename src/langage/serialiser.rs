@@ -163,9 +163,21 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 ecrire_inline(contenu, out);
                 out.push('}');
             }
-            Inline::Citation(cle) => {
-                out.push('@');
-                out.push_str(cle);
+            Inline::Citation(references) => {
+                for (index, reference) in references.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str("; ");
+                    }
+
+                    out.push('@');
+                    out.push_str(&reference.cle);
+
+                    if let Some(page) = &reference.page {
+                        out.push('[');
+                        echapper_page(page, out);
+                        out.push(']');
+                    }
+                }
             }
             Inline::Note(contenu) => {
                 out.push_str("^[");
@@ -187,6 +199,17 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
 fn echapper_texte(texte: &str, out: &mut String) {
     for caractere in texte.chars() {
         if MARQUEURS.contains(&caractere) {
+            out.push('\\');
+        }
+
+        out.push(caractere);
+    }
+}
+
+/// Écrit une mention de page, en échappant ce qui romprait ses crochets.
+fn echapper_page(page: &str, out: &mut String) {
+    for caractere in page.chars() {
+        if matches!(caractere, '\\' | ']') {
             out.push('\\');
         }
 
@@ -226,6 +249,30 @@ mod tests {
         let document = parse(texte);
 
         assert_eq!(parse(&serialiser(&document)), document);
+    }
+
+    /// Un appel groupé se réécrit tel quel — et reste **un** appel à la
+    /// relecture. C'est la forme que le composeur de notes écrit.
+    #[test]
+    fn un_appel_groupe_se_recrit_tel_quel() {
+        let texte = "Voir @dupont2023[p. 45]; @martin2020 et @bernard2021[pp. 12-15].\n";
+
+        let document = parse(texte);
+        let regenere = serialiser(&document);
+
+        assert_eq!(regenere, texte);
+        assert_eq!(parse(&regenere), document);
+    }
+
+    /// Une mention de page qui contient un crochet fermant revient entière au
+    /// round-trip : le crochet s'échappe d'une barre oblique.
+    #[test]
+    fn une_page_qui_contient_un_crochet_revient_entiere() {
+        let document = parse("Voir @dupont2023[p. 45, note 2\\]].\n");
+        let regenere = serialiser(&document);
+
+        assert_eq!(regenere, "Voir @dupont2023[p. 45, note 2\\]].\n");
+        assert_eq!(parse(&regenere), document);
     }
 
     /// Un texte qui ressemble à du balisage reste du texte.

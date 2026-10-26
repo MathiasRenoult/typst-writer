@@ -38,7 +38,7 @@
 //! - **Une ligne qui commence par une barre oblique est du texte**, jamais un
 //!   bloc : c'est ainsi qu'un paragraphe peut commencer par `-` ou `#`.
 
-use super::schema::{Bloc, Document, Inline};
+use super::schema::{Bloc, Document, Inline, Reference};
 
 /// Analyse un texte en Document structuré.
 ///
@@ -400,10 +400,11 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
             continue;
         }
 
-        // Citation : `@clé`.
-        if let Some((cle, apres)) = citation(reste) {
+        // Citation : `@clé`, `@clé[p. 45]`, ou un appel groupé
+        // `@clé[p. 45]; @autre` qui réunit ses références dans une note.
+        if let Some((references, apres)) = appel(reste) {
             vider!();
-            elements.push(Inline::Citation(cle.to_string()));
+            elements.push(Inline::Citation(references));
             reste = apres;
             continue;
         }
@@ -487,10 +488,36 @@ fn note(texte: &str) -> Option<(&str, &str)> {
     Some((&apres_ouverture[..fin], &apres_ouverture[fin + 1..]))
 }
 
-/// Une citation bibliographique : `@clé`.
+/// Un appel de citation : `@clé`, `@clé[p. 45]`, ou plusieurs références.
+///
+/// Un appel est **une** note de bas de page : ses références se joignent par
+/// `; ` — `@dupont2023[p. 45]; @martin2020` — et s'y retrouvent toutes. Un
+/// mot entre deux rompt le groupe : `@a; puis @b` reste deux appels, donc
+/// deux notes.
+fn appel(texte: &str) -> Option<(Vec<Reference>, &str)> {
+    let (premiere, mut reste) = reference(texte)?;
+    let mut references = vec![premiere];
+
+    while let Some((autre, apres)) = suite_appel(reste) {
+        references.push(autre);
+        reste = apres;
+    }
+
+    Some((references, reste))
+}
+
+/// La suite d'un appel : `; ` puis une autre référence, ou rien du tout.
+fn suite_appel(texte: &str) -> Option<(Reference, &str)> {
+    let apres = texte.trim_start().strip_prefix(';')?;
+    reference(apres.trim_start())
+}
+
+/// Une référence : `@clé`, suivie de sa mention de page entre crochets.
 ///
 /// La clé est une suite de caractères alphanumériques, tirets et underscores.
-fn citation(texte: &str) -> Option<(&str, &str)> {
+/// La page s'écrit telle qu'elle apparaîtra — `p. 45`, `pp. 12-15`,
+/// `chap. 3` — et une barre oblique y rend littéral le caractère suivant.
+fn reference(texte: &str) -> Option<(Reference, &str)> {
     let apres = texte.strip_prefix('@')?;
 
     let fin = apres
@@ -503,7 +530,38 @@ fn citation(texte: &str) -> Option<(&str, &str)> {
         return None;
     }
 
-    Some((&apres[..fin], &apres[fin..]))
+    let cle = &apres[..fin];
+    let reste = &apres[fin..];
+
+    let Some(page_brute) = reste.strip_prefix('[') else {
+        return Some((Reference::new(cle), reste));
+    };
+
+    match lire_page(page_brute) {
+        // Une page vide n'est pas de page : `@clé[]` est `@clé`.
+        Some((page, apres)) if page.is_empty() => Some((Reference::new(cle), apres)),
+        Some((page, apres)) => Some((Reference::new(cle).avec_page(page), apres)),
+        // Un crochet jamais fermé n'ouvre pas de page : la référence reste
+        // nue, et les crochets qui suivent redeviennent du texte.
+        None => Some((Reference::new(cle), reste)),
+    }
+}
+
+/// Lit une mention de page, jusqu'au crochet fermant.
+fn lire_page(texte: &str) -> Option<(String, &str)> {
+    let mut page = String::new();
+    let mut caracteres = texte.chars();
+
+    while let Some(caractere) = caracteres.next() {
+        match caractere {
+            // Une barre oblique rend littéral le caractère suivant.
+            '\\' => page.push(caracteres.next()?),
+            ']' => return Some((page.trim().to_string(), caracteres.as_str())),
+            _ => page.push(caractere),
+        }
+    }
+
+    None
 }
 
 /// Un lien : `[texte](cible)`.
@@ -727,8 +785,60 @@ mod tests {
             doc.blocs,
             vec![Bloc::Paragraphe(vec![
                 Inline::Texte("Voir ".to_string()),
-                Inline::Citation("dupont2023".to_string()),
+                Inline::Citation(vec![Reference::new("dupont2023")]),
                 Inline::Texte(".".to_string()),
+            ])]
+        );
+    }
+
+    /// Une mention de page se lit avec sa référence, et rien n'autre.
+    #[test]
+    fn une_page_se_lit_avec_sa_reference() {
+        let doc = parse("Voir @dupont2023[p. 45].\n");
+
+        assert_eq!(
+            doc.blocs,
+            vec![Bloc::Paragraphe(vec![
+                Inline::Texte("Voir ".to_string()),
+                Inline::Citation(vec![Reference::new("dupont2023").avec_page("p. 45")]),
+                Inline::Texte(".".to_string()),
+            ])]
+        );
+    }
+
+    /// Un point-virgule joint les références dans **un** appel — donc une
+    /// note — et un mot entre deux rompt le groupe.
+    #[test]
+    fn un_point_virgule_reunit_les_references_d_un_meme_appel() {
+        let doc = parse("Voir @dupont2023[p. 45]; @martin2020 et @bernard2021.\n");
+
+        assert_eq!(
+            doc.blocs,
+            vec![Bloc::Paragraphe(vec![
+                Inline::Texte("Voir ".to_string()),
+                Inline::Citation(vec![
+                    Reference::new("dupont2023").avec_page("p. 45"),
+                    Reference::new("martin2020"),
+                ]),
+                Inline::Texte(" et ".to_string()),
+                Inline::Citation(vec![Reference::new("bernard2021")]),
+                Inline::Texte(".".to_string()),
+            ])]
+        );
+    }
+
+    /// Un crochet jamais fermé n'ouvre pas de page : la référence reste nue,
+    /// et les crochets redeviennent du texte.
+    #[test]
+    fn un_crochet_non_ferme_n_ouvre_pas_de_page() {
+        let doc = parse("Voir @dupont2023[p. 45.\n");
+
+        assert_eq!(
+            doc.blocs,
+            vec![Bloc::Paragraphe(vec![
+                Inline::Texte("Voir ".to_string()),
+                Inline::Citation(vec![Reference::new("dupont2023")]),
+                Inline::Texte("[p. 45.".to_string()),
             ])]
         );
     }

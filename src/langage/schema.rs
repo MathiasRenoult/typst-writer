@@ -59,12 +59,43 @@ pub enum Inline {
         couleur: String,
         contenu: Vec<Inline>,
     },
-    /// Une citation bibliographique : `@clé`.
-    Citation(String),
+    /// Un appel de citation : `@clé`, `@clé[p. 45]`, ou plusieurs références
+    /// jointes par `; ` — `@clé[p. 45]; @autre`.
+    ///
+    /// Un appel ne fait jamais qu'**une** note de bas de page : la mesure le
+    /// dit, et c'est elle qui dicte la forme du générateur (voir
+    /// [`crate::langage::generer::generer`]).
+    Citation(Vec<Reference>),
     /// Une note de bas de page : `^[contenu]`.
     Note(Vec<Inline>),
     /// Un lien : `[texte](https://…)`.
     Lien { texte: Vec<Inline>, cible: String },
+}
+
+/// Une référence bibliographique dans un appel de citation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reference {
+    /// La clé de l'entrée dans `references.bib`.
+    pub cle: String,
+    /// La mention de page, écrite telle qu'elle apparaîtra : `p. 45`,
+    /// `pp. 12-15`, `chap. 3`…
+    pub page: Option<String>,
+}
+
+impl Reference {
+    /// Une référence sans mention de page.
+    pub fn new(cle: impl Into<String>) -> Self {
+        Self {
+            cle: cle.into(),
+            page: None,
+        }
+    }
+
+    /// La même référence, avec sa mention de page.
+    pub fn avec_page(mut self, page: impl Into<String>) -> Self {
+        self.page = Some(page.into());
+        self
+    }
 }
 
 impl Document {
@@ -122,7 +153,20 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => out.push_str(&inline_texte_nu(contenu)),
             Inline::Code(texte) => out.push_str(texte),
-            Inline::Citation(cle) => out.push_str(cle),
+            Inline::Citation(references) => {
+                for (index, reference) in references.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str("; ");
+                    }
+
+                    out.push_str(&reference.cle);
+
+                    if let Some(page) = &reference.page {
+                        out.push(' ');
+                        out.push_str(page);
+                    }
+                }
+            }
             Inline::Lien { texte, .. } => out.push_str(&inline_texte_nu(texte)),
         }
     }
@@ -198,9 +242,21 @@ mod tests {
     fn une_citation_compte_comme_son_texte() {
         let bloc = Bloc::Paragraphe(vec![
             Inline::Texte("Voir ".to_string()),
-            Inline::Citation("dupont2023".to_string()),
+            Inline::Citation(vec![Reference::new("dupont2023")]),
         ]);
 
         assert_eq!(bloc.texte_nu(), "Voir dupont2023");
+    }
+
+    /// La mention de page se lit à côté de sa clé, et un appel groupé les
+    /// rejoint par le point-virgule qui les sépare dans le texte.
+    #[test]
+    fn une_page_et_un_groupe_se_lisent_comme_ils_s_ecrivent() {
+        let bloc = Bloc::Paragraphe(vec![Inline::Citation(vec![
+            Reference::new("dupont2023").avec_page("p. 45"),
+            Reference::new("martin2020"),
+        ])]);
+
+        assert_eq!(bloc.texte_nu(), "dupont2023 p. 45; martin2020");
     }
 }
