@@ -1,0 +1,39 @@
+# Everforest — un thème chaud, pour écrire comme sur du papier.
+#
+# Inspiré de la famille Everforest : un fond crème, des verts doux pour
+# l'accent, et des gris-bruns qui reposent les yeux. La lisière est un ton
+# plus soutenu que le fond : les panneaux se dessinent au trait, jamais au
+# bloc de couleur.
+
+[meta]
+name = "Everforest"
+appearance = "light"
+
+[colors]
+# Le papier : un beige tiède, pas le blanc de l'écran.
+background = "#F2EFE2"
+
+# Les panneaux : un ton plus soutenu, qui creuse la page de rédaction.
+surface = "#EAE5D3"
+
+# Le texte : un gris-brun profond, la couleur de l'encre séchée.
+text = "#4D5243"
+
+# L'accent : le vert calme d'Everforest — actif, lien, surbrillance.
+accent = "#5F8765"
+
+# Le discret : légendes, comptes, statuts.
+text_muted = "#8B8878"
+
+# La lisière : un ton plus soutenu que le fond, jamais un bloc.
+border = "#D4CEB9"
+
+danger = "#BC5B57"
+warning = "#B5854E"
+success = "#7B946E"
+
+[editor]
+background = "#F6F3E8"
+text = "#4D5243"
+selection = "#A8BFA340"
+current_line = "#EDE8D8"

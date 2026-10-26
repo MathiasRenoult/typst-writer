@@ -232,7 +232,8 @@ pub fn lisible_sur(fond: Color) -> Color {
 /// Ce que les yeux appellent « épuré » est souvent cette seule régularité.
 pub mod jetons {
     /// Le rayon des surfaces : panneaux, boutons, champs, infobulles.
-    pub const RAYON: f32 = 8.0;
+    /// Un coin nettement arrondi — la douceur iOS — sans aller au pilule.
+    pub const RAYON: f32 = 12.0;
 
     /// Le pas de l'entre-deux : entre des rangées, des blocs, des champs.
     pub const PAS: f32 = 8.0;

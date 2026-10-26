@@ -15,7 +15,7 @@ use crate::app::message::Message;
 use crate::app::state::State;
 use crate::mise_en_page::modele::Champ;
 use crate::ui::editor::bubble_style;
-use crate::ui::theme::Palette;
+use crate::ui::theme::{self, Palette};
 
 const FORMATS: &[&str] = &["a3", "a4", "a5", "a6", "b4", "b5", "letter", "legal"];
 const ORIENTATIONS: &[&str] = &["portrait", "paysage"];
@@ -23,6 +23,8 @@ const FORMES: &[&str] = &["1", "I", "i", "A", "a"];
 const POSITIONS: &[&str] = &["haut", "bas"];
 const ALIGNEMENTS: &[&str] = &["gauche", "centre", "droite"];
 const CASSES: &[&str] = &["normale", "majuscules", "minuscules"];
+const LANGUES: &[&str] = &["fr", "en", "de", "es", "it", "pt", "nl", "la"];
+const NUMEROTATIONS: &[&str] = &["1.1", "1.1.1", "I.i", "A.a", "1)", "(1)", "A.", "a."];
 
 /// La fenêtre, ou sa place vide.
 ///
@@ -56,6 +58,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Format",
+                "Le papier de composition : a4, letter, a5…",
                 choix(
                     FORMATS,
                     reglages.papier.format.as_str(),
@@ -65,6 +68,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Orientation",
+                "Portrait, ou paysage.",
                 choix(
                     ORIENTATIONS,
                     reglages.papier.orientation.as_str(),
@@ -74,6 +78,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Marges (haut, bas)",
+                "La marge verticale. Toute mesure Typst : 2cm, 1in, 24pt.",
                 row![
                     saisie(palette, &reglages.marges.haut, Champ::MargeHaut, "2cm"),
                     saisie(palette, &reglages.marges.bas, Champ::MargeBas, "2cm"),
@@ -83,6 +88,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Marges (gauche, droite)",
+                "La marge horizontale. Toute mesure Typst : 2cm, 1in, 24pt.",
                 row![
                     saisie(palette, &reglages.marges.gauche, Champ::MargeGauche, "2cm"),
                     saisie(palette, &reglages.marges.droite, Champ::MargeDroite, "2cm"),
@@ -101,6 +107,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Police",
+                "La police de composition, par son nom système.",
                 saisie(
                     palette,
                     &reglages.texte.police,
@@ -111,15 +118,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Corps, langue",
+                "Le corps du texte (11pt) et la langue de césure (fr).",
                 row![
                     saisie(palette, &reglages.texte.taille, Champ::TexteTaille, "11pt"),
-                    saisie(palette, &reglages.texte.langue, Champ::TexteLangue, "fr"),
+                    choix(LANGUES, reglages.texte.langue.as_str(), Champ::TexteLangue),
                 ]
                 .spacing(8)
             ),
             ligne(
                 palette,
                 "Interligne, espace",
+                "L'interligne (0.65em) et l'espace entre les paragraphes (1.2em).",
                 row![
                     saisie(
                         palette,
@@ -139,6 +148,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Retrait de la 1re ligne",
+                "Le retrait du premier paragraphe. 0cm pour aucun retrait.",
                 saisie(palette, &reglages.texte.retrait, Champ::TexteRetrait, "0cm")
             ),
             row![
@@ -166,6 +176,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Police (vide : celle du texte)",
+                "La police des titres. Vide : celle du texte.",
                 saisie(
                     palette,
                     &reglages.titres.police,
@@ -176,16 +187,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Numérotation des chapitres",
-                saisie(
-                    palette,
-                    &reglages.titres.numerotation,
-                    Champ::TitresNumerotation,
-                    "1.1"
+                "Le motif des numéros : 1.1, I.i, A.a…",
+                choix(
+                    NUMEROTATIONS,
+                    reglages.titres.numerotation.as_str(),
+                    Champ::TitresNumerotation
                 )
             ),
             ligne(
                 palette,
                 "Corps des titres 1, 2, 3",
+                "Le corps de chaque niveau de titre.",
                 row![
                     saisie(
                         palette,
@@ -211,11 +223,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Casse",
+                "Normale, MAJUSCULES ou minuscules.",
                 choix(CASSES, reglages.titres.casse.as_str(), Champ::TitresCasse)
             ),
             ligne(
                 palette,
                 "Espace autour d'un titre",
+                "L'espace au-dessus et au-dessous d'un titre.",
                 saisie(
                     palette,
                     &reglages.titres.espacement,
@@ -241,6 +255,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Forme",
+                "Le chiffre des numéros de page : 1, I, i, A, a.",
                 choix(
                     FORMES,
                     reglages.numerotation.forme.as_str(),
@@ -250,6 +265,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Position",
+                "En haut ou en bas de la page.",
                 choix(
                     POSITIONS,
                     reglages.numerotation.position.as_str(),
@@ -259,6 +275,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Alignement",
+                "L'alignement du numéro dans sa marge.",
                 choix(
                     ALIGNEMENTS,
                     reglages.numerotation.alignement.as_str(),
@@ -277,6 +294,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Texte",
+                "La couleur du texte composé, en hexadécimal.",
                 row![
                     pastille(&reglages.couleurs.texte),
                     saisie(
@@ -291,6 +309,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Titres",
+                "La couleur des titres, en hexadécimal.",
                 row![
                     pastille(&reglages.couleurs.titres),
                     saisie(
@@ -305,6 +324,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Liens",
+                "La couleur des liens et citations, en hexadécimal.",
                 row![
                     pastille(&reglages.couleurs.liens),
                     saisie(
@@ -319,6 +339,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ligne(
                 palette,
                 "Papier",
+                "La couleur du papier, en hexadécimal.",
                 row![
                     pastille(&reglages.couleurs.fond),
                     saisie(
@@ -414,14 +435,27 @@ fn section<'a>(
         .into()
 }
 
-/// Une ligne : son libellé et son contrôle.
+/// Une ligne : son libellé, son infobulle, et son contrôle.
+///
+/// L'infobulle vient au survol : la fenêtre reste dépouillée, mais rien
+/// n'est muet — laisser la souris sur un paramètre dit ce qu'il règle et
+/// sous quelle forme l'écrire.
 fn ligne<'a>(
     palette: Palette,
     libelle: &'a str,
+    note: &'a str,
     controle: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    row![
+    use iced::widget::tooltip;
+
+    let etiquette = tooltip(
         palette.label(libelle).size(12),
+        text(note).size(theme::jetons::DETAIL),
+        tooltip::Position::Top,
+    );
+
+    row![
+        etiquette,
         Space::new().width(Length::Fill),
         controle.into(),
     ]

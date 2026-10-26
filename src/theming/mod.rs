@@ -671,6 +671,27 @@ pub fn is_reserved_name(name: &str) -> bool {
         .any(|(_, native)| native.eq_ignore_ascii_case(name.trim()))
 }
 
+/// Les thèmes **livrés** avec l'application : écrits une fois dans le
+/// dossier des thèmes, puis traités comme n'importe quel thème local —
+/// l'utilisateur peut les ouvrir, les lire, les modifier.
+const EXPEDIES: &[(&str, &str)] =
+    &[("everforest.toml", include_str!("everforest.toml"))];
+
+/// Sème les thèmes livrés dans le dossier, s'ils n'y sont pas encore.
+///
+/// Un thème livré qui a été modifié **n'est pas** récrasé : le dossier
+/// appartient à l'utilisateur, et une mise à jour de l'application ne doit
+/// pas effacer ses réglages.
+fn semer() {
+    for (nom, contenu) in EXPEDIES {
+        let chemin = themes_dir().join(nom);
+
+        if !chemin.exists() {
+            let _ = std::fs::write(&chemin, contenu);
+        }
+    }
+}
+
 /// Le dossier des thèmes locaux.
 pub fn themes_dir() -> PathBuf {
     let dir = crate::project::work_dir().join("themes");
@@ -686,6 +707,8 @@ pub fn themes_dir() -> PathBuf {
 /// dossier ne doit pas empêcher l'application de démarrer. Il est revanche
 /// rapporté, pour que l'utilisateur sache pourquoi son thème n'apparaît pas.
 pub fn list() -> (Vec<Theme>, Vec<String>) {
+    semer();
+
     let mut themes = natives();
     let mut problems = Vec::new();
 
