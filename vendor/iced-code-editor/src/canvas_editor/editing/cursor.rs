@@ -926,6 +926,20 @@ impl CodeEditor {
 }
 
 impl CodeEditor {
+    /// Sélectionne la plage `[debut, fin)` — deux positions (ligne, colonne).
+    ///
+    /// C'est la voie royale du remplacement : la sélection part **en entier**
+    /// à la frappe ou au collage suivant. Aucun retour arrière à compter — un
+    /// octet n'est pas un caractère, et une note est un caractère entier qu'une
+    /// seule frappe emporte déjà.
+    pub fn selectionner(&mut self, debut: (usize, usize), fin: (usize, usize)) {
+        let curseur = self.cursors.primary_mut();
+        curseur.position = fin;
+        curseur.anchor = Some(debut);
+
+        self.overlay_cache.clear();
+    }
+
     /// Converts a logical buffer position into a canvas point, if visible.
     pub(crate) fn point_from_position(
         &self,
@@ -1099,6 +1113,24 @@ mod tests {
         assert_eq!(
             CodeEditor::vim_word_motion(&chars, (0, 4), VimMotion::WordEnd),
             (0, 6)
+        );
+    }
+
+    #[test]
+    fn un_retour_arriere_emporte_la_note_entiere() {
+        let mut editor = CodeEditor::new("ab@x note", "tw");
+        editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
+            0, 2, 4, "1",
+        )]);
+
+        // Le curseur sur le bord droit de la note.
+        editor.cursors.as_mut_slice()[0].position = (0, 4);
+        let _ = editor.handle_backspace();
+
+        assert_eq!(
+            editor.content(),
+            "ab note",
+            "la note part d'une frappe, le texte d'avant est intact"
         );
     }
 

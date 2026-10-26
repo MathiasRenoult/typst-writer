@@ -346,27 +346,46 @@ impl EditorState {
 
     /// Remplace une plage du document par du texte.
     ///
-    /// Le curseur va d'abord en fin de plage : `replace_before` efface à
-    /// rebours, et c'est la seule direction que le crate connaisse.
+    /// La plage devient une **sélection**, que le collage remplace d'un geste.
+    /// L'ancienne façon — aller en fin de plage, puis effacer à rebours —
+    /// comptait ses retours arrière en octets, où le remplacement ne parle
+    /// qu'en caractères : le texte d'avant la citation y passait. Pire,
+    /// la suppression en caractère entier emporte une note en une seule
+    /// frappe, et le reste des retours arrière rongeait le texte d'avant.
     pub fn replace_span(&mut self, start: usize, end: usize, text: &str) -> Task<EditorMessage> {
-        let aller = self.set_cursor_offset(end);
-        let remplacer = self.replace_before(end.saturating_sub(start), text);
+        let debut = self.position_de_offset(start);
+        let fin = self.position_de_offset(end);
 
-        Task::batch([aller, remplacer])
+        self.editor.selectionner(debut, fin);
+        self.refresh_document();
+
+        if text.is_empty() {
+            // Le collage vide est interdit (il prendrait le presse-papiers) :
+            // c'est le retour arrière qui efface la sélection.
+            self.editor.update(&EditorMessage::Backspace)
+        } else {
+            self.editor.update(&EditorMessage::Paste(text.to_string()))
+        }
     }
 
-    /// Pose le curseur à un décalage, en caractères depuis le début du texte.
+    /// La position (ligne, colonne) d'un décalage en octets du document.
+    fn position_de_offset(&self, offset: usize) -> (usize, usize) {
+        let content = self.content();
+        let offset = offset.min(content.len());
+        let avant = &content[..offset];
+
+        (
+            avant.matches('\n').count(),
+            avant.chars().rev().take_while(|c| *c != '\n').count(),
+        )
+    }
+
+    /// Pose le curseur à un décalage, en octets depuis le début du texte.
     ///
     /// Le crate ne se déplace qu'en (ligne, colonne) : la conversion se fait
     /// ici, une seule fois.
     pub fn set_cursor_offset(&mut self, offset: usize) -> Task<EditorMessage> {
-        let content = self.content();
-        let offset = offset.min(content.len());
-        let avant = &content[..offset];
-        let ligne = avant.matches('\n').count();
-        let colonne = avant.chars().rev().take_while(|c| *c != '\n').count();
-
-        self.set_cursor(ligne, colonne)
+        self.set_cursor(self.position_de_offset(offset).0, self.position_de_offset(offset).1)
     }
 
     /// Applique une commande de mise en forme au document `.tw` courant.
@@ -722,6 +741,34 @@ fn markdown_continuation(line: &str) -> Option<(String, usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le remplacement d'une citation ne touche jamais le texte d'avant.
+    ///
+    /// L'ancien chemin effaçait à rebours, ses retours arrière comptés en
+    /// **octets** là où ils effacent des **caractères** — et le premier
+    /// emportait la note entière d'un coup : tout le reste rongeait le texte
+    /// précédent, « une partie généreuse » disparaissait.
+    #[test]
+    fn remplacer_une_citation_laisse_le_texte_davant() {
+        let mut editor = EditorState::default();
+        let texte = "Un début de phrase bien à lui, et @dupont2023[p. 45] la suite.";
+        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
+
+        // La citation est pliée en glyphe, comme dans l'éditeur : c'est ce
+        // caractère entier que le premier retour arrière emportait d'un coup.
+        let notes = crate::langage::marques::notes(&editor.content());
+        editor.set_marques(&notes);
+
+        let debut = texte.find("@dupont2023").expect("la citation est là");
+        let fin = texte.find(" la suite").expect("la suite est là");
+        let _ = editor.replace_span(debut, fin, "@martin2020");
+
+        assert_eq!(
+            editor.content(),
+            "Un début de phrase bien à lui, et @martin2020 la suite.",
+            "seule la citation change ; le texte d'avant, accents compris, est intact"
+        );
+    }
 
     /// L'apostrophe ne doit plus être appairée.
     ///

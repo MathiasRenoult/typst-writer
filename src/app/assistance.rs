@@ -569,13 +569,13 @@ pub(super) fn fermer_composeur(state: &mut State, texte: Option<String>) -> Task
                 .map(Message::Editor)
         }
         None => {
-            let caracteres = state.editor.cursor_offset().saturating_sub(composeur.ancre);
-            let texte = separer(state, state.editor.cursor_offset(), texte);
+            // En création, la plage va du `@` mangé (l'ancre) au curseur : ce
+            // que la frappe a écrit par-dessus. Même remplacement en une
+            // sélection — jamais de retours arrière à compter.
+            let fin = state.editor.cursor_offset();
+            let texte = separer(state, fin, texte);
 
-            state
-                .editor
-                .replace_before(caracteres, &texte)
-                .map(Message::Editor)
+            state.editor.replace_span(composeur.ancre, fin, &texte).map(Message::Editor)
         }
     };
 
