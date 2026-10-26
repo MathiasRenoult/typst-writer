@@ -893,6 +893,26 @@ accent     = "#89b4fa"
 mod tests {
     use super::*;
 
+    /// Le thème livré se charge, et tient son style : le papier beige, une
+    /// encre gris-brun, un vert calme. Un fichier livré cassé ne doit pas se
+    /// semer en silence — ce test le relirait à chaque suite.
+    #[test]
+    fn everforest_se_charge_et_tient_son_style() {
+        let fichier = ThemeFile::parse(include_str!("everforest.toml"), None)
+            .expect("everforest.toml se charge");
+
+        assert_eq!(fichier.meta.name, "Everforest");
+        assert_eq!(fichier.meta.appearance, Appearance::Light);
+
+        // Le beige du papier : plus de rouge et de vert que de bleu.
+        let fond = fichier.colors.background.0;
+        assert!(fond.r > fond.b, "le papier est beige, pas bleu : {fond:?}");
+
+        // L'encre : un gris-brun profond, sombre sur le papier clair.
+        let encre = fichier.colors.text.0;
+        assert!(fond.r > encre.r, "l'encre est plus sombre que le papier");
+    }
+
     /// La famille de l'éditeur vient du thème, et n'a pas d'autre source.
     ///
     /// Un thème qui nomme une famille doit l'obtenir ; un thème qui n'en nomme
