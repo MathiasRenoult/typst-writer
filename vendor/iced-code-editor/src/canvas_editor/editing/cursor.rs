@@ -568,19 +568,30 @@ impl CodeEditor {
         {
             let col_abs = visual_line.start_col + col_offset;
 
-            // Une note est un seul caractère : le clic y tombe sur son bord —
-            // gauche sous le milieu du glyphe, droit au-delà. Jamais dedans.
+            // Une note est un seul caractère : le clic **dans** son glyphe
+            // tombe à son bord — gauche sous le milieu, droit au-delà. Un
+            // clic ailleurs continue sa route : le glyphe ne décide que de
+            // son propre sort, jamais de toute la ligne.
             if let Some(marque) = marques.sous(col_abs) {
-                let largeur = largeur_marque(marque, self.char_width);
+                if marque.debut == col_abs {
+                    let largeur = largeur_marque(marque, self.char_width);
 
-                col_offset = if x_in_text < current_width + largeur / 2.0 {
-                    marque.debut
-                } else {
-                    marque.fin
+                    if x_in_text < current_width + largeur {
+                        col_offset = if x_in_text < current_width + largeur / 2.0 {
+                            marque.debut
+                        } else {
+                            marque.fin
+                        }
+                        .saturating_sub(visual_line.start_col);
+
+                        break;
+                    }
+
+                    current_width += largeur;
                 }
-                .saturating_sub(visual_line.start_col);
 
-                break;
+                col_offset += 1;
+                continue;
             }
 
             let char_width = largeur_caractere(
@@ -1131,6 +1142,49 @@ mod tests {
         assert_eq!(
             CodeEditor::vim_word_motion(&chars, (0, 4), VimMotion::WordEnd),
             (0, 6)
+        );
+    }
+
+    #[test]
+    fn le_clic_tombe_ou_l_on_clique_malgre_les_glyphes() {
+        let mut editor = CodeEditor::new("aa@x bb@y cc dd", "tw");
+        editor.set_marques(vec![
+            crate::canvas_editor::marques::Marque::new(0, 0, 2, 4, "1"),
+            crate::canvas_editor::marques::Marque::new(1, 0, 7, 9, "2"),
+        ]);
+        editor.viewport_width = 800.0;
+
+        // Un clic loin à droite, dans « cc dd » : le curseur y va, il ne
+        // reste pas collé au premier glyphe. (Les glyphes sont plus étroits
+        // que leur texte : la colonne exacte se lit dans la géométrie, ce qui
+        // compte ici est d'être passé au-delà des deux notes.)
+        let x = editor.gutter_width() + 5.0 + editor.char_width * 12.0;
+        let position = editor.calculate_cursor_from_point(Point::new(x, 8.0));
+
+        assert!(
+            position.is_some_and(|(_, col)| col >= 10),
+            "le clic tombe dans le texte d'après les glyphes, pas au premier : {position:?}"
+        );
+    }
+
+    #[test]
+    fn ecrire_apres_un_glyphe_ne_grossit_pas_la_cle() {
+        let mut editor = CodeEditor::new("aa@x bb", "tw");
+        editor.request_focus();
+        editor.has_canvas_focus = true;
+        editor.focus_locked = false;
+        editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
+            0, 0, 2, 4, "1",
+        )]);
+
+        // Le curseur juste après le glyphe, et l'on frappe une lettre de clé.
+        editor.cursors.as_mut_slice()[0].position = (0, 4);
+        let _ = editor.update(&Message::CharacterInput('z'));
+
+        assert_eq!(
+            editor.content(),
+            "aa@x z bb",
+            "la lettre reste du texte, elle ne grossit pas la clé"
         );
     }
 

@@ -97,6 +97,13 @@ impl CodeEditor {
                 self.clear_selection();
             }
 
+            // Une note est un caractère entier : frapper juste après son
+            // glyphe écrit **après** elle, jamais dans sa clé. Si le caractère
+            // collerait à la clé, un espace les sépare d'abord.
+            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+                self.separer_de_la_note_si_besoin();
+            }
+
             // Multi-cursor: build a sorted index list (descending document order)
             // so that edits at higher positions don't invalidate lower positions.
             let order = self.cursors.descending_order();
@@ -152,6 +159,33 @@ impl CodeEditor {
         }
 
         self.scroll_to_cursor()
+    }
+
+    /// Sépare le curseur de la note qui finit sous lui, s'il y est collé.
+    ///
+    /// Une note est un caractère entier : frapper dans sa clé, c'est la
+    /// modifier sans la voir — le glyphe avale la lettre. Un espace les
+    /// sépare, et ce qui se frappe reste du texte.
+    fn separer_de_la_note_si_besoin(&mut self) {
+        use crate::canvas_editor::editing::command::InsertTextCommand;
+
+        for idx in 0..self.cursors.len() {
+            let pos = self.cursors.as_slice()[idx].position;
+            let colle = self
+                .marques
+                .iter()
+                .any(|m| m.ligne == pos.0 && m.fin == pos.1);
+
+            if !colle {
+                continue;
+            }
+
+            let mut cmd = InsertTextCommand::new(pos.0, pos.1, " ".to_string(), pos);
+            let mut cursor_pos = pos;
+            cmd.execute(&mut self.buffer, &mut cursor_pos);
+            self.cursors.as_mut_slice()[idx].position = cursor_pos;
+            self.history.push(Box::new(cmd));
+        }
     }
 
     /// Returns the character at `(line, col)`, or `None` if `col` is at or
