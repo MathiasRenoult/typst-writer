@@ -17,7 +17,7 @@ use crate::app::composeur::{Composeur, Etape};
 use crate::app::message::Message;
 use crate::app::state::State;
 use crate::ui::editor::{bubble_style, completion_popup};
-use crate::ui::theme::Palette;
+use crate::ui::theme::{self, Palette};
 
 /// Largeur de la fenêtre de suggestions.
 const LARGEUR: f32 = 400.0;
@@ -192,11 +192,11 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
             palette
                 .label(format!("{}", index + 1))
                 .size(11)
-                .color(if tenue { palette.background } else { palette.text }),
+                .color(if tenue { theme::lisible_sur(palette.accent) } else { palette.text }),
         );
 
         ligne = ligne.push(palette.label(&reference.cle).size(13).color(if tenue {
-            palette.background
+            theme::lisible_sur(palette.accent)
         } else {
             palette.text
         }));
@@ -205,7 +205,7 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
 
         if !page.is_empty() {
             ligne = ligne.push(palette.label(page).size(11).color(if tenue {
-                palette.background
+                theme::lisible_sur(palette.accent)
             } else {
                 palette.text
             }));
@@ -222,7 +222,7 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
                         palette.surface_hover.into()
                     }),
                     text_color: if tenue {
-                        palette.background
+                        theme::lisible_sur(palette.accent)
                     } else {
                         palette.text
                     },
@@ -283,7 +283,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
             .align_y(Alignment::Center);
 
         ligne = ligne.push(palette.label(cle).size(13).color(if selected {
-            palette.background
+            theme::lisible_sur(palette.accent)
         } else {
             palette.text
         }));
@@ -291,7 +291,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
         ligne = ligne.push(Space::new().width(Length::Fill));
 
         ligne = ligne.push(palette.label(genre).size(11).color(if selected {
-            palette.background
+            theme::lisible_sur(palette.accent)
         } else {
             palette.text
         }));
@@ -307,7 +307,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
                         palette.surface_hover.into()
                     }),
                     text_color: if selected {
-                        palette.background
+                        theme::lisible_sur(palette.accent)
                     } else {
                         palette.text
                     },

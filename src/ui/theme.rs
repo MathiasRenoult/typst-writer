@@ -207,6 +207,24 @@ pub fn icon<'a>(
     glyph.size(size).color(color)
 }
 
+/// La couleur de texte lisible **sur** ce fond.
+///
+/// Un thème clair et un thème sombre n'ont ni le même accent, ni le même fond :
+/// plutôt que de parier sur l'un ou l'autre, on mesure la luminance du fond et
+/// on prend le texte qui contraste — noir profond ou blanc. C'est ce qui rend
+/// une sélection lisible dans **tous** les thèmes, pas seulement dans celui
+/// sous les yeux du jour.
+pub fn lisible_sur(fond: Color) -> Color {
+    // La luminance perçue, pondérée comme l'œil : le vert pèse le plus.
+    let luminance = 0.2126 * fond.r + 0.7152 * fond.g + 0.0722 * fond.b;
+
+    if luminance > 0.5 {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    }
+}
+
 /// Les polices résolues d'un thème.
 #[derive(Debug, Clone, Copy)]
 pub struct Typography {

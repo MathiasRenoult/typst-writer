@@ -244,9 +244,40 @@ impl EditorState {
 
         if content_may_change {
             self.refresh_document();
+            self.marques_a_jour();
         }
 
         task
+    }
+
+    /// Repose les glyphes de notes : le contenu a changé, ou le curseur.
+    ///
+    /// C'est la **seule** règle de pliage : chaque note du document devient un
+    /// glyphe, sauf le pied de page sous le curseur, qui s'ouvre pour s'y
+    /// écrire. Elle suit **chaque** changement — le composeur qui remplace une
+    /// citation, la complétion qui insère une clé, la frappe, l'annulation —
+    /// parce qu'un contenu sans son glyphe est un texte à nu : le Suppr y
+    /// grignote les caractères de la clé, et le `.tw` s'abîme.
+    pub fn marques_a_jour(&mut self) {
+        use crate::langage::marques::Nature;
+
+        let contenu = self.content();
+        let offset = self.cursor_offset();
+        let notes = crate::langage::marques::notes(&contenu)
+            .into_iter()
+            .filter(|note| {
+                !(note.nature == Nature::PiedDePage
+                    && note.debut < offset
+                    && offset < note.fin)
+            })
+            .collect::<Vec<_>>();
+
+        self.set_marques(&notes);
+    }
+
+    /// Le nombre de glyphes posés sur le document.
+    pub fn nombre_de_glyphes(&self) -> usize {
+        self.editor.nombre_de_marques()
     }
 
     /// Poursuit la structure Markdown du bloc courant au retour à la ligne.
@@ -341,6 +372,7 @@ impl EditorState {
         }
 
         self.refresh_document();
+        self.marques_a_jour();
 
         Task::batch(tasks)
     }
@@ -360,13 +392,19 @@ impl EditorState {
         self.editor.selectionner(debut, fin);
         self.refresh_document();
 
-        if text.is_empty() {
+        let tache = if text.is_empty() {
             // Le collage vide est interdit (il prendrait le presse-papiers) :
             // c'est le retour arrière qui efface la sélection.
             self.editor.update(&EditorMessage::Backspace)
         } else {
             self.editor.update(&EditorMessage::Paste(text.to_string()))
-        }
+        };
+
+        // Le glyphe suit le contenu aussitôt — jamais un moment à nu où la
+        // clé se montrerait et où le Suppr grignoterait ses caractères.
+        self.marques_a_jour();
+
+        tache
     }
 
     /// La position (ligne, colonne) d'un décalage en octets du document.
@@ -558,7 +596,13 @@ impl EditorState {
     /// La vue suit le curseur : c'est ce qui fait d'un saut une navigation, et
     /// non un simple changement de position.
     pub fn set_cursor(&mut self, line: usize, column: usize) -> Task<EditorMessage> {
-        self.editor.set_cursor(line, column)
+        let tache = self.editor.set_cursor(line, column);
+
+        // Le pied de page sous le curseur s'ouvre pour s'y écrire, et se
+        // replie dès qu'on le quitte : le curseur compte comme un changement.
+        self.marques_a_jour();
+
+        tache
     }
 
     /// La position du curseur, et où il tombe dans le texte.
@@ -742,6 +786,32 @@ fn markdown_continuation(line: &str) -> Option<(String, usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Insérer une citation pose son glyphe **aussitôt** — jamais un moment où
+    /// la clé se montre à nu, et où le Suppr en grignoterait les caractères.
+    #[test]
+    fn inserer_une_citation_pose_le_glyphe_aussitot() {
+        let mut editor = EditorState::default();
+        let texte = "Avant la note et après.";
+        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
+
+        let ancre = texte.find(" et après").expect("la suite est là");
+        let _ = editor.replace_span(ancre, ancre, "@dupont2023[p. 45]");
+
+        assert_eq!(editor.nombre_de_glyphes(), 1, "le glyphe est posé, sans délai");
+
+        // Et le Suppr emporte le glyphe entier, jamais la dernière lettre de
+        // la clé : c'était la porte de corruption du `.tw`.
+        let notes = crate::langage::marques::notes(&editor.content());
+        let _ = editor.set_cursor_offset(notes[0].debut);
+        let _ = editor.update(EditorMessage::Delete);
+
+        assert_eq!(
+            editor.content(),
+            "Avant la note et après.",
+            "la note part entière, le texte d'après intact"
+        );
+    }
 
     /// Le changement du panneau se reprend d'**une** annulation : remplacer
     /// une citation n'est pas deux gestes au fil de l'histoire.

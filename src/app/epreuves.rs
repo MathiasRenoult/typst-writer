@@ -441,6 +441,10 @@ pub fn driver_annulation(state: &mut State) -> Option<Task<Message>> {
                 .collect::<Vec<_>>();
 
             println!("[annulation] après annulation : {contenu:?}");
+            println!(
+                "[annulation] glyphes posés : {}",
+                state.editor.nombre_de_glyphes()
+            );
             println!("[annulation] glyphes (début, fin, n°) : {plissees:?}");
             None
         }

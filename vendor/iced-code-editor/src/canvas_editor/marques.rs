@@ -261,6 +261,12 @@ impl CodeEditor {
         self.marques_revision = self.marques_revision.wrapping_add(1);
     }
 
+    /// Le nombre de glyphes posés — pour l'hôte, qui doit pouvoir vérifier
+    /// qu'il n'y a jamais de texte à nu là où un glyphe devrait être.
+    pub fn nombre_de_marques(&self) -> usize {
+        self.marques.len()
+    }
+
     /// La marque touchée par le dernier clic, s'il a visé un glyphe :
     /// (ligne, début, fin) de la plage, ou `None`.
     pub fn dernier_clic_sur_marque(&self) -> Option<(usize, usize, usize)> {

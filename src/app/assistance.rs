@@ -33,28 +33,11 @@ pub(super) fn reserved_keys() -> Vec<iced::keyboard::Key> {
 /// Repose les glyphes de notes : le document change, les numéros suivent.
 ///
 /// C'est ici que « dynamique » a lieu — à chaque frappe, à chaque déplacement
-/// du curseur : les notes sont rebalayées, renumérotées, et repoussées au
-/// rendu. Une note est un caractère entier, jamais un texte qu'on entre à la
-/// main : seul un clic sur son glyphe l'ouvre — le composeur pour une
-/// citation, le dépliage pour un pied de page, qui se replie dès que le
-/// curseur le quitte.
+/// du curseur. La règle de pliage est **une**, dans l'éditeur
+/// (`EditorState::marques_a_jour`) : elle suit aussi les remplacements faits
+/// par le composeur, qui ne passent pas par la boucle des messages.
 pub(super) fn actualiser_marques(state: &mut State) {
-    use crate::langage::marques::Nature;
-
-    let contenu = state.editor.content();
-    let offset = state.editor.cursor_offset();
-    let notes = crate::langage::marques::notes(&contenu)
-        .into_iter()
-        .filter(|note| {
-            // Le pied de page sous le curseur est ouvert : son texte se voit,
-            // et s'écrit là. À ses bords, il reste un glyphe.
-            !(note.nature == Nature::PiedDePage
-                && note.debut < offset
-                && offset < note.fin)
-        })
-        .collect::<Vec<_>>();
-
-    state.editor.set_marques(&notes);
+    state.editor.marques_a_jour();
 }
 
 /// Demande la liste au serveur, si le texte la demande à l'endroit du curseur.
