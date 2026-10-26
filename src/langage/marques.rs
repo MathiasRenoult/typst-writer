@@ -286,4 +286,20 @@ mod tests {
     fn un_arobase_echappe_ne_rien_ouvre() {
         assert!(notes("écrire \\@dupont2023 sans citer.").is_empty());
     }
+
+    /// Un `;` orphelin n'avale jamais la suite : après une suppression qui
+    /// laisse « @dupont2023[p. 45]; » seul en bout de ligne, le texte qui
+    /// suit reste du texte — sinon le glyphe le cacherait tout entier.
+    #[test]
+    fn un_point_virgule_orphelin_navale_pas_la_suite() {
+        let texte = "Avant @dupont2023[p. 45];\n et tout ce qui suit après.";
+        let trouvees = notes(texte);
+
+        assert_eq!(trouvees.len(), 1, "une seule note, celle qui reste");
+        assert_eq!(
+            &texte[trouvees[0].debut..trouvees[0].fin],
+            "@dupont2023[p. 45]",
+            "le glyphe ne couvre que l'appel, jamais le texte d'après"
+        );
+    }
 }

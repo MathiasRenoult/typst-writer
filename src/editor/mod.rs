@@ -74,6 +74,7 @@ fn marques_du_contenu(
 
                 marques.push((
                     iced_code_editor::Marque::new(
+                        rang,
                         ligne,
                         debut_col,
                         fin_col,
@@ -741,6 +742,84 @@ fn markdown_continuation(line: &str) -> Option<(String, usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le changement du panneau se reprend d'**une** annulation : remplacer
+    /// une citation n'est pas deux gestes au fil de l'histoire.
+    #[test]
+    fn une_annulation_reprend_tout_le_changement_du_panneau() {
+        let mut editor = EditorState::default();
+        let texte =
+            "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
+        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
+
+        let debut = texte.find("@dupont2023").expect("la citation est là");
+        let fin = texte.find(" et tout").expect("la suite est là");
+        let _ = editor.replace_span(debut, fin, "@martin2020");
+        let _ = editor.update(EditorMessage::Undo);
+
+        assert_eq!(
+            editor.content(),
+            texte,
+            "une seule annulation rend le document d'origine, mot pour mot"
+        );
+    }
+
+    /// Une note sur deux lignes s'emporte d'un seul geste : Backspace sur son
+    /// bord ne laisse pas la moitié derrière lui.
+    #[test]
+    fn une_note_sur_deux_lignes_part_entiere() {
+        let mut editor = EditorState::default();
+        let texte =
+            "Avant @dupont2023[p. 45];\n@martin2020 et tout ce qui suit.";
+        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
+
+        let notes = crate::langage::marques::notes(&editor.content());
+        editor.set_marques(&notes);
+        let note = notes[0].clone();
+
+        let _ = editor.set_cursor_offset(note.fin);
+        let _ = editor.update(EditorMessage::Backspace);
+
+        assert_eq!(
+            editor.content(),
+            "Avant  et tout ce qui suit.",
+            "la note part entière, ses deux rangons avec elle"
+        );
+    }
+
+    /// Supprimer une note puis l'annuler : le document revient entier, et le
+    /// glyphe ne plie rien d'autre que la note.
+    #[test]
+    fn annuler_la_suppression_dune_note_rend_le_document_entier() {
+        let mut editor = EditorState::default();
+        let texte =
+            "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
+        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
+
+        let notes = crate::langage::marques::notes(&editor.content());
+        editor.set_marques(&notes);
+        assert_eq!(notes.len(), 1);
+        let note = notes[0].clone();
+
+        // Le curseur sur le bord droit de la note : une frappe l'emporte.
+        let _ = editor.set_cursor_offset(note.fin);
+        let _ = editor.update(EditorMessage::Backspace);
+
+        let _ = editor.update(EditorMessage::Undo);
+
+        assert_eq!(editor.content(), texte, "le document revient entier");
+
+        // Les glyphes suivent, comme dans l'application.
+        let notes = crate::langage::marques::notes(&editor.content());
+        editor.set_marques(&notes);
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(
+            (notes[0].debut, notes[0].fin),
+            (note.debut, note.fin),
+            "le glyphe ne couvre que la note, jamais le texte d'après"
+        );
+    }
 
     /// Le remplacement d'une citation ne touche jamais le texte d'avant.
     ///

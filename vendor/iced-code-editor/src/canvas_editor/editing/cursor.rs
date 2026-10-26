@@ -15,7 +15,7 @@ use crate::canvas_editor::features::vim::VimMotion;
 use crate::canvas_editor::render::wrapping::{VisualLine, WrappingCalculator};
 use crate::canvas_editor::{
     ArrowDirection, CodeEditor, Message,
-    marques::{MarquesLigne, largeur_caractere, largeur_marque, largeur_troncon},
+    marques::{MarquesLigne, bords_du_groupe, largeur_caractere, largeur_marque, largeur_troncon},
 };
 /// Maps a cursor's column onto the visual row it is moving to.
 ///
@@ -95,34 +95,46 @@ fn compute_next_position(
             );
 
             // Une note est un seul caractère : la montée et la descente
-            // s'arrêtent sur son bord le plus proche, jamais dedans.
-            let bord = MarquesLigne::new(marques, ligne)
-                .sous(colonne)
-                .map(|m| {
-                    if colonne - m.debut < m.fin - colonne {
-                        m.debut
+            // s'arrêtent sur son bord le plus proche, jamais dedans — et les
+            // bords sont ceux du **groupe**, la note entière, même sur
+            // plusieurs lignes.
+            let arrivee = (ligne, colonne);
+            let bord = marques
+                .iter()
+                .filter_map(|m| bords_du_groupe(marques, m.groupe))
+                .find(|(debut, fin)| *debut <= arrivee && arrivee < *fin)
+                .map(|(debut, fin)| {
+                    let milieu = ((debut.0 + fin.0) / 2, (debut.1 + fin.1) / 2);
+
+                    if arrivee <= milieu {
+                        debut
                     } else {
-                        m.fin
+                        fin
                     }
                 });
 
-            Some((ligne, bord.unwrap_or(colonne)))
+            Some(bord.unwrap_or(arrivee))
         }
         ArrowDirection::Left => {
-            let ligne = MarquesLigne::new(marques, line);
+            let pos = (line, col);
+
+            // Une note est un seul caractère : sur son bord droit, ou dedans
+            // par mégarde, un bond la franchit d'un coup — d'un bout à
+            // l'autre du groupe, même sur plusieurs lignes. Sur son bord
+            // **gauche**, le curseur est devant elle : il recule d'un
+            // caractère normal, jamais un saut qui le clouerait sur place.
+            let saut = marques
+                .iter()
+                .filter_map(|m| bords_du_groupe(marques, m.groupe))
+                .find(|(debut, fin)| *debut < pos && pos <= *fin)
+                .map(|(debut, _)| debut);
+
+            if let Some(debut) = saut {
+                return Some(debut);
+            }
 
             if col > 0 {
-                // Une note est un seul caractère : sur son bord droit, ou
-                // dedans par mégarde, un bond la franchit d'un coup. Sur son
-                // bord **gauche**, le curseur est devant elle : il recule d'un
-                // caractère normal — c'est `col - 1`, jamais un saut qui le
-                // clouerait sur place.
-                let saut = ligne
-                    .finissant_a(col)
-                    .or_else(|| ligne.sous(col).filter(|m| m.debut < col))
-                    .map(|m| m.debut);
-
-                Some((line, saut.unwrap_or(col - 1)))
+                Some((line, col - 1))
             } else if line > 0 {
                 Some((line - 1, buffer.line_len(line - 1)))
             } else {
@@ -131,15 +143,21 @@ fn compute_next_position(
         }
         ArrowDirection::Right => {
             let line_len = buffer.line_len(line);
-            let ligne = MarquesLigne::new(marques, line);
+            let pos = (line, col);
+
+            // La note part d'un bond, de son bord gauche à son bord droit.
+            let saut = marques
+                .iter()
+                .filter_map(|m| bords_du_groupe(marques, m.groupe))
+                .find(|(debut, fin)| *debut <= pos && pos < *fin)
+                .map(|(_, fin)| fin);
+
+            if let Some(fin) = saut {
+                return Some(fin);
+            }
 
             if col < line_len {
-                let saut = ligne
-                    .commençant_a(col)
-                    .or_else(|| ligne.sous(col))
-                    .map(|m| m.fin);
-
-                Some((line, saut.unwrap_or(col + 1)))
+                Some((line, col + 1))
             } else if line + 1 < buffer.line_count() {
                 Some((line + 1, 0))
             } else {
@@ -1120,7 +1138,7 @@ mod tests {
     fn un_retour_arriere_emporte_la_note_entiere() {
         let mut editor = CodeEditor::new("ab@x note", "tw");
         editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
-            0, 2, 4, "1",
+            0, 0, 2, 4, "1",
         )]);
 
         // Le curseur sur le bord droit de la note.
@@ -1138,7 +1156,7 @@ mod tests {
     fn la_fleche_gauche_sort_davant_un_glyphe() {
         let mut editor = CodeEditor::new("ab@x note", "tw");
         editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
-            0, 2, 4, "1",
+            0, 0, 2, 4, "1",
         )]);
 
         // Le curseur juste avant la note : sur le bord gauche du glyphe.
@@ -1156,7 +1174,7 @@ mod tests {
     fn la_fleche_gauche_saute_une_note_qui_finit_sous_le_curseur() {
         let mut editor = CodeEditor::new("ab@x note", "tw");
         editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
-            0, 2, 4, "1",
+            0, 0, 2, 4, "1",
         )]);
 
         // Le curseur sur le bord droit de la note.

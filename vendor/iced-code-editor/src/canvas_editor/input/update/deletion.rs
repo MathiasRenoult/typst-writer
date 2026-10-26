@@ -6,39 +6,57 @@ use super::{EditType, adjust_other_cursors};
 use crate::canvas_editor::editing::command::{
     Command, DeleteCharCommand, DeleteForwardCommand,
 };
-use crate::canvas_editor::marques::MarquesLigne;
 use crate::canvas_editor::{CodeEditor, Message};
 
 impl CodeEditor {
     /// Sélectionne les notes dont le curseur occupe le bord, pour qu'une
     /// suppression les emporte entières.
     ///
-    /// Une note est un seul caractère : on ne ronge pas son texte caché
-    /// lettre à lettre. Sur son bord, Backspace ou Delete emporte toute la
-    /// note — c'est même le seul geste qui en débarrasse, le clic étant
-    /// réservé à son édition.
+    /// Une note est un seul caractère — **même sur plusieurs lignes** : ses
+    /// marques portent le même groupe, et la suppression vise les deux bords
+    /// du groupe, pas le rangon sous le curseur. Sur son bord, Backspace ou
+    /// Suppr emporte toute la note — c'est même le seul geste qui en
+    /// débarrasse, le clic étant réservé à son édition.
     fn selectionner_les_notes_au_bord(&mut self, avant: bool) {
+        use crate::canvas_editor::marques::bords_du_groupe;
+
+        // Les deux bords de chaque note du document.
+        let mut groupes: Vec<((usize, usize), (usize, usize))> = Vec::new();
+        let mut vus: Vec<usize> = Vec::new();
+
+        for marque in &self.marques {
+            if vus.contains(&marque.groupe) {
+                continue;
+            }
+            vus.push(marque.groupe);
+
+            if let Some(bords) = bords_du_groupe(&self.marques, marque.groupe) {
+                groupes.push(bords);
+            }
+        }
+
         for curseur in self.cursors.as_mut_slice() {
             if curseur.anchor.is_some() {
                 continue;
             }
 
-            let (ligne, col) = curseur.position;
-            let marques = MarquesLigne::new(&self.marques, ligne);
-            let cible = if avant {
-                // Backspace emporte la note qui **finit** ici, ou celle dont
-                // le curseur occupe l'intérieur. Sur son bord gauche, il
-                // efface le caractère d'avant — la note est devant lui.
-                marques
-                    .finissant_a(col)
-                    .or_else(|| marques.sous(col).filter(|m| m.debut < col))
-            } else {
-                marques.sous(col)
-            };
+            let pos = curseur.position;
+            let cible = groupes.iter().find(|(debut, fin)| {
+                if avant {
+                    // Backspace : la note qui finit sous le curseur, ou dont
+                    // il occupe l'intérieur. Sur son bord gauche, il efface le
+                    // caractère d'avant — la note est devant lui.
+                    *debut < pos && pos <= *fin
+                } else {
+                    // Suppr : la note qui commence sous le curseur, ou dont il
+                    // occupe l'intérieur.
+                    *debut <= pos && pos < *fin
+                }
+            });
 
-            if let Some(marque) = cible {
-                curseur.anchor = Some((ligne, marque.debut));
-                curseur.position = (ligne, marque.fin);
+            if let Some((debut, fin)) = cible {
+                curseur.anchor = Some(*debut);
+                curseur.position = *fin;
             }
         }
     }

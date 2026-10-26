@@ -173,6 +173,14 @@ impl CodeEditor {
     /// After every insertion all other cursors (including already-processed
     /// ones) are adjusted to account for the buffer change.
     pub(crate) fn paste_text(&mut self, text: &str) {
+        // Un collage sur une sélection = suppression + insertion : une seule
+        // étape d'annulation, pas deux. Sinon Ctrl+Z ne reprend que
+        // l'insertion, et la sélection emportée reste perdue.
+        let remplace = self.cursors.iter().any(|c| c.has_selection());
+        if remplace {
+            self.ensure_grouping_started();
+        }
+
         // Remove all selections before inserting.
         if self.cursors.iter().any(|c| c.has_selection()) {
             self.delete_selection();
@@ -194,6 +202,11 @@ impl CodeEditor {
             cmd.execute(&mut self.buffer, &mut cursor_pos);
             self.cursors.primary_mut().position = cursor_pos;
             self.history.push(Box::new(cmd));
+
+            if remplace {
+                self.end_grouping_if_active();
+            }
+
             return;
         }
 
@@ -248,6 +261,10 @@ impl CodeEditor {
                     );
                 }
             }
+        }
+
+        if remplace {
+            self.end_grouping_if_active();
         }
     }
 }

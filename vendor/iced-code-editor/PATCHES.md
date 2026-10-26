@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les douze modifications
+## Les treize modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -241,6 +241,19 @@ composeur — pendant que le pointeur, sur le glyphe, devient **cliquable**
 un clic sur un glyphe est mémorisé, l'hôte décide seul d'ouvrir quoi. Le
 pied de page, lui, se déplie sous le curseur pour s'y écrire, et replie dès
 qu'on le quitte.
+
+### 13. La note entière est un groupe, et le collage est une étape
+Une note sur plusieurs lignes avait une marque par rangon, mais les gests ne
+voyaient que le rangon sous le curseur : Backspace en emportait la moitié, et
+l'autre moitié restait orpheline. `Marque` porte maintenant un `groupe` — la
+note entière — et `bords_du_groupe` donne ses deux bords : la suppression,
+les flèches et les sauts traitent le groupe comme **un** caractère. Autre
+piège voisin : coller sur une sélection faisait deux commandes (suppression,
+puis insertion), et Ctrl+Z ne reprenait que la seconde. `paste_text` groupe
+les deux en une seule étape d'annulation.
+
+`marques.rs` (`groupe`, `bords_du_groupe`), `editing/cursor.rs`,
+`input/update/deletion.rs`, `editing/clipboard.rs`.
 
 ### 12. La sélection remplace, les retours arrière ne comptent plus
 Un remplacement bâti en N retours arrière est un piège : N se comptait en

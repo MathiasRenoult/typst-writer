@@ -648,6 +648,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return tache;
             }
 
+            if let Some(tache) = crate::app::epreuves::driver_annulation(state) {
+                return tache;
+            }
+
             // Le serveur de langage suit **le document que l'éditeur tient**,
             // quel que soit le chemin par lequel on y est arrivé. S'accrocher
             // aux fonctions qui *ouvrent* un document laissait passer le

@@ -402,6 +402,52 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
 }
 
 /// Pilote l'éditeur tout seul, un pas par tic ; `None` quand rien à faire.
+/// Pilote l'annulation : la suppression d'une note, puis Ctrl+Z, et ce que le
+/// document devient — c'est la mesure du bug « le texte d'après disparaît ».
+pub fn driver_annulation(state: &mut State) -> Option<Task<Message>> {
+    if !actif("annulation") {
+        return None;
+    }
+
+    static TRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    match TRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
+        5 => {
+            let contenu = state.editor.content();
+            let notes = crate::langage::marques::notes(&contenu);
+
+            println!("[annulation] départ : {contenu:?}");
+            println!("[annulation] {} notes", notes.len());
+
+            let note = notes.first().cloned()?;
+
+            Some(state.editor.set_cursor_offset(note.fin).map(Message::Editor))
+        }
+        15 => {
+            println!("[annulation] une frappe sur le bord droit de la note");
+            Some(Task::done(Message::Editor(iced_code_editor::Message::Backspace)))
+        }
+        25 => {
+            let contenu = state.editor.content();
+            println!("[annulation] après suppression : {contenu:?}");
+            Some(Task::done(Message::Editor(iced_code_editor::Message::Undo)))
+        }
+        35 => {
+            let contenu = state.editor.content();
+            let notes = crate::langage::marques::notes(&contenu);
+            let plissees = notes
+                .iter()
+                .map(|n| (n.debut, n.fin, n.numero))
+                .collect::<Vec<_>>();
+
+            println!("[annulation] après annulation : {contenu:?}");
+            println!("[annulation] glyphes (début, fin, n°) : {plissees:?}");
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Pilote les glyphes : de vrais clics sur les signes, et ce que
 /// l'application en fait — la note visée, la fenêtre qui s'ouvre, le pied de
 /// page qui se déplie. C'est l'épreuve du **geste**, pas du rendu.

@@ -311,7 +311,7 @@ mod tests {
     fn un_glyphe_de_note_rend_le_pointeur_cliquable() {
         let mut editor = CodeEditor::new("@a note", "tw");
         editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
-            0, 0, 2, "1",
+            0, 0, 0, 2, "1",
         )]);
 
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));

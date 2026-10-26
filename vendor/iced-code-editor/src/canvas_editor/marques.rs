@@ -14,9 +14,16 @@
 
 use crate::canvas_editor::{CodeEditor, measure_char_width};
 
-/// Une note fondue en un glyphe.
+/// Une plage de colonnes fondue en un glyphe.
+///
+/// Les plages d'une **même note** portent le même `groupe` : une note qui
+/// court sur plusieurs lignes a une marque par rangon, mais c'est un seul
+/// caractère — le curseur la saute, la suppression l'emporte, d'un bout à
+/// l'autre du groupe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Marque {
+    /// Le groupe : la note entière, même sur plusieurs lignes.
+    pub groupe: usize,
     /// La ligne logique où commence la plage.
     pub ligne: usize,
     /// La première colonne de la plage, en caractères de la ligne.
@@ -30,12 +37,14 @@ pub struct Marque {
 impl Marque {
     /// Une marque couvrant `[debut, fin)` de `ligne`, notée `label`.
     pub fn new(
+        groupe: usize,
         ligne: usize,
         debut: usize,
         fin: usize,
         label: impl Into<String>,
     ) -> Self {
         Self {
+            groupe,
             ligne,
             debut,
             fin,
@@ -47,6 +56,31 @@ impl Marque {
     pub fn couvre(&self, col: usize) -> bool {
         self.debut <= col && col < self.fin
     }
+}
+
+/// Les deux bords d'un groupe — la note entière, d'un bout à l'autre.
+///
+/// `((ligne, colonne) du début, (ligne, colonne) de la fin)`.
+pub(crate) fn bords_du_groupe(
+    marques: &[Marque],
+    groupe: usize,
+) -> Option<((usize, usize), (usize, usize))> {
+    let mut bouts = marques.iter().filter(|m| m.groupe == groupe);
+    let premier = bouts.next()?;
+
+    let mut debut = (premier.ligne, premier.debut);
+    let mut fin = (premier.ligne, premier.fin);
+
+    for marque in bouts {
+        if (marque.ligne, marque.debut) < debut {
+            debut = (marque.ligne, marque.debut);
+        }
+        if (marque.ligne, marque.fin) > fin {
+            fin = (marque.ligne, marque.fin);
+        }
+    }
+
+    Some((debut, fin))
 }
 
 /// Les marques d'une ligne logique, prêtes à être consultées colonne par
@@ -77,16 +111,6 @@ impl<'a> MarquesLigne<'a> {
     /// La marque qui tient cette colonne, s'il y en a une.
     pub(crate) fn sous(&self, col: usize) -> Option<&'a Marque> {
         self.marques.iter().copied().find(|m| m.couvre(col))
-    }
-
-    /// La marque qui **commence** à cette colonne.
-    pub(crate) fn commençant_a(&self, col: usize) -> Option<&'a Marque> {
-        self.marques.iter().copied().find(|m| m.debut == col)
-    }
-
-    /// La marque qui **finit** à cette colonne.
-    pub(crate) fn finissant_a(&self, col: usize) -> Option<&'a Marque> {
-        self.marques.iter().copied().find(|m| m.fin == col)
     }
 
     /// Les marques de la ligne, dans l'ordre.
@@ -253,7 +277,7 @@ mod tests {
 
     /// Une ligne de marque : `@dupont2023[p. 45]`, colonnes 0 à 18.
     fn marque() -> Marque {
-        Marque::new(0, 0, 18, "2")
+        Marque::new(0, 0, 0, 18, "2")
     }
 
     /// Sous la marque, le texte ne tient plus : zéro par caractère, et le
