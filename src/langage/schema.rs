@@ -122,7 +122,7 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => out.push_str(&inline_texte_nu(contenu)),
             Inline::Code(texte) => out.push_str(texte),
-            Inline::Citation(cle) => out.push_str(&cle),
+            Inline::Citation(cle) => out.push_str(cle),
             Inline::Lien { texte, .. } => out.push_str(&inline_texte_nu(texte)),
         }
     }

@@ -74,13 +74,13 @@ pub fn parse(texte: &str) -> Document {
         }
 
         // Un titre.
-        if !echappee {
-            if let Some(niveau) = niveau_titre(ligne) {
-                let contenu = parse_inline(ligne.trim_start()[niveau as usize..].trim());
-                blocs.push(Bloc::Titre { niveau, contenu });
-                index += 1;
-                continue;
-            }
+        if !echappee
+            && let Some(niveau) = niveau_titre(ligne)
+        {
+            let contenu = parse_inline(ligne.trim_start()[niveau as usize..].trim());
+            blocs.push(Bloc::Titre { niveau, contenu });
+            index += 1;
+            continue;
         }
 
         // Une citation de bloc.
@@ -167,12 +167,11 @@ pub fn titres_source(texte: &str, document: &Document) -> Vec<SourceHeading> {
             _ => None,
         })
         .zip(positions)
-        .filter_map(|((level, contenu), (source_level, line))| {
-            (level == source_level).then(|| SourceHeading {
-                level,
-                text: super::schema::inline_texte_nu(contenu),
-                line,
-            })
+        .filter(|((level, _), (source_level, _))| level == source_level)
+        .map(|((level, contenu), (_, line))| SourceHeading {
+            level,
+            text: super::schema::inline_texte_nu(contenu),
+            line,
         })
         .collect()
 }

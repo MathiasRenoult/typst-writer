@@ -16,20 +16,15 @@ use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
 
 /// Mode d'ajustement du zoom de l'aperçu.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum PreviewZoomMode {
     /// La page occupe la largeur disponible.
+    #[default]
     FitWidth,
     /// La page occupe la hauteur visible.
     FitHeight,
     /// Rapport d'affichage libre, en pixels logiques par point Typst.
     Free(f64),
-}
-
-impl Default for PreviewZoomMode {
-    fn default() -> Self {
-        Self::FitWidth
-    }
 }
 
 /// L'état de l'application.
@@ -1071,8 +1066,10 @@ mod tests {
     /// Une nouvelle échelle invalide les tâches et images de l'ancienne.
     #[test]
     fn raster_density_invalidation_starts_a_new_generation() {
-        let mut render = RenderState::default();
-        render.visible = Some((1, 2));
+        let mut render = RenderState {
+            visible: Some((1, 2)),
+            ..RenderState::default()
+        };
         assert!(render.begin_page_render(0, 1));
         render.image_hashes.insert(1, 42);
 
