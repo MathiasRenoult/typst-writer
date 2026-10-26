@@ -147,7 +147,7 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
 /// un espace** — un point-virgule entre eux serait avalé —, alors que des
 /// `@clé` juxtaposés donneraient autant de notes que de références. Mesuré sur
 /// le compilateur : c'est toute la raison de cette forme.
-fn generer_citation(references: &[Reference], out: &mut String) {
+pub fn generer_citation(references: &[Reference], out: &mut String) {
     if references.len() == 1 {
         let reference = &references[0];
         out.push('@');

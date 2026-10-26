@@ -123,6 +123,25 @@ pub enum Message {
     /// On ferme la liste sans rien accepter.
     CompletionDismiss,
 
+    /// Le composeur de notes : ce qui est tapé dans le champ de l'étape —
+    /// le filtre des clés, ou la mention de page.
+    ComposeurSaisie(String),
+
+    /// Tab : prendre la référence choisie, ou valider la page saisie.
+    ComposeurAvancer,
+
+    /// Entrée : insérer la note, et fermer.
+    ComposeurTerminer,
+
+    /// Échap : fermer sans rien laisser.
+    ComposeurFermer,
+
+    /// ↑↓ : déplacer la sélection dans la liste des clés.
+    ComposeurDeplacer(isize),
+
+    /// Un clic sur une ligne de la liste : la prendre, comme Tab.
+    ComposeurPrendre(usize),
+
     /// Aller à la définition de ce qui est sous le curseur.
     GoToDefinition,
 

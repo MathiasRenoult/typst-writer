@@ -85,6 +85,12 @@ pub struct State {
     /// Renommage de symbole en cours, s'il y en a un.
     pub renommage: Option<Renommage>,
 
+    /// Le composeur de notes de références, s'il est ouvert.
+    ///
+    /// Il tient le clavier tant qu'il est là : le document ne reçoit la note
+    /// qu'à la fin, et Échap ne laisse rien.
+    pub composeur: Option<crate::app::composeur::Composeur>,
+
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 

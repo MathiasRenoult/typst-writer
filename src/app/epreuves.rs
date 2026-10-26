@@ -214,6 +214,179 @@ pub fn driver_renommage(state: &State) -> Option<Task<Message>> {
     }
 }
 
+/// Pilote le composeur de notes de références, un pas par tic.
+///
+/// La chronique va du `@` déclencheur à la note écrite — puis prouve la
+/// promesse inverse : Échap ne laisse rien. Le document est lu à chaque
+/// étape : c'est lui l'observable, pas le message envoyé.
+pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
+    if !actif("composeur") {
+        return None;
+    }
+
+    static TRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static AVANT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+    match TRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed) {
+        8 => {
+            // La main entre dans l'éditeur : c'est le clic qui la lui donne,
+            // et sans elle la frappe est ignorée — le message du clic porte
+            // les deux moitiés du focus, comme dans la vraie vie.
+            println!("[épreuve] la main entre dans l'éditeur");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::MouseClick(iced::Point::ORIGIN),
+            )))
+        }
+        12 => {
+            println!("[épreuve] le `@` déclencheur est tapé dans le document");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::CharacterInput('@'),
+            )))
+        }
+        20 => {
+            match state.composeur.as_ref() {
+                Some(composeur) => println!(
+                    "[épreuve] composeur ouvert — ancre {}, filtre {:?}",
+                    composeur.ancre, composeur.saisie
+                ),
+                None => println!("[épreuve] RIEN : le composeur ne s'est pas ouvert"),
+            }
+
+            None
+        }
+        24 => Some(Task::done(Message::ComposeurSaisie("dup".to_string()))),
+        28 => {
+            if let Some(composeur) = state.composeur.as_ref() {
+                println!(
+                    "[épreuve] filtre {:?} → {} clé(s), surlignée {:?}",
+                    composeur.saisie,
+                    composeur.visibles().len(),
+                    composeur.choisie()
+                );
+                println!("[épreuve] aperçu : {}", composeur.apercu(true));
+            }
+
+            None
+        }
+        32 => {
+            println!("[épreuve] Tab : prendre la référence, proposer la page");
+            Some(Task::done(Message::ComposeurAvancer))
+        }
+        36 => Some(Task::done(Message::ComposeurSaisie("p. 45".to_string()))),
+        40 => {
+            if let Some(composeur) = state.composeur.as_ref() {
+                println!(
+                    "[épreuve] étape {:?} — aperçu : {}",
+                    composeur.etape,
+                    composeur.apercu(true)
+                );
+            }
+
+            None
+        }
+        44 => {
+            println!("[épreuve] Tab : valider la page, proposer une autre référence");
+            Some(Task::done(Message::ComposeurAvancer))
+        }
+        48 => Some(Task::done(Message::ComposeurSaisie("mar".to_string()))),
+        52 => {
+            println!("[épreuve] Tab : prendre la seconde référence");
+            Some(Task::done(Message::ComposeurAvancer))
+        }
+        56 => {
+            println!("[épreuve] Entrée : insérer la note");
+            Some(Task::done(Message::ComposeurTerminer))
+        }
+        60 => {
+            let contenu = state.editor.content();
+
+            println!("[épreuve] document après insertion : {contenu:?}");
+            println!("[épreuve] curseur : {}", state.editor.cursor_offset());
+            *AVANT.lock().unwrap() = Some(contenu);
+
+            None
+        }
+        64 => {
+            println!("[épreuve] un second `@`, puis Échap : rien ne doit bouger");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::CharacterInput('@'),
+            )))
+        }
+        68 => {
+            println!("[épreuve] Échap");
+
+            Some(Task::done(Message::ComposeurFermer))
+        }
+        72 => {
+            let avant = AVANT.lock().unwrap().clone();
+            let maintenant = state.editor.content();
+
+            if avant.as_deref() == Some(maintenant.as_str()) {
+                println!("[épreuve] Échap a laissé le document intact : {maintenant:?}");
+            } else {
+                println!("[épreuve] ÉCHAP A ÉCRIT : {avant:?} devenu {maintenant:?}");
+            }
+
+            None
+        }
+        75 => {
+            // Le curseur entre dans la citation — la note est finie depuis, et
+            // c'est d'elle qu'on reprend la main.
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::ArrowKey(
+                    iced_code_editor::ArrowDirection::Left,
+                    false,
+                ),
+            )))
+        }
+        76 => {
+            println!("[épreuve] une frappe **dans** la citation : c'est son édition");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::CharacterInput('x'),
+            )))
+        }
+        80 => match state.composeur.as_ref() {
+            Some(composeur) => {
+                println!(
+                    "[épreuve] composeur d'édition — plage {:?}, clé {:?}, page {:?}",
+                    composeur.edition, composeur.saisie, composeur.page_en_attente
+                );
+                println!("[épreuve] aperçu : {}", composeur.apercu(true));
+
+                None
+            }
+            None => {
+                println!("[épreuve] RIEN : l'édition ne s'est pas ouverte");
+
+                None
+            }
+        },
+        84 => {
+            println!("[épreuve] Entrée : la citation est réécrite");
+            Some(Task::done(Message::ComposeurTerminer))
+        }
+        88 => {
+            let contenu = state.editor.content();
+
+            if contenu.contains("martin2020x") {
+                println!("[épreuve] la citation réécrite tient sa place : {contenu:?}");
+            } else {
+                println!("[épreuve] LA RÉÉCRITURE A PERDU LA CITATION : {contenu:?}");
+            }
+
+            None
+        }
+        92 => {
+            println!("[épreuve] réouverture pour la vue — le composeur reste affiché");
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::CharacterInput('@'),
+            )))
+        }
+        96 => Some(Task::done(Message::ComposeurSaisie("dup".to_string()))),
+        _ => None,
+    }
+}
+
 /// Pilote l'éditeur tout seul, un pas par tic ; `None` quand rien à faire.
 pub fn driver(state: &State) -> Option<Task<Message>> {
     if !actif("defilement") {

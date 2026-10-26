@@ -547,6 +547,49 @@ fn reference(texte: &str) -> Option<(Reference, &str)> {
     }
 }
 
+/// L'appel de citation qui contient une position, et sa plage dans le texte.
+///
+/// C'est la porte du composeur sur une citation déjà écrite : un appel peut
+/// réunir plusieurs références, et c'est son texte **entier** qu'il faut
+/// connaître pour l'ouvrir dessus et le réécrire à la fin. On remonte aux `@`
+/// précédents — un appel commence toujours par l'un d'eux, et un `@` échappé
+/// n'en ouvre pas —, et le plus proche dont la plage contient la position est
+/// le bon.
+pub fn appel_autour(texte: &str, offset: usize) -> Option<(Vec<Reference>, usize, usize)> {
+    let offset = offset.min(texte.len());
+    let mut candidats = Vec::new();
+
+    for (start, _) in texte.match_indices('@') {
+        if start > offset {
+            break;
+        }
+
+        // Un `@` échappé est du texte, pas un appel.
+        if texte[..start].ends_with('\\') {
+            continue;
+        }
+
+        candidats.push(start);
+    }
+
+    for start in candidats {
+        let Some((references, reste)) = appel(&texte[start..]) else {
+            continue;
+        };
+
+        let fin = texte.len() - reste.len();
+
+        // Le premier `@` dont la plage contient la position ouvre l'appel du
+        // plus **ancien** : c'est lui qui englobe un groupe entier, là où le
+        // plus proche ne donnerait que la dernière référence.
+        if offset <= fin {
+            return Some((references, start, fin));
+        }
+    }
+
+    None
+}
+
 /// Lit une mention de page, jusqu'au crochet fermant.
 fn lire_page(texte: &str) -> Option<(String, &str)> {
     let mut page = String::new();
@@ -825,6 +868,30 @@ mod tests {
                 Inline::Texte(".".to_string()),
             ])]
         );
+    }
+
+    /// L'appel autour du curseur se lit entier, groupe compris : c'est son
+    /// texte tout entier que le composeur devra réécrire.
+    #[test]
+    fn l_appel_autour_se_lit_entier() {
+        let texte = "Voir @dupont2023[p. 45]; @martin2020 ici.";
+        let offset = texte.find("@martin").unwrap() + 3;
+
+        let (references, debut, fin) = appel_autour(texte, offset).expect("un appel");
+
+        assert_eq!(&texte[debut..fin], "@dupont2023[p. 45]; @martin2020");
+        assert_eq!(references.len(), 2);
+
+        // Le curseur en bout d'appel est encore dedans.
+        assert!(appel_autour(texte, fin).is_some());
+    }
+
+    /// Hors d'un appel, il n'y en a pas — et un `@` échappé n'en ouvre pas.
+    #[test]
+    fn pas_d_appel_hors_citation() {
+        let texte = "Un arobase nu @ n'ouvre rien, et \\@dupont2023 non plus.";
+        assert_eq!(appel_autour(texte, 20), None);
+        assert_eq!(appel_autour(texte, texte.find("dupont").unwrap()), None);
     }
 
     /// Un crochet jamais fermé n'ouvre pas de page : la référence reste nue,

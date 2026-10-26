@@ -9,7 +9,7 @@
 //! le round-trip perdrait les documents qui parlent du langage lui-même — et
 //! une note de bas de page commençant par `#` deviendrait un titre.
 
-use super::schema::{Bloc, Document, Inline};
+use super::schema::{Bloc, Document, Inline, Reference};
 
 /// Caractères qui ouvrent un marqueur inline, et qu'un texte nu doit échapper.
 ///
@@ -164,20 +164,7 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 out.push('}');
             }
             Inline::Citation(references) => {
-                for (index, reference) in references.iter().enumerate() {
-                    if index > 0 {
-                        out.push_str("; ");
-                    }
-
-                    out.push('@');
-                    out.push_str(&reference.cle);
-
-                    if let Some(page) = &reference.page {
-                        out.push('[');
-                        echapper_page(page, out);
-                        out.push(']');
-                    }
-                }
+                out.push_str(&texte_appel(references));
             }
             Inline::Note(contenu) => {
                 out.push_str("^[");
@@ -215,6 +202,32 @@ fn echapper_page(page: &str, out: &mut String) {
 
         out.push(caractere);
     }
+}
+
+/// Le texte d'un appel de citation, dans notre syntaxe.
+///
+/// C'est **la** forme canonique — `@dupont2023[p. 45]; @martin2020` — que le
+/// sérialiseur écrit et que le composeur de notes insère : une seule source,
+/// pour que le document lu et le document écrit ne divergent jamais.
+pub fn texte_appel(references: &[Reference]) -> String {
+    let mut out = String::new();
+
+    for (index, reference) in references.iter().enumerate() {
+        if index > 0 {
+            out.push_str("; ");
+        }
+
+        out.push('@');
+        out.push_str(&reference.cle);
+
+        if let Some(page) = &reference.page {
+            out.push('[');
+            echapper_page(page, &mut out);
+            out.push(']');
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]

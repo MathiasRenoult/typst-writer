@@ -1,4 +1,5 @@
 pub mod assistance;
+pub mod composeur;
 pub mod epreuves;
 mod fichiers;
 mod journal;
@@ -80,6 +81,7 @@ impl State {
             scale_factor: 1.0,
             mise_en_page: None,
             renommage: None,
+            composeur: None,
             renaming: None,
             jump: None,
             render: Default::default(),
@@ -436,6 +438,19 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Editor(message) => {
             let content_changed = crate::editor::EditorState::message_may_change_content(&message);
 
+            // Un `@` qui vient d'être tapé est le déclencheur du composeur ;
+            // les autres frappes peuvent être l'édition d'une citation.
+            let declencheur_tape =
+                matches!(message, iced_code_editor::Message::CharacterInput('@'));
+
+            // Un clic dans le texte a le dernier mot sur le composeur.
+            let clic_dans_le_texte = matches!(
+                message,
+                iced_code_editor::Message::MouseClick(_)
+                    | iced_code_editor::Message::DoubleClick(_)
+                    | iced_code_editor::Message::TripleClick(_)
+            );
+
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
             state.render.words_pending = true;
@@ -448,6 +463,25 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             let task = state.editor.update(message).map(Message::Editor);
 
+            if clic_dans_le_texte {
+                if state.composeur.is_some() {
+                    // La main est rendue au document, et la note en cours ne
+                    // s'écrit pas — le même geste qu'Échap.
+                    return Task::batch([task, fermer_composeur(state, None)]);
+                }
+
+                // Un clic **sur une citation** ouvre sa fenêtre d'édition :
+                // c'est le geste du signe en exposant, en attendant le signe.
+                let content = state.editor.content();
+                let offset = state.editor.cursor_offset();
+
+                if let Some((references, debut, fin)) =
+                    crate::langage::parse::appel_autour(&content, offset)
+                {
+                    return Task::batch([task, ouvrir_edition(state, references, debut, fin)]);
+                }
+            }
+
             let suivi = if suivre {
                 follow_editor_scroll(state)
             } else {
@@ -456,7 +490,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             // La frappe filtre la liste ; la navigation au curseur la ferme.
             // Le défilement, lui, la garde ouverte et met à jour son ancre.
-            let completion = request_completion(state, content_changed);
+            let completion = request_completion(state, content_changed, declencheur_tape);
 
             if crate::app::epreuves::actif("lsp") {
                 report_lsp(state);
@@ -470,9 +504,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            // Le bouton « citation » est un `@` tapé par la main de l'outil.
+            let declencheur_tape =
+                matches!(action, crate::app::message::FormatAction::Citation);
+
             state.render.words_pending = true;
             let edit = state.editor.apply_format(action).map(Message::Editor);
-            let completion = request_completion(state, true);
+            let completion = request_completion(state, true, declencheur_tape);
 
             Task::batch([edit, completion])
         }
@@ -502,6 +540,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             Task::none()
         }
+
+        Message::ComposeurSaisie(_)
+        | Message::ComposeurAvancer
+        | Message::ComposeurTerminer
+        | Message::ComposeurFermer
+        | Message::ComposeurDeplacer(_)
+        | Message::ComposeurPrendre(_) => composeur_update(state, message),
 
         Message::ScaleFactor(scale_factor) => {
             // La densité du rendu en découle, et elle décide de la mémoire d'une
@@ -567,6 +612,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             if let Some(tache) = crate::app::epreuves::driver_reglages(state) {
+                return tache;
+            }
+
+            if let Some(tache) = crate::app::epreuves::driver_composeur(state) {
                 return tache;
             }
 
@@ -1084,6 +1133,12 @@ fn completion_shortcut(
 ) -> Option<Task<Message>> {
     use iced::keyboard::{Key, key::Named};
 
+    // Le composeur de notes, quand il est ouvert, prend ses touches — et la
+    // liste de complétion, elle, n'a plus rien à faire.
+    if state.composeur.is_some() {
+        return composeur_touche(state, key, modifiers);
+    }
+
     state.lsp.completion.as_ref()?;
 
     // Ctrl+Espace accepte : c'est le geste qu'on a dans les doigts quand la
@@ -1517,6 +1572,40 @@ fn subscription_keys() -> Subscription<Message> {
     })
 }
 
+/// Les touches du composeur que son champ de saisie capture.
+///
+/// Le champ prend la frappe entière — c'est sa fonction — mais il attrape
+/// aussi Échap, qu'il se contente de défiler du focus. Le composeur, lui,
+/// veut cette touche : on relaie les siennes même capturées, et jamais une
+/// autre. L'abonnement n'existe que tant que le composeur est ouvert.
+fn subscription_composeur(state: &State) -> Subscription<Message> {
+    if state.composeur.is_none() {
+        return Subscription::none();
+    }
+
+    iced::event::listen_with(|event, status, _window| match status {
+        Status::Captured => match event {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                if est_touche_composeur(&key) =>
+            {
+                Some(Message::RawKey(key, modifiers))
+            }
+            _ => None,
+        },
+        Status::Ignored => None,
+    })
+}
+
+/// Les touches qui font avancer le composeur, et que rien d'autre ne garde.
+fn est_touche_composeur(key: &iced::keyboard::Key) -> bool {
+    use iced::keyboard::{Key, key::Named};
+
+    matches!(
+        key,
+        Key::Named(Named::Tab | Named::Enter | Named::Escape | Named::ArrowUp | Named::ArrowDown)
+    )
+}
+
 pub fn subscription(_state: &State) -> Subscription<Message> {
     Subscription::batch(vec![
         subscription_timer(),
@@ -1525,6 +1614,7 @@ pub fn subscription(_state: &State) -> Subscription<Message> {
         subscription_window(),
         subscription_drag(),
         subscription_keys(),
+        subscription_composeur(_state),
         subscription_lsp(_state),
         subscription_memory(),
     ])

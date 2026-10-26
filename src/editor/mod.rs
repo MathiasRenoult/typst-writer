@@ -240,9 +240,15 @@ impl EditorState {
     /// Insère du texte à la position du curseur.
     ///
     /// Le mécanisme est le message `Paste` de l'éditeur — c'est son insertion
-    /// documentée au curseur (utilisée par la palette de commandes), pas un
-    /// accès au presse-papiers système.
+    /// documentée au curseur (utilisée par la palette de commandes). **Jamais
+    /// avec un texte vide** : chez ce crate, `Paste("")` n'insère rien, il va
+    /// *lire le presse-papiers* et le coller. Un collage fantôme s'est ainsi
+    /// glissé dans le document à l'ouverture d'une fenêtre.
     pub fn insert_at_cursor(&mut self, text: &str) -> Task<EditorMessage> {
+        if text.is_empty() {
+            return Task::none();
+        }
+
         self.update(EditorMessage::Paste(text.to_string()))
     }
 
@@ -253,6 +259,9 @@ impl EditorState {
     /// effacer, puis l'insertion. C'est la seule voie qui n'ajoute pas de
     /// dépendance à l'intérieur du crate, et elle se comporte exactement comme
     /// la frappe (le curseur suit, l'historique enregistre une seule action).
+    ///
+    /// Un remplacement par le vide s'arrête aux retours arrière : le `Paste`
+    /// qui les suit lirait le presse-papiers (voir [`Self::insert_at_cursor`]).
     pub fn replace_before(&mut self, characters: usize, text: &str) -> Task<EditorMessage> {
         let mut tasks = Vec::with_capacity(characters + 1);
 
@@ -260,10 +269,38 @@ impl EditorState {
             tasks.push(self.editor.update(&EditorMessage::Backspace));
         }
 
-        tasks.push(self.editor.update(&EditorMessage::Paste(text.to_string())));
+        if !text.is_empty() {
+            tasks.push(self.editor.update(&EditorMessage::Paste(text.to_string())));
+        }
+
         self.refresh_document();
 
         Task::batch(tasks)
+    }
+
+    /// Remplace une plage du document par du texte.
+    ///
+    /// Le curseur va d'abord en fin de plage : `replace_before` efface à
+    /// rebours, et c'est la seule direction que le crate connaisse.
+    pub fn replace_span(&mut self, start: usize, end: usize, text: &str) -> Task<EditorMessage> {
+        let aller = self.set_cursor_offset(end);
+        let remplacer = self.replace_before(end.saturating_sub(start), text);
+
+        Task::batch([aller, remplacer])
+    }
+
+    /// Pose le curseur à un décalage, en caractères depuis le début du texte.
+    ///
+    /// Le crate ne se déplace qu'en (ligne, colonne) : la conversion se fait
+    /// ici, une seule fois.
+    pub fn set_cursor_offset(&mut self, offset: usize) -> Task<EditorMessage> {
+        let content = self.content();
+        let offset = offset.min(content.len());
+        let avant = &content[..offset];
+        let ligne = avant.matches('\n').count();
+        let colonne = avant.chars().rev().take_while(|c| *c != '\n').count();
+
+        self.set_cursor(ligne, colonne)
     }
 
     /// Applique une commande de mise en forme au document `.tw` courant.
