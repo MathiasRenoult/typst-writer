@@ -112,12 +112,14 @@ fn compute_next_position(
             let ligne = MarquesLigne::new(marques, line);
 
             if col > 0 {
-                // Une note est un seul caractère : sur son bord, ou dedans
-                // par mégarde, un bond la franchit d'un coup. Le curseur
-                // n'entre jamais dans son texte caché.
+                // Une note est un seul caractère : sur son bord droit, ou
+                // dedans par mégarde, un bond la franchit d'un coup. Sur son
+                // bord **gauche**, le curseur est devant elle : il recule d'un
+                // caractère normal — c'est `col - 1`, jamais un saut qui le
+                // clouerait sur place.
                 let saut = ligne
                     .finissant_a(col)
-                    .or_else(|| ligne.sous(col))
+                    .or_else(|| ligne.sous(col).filter(|m| m.debut < col))
                     .map(|m| m.debut);
 
                 Some((line, saut.unwrap_or(col - 1)))
@@ -1097,6 +1099,42 @@ mod tests {
         assert_eq!(
             CodeEditor::vim_word_motion(&chars, (0, 4), VimMotion::WordEnd),
             (0, 6)
+        );
+    }
+
+    #[test]
+    fn la_fleche_gauche_sort_davant_un_glyphe() {
+        let mut editor = CodeEditor::new("ab@x note", "tw");
+        editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
+            0, 2, 4, "1",
+        )]);
+
+        // Le curseur juste avant la note : sur le bord gauche du glyphe.
+        editor.cursors.as_mut_slice()[0].position = (0, 2);
+        editor.move_cursor(ArrowDirection::Left);
+
+        assert_eq!(
+            editor.cursors.primary_position(),
+            (0, 1),
+            "la flèche gauche sort d'avant la note"
+        );
+    }
+
+    #[test]
+    fn la_fleche_gauche_saute_une_note_qui_finit_sous_le_curseur() {
+        let mut editor = CodeEditor::new("ab@x note", "tw");
+        editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(
+            0, 2, 4, "1",
+        )]);
+
+        // Le curseur sur le bord droit de la note.
+        editor.cursors.as_mut_slice()[0].position = (0, 4);
+        editor.move_cursor(ArrowDirection::Left);
+
+        assert_eq!(
+            editor.cursors.primary_position(),
+            (0, 2),
+            "la note part d'un bond, son texte fondu n'est pas traversé"
         );
     }
 

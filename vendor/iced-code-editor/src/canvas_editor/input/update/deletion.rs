@@ -26,9 +26,14 @@ impl CodeEditor {
             let (ligne, col) = curseur.position;
             let marques = MarquesLigne::new(&self.marques, ligne);
             let cible = if avant {
-                marques.finissant_a(col)
+                // Backspace emporte la note qui **finit** ici, ou celle dont
+                // le curseur occupe l'intérieur. Sur son bord gauche, il
+                // efface le caractère d'avant — la note est devant lui.
+                marques
+                    .finissant_a(col)
+                    .or_else(|| marques.sous(col).filter(|m| m.debut < col))
             } else {
-                marques.commençant_a(col)
+                marques.sous(col)
             };
 
             if let Some(marque) = cible {
