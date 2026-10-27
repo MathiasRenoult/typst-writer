@@ -517,6 +517,13 @@ pub struct LspState {
     /// muet ne doit pas tenir l'application en haleine.
     pub depuis: Option<std::time::Instant>,
 
+    /// Le texte tel que le serveur l'a vu, la dernière fois qu'on le lui
+    /// a donné.
+    ///
+    /// Ses positions sont dans **son** texte : les recalculer sur celui du
+    /// moment ferait pointer les diagnostics ailleurs que le problème.
+    pub vu: String,
+
     /// La liste de complétion ouverte, s'il y en a une.
     pub completion: Option<Completion>,
 

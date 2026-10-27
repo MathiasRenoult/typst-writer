@@ -146,12 +146,10 @@ fn named_families(texts: &[String], root: &Path) -> Vec<String> {
 
     // Les chapitres que l'assemblage inclut sans qu'ils soient ouverts : leur
     // texte n'est nulle part en mémoire, et un document peut très bien demander
-    // sa police hébraïque dans le chapitre qu'on n'écrit pas.
-    for path in typ_files(root) {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            names.extend(quoted(&text));
-        }
-    }
+    // sa police hébraïque dans le chapitre qu'on n'écrit pas. Le résultat se
+    // garde : relire tout le projet à chaque compilation — toutes les trois
+    // secondes d'écriture — est un coût pour rien.
+    names.extend(noms_des_fichiers_typ(root));
 
     names.sort_unstable();
     names.dedup();
@@ -159,7 +157,49 @@ fn named_families(texts: &[String], root: &Path) -> Vec<String> {
     names
 }
 
-/// Les chaînes citées d'un texte : ce sont elles qui peuvent être des noms de
+/// Les noms cités par les `.typ` du projet, gardés entre deux compilations.
+///
+/// Le cache tient tant qu'aucun fichier n'a changé : c'est la date la plus
+/// récente des `.typ` qui le dit, et un fichier touché relit le projet.
+fn noms_des_fichiers_typ(root: &Path) -> Vec<String> {
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+
+    static CACHE: Mutex<Vec<(PathBuf, SystemTime, Vec<String>)>> = Mutex::new(Vec::new());
+
+    let fichiers = typ_files(root);
+    let plus_recent = fichiers
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).ok())
+        .filter_map(|meta| meta.modified().ok())
+        .max()
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if let Ok(caches) = CACHE.lock()
+        && let Some((_, garde, noms)) = caches
+            .iter()
+            .find(|(racine, _, _)| racine == root)
+        && *garde >= plus_recent
+    {
+        return noms.clone();
+    }
+
+    let mut noms = Vec::new();
+    for path in &fichiers {
+        if let Ok(texte) = std::fs::read_to_string(path) {
+            noms.extend(quoted(&texte));
+        }
+    }
+
+    if let Ok(mut caches) = CACHE.lock() {
+        caches.retain(|(racine, _, _)| racine != root);
+        caches.push((root.to_path_buf(), plus_recent, noms.clone()));
+    }
+
+    noms
+}
+
+/// Les chaînes citées d'un texte/// Les chaînes citées d'un texte : ce sont elles qui peuvent être des noms de
 /// polices.
 fn quoted(text: &str) -> Vec<String> {
     let mut names = Vec::new();

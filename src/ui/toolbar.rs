@@ -379,6 +379,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
         false,
     ));
 
+    // La barre déborde parfois la fenêtre : plutôt que rogner des boutons
+    // inatteignables, elle défile — sans barre de défilement visible, le
+    // reste est au diapason de la sobriété de la fenêtre.
+    let bar = iced::widget::scrollable(bar)
+        .direction(iced::widget::scrollable::Direction::Horizontal(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(0)
+                .scroller_width(0),
+        ))
+        .height(Length::Fixed(BAR_HEIGHT));
+
     container(bar)
         .width(Length::Fill)
         .height(Length::Fixed(BAR_HEIGHT))

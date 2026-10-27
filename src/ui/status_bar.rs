@@ -62,6 +62,22 @@ pub fn view(state: &State) -> Element<'_, Message> {
         );
     }
 
+    // Ce que l'application exporte ou enregistre vit dans le panneau
+    // d'aperçu — masquable. La barre d'état le relaie quand il n'y a pas
+    // de note plus fraîche : un retour ne peut pas disparaître avec le
+    // panneau qui l'a produit.
+    if state.note.is_none()
+        && let Some(etat) = state.export_status.as_ref()
+        && !etat.is_empty()
+    {
+        bar = bar.push(
+            palette
+                .label(etat.clone())
+                .size(12)
+                .color(palette.text_muted),
+        );
+    }
+
     bar = bar.push(space::horizontal().width(Length::Fill));
 
     // Le compte de mots est le seul renseignement de fond utile pendant la

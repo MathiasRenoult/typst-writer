@@ -72,11 +72,24 @@ fn fenetre<'a>(
     .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
-    let champ = |invite: &str, valeur: &str, nom: &'static str| {
-        text_input(invite, valeur)
-            .on_input(move |texte| Message::EditionReferenceChamp(nom.to_string(), texte))
-            .padding(6)
-            .width(Length::Fill)
+    // Seule une bibliothèque locale s'écrit : une notice Zotero se lit,
+    // et ses champs ne sont pas des champs de saisie.
+    let lecture_seule = !edition.locale;
+
+    let champ = move |invite: &str, valeur: &str, nom: &'static str| -> Element<'static, Message> {
+        let saisie = text_input(invite, valeur).padding(6).width(Length::Fill);
+
+        // Un champ sans `on_input` ne prend rien : c'est iced qui le dit,
+        // et la notice Zotero reste lue telle qu'elle est.
+        if lecture_seule {
+            saisie.into()
+        } else {
+            saisie
+                .on_input(move |texte| {
+                    Message::EditionReferenceChamp(nom.to_string(), texte)
+                })
+                .into()
+        }
     };
 
     let mut formulaire = column![].spacing(theme::jetons::PAS);
@@ -84,9 +97,27 @@ fn fenetre<'a>(
     // La clé : choisie une fois, puis citée — elle ne bouge plus.
     if edition.creation {
         formulaire = formulaire.push(row![
-            champ("Clé", &edition.cle, "cle")
-                .id(id_premier_champ())
-                .width(Length::Fill),
+            {
+                // L'identifiant du premier champ : la fiche s'ouvre sur
+                // lui, et lui seul — un identifiant partagé viserait deux
+                // cibles à la fois.
+                let saisie = text_input("Clé", &edition.cle)
+                    .padding(6)
+                    .width(Length::Fill)
+                    .id(id_premier_champ());
+
+                let champ: Element<'static, Message> = if lecture_seule {
+                    saisie.into()
+                } else {
+                    saisie
+                        .on_input(|texte| {
+                            Message::EditionReferenceChamp("cle".to_string(), texte)
+                        })
+                        .into()
+                };
+
+                champ
+            },
             pick_list(
                 TYPES.iter().map(|type_| type_.to_string()).collect::<Vec<_>>(),
                 Some(edition.kind.clone()),
@@ -103,17 +134,15 @@ fn fenetre<'a>(
     }
 
     formulaire = formulaire.push(row![
-        champ("Nom", &edition.nom, "nom")
-            .id(id_premier_champ())
-            .width(Length::Fill),
-        champ("Prénom", &edition.prenom, "prenom").width(Length::Fill),
+        champ("Nom", &edition.nom, "nom"),
+        champ("Prénom", &edition.prenom, "prenom"),
     ].spacing(theme::jetons::PAS));
 
     formulaire = formulaire.push(champ("Titre", &edition.titre, "titre"));
     formulaire = formulaire.push(champ("Titre court", &edition.titre_court, "titre_court"));
     formulaire = formulaire.push(row![
-        champ("Année", &edition.annee, "annee").width(Length::Fill),
-        champ("Éditeur", &edition.editeur, "editeur").width(Length::Fill),
+        champ("Année", &edition.annee, "annee"),
+        champ("Éditeur", &edition.editeur, "editeur"),
     ].spacing(theme::jetons::PAS));
     formulaire = formulaire.push(champ("Lieu", &edition.lieu, "lieu"));
 

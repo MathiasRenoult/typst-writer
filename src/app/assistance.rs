@@ -130,6 +130,7 @@ pub(super) fn request_completion(
     // venait qu'à la demande suivante — d'où l'impression qu'il fallait une
     // touche de plus. Le coût est borné : on ne synchronise que lorsque le
     // curseur est dans un mot déclenché par `#` ou `@`.
+    state.lsp.vu = content.clone();
     session.did_change(&content);
 
     state.lsp.tokens += 1;
@@ -605,7 +606,7 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
                 // La traduction pour l'affichage se fait **ici**, une fois :
                 // elle demande le texte du document, et la vue ne doit rien
                 // cloner.
-                state.lsp.reported = crate::lsp::messages::report(&state.editor.content(), &items);
+                state.lsp.reported = crate::lsp::messages::report(&state.lsp.vu, &items);
                 state.lsp.diagnostics = items;
             }
 

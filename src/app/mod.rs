@@ -262,6 +262,7 @@ impl State {
         if let Some(session) = self.lsp.session.as_mut() {
             session.open_document(&path, &text);
             self.lsp.document = Some(session.uri().to_string());
+            self.lsp.vu = text;
 
             // Les diagnostics du document précédent ne restent pas : ses
             // boutons sauteraient aux anciennes lignes du nouveau.

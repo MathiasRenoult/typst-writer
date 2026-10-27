@@ -112,12 +112,18 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center),
     );
 
+    // La fenêtre tient dans la fenêtre : une taille fixe dépassait d'une
+    // application ramenée à son minimum, et le pied — « Appliquer » —
+    // atterrissait hors écran.
+    let largeur = 760.0_f32.min(state.window_size.width - 32.0).max(320.0);
+    let hauteur = 640.0_f32.min(state.window_size.height - 32.0).max(320.0);
+
     let fenetre =
         container(column![entete, scrollable(corps).height(Length::Fill), pied].spacing(16))
             .padding(18)
             .style(bubble_style(palette))
-            .width(Length::Fixed(760.0))
-            .height(Length::Fixed(640.0));
+            .width(Length::Fixed(largeur))
+            .height(Length::Fixed(hauteur));
 
     container(fenetre)
         .width(Length::Fill)
