@@ -38,6 +38,11 @@ pub fn generer(mise_en_page: &MiseEnPage) -> String {
 
     out.push_str(&format!("#let {FONCTION}(doc) = {{\n"));
 
+    // Les guillemets sont ceux des normes : Typst ne retransforme pas ce
+    // que la typographie a composé. En `lang: "fr"`, sa propre conversion
+    // changerait tout — même les paires anglaises — en guillemets français.
+    out.push_str("  set smartquote(enabled: false)\n");
+
     out.push_str(&page(mise_en_page));
     out.push_str(&texte(mise_en_page));
     out.push_str(&paragraphes(mise_en_page));
@@ -115,6 +120,7 @@ fn texte(mise_en_page: &MiseEnPage) -> String {
     if !mise_en_page.texte.langue.is_empty() {
         lignes.push(format!("    lang: \"{}\",", echapper(&mise_en_page.texte.langue)));
     }
+
 
     lignes.push(format!(
         "    hyphenate: {},",
@@ -297,6 +303,7 @@ fn echapper(texte: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::typst::render::compile;
     use std::path::PathBuf;

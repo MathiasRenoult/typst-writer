@@ -249,6 +249,42 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                 profondeur = profondeur.saturating_sub(1);
             }
 
+            // Le guillemet droit : celui du clavier. Il s'ouvre devant ce
+            // qui n'est pas un blanc, et se ferme ailleurs — sur le même
+            // empilement que les marques explicites.
+            '"' => {
+                let ouvrant = suivant.is_some_and(|suivant| !suivant.is_whitespace());
+
+                if ouvrant {
+                    profondeur += 1;
+                    let (cote, _) = paire(regles, profondeur);
+                    sortie.push(cote);
+                    venant_du_guillemet = true;
+
+                    if let Some(espace) = regles.espace_guillemets.caractere()
+                        && suivant.is_some()
+                    {
+                        sortie.push(espace);
+                    }
+                } else {
+                    while sortie.ends_with(' ') {
+                        sortie.pop();
+                    }
+
+                    let (_, fermant) = paire(regles, profondeur.max(1));
+
+                    if let Some(espace) = regles.espace_guillemets.caractere()
+                        && !sortie.is_empty()
+                        && !sortie.ends_with(espace)
+                    {
+                        sortie.push(espace);
+                    }
+
+                    sortie.push(fermant);
+                    profondeur = profondeur.saturating_sub(1);
+                }
+            }
+
             _ => {
                 sortie.push(*caractere);
             }
@@ -351,6 +387,24 @@ mod tests {
         assert_eq!(
             appliquer("« un « deux » fin »", &anglais),
             "\"un 'deux' fin\""
+        );
+    }
+
+    /// Le guillemet droit du clavier compose lui aussi, sur le même
+    /// empilement : ce qui s'ouvre devant un mot se ferme après lui.
+    #[test]
+    fn le_guillemet_droit_du_clavier_compose() {
+        let française = Regles::francaise();
+
+        assert_eq!(
+            appliquer("\"Double \"Insertion\" et quotes\"", &française),
+            format!("«{INSECABLE}Double \"{INSECABLE}Insertion{INSECABLE}\" et quotes{INSECABLE}»")
+        );
+
+        let anglaise = Regles::anglaise();
+        assert_eq!(
+            appliquer("\"Double \"Insertion\" et quotes\"", &anglaise),
+            "\"Double 'Insertion' et quotes\""
         );
     }
 
