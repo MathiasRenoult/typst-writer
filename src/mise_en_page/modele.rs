@@ -593,20 +593,6 @@ impl MiseEnPage {
 #[cfg(test)]
 mod tests {
 
-    #[test]
-    fn examen_guillemets_reels() {
-        let chemin = "/home/mat/.typst-writer/projets/mon-travail/mise-en-page.toml";
-        let texte = std::fs::read_to_string(chemin).expect("normes");
-        let mise_en_page = MiseEnPage::lire(&texte).expect("lisible");
-
-        println!("BASE     : {:?}", mise_en_page.typographie.base);
-        println!("GUILLEMETS : {:?}", mise_en_page.typographie.guillemets);
-        let regles = mise_en_page.typographie.regles();
-        println!("REGLES   : {:?}", regles.guillemets);
-
-        let composé = crate::langage::typographie::appliquer("« un « deux » fin »", &regles);
-        println!("COMPOSÉ  : {:?}", composé);
-    }
 
 
     /// La typographie d'avant la section dédiée se porte dans sa section :

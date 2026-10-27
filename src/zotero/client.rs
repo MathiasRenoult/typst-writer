@@ -77,6 +77,8 @@ pub fn collections_depuis(base: &str) -> Result<Vec<Collection>, Erreur> {
         let corps = requete(base, &chemin)?;
         let page: Vec<Collection> = lecture_collections(&corps)?;
 
+        // Une page plus courte que la limite est la dernière : le compte
+        // est celui des **items**, jamais celui des octets du corps.
         depart += page.len();
         let fini = page.len() < 100;
         collections.extend(page);
@@ -100,7 +102,11 @@ pub fn bibtex_depuis(base: &str, cle: &str) -> Result<String, Erreur> {
         );
         let page = requete(base, &chemin)?;
 
-        let fini = page.len() < 100;
+        // Une entrée BibTeX s'ouvre par `@` en tête de ligne : les compter
+        // dit si la page est entière — jamais la longueur du corps, qui
+        // dépend de la longueur des titres.
+        let entrees = page.lines().filter(|ligne| ligne.starts_with('@')).count();
+        let fini = page.trim().is_empty() || entrees < 100;
         sortie.push_str(&page);
         if !sortie.ends_with('\n') {
             sortie.push('\n');
@@ -255,8 +261,14 @@ fn morceaux(corps: &str) -> String {
         let morceau: String = suite.chars().take(taille).collect();
         sortie.push_str(&morceau);
 
-        // Le morceau fini, son séparateur aussi.
-        let suite = &suite[taille.min(suite.len())..];
+        // Le morceau fini, son séparateur aussi. La taille est en
+        // **caractères** : le reste se découpe au même cran, jamais au
+        // nombre d'octets — un accent y coupait en deux.
+        let suite = {
+            let octets = suite.len();
+            let pris: String = suite.chars().take(taille).collect();
+            &suite[pris.len()..octets]
+        };
         reste = suite.strip_prefix("\r\n").unwrap_or(suite);
     }
 
