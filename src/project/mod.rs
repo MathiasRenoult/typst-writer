@@ -373,7 +373,7 @@ fn entree_de(bloc: &str) -> Option<BibliographyEntry> {
     let (kind, reste) = reste.split_once('{')?;
 
     let (cle, champs) = reste.split_once(',').unwrap_or((reste, ""));
-    let key = cle.trim().to_string();
+    let key = cle.split(['}', ',']).next()?.trim().to_string();
 
     if key.is_empty() {
         return None;
@@ -716,6 +716,19 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une entrée sans virgule après la clé (ex. `@article{clé}`) donne la
+    /// clé sans son accolade fermante.
+    #[test]
+    fn une_entree_sans_virgule_garde_sa_cle_nue() {
+        let entry = entree_de("@article{clé}");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().key, "clé");
+
+        let entry = entree_de("@book{smith2020 }");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().key, "smith2020");
     }
 
     /// Une session d'une version précédente, qui ne connaissait que
