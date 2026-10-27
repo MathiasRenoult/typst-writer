@@ -192,6 +192,9 @@ fn bibliography_call_range(main: &str) -> Option<(usize, usize)> {
 #[cfg(test)]
 mod tests {
 
+
+
+
     /// La typographie des normes s'applique au texte composé — et le `\`
     /// de la syntaxe en exempte ce qu'il écrit.
     #[test]

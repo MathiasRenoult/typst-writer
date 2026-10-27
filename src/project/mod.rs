@@ -241,9 +241,19 @@ fn remplacer_champ(bloc: &str, nom: &str, valeur: &str) -> String {
                 return bloc.to_string();
             };
 
+            // La virgule sépare les champs — jamais deux, et toujours une
+            // entre le dernier champ et le nouveau. Une virgule orpheline,
+            // et c'est BibLaTeX qui refuse le fichier entier.
+            // La virgule sépare les champs — jamais deux, et toujours une
+            // entre le dernier champ et le nouveau. Une virgule orpheline,
+            // et c'est BibLaTeX qui refuse le fichier entier.
+            let tete = bloc[..fin].trim_end();
+            let separateur = if tete.ends_with(',') { "" } else { "," };
+
             let mut sortie = String::with_capacity(bloc.len() + valeur.len() + 16);
-            sortie.push_str(&bloc[..fin]);
-            sortie.push_str(&format!(",\n  {nom} = {{{valeur}}}"));
+            sortie.push_str(tete);
+            sortie.push_str(separateur);
+            sortie.push_str(&format!("\n  {nom} = {{{valeur}}}\n"));
             sortie.push_str(&bloc[fin..]);
 
             sortie
@@ -684,6 +694,47 @@ mod tests {
     }
 
     /// Modifier une référence réécrit ses champs, sans toucher au reste du
+    /// Écrire une référence dans une entrée BibLaTeX donne un fichier que
+    /// Typst accepte — la virgule de séparation n'est jamais deux.
+    ///
+    /// C'est la régression du rendu cassé : un champ ajouté après une ligne
+    /// finissant déjà par une virgule écrivait une virgule orpheline, et le
+    /// parseur BibLaTeX de Typst refusait le fichier entier.
+    #[test]
+    fn ecrire_une_reference_laisse_un_bib_que_typst_accepte() {
+        let dir = std::env::temp_dir().join(format!("tw-maj-typst-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let chemin = dir.join("references.bib");
+        let entree = "@book{cle,\n\tauthor = {Nom},\n\ttitle = {Titre},\n\tdate = {2023},\n}\n";
+        std::fs::write(&chemin, entree).unwrap();
+
+        // L'entrée n'a pas de champ `year` : c'est l'ajout qui corrompait.
+        super::maj_reference(&chemin, "cle", "Nom", "Prénom", "Titre", "2014").unwrap();
+
+        let corrige = std::fs::read_to_string(&chemin).unwrap();
+        assert!(!corrige.contains(",\n,"), "jamais deux virgules : {corrige}");
+
+        // Le vrai juge : le parseur BibLaTeX de Typst.
+        let root = std::path::Path::new("/projet");
+        let entry = "#bibliography(\"references.bib\", style: \"chicago-notes\")\n";
+        let overrides = vec![(root.join("references.bib"), corrige)];
+        let outcome = crate::typst::render::compile(root, entry, &overrides);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "le .bib doit rester valide : {:?}",
+            outcome
+                .errors
+                .iter()
+                .map(|erreur| erreur.message.clone())
+                .collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// fichier — et la clé ne bouge pas, elle est citée dans les documents.
     #[test]
     fn modifier_une_reference_ne_reecrit_que_ses_champs() {
