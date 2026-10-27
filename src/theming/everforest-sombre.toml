@@ -1,0 +1,21 @@
+# Everforest sombre — le même papier, à la nuit tombée.
+
+[meta]
+name = "Everforest sombre"
+appearance = "dark"
+
+[colors]
+background = "#2B332E"
+surface = "#343D37"
+text = "#D6D9CE"
+accent = "#8AB48F"
+text_muted = "#9AA294"
+border = "#46514A"
+danger = "#D2887E"
+warning = "#D4A96C"
+success = "#A0B88B"
+
+[editor]
+background = "#2E3731"
+selection = "#8AB48F40"
+current_line = "#323B35"

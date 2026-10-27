@@ -1,0 +1,21 @@
+# Pin rosé — la lumière rose : pétale pâle, encre prune.
+
+[meta]
+name = "Pin rosé"
+appearance = "light"
+
+[colors]
+background = "#FAF4ED"
+surface = "#F2E9E1"
+text = "#575279"
+accent = "#907AA9"
+text_muted = "#9893A5"
+border = "#DFDAD9"
+danger = "#B4637A"
+warning = "#EA9D34"
+success = "#56949F"
+
+[editor]
+background = "#FFFAF3"
+selection = "#907AA930"
+current_line = "#F4EDE6"

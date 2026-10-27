@@ -1,0 +1,21 @@
+# Gruvbox nuit — le rétro chaud, à la nuit.
+
+[meta]
+name = "Gruvbox nuit"
+appearance = "dark"
+
+[colors]
+background = "#282828"
+surface = "#32302F"
+text = "#EBDBB2"
+accent = "#FE8019"
+text_muted = "#A89984"
+border = "#504945"
+danger = "#FB4934"
+warning = "#FABD2F"
+success = "#B8BB26"
+
+[editor]
+background = "#2B2A28"
+selection = "#FE801930"
+current_line = "#302E2C"

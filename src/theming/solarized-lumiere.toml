@@ -1,0 +1,21 @@
+# Solarized lumière — le calme polaire : crème et bleu profond.
+
+[meta]
+name = "Solarized lumière"
+appearance = "light"
+
+[colors]
+background = "#FDF6E3"
+surface = "#EEE8D5"
+text = "#073642"
+accent = "#268BD2"
+text_muted = "#657B83"
+border = "#D9CFB8"
+danger = "#DC322F"
+warning = "#B58900"
+success = "#859900"
+
+[editor]
+background = "#FCF5DD"
+selection = "#268BD228"
+current_line = "#F2EBCF"

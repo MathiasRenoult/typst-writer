@@ -1,0 +1,21 @@
+# Kanagawa — l'encre du soir : bleu nuit tiède, or patiné.
+
+[meta]
+name = "Kanagawa"
+appearance = "dark"
+
+[colors]
+background = "#1F1F28"
+surface = "#2A2A37"
+text = "#DCD7BA"
+accent = "#C0A36E"
+text_muted = "#8A8980"
+border = "#3B3B4D"
+danger = "#E46876"
+warning = "#E6C384"
+success = "#98BB6C"
+
+[editor]
+background = "#22222C"
+selection = "#C0A36E35"
+current_line = "#272733"

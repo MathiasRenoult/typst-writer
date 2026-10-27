@@ -575,7 +575,7 @@ fn format_path(path: &std::path::Path) -> String {
 }
 
 /// Bouton principal : plein, pour qu'il se détache du reste.
-fn primary_style(t: &Theme, status: button::Status, palette: Palette) -> button::Style {
+fn primary_style(_t: &Theme, status: button::Status, palette: Palette) -> button::Style {
     let background = match status {
         button::Status::Active | button::Status::Hovered => Some(palette.accent),
         button::Status::Pressed => Some(palette.surface_active),
@@ -584,9 +584,9 @@ fn primary_style(t: &Theme, status: button::Status, palette: Palette) -> button:
 
     button::Style {
         background: background.map(Into::into),
-        // Sur un fond accentué, le texte doit rester lisible : iced fournit la
-        // couleur de contraste plutôt que d'en choisir une à la main.
-        text_color: t.extended_palette().primary.base.text,
+        // Le texte doit rester lisible sur le fond réel : un thème écrit son
+        // propre accent, celui d'iced n'est pas le bon — on mesure.
+        text_color: theme::lisible_sur(background.unwrap_or(palette.surface)),
         border: iced::Border {
             radius: crate::ui::theme::jetons::RAYON.into(),
             ..Default::default()
@@ -595,8 +595,8 @@ fn primary_style(t: &Theme, status: button::Status, palette: Palette) -> button:
     }
 }
 
-/// Entrée de liste : fond transparent au repos, survol au passage, fond
-/// accentué pour l'élément courant.
+/// Entrée de liste : rien au repos, une brume au survol, et la sélection
+/// **par la bordure** — le bloc de couleur ne se teinte pas.
 fn entry_style(
     _t: &Theme,
     status: button::Status,
@@ -604,7 +604,7 @@ fn entry_style(
     active: bool,
 ) -> button::Style {
     let background = if active {
-        Some(palette.surface_active)
+        None
     } else {
         match status {
             button::Status::Active => None,
@@ -616,29 +616,35 @@ fn entry_style(
 
     button::Style {
         background: background.map(Into::into),
-        text_color: palette.text,
+        text_color: if active { palette.accent } else { palette.text },
         border: iced::Border {
+            color: if active {
+                palette.accent
+            } else {
+                iced::Color::TRANSPARENT
+            },
+            width: if active { 1.5 } else { 1.0 },
             radius: crate::ui::theme::jetons::RAYON.into(),
-            ..Default::default()
         },
         ..Default::default()
     }
 }
 
-/// Corbeille : discrète jusqu'au survol, où elle passe en rouge.
+/// Corbeille : discrète jusqu'au survol, où sa bordure se teinte de danger.
 fn delete_style(_t: &Theme, status: button::Status, palette: Palette) -> button::Style {
-    let (background, text_color) = match status {
+    let (lisiere, text_color) = match status {
         button::Status::Active => (None, palette.text_muted),
-        button::Status::Hovered | button::Status::Pressed => (Some(palette.danger), palette.text),
+        button::Status::Hovered | button::Status::Pressed => (Some(palette.danger), palette.danger),
         button::Status::Disabled => (None, palette.text_muted),
     };
 
     button::Style {
-        background: background.map(Into::into),
+        background: None,
         text_color,
         border: iced::Border {
+            color: lisiere.unwrap_or(iced::Color::TRANSPARENT),
+            width: if lisiere.is_some() { 1.5 } else { 1.0 },
             radius: crate::ui::theme::jetons::RAYON.into(),
-            ..Default::default()
         },
         ..Default::default()
     }

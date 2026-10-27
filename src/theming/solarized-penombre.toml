@@ -1,0 +1,21 @@
+# Solarized pénombre — la nuit bleutée : profondeur et patience.
+
+[meta]
+name = "Solarized pénombre"
+appearance = "dark"
+
+[colors]
+background = "#002B36"
+surface = "#073642"
+text = "#93A1A1"
+accent = "#268BD2"
+text_muted = "#657B83"
+border = "#134B57"
+danger = "#DC322F"
+warning = "#B58900"
+success = "#859900"
+
+[editor]
+background = "#01313C"
+selection = "#268BD235"
+current_line = "#043E4B"

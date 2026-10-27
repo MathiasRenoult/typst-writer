@@ -170,6 +170,17 @@ fn fenetre_composeur<'a>(
         .into()
 }
 
+/// Le fond d'un bouton au survol : une brume, jamais un bloc.
+///
+/// La sélection ne colore pas la boîte — c'est sa **bordure** qui se teinte.
+/// Le survol n'est qu'un soupçon de surface, pour dire que ça se clique.
+fn survol(status: button::Status, palette: Palette) -> Option<iced::Background> {
+    match status {
+        button::Status::Hovered | button::Status::Pressed => Some(palette.surface_hover.into()),
+        _ => None,
+    }
+}
+
 /// Les lignes de la note : chacune se reprend, à son rang.
 ///
 /// Cliquer une ligne remet sa clé et sa page sous les doigts — c'est la
@@ -192,11 +203,11 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
             palette
                 .label(format!("{}", index + 1))
                 .size(theme::jetons::DETAIL)
-                .color(if tenue { theme::lisible_sur(palette.accent) } else { palette.text }),
+                .color(if tenue { palette.accent } else { palette.text_muted }),
         );
 
         ligne = ligne.push(palette.label(&reference.cle).size(theme::jetons::SAILLANT).color(if tenue {
-            theme::lisible_sur(palette.accent)
+            palette.accent
         } else {
             palette.text
         }));
@@ -205,9 +216,9 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
 
         if !page.is_empty() {
             ligne = ligne.push(palette.label(page).size(theme::jetons::DETAIL).color(if tenue {
-                theme::lisible_sur(palette.accent)
+                palette.accent
             } else {
-                palette.text
+                palette.text_muted
             }));
         }
 
@@ -215,16 +226,13 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
             button(ligne)
                 .width(Length::Fill)
                 .padding([6, 10])
-                .style(move |_, _| button::Style {
-                    background: Some(if tenue {
-                        palette.accent.into()
-                    } else {
-                        palette.surface_hover.into()
-                    }),
-                    text_color: if tenue {
-                        theme::lisible_sur(palette.accent)
-                    } else {
-                        palette.text
+                .style(move |_, status| button::Style {
+                    background: survol(status, palette),
+                    text_color: if tenue { palette.accent } else { palette.text },
+                    border: iced::Border {
+                        color: if tenue { palette.accent } else { iced::Color::TRANSPARENT },
+                        width: if tenue { 1.5 } else { 1.0 },
+                        radius: theme::jetons::RAYON.into(),
                     },
                     ..Default::default()
                 })
@@ -283,7 +291,7 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
             .align_y(Alignment::Center);
 
         ligne = ligne.push(palette.label(cle).size(theme::jetons::SAILLANT).color(if selected {
-            theme::lisible_sur(palette.accent)
+            palette.accent
         } else {
             palette.text
         }));
@@ -291,25 +299,22 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
         ligne = ligne.push(Space::new().width(Length::Fill));
 
         ligne = ligne.push(palette.label(genre).size(theme::jetons::DETAIL).color(if selected {
-            theme::lisible_sur(palette.accent)
+            palette.accent
         } else {
-            palette.text
+            palette.text_muted
         }));
 
         liste = liste.push(
             button(ligne)
                 .width(Length::Fill)
                 .padding([6, 10])
-                .style(move |_, _| button::Style {
-                    background: Some(if selected {
-                        palette.accent.into()
-                    } else {
-                        palette.surface_hover.into()
-                    }),
-                    text_color: if selected {
-                        theme::lisible_sur(palette.accent)
-                    } else {
-                        palette.text
+                .style(move |_, status| button::Style {
+                    background: survol(status, palette),
+                    text_color: if selected { palette.accent } else { palette.text },
+                    border: iced::Border {
+                        color: if selected { palette.accent } else { iced::Color::TRANSPARENT },
+                        width: if selected { 1.5 } else { 1.0 },
+                        radius: theme::jetons::RAYON.into(),
                     },
                     ..Default::default()
                 })

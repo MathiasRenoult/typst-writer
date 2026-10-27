@@ -674,8 +674,25 @@ pub fn is_reserved_name(name: &str) -> bool {
 /// Les thèmes **livrés** avec l'application : écrits une fois dans le
 /// dossier des thèmes, puis traités comme n'importe quel thème local —
 /// l'utilisateur peut les ouvrir, les lire, les modifier.
-const EXPEDIES: &[(&str, &str)] =
-    &[("everforest.toml", include_str!("everforest.toml"))];
+const EXPEDIES: &[(&str, &str)] = &[
+    ("everforest.toml", include_str!("everforest.toml")),
+    ("everforest-sombre.toml", include_str!("everforest-sombre.toml")),
+    ("moka.toml", include_str!("moka.toml")),
+    ("moka-sombre.toml", include_str!("moka-sombre.toml")),
+    ("gruvbox-creme.toml", include_str!("gruvbox-creme.toml")),
+    ("gruvbox-nuit.toml", include_str!("gruvbox-nuit.toml")),
+    ("pin-rose.toml", include_str!("pin-rose.toml")),
+    ("pin-rose-nuit.toml", include_str!("pin-rose-nuit.toml")),
+    (
+        "solarized-lumiere.toml",
+        include_str!("solarized-lumiere.toml"),
+    ),
+    (
+        "solarized-penombre.toml",
+        include_str!("solarized-penombre.toml"),
+    ),
+    ("kanagawa.toml", include_str!("kanagawa.toml")),
+];
 
 /// Sème les thèmes livrés dans le dossier, s'ils n'y sont pas encore.
 ///
@@ -911,6 +928,41 @@ mod tests {
         // L'encre : un gris-brun profond, sombre sur le papier clair.
         let encre = fichier.colors.text.0;
         assert!(fond.r > encre.r, "l'encre est plus sombre que le papier");
+    }
+
+    /// Tous les thèmes livrés se chargent, tiennent un texte lisible sur
+    /// leur papier, et ne se marchent pas dessus par le nom.
+    ///
+    /// Un thème livré cassé se sèmerait en silence et apparaîtrait en erreur
+    /// dans la liste : cette suite les relit tous.
+    #[test]
+    fn tous_les_themes_livres_se_chargent_et_se_distinct() {
+        let mut noms = std::collections::HashSet::new();
+
+        for (fichier, contenu) in EXPEDIES {
+            let theme =
+                ThemeFile::parse(contenu, None).unwrap_or_else(|e| panic!("{fichier} : {e}"));
+
+            assert!(
+                noms.insert(theme.meta.name.clone()),
+                "deux thèmes livrés portent le nom « {} »",
+                theme.meta.name
+            );
+
+            // Le texte doit se détacher du papier : sinon le thème est
+            // illisible, et ne mérite pas sa place dans la liste.
+            let fond = theme.colors.background.0;
+            let encre = theme.colors.text.0;
+            let ecart = (fond.r - encre.r).abs()
+                + (fond.g - encre.g).abs()
+                + (fond.b - encre.b).abs();
+
+            assert!(
+                ecart > 1.2,
+                "« {} » : le texte ne se détache pas du papier",
+                theme.meta.name
+            );
+        }
     }
 
     /// La famille de l'éditeur vient du thème, et n'a pas d'autre source.

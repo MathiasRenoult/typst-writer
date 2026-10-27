@@ -1,0 +1,21 @@
+# Moka — le café au lait : chaleur brunie sur papier crème.
+
+[meta]
+name = "Moka"
+appearance = "light"
+
+[colors]
+background = "#F4EDE2"
+surface = "#EAE0CE"
+text = "#5B4A3C"
+accent = "#A0714F"
+text_muted = "#93826E"
+border = "#D6C6AC"
+danger = "#B4604E"
+warning = "#B58849"
+success = "#7D8B5C"
+
+[editor]
+background = "#F7F1E7"
+selection = "#A0714F30"
+current_line = "#EDE4D2"

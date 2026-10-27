@@ -1,0 +1,21 @@
+# Pin rosé nuit — le velours : prune sombre, iris lumineux.
+
+[meta]
+name = "Pin rosé nuit"
+appearance = "dark"
+
+[colors]
+background = "#191724"
+surface = "#262336"
+text = "#E0DEF4"
+accent = "#C4A7E7"
+text_muted = "#908CAA"
+border = "#393552"
+danger = "#EB6F92"
+warning = "#F6C177"
+success = "#9CCFD8"
+
+[editor]
+background = "#1F1D2E"
+selection = "#C4A7E735"
+current_line = "#232032"

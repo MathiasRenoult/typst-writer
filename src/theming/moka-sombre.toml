@@ -1,0 +1,21 @@
+# Moka sombre — le café noir, la crème pour l'encre.
+
+[meta]
+name = "Moka sombre"
+appearance = "dark"
+
+[colors]
+background = "#2B2118"
+surface = "#35291E"
+text = "#E8D7C2"
+accent = "#C8956D"
+text_muted = "#A8917A"
+border = "#4B3B2B"
+danger = "#D2876E"
+warning = "#D4A96C"
+success = "#A3B176"
+
+[editor]
+background = "#2E2319"
+selection = "#C8956D35"
+current_line = "#33271C"
