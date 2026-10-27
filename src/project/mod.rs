@@ -123,6 +123,15 @@ pub struct BibliographyEntry {
 
     /// L'année de parution, si le fichier la donne.
     pub annee: Option<String>,
+
+    /// La maison d'édition, `publisher` chez BibTeX.
+    pub editeur: Option<String>,
+
+    /// Le lieu de parution, `location` ou `address`.
+    pub lieu: Option<String>,
+
+    /// Le titre court, `shorttitle` : celui des notes serrées.
+    pub titre_court: Option<String>,
 }
 
 impl BibliographyEntry {
@@ -164,18 +173,45 @@ pub fn parse_bibliography(path: &Path) -> Vec<BibliographyEntry> {
     parse_bibliography_text(&content)
 }
 
+/// Les champs d'une notice, tels que le formulaire les édite.
+pub struct ReferenceChamps {
+    /// La clé de citation — celle que les documents citent.
+    pub cle: String,
+
+    /// Le type de document : `book`, `article`, `inproceedings`…
+    pub kind: String,
+
+    /// Le nom de l'auteur.
+    pub nom: String,
+
+    /// Son prénom.
+    pub prenom: String,
+
+    /// Le titre de l'œuvre.
+    pub titre: String,
+
+    /// Le titre court, celui des notes serrées.
+    pub titre_court: String,
+
+    /// L'année de parution.
+    pub annee: String,
+
+    /// La maison d'édition.
+    pub editeur: String,
+
+    /// Le lieu de parution.
+    pub lieu: String,
+}
+
 /// Met à jour une référence dans un fichier `.bib`.
 ///
-/// Les champs connus — auteur, titre, année — sont remplacés ou ajoutés **dans
-/// le bloc de l'entrée** ; tout le reste du fichier ne bouge pas, et la clé
-/// reste la sienne : elle est citée dans les documents.
+/// Les champs connus sont remplacés ou ajoutés **dans le bloc de l'entrée** ;
+/// tout le reste du fichier ne bouge pas, et la clé reste la sienne : elle
+/// est citée dans les documents.
 pub fn maj_reference(
     chemin: &std::path::Path,
     cle: &str,
-    nom: &str,
-    prenom: &str,
-    titre: &str,
-    annee: &str,
+    champs: &ReferenceChamps,
 ) -> std::io::Result<()> {
     let contenu = std::fs::read_to_string(chemin)?;
     let octets = contenu.as_bytes();
@@ -195,21 +231,20 @@ pub fn maj_reference(
         let bloc = &contenu[debut..fin];
 
         if entree_de(bloc).is_some_and(|entree| entree.key == cle) {
-            let auteur = if prenom.is_empty() {
-                nom.to_string()
+            let auteur = if champs.prenom.is_empty() {
+                champs.nom.clone()
             } else {
-                format!("{nom}, {prenom}")
+                format!("{}, {}", champs.nom, champs.prenom)
             };
 
             let mut maj = bloc.to_string();
+            maj = remplacer_type(&maj, &champs.kind);
             maj = remplacer_champ(&maj, "author", &auteur);
-            maj = remplacer_champ(&maj, "title", titre);
-
-            if annee.is_empty() {
-                maj = retirer_champ(&maj, "year");
-            } else {
-                maj = remplacer_champ(&maj, "year", annee);
-            }
+            maj = remplacer_champ(&maj, "title", &champs.titre);
+            maj = option(&maj, "year", &champs.annee);
+            maj = option(&maj, "publisher", &champs.editeur);
+            maj = option(&maj, "location", &champs.lieu);
+            maj = option(&maj, "shorttitle", &champs.titre_court);
 
             sortie.push_str(&maj);
         } else {
@@ -220,6 +255,26 @@ pub fn maj_reference(
     }
 
     std::fs::write(chemin, sortie)
+}
+
+/// Un champ optionnel : écrit quand il a une valeur, retiré sinon.
+fn option(entree: &str, champ: &str, valeur: &str) -> String {
+    if valeur.is_empty() {
+        retirer_champ(entree, champ)
+    } else {
+        remplacer_champ(entree, champ, valeur)
+    }
+}
+
+/// Le type d'une entrée : `@book{…` devient `@article{…`.
+///
+/// La clé, elle, ne bouge pas : elle est citée dans les documents.
+fn remplacer_type(entree: &str, kind: &str) -> String {
+    let Some(ouverture) = entree.find('{') else {
+        return entree.to_string();
+    };
+
+    format!("@{}{}", kind.trim(), &entree[ouverture..])
 }
 
 /// Remplace la valeur d'un champ dans un bloc d'entrée, ou l'y ajoute.
@@ -356,6 +411,63 @@ pub fn parse_bibliography_text(content: &str) -> Vec<BibliographyEntry> {
     entrees
 }
 
+/// Ajoute une référence au fichier `.bib` et rend la clé retenue.
+///
+/// Une clé vide prend un nom généré ; une clé déjà citée est dédoublonnée
+/// d'un numéro — jamais deux documents ne partagent une clé de citation.
+pub fn nouvelle_reference(
+    chemin: &std::path::Path,
+    champs: &ReferenceChamps,
+) -> std::io::Result<String> {
+    let contenu = std::fs::read_to_string(chemin).unwrap_or_default();
+    let existantes = parse_bibliography_text(&contenu);
+
+    let mut cle = champs.cle.trim().to_string();
+    if cle.is_empty() {
+        cle = "reference".to_string();
+    }
+
+    let racine = cle.clone();
+    let mut numero = 2;
+    while existantes.iter().any(|entree| entree.key == cle) {
+        cle = format!("{racine}{numero}");
+        numero += 1;
+    }
+
+    let auteur = if champs.prenom.is_empty() {
+        champs.nom.trim().to_string()
+    } else {
+        format!("{}, {}", champs.nom.trim(), champs.prenom.trim())
+    };
+
+    let mut entree = format!("@{}{{{},\n", champs.kind.trim(), cle);
+
+    for (champ, valeur) in [
+        ("author", auteur.as_str()),
+        ("title", champs.titre.trim()),
+        ("shorttitle", champs.titre_court.trim()),
+        ("year", champs.annee.trim()),
+        ("publisher", champs.editeur.trim()),
+        ("location", champs.lieu.trim()),
+    ] {
+        if !valeur.is_empty() {
+            entree.push_str(&format!("  {champ} = {{{valeur}}},\n"));
+        }
+    }
+
+    entree.push_str("}\n\n");
+
+    let mut suite = contenu.trim_end().to_string();
+    if !suite.is_empty() {
+        suite.push('\n');
+        suite.push('\n');
+    }
+    suite.push_str(&entree);
+
+    std::fs::write(chemin, suite)?;
+    Ok(cle)
+}
+
 /// La fin d'une entrée : l'accolade qui referme celle ouverte en `debut`.
 fn fin_d_entree(octets: &[u8], debut: usize) -> Option<usize> {
     let mut profondeur = 0usize;
@@ -389,12 +501,17 @@ fn entree_de(bloc: &str) -> Option<BibliographyEntry> {
         return None;
     }
 
+    let lieu = champ(champs, "location").or_else(|| champ(champs, "address"));
+
     Some(BibliographyEntry {
         kind: kind.trim().to_string(),
         key,
         auteurs: auteurs_de(champ(champs, "author")),
         titre: champ(champs, "title").unwrap_or_default(),
         annee: champ(champs, "year"),
+        editeur: champ(champs, "publisher"),
+        lieu,
+        titre_court: champ(champs, "shorttitle"),
     })
 }
 
@@ -606,6 +723,87 @@ fn locate_flat_documents() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Une notice neuve s'écrit avec ses champs — type, éditeur, lieu, titre
+    /// court — et le fichier reste lisible par Typst.
+    #[test]
+    fn une_notice_neuve_s_ecrit_et_se_relit() {
+        let dir = std::env::temp_dir().join(format!("tw-nouvelle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let chemin = dir.join("references.bib");
+        std::fs::write(&chemin, "@book{deja,\n  title = {Déjà},\n}\n").unwrap();
+
+        let cle = nouvelle_reference(
+            &chemin,
+            &ReferenceChamps {
+                cle: "dupont2024".to_string(),
+                kind: "article".to_string(),
+                nom: "Dupont".to_string(),
+                prenom: "Jean".to_string(),
+                titre: "Un titre".to_string(),
+                titre_court: "Titre court".to_string(),
+                annee: "2024".to_string(),
+                editeur: "Gallimard".to_string(),
+                lieu: "Paris".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(cle, "dupont2024");
+
+        let entrees = parse_bibliography(&chemin);
+        assert_eq!(entrees.len(), 2);
+        let neuve = &entrees[1];
+        assert_eq!(neuve.key, "dupont2024");
+        assert_eq!(neuve.kind, "article");
+        assert_eq!(neuve.editeur.as_deref(), Some("Gallimard"));
+        assert_eq!(neuve.lieu.as_deref(), Some("Paris"));
+        assert_eq!(neuve.titre_court.as_deref(), Some("Titre court"));
+
+        // Le vrai juge : le parseur BibLaTeX de Typst.
+        let contenu = std::fs::read_to_string(&chemin).unwrap();
+        let root = std::path::Path::new("/projet");
+        let entry = "#bibliography(\"references.bib\", style: \"chicago-notes\")\n";
+        let overrides = vec![(root.join("references.bib"), contenu)];
+        let outcome = crate::typst::render::compile(root, entry, &overrides);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "la notice neuve doit être valide : {:?}",
+            outcome.errors
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une clé déjà citée n'est jamais réutilisée : elle prend un numéro.
+    #[test]
+    fn une_cle_citee_ne_se_double_pas() {
+        let dir = std::env::temp_dir().join(format!("tw-cle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let chemin = dir.join("references.bib");
+        std::fs::write(&chemin, "@book{dupont,\n  title = {Déjà},\n}\n").unwrap();
+
+        let champs = ReferenceChamps {
+            cle: "dupont".to_string(),
+            kind: "book".to_string(),
+            nom: "Dupont".to_string(),
+            prenom: String::new(),
+            titre: "Autre".to_string(),
+            titre_court: String::new(),
+            annee: String::new(),
+            editeur: String::new(),
+            lieu: String::new(),
+        };
+
+        assert_eq!(nouvelle_reference(&chemin, &champs).unwrap(), "dupont2");
+        assert_eq!(nouvelle_reference(&chemin, &champs).unwrap(), "dupont3");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     /// Les entrées se lisent avec leurs auteurs, leur titre, leur année —
@@ -711,7 +909,22 @@ mod tests {
         std::fs::write(&chemin, entree).unwrap();
 
         // L'entrée n'a pas de champ `year` : c'est l'ajout qui corrompait.
-        super::maj_reference(&chemin, "cle", "Nom", "Prénom", "Titre", "2014").unwrap();
+        super::maj_reference(
+            &chemin,
+            "cle",
+            &ReferenceChamps {
+                cle: "cle".to_string(),
+                kind: "book".to_string(),
+                nom: "Nom".to_string(),
+                prenom: "Prénom".to_string(),
+                titre: "Titre".to_string(),
+                titre_court: String::new(),
+                annee: "2014".to_string(),
+                editeur: String::new(),
+                lieu: String::new(),
+            },
+        )
+        .unwrap();
 
         let corrige = std::fs::read_to_string(&chemin).unwrap();
         assert!(!corrige.contains(",\n,"), "jamais deux virgules : {corrige}");
@@ -749,7 +962,22 @@ mod tests {
         )
         .unwrap();
 
-        maj_reference(&bib, "dupont2023", "Curie", "Marie", "Un autre titre", "2024").unwrap();
+        maj_reference(
+            &bib,
+            "dupont2023",
+            &ReferenceChamps {
+                cle: "dupont2023".to_string(),
+                kind: "article".to_string(),
+                nom: "Curie".to_string(),
+                prenom: "Marie".to_string(),
+                titre: "Un autre titre".to_string(),
+                titre_court: String::new(),
+                annee: "2024".to_string(),
+                editeur: String::new(),
+                lieu: String::new(),
+            },
+        )
+        .unwrap();
 
         let entrees = parse_bibliography(&bib);
 

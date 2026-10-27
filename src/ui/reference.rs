@@ -1,18 +1,41 @@
 //! La fenêtre d'édition d'une référence.
 //!
-//! Elle montre ce qui se lit dans une notice — nom, prénom, titre, année —
-//! et permet de le corriger. Une seule règle : **seule une bibliothèque
-//! locale s'écrit**. Une notice Zotero appartient à Zotero, qui la reprendrait
-//! à la prochaine synchronisation : ici, elle se lit, jamais.
+//! Elle montre la notice — type, auteur, titre, titre court, année, éditeur,
+//! lieu — et permet de la corriger, ou de l'écrire pour la première fois. Une
+//! seule règle : **seule une bibliothèque locale s'écrit**. Une notice Zotero
+//! appartient à Zotero, qui la reprendrait à la prochaine synchronisation :
+//! ici, elle se lit, jamais.
+//!
+//! Le formulaire se conduit au clavier : `Tabulation` circule dans les
+//! champs, `Entrée` enregistre, `Échap` ferme.
 
 use crate::app::state::EditionReference;
 use crate::app::Message;
 use crate::ui::theme::{self, Palette};
-use iced::widget::{Space, button, column, container, row, text_input};
+use iced::widget::{Space, button, column, container, pick_list, row, text_input};
 use iced::{Alignment, Element, Length};
 
 /// La largeur de la fenêtre.
 const LARGEUR: f32 = 380.0;
+
+/// L'identifiant du premier champ à saisir : la fiche s'ouvre sur lui, et
+/// le clavier a déjà un champ à qui parler.
+pub fn id_premier_champ() -> iced::widget::Id {
+    iced::widget::Id::new("reference-premier-champ")
+}
+
+/// Les types de document, du plus courant au plus rare.
+const TYPES: &[&str] = &[
+    "book",
+    "article",
+    "incollection",
+    "inproceedings",
+    "phdthesis",
+    "mastersthesis",
+    "techreport",
+    "online",
+    "misc",
+];
 
 /// La couche d'édition : la fenêtre quand elle est ouverte, rien sinon.
 pub fn view(state: &crate::app::State) -> Element<'_, Message> {
@@ -28,11 +51,21 @@ fn fenetre<'a>(
     edition: &'a EditionReference,
     palette: Palette,
 ) -> Element<'a, Message> {
+    let titre = if edition.creation {
+        "Nouvelle référence"
+    } else {
+        "Modifier la référence"
+    };
+
     let entete = row![
-        palette.label("Modifier la référence").size(theme::jetons::TITRE),
+        palette.label(titre).size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         palette
-            .label(format!("@{}", edition.cle))
+            .label(if edition.creation {
+                "bientôt citable".to_string()
+            } else {
+                format!("@{}", edition.cle)
+            })
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
     ]
@@ -48,18 +81,46 @@ fn fenetre<'a>(
 
     let mut formulaire = column![].spacing(theme::jetons::PAS);
 
+    // La clé : choisie une fois, puis citée — elle ne bouge plus.
+    if edition.creation {
+        formulaire = formulaire.push(row![
+            champ("Clé", &edition.cle, "cle")
+                .id(id_premier_champ())
+                .width(Length::Fill),
+            pick_list(
+                TYPES.iter().map(|type_| type_.to_string()).collect::<Vec<_>>(),
+                Some(edition.kind.clone()),
+                |choisi: String| Message::EditionReferenceChamp("kind".to_string(), choisi),
+            )
+            .width(Length::Fixed(130.0)),
+        ].spacing(theme::jetons::PAS));
+    } else {
+        formulaire = formulaire.push(pick_list(
+            TYPES.iter().map(|type_| type_.to_string()).collect::<Vec<_>>(),
+            Some(edition.kind.clone()),
+            |choisi: String| Message::EditionReferenceChamp("kind".to_string(), choisi),
+        ));
+    }
+
     formulaire = formulaire.push(row![
-        champ("Nom", &edition.nom, "nom").width(Length::Fill),
+        champ("Nom", &edition.nom, "nom")
+            .id(id_premier_champ())
+            .width(Length::Fill),
         champ("Prénom", &edition.prenom, "prenom").width(Length::Fill),
     ].spacing(theme::jetons::PAS));
 
     formulaire = formulaire.push(champ("Titre", &edition.titre, "titre"));
-    formulaire = formulaire.push(champ("Année", &edition.annee, "annee"));
+    formulaire = formulaire.push(champ("Titre court", &edition.titre_court, "titre_court"));
+    formulaire = formulaire.push(row![
+        champ("Année", &edition.annee, "annee").width(Length::Fill),
+        champ("Éditeur", &edition.editeur, "editeur").width(Length::Fill),
+    ].spacing(theme::jetons::PAS));
+    formulaire = formulaire.push(champ("Lieu", &edition.lieu, "lieu"));
 
     let pied = if edition.locale {
         row![
             palette
-                .label("Entrée : enregistrer · Échap : fermer")
+                .label("Tab : suivant · Entrée : enregistrer · Échap : fermer")
                 .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
             Space::new().width(Length::Fill),

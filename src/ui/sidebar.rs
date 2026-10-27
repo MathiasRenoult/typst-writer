@@ -225,6 +225,34 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
     ));
 
+    // Une notice s'ajoute quand la bibliothèque est la sienne : seule une
+    // bibliothèque locale s'écrit.
+    let locale = state.zotero.source == crate::zotero::Source::Locale;
+
+    if locale && !missing {
+        content = content.push(Space::new().height(6));
+        content = content.push(
+            button(
+                row![
+                    theme::icon(
+                        lucide_icons::iced::icon_plus::<Theme>(),
+                        11.0,
+                        palette.text_muted,
+                    ),
+                    palette
+                        .label("Nouvelle référence")
+                        .size(theme::jetons::CORPS),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::EditionReferenceNouveau)
+            .padding([4, 8])
+            .width(Fill)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        );
+    }
+
     // Les clés citables, quand la bibliographie en contient : un clic insère
     // `@clé` au curseur. Tant que le fichier est vide, il n'y a rien à citer.
     for entry in &state.bibliography {

@@ -71,6 +71,8 @@ pub enum Message {
     EditionReferenceEnregistrer,
 
     /// Ferme la fenêtre d'édition sans rien écrire.
+    EditionReferenceNouveau,
+
     EditionReferenceFermer,
 
     SaveFile,

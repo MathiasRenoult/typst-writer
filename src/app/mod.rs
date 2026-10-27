@@ -455,27 +455,64 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.edition_reference = Some(crate::app::state::EditionReference {
                 cle: entree.key,
+                kind: entree.kind,
                 nom,
                 prenom,
                 titre: entree.titre,
+                titre_court: entree.titre_court.unwrap_or_default(),
                 annee: entree.annee.unwrap_or_default(),
+                editeur: entree.editeur.unwrap_or_default(),
+                lieu: entree.lieu.unwrap_or_default(),
+                creation: false,
                 locale,
             });
 
-            Task::none()
+            // La fiche s'ouvre sur son premier champ : le clavier a déjà
+            // quelqu'un à qui parler.
+            iced::widget::operation::focus(crate::ui::reference::id_premier_champ())
         }
         Message::EditionReferenceChamp(champ, valeur) => {
             if let Some(edition) = state.edition_reference.as_mut() {
                 match champ.as_str() {
+                    "cle" => edition.cle = valeur,
+                    "kind" => edition.kind = valeur,
                     "nom" => edition.nom = valeur,
                     "prenom" => edition.prenom = valeur,
                     "titre" => edition.titre = valeur,
+                    "titre_court" => edition.titre_court = valeur,
                     "annee" => edition.annee = valeur,
+                    "editeur" => edition.editeur = valeur,
+                    "lieu" => edition.lieu = valeur,
                     _ => {}
                 }
             }
 
             Task::none()
+        }
+        Message::EditionReferenceNouveau => {
+            // Seule une bibliothèque locale s'écrit : la création suppose
+            // d'écrire, donc un fichier à soi.
+            let locale = state.zotero.source == crate::zotero::Source::Locale;
+
+            if !locale {
+                return Task::none();
+            }
+
+            state.edition_reference = Some(crate::app::state::EditionReference {
+                cle: String::new(),
+                kind: "book".to_string(),
+                nom: String::new(),
+                prenom: String::new(),
+                titre: String::new(),
+                titre_court: String::new(),
+                annee: String::new(),
+                editeur: String::new(),
+                lieu: String::new(),
+                creation: true,
+                locale,
+            });
+
+            iced::widget::operation::focus(crate::ui::reference::id_premier_champ())
         }
         Message::EditionReferenceFermer => {
             state.edition_reference = None;
@@ -500,14 +537,34 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
 
-            if let Err(erreur) = crate::project::maj_reference(
-                &chemin,
-                &edition.cle,
-                &edition.nom,
-                &edition.prenom,
-                &edition.titre,
-                &edition.annee,
-            ) {
+            let champs = crate::project::ReferenceChamps {
+                cle: edition.cle.clone(),
+                kind: edition.kind.clone(),
+                nom: edition.nom.clone(),
+                prenom: edition.prenom.clone(),
+                titre: edition.titre.clone(),
+                titre_court: edition.titre_court.clone(),
+                annee: edition.annee.clone(),
+                editeur: edition.editeur.clone(),
+                lieu: edition.lieu.clone(),
+            };
+
+            let ecrit: Result<(), String> = if edition.creation {
+                crate::project::nouvelle_reference(&chemin, &champs)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            } else {
+                crate::project::maj_reference(&chemin, &edition.cle, &champs)
+                    .map_err(|e| e.to_string())
+            };
+
+            if ecrit.is_ok() {
+                // La clé retenue se voit aussitôt : elle vient d'être
+                // citable, et c'est celle-là qu'on insérera.
+                state.bibliography = crate::project::parse_bibliography(&chemin);
+            }
+
+            if let Err(erreur) = ecrit {
                 eprintln!("Enregistrement de la référence : {erreur}");
             }
 
@@ -1234,6 +1291,21 @@ fn handle_shortcut(
     key: iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Task<Message> {
+    // La fiche de référence, quand elle est ouverte : un formulaire se
+    // conduit au clavier — `Tabulation` circule dans les champs, `Entrée`
+    // enregistre, `Échap` ferme. Ses touches lui appartiennent.
+    if state.edition_reference.is_some() {
+        use iced::keyboard::{Key, key::Named};
+
+        match key {
+            Key::Named(Named::Tab) if modifiers.shift() => return iced::widget::operation::focus_previous(),
+            Key::Named(Named::Tab) => return iced::widget::operation::focus_next(),
+            Key::Named(Named::Enter) => return update(state, Message::EditionReferenceEnregistrer),
+            Key::Named(Named::Escape) => return update(state, Message::EditionReferenceFermer),
+            _ => {}
+        }
+    }
+
     // La liste de complétion, quand elle est ouverte, prend les touches dont
     // elle a besoin. L'éditeur les a **déclinées** (patch 4 du crate) : elles
     // arrivent donc jusqu'ici, et c'est ici qu'on décide de ce qu'elles font.

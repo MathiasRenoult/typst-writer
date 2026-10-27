@@ -193,16 +193,30 @@ pub struct Renommage {
 /// bouge pas : elle est citée dans les documents, la changer les casserait.
 #[derive(Debug, Clone)]
 pub struct EditionReference {
-    /// La clé de citation, immuable.
+    /// La clé de citation. Immuable dans une notice — elle est citée — et
+    /// libre dans une notice neuve.
     pub cle: String,
+
+    /// Le type de document : `book`, `article`, `inproceedings`…
+    pub kind: String,
+
     /// Le nom de l'auteur.
     pub nom: String,
     /// Son prénom.
     pub prenom: String,
     /// Le titre de l'œuvre.
     pub titre: String,
+    /// Le titre court, celui des notes serrées.
+    pub titre_court: String,
     /// L'année, si elle est là.
     pub annee: String,
+    /// La maison d'édition.
+    pub editeur: String,
+    /// Le lieu de parution.
+    pub lieu: String,
+
+    /// Une notice neuve, pas encore écrite : la clé se choisit.
+    pub creation: bool,
     /// La bibliographie est-elle locale ? Seule une bibliothèque locale
     /// s'écrit ; une notice Zotero se lit, jamais.
     pub locale: bool,
