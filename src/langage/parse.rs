@@ -341,21 +341,40 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
     }
 
     while let Some(caractere) = reste.chars().next() {
-        // Une barre oblique rend littéral le caractère suivant.
+        // Une barre oblique ouvre un **littéral** : le caractère qui suit ne
+        // reçoit aucune interprétation — ni syntaxique, ni typographique.
+        // Les échappements qui se suivent forment un seul littéral.
         if caractere == '\\' {
-            let mut suite = reste[1..].chars();
+            vider!();
 
-            match suite.next() {
-                Some(litteral) => {
-                    tampon.push(litteral);
-                    reste = suite.as_str();
-                }
-                None => {
-                    tampon.push('\\');
-                    reste = "";
+            let mut litteral = String::new();
+            let mut position = 1;
+
+            loop {
+                // Le caractère que la barre porte.
+                let Some(litterel) = reste[position..].chars().next() else {
+                    // Une barre oblique en fin de texte reste elle-même.
+                    litteral.push('\\');
+                    break;
+                };
+
+                litteral.push(litterel);
+                position += litterel.len_utf8();
+
+                // Une autre barre enchaîne l'échappement ; sinon la main est
+                // rendue au parseur.
+                if reste[position..].starts_with('\\') {
+                    position += 1;
+                } else {
+                    break;
                 }
             }
 
+            if !litteral.is_empty() {
+                elements.push(Inline::Litteral(litteral));
+            }
+
+            reste = &reste[position..];
             continue;
         }
 
@@ -941,9 +960,16 @@ mod tests {
 
         assert_eq!(
             doc.blocs,
-            vec![Bloc::Paragraphe(vec![Inline::Texte(
-                "Une *étoile* et du #texte.".to_string()
-            )])]
+            vec![Bloc::Paragraphe(vec![
+                Inline::Texte("Une ".to_string()),
+                Inline::Litteral("*".to_string()),
+                Inline::Texte("étoile".to_string()),
+                Inline::Litteral("*".to_string()),
+                Inline::Texte(" et du ".to_string()),
+                Inline::Litteral("#".to_string()),
+                Inline::Texte("texte.".to_string()),
+            ])],
+            "l'échappement fait un littéral : le caractère nu, sans interprétation"
         );
     }
 
@@ -954,9 +980,11 @@ mod tests {
 
         assert_eq!(
             doc.blocs,
-            vec![Bloc::Paragraphe(vec![Inline::Texte(
-                "Un paragraphe # pas un titre".to_string()
-            )])]
+            vec![Bloc::Paragraphe(vec![
+                Inline::Texte("Un paragraphe ".to_string()),
+                Inline::Litteral("#".to_string()),
+                Inline::Texte(" pas un titre".to_string()),
+            ])]
         );
     }
 

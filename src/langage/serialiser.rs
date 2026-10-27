@@ -9,7 +9,7 @@
 //! le round-trip perdrait les documents qui parlent du langage lui-même — et
 //! une note de bas de page commençant par `#` deviendrait un titre.
 
-use super::schema::{Bloc, Document, Inline, Reference};
+use super::schema::{Bloc, Document, Inline, Reference, ouvre_un_bloc};
 
 /// Caractères qui ouvrent ou ferment un marqueur inline, et qu'un texte nu
 /// doit échapper.
@@ -109,36 +109,20 @@ fn ecrire_ligne(contenu: &[Inline], out: &mut String) {
     }
 }
 
-/// La même reconnaissance de marqueurs de blocs que le parseur.
-fn ouvre_un_bloc(texte: &str) -> bool {
-    let debut = texte.trim_start();
-
-    if debut.starts_with('>') || debut.starts_with("- ") || debut.starts_with("```") {
-        return true;
-    }
-
-    let dièses = debut
-        .chars()
-        .take_while(|caractere| *caractere == '#')
-        .count();
-
-    if (1..=6).contains(&dièses) && debut[dièses..].starts_with(' ') {
-        return true;
-    }
-
-    let chiffres = debut
-        .chars()
-        .take_while(|caractere| caractere.is_ascii_digit())
-        .count();
-
-    chiffres > 0 && debut[chiffres..].starts_with(". ")
-}
-
 /// Écrit une suite d'éléments inline.
 fn ecrire_inline(inline: &[Inline], out: &mut String) {
     for element in inline {
         match element {
             Inline::Texte(texte) => echapper_texte(texte, out),
+            Inline::Litteral(texte) => {
+                // Un littéral est ce que l'échappement a fait : chaque
+                // caractère reprend sa barre, et la lecture retombe sur le
+                // même littéral.
+                for caractere in texte.chars() {
+                    out.push('\\');
+                    out.push(caractere);
+                }
+            }
             Inline::Gras(contenu) => {
                 out.push_str("**");
                 ecrire_inline(contenu, out);
@@ -306,10 +290,22 @@ mod tests {
     /// phrase, une arobase dans une adresse, une accolade dans une formule.
     #[test]
     fn un_texte_qui_ressemble_a_un_marqueur_est_echappe() {
+        // La forme canonique : le texte nu ne porte pas de marqueur, ils
+        // vivent dans les littéraux que la lecture en tire.
         let document = Document {
-            blocs: vec![Bloc::Paragraphe(vec![Inline::Texte(
-                "Une *étoile*, un @grep et {accolades}.".to_string(),
-            )])],
+            blocs: vec![Bloc::Paragraphe(vec![
+                Inline::Texte("Une ".to_string()),
+                Inline::Litteral("*".to_string()),
+                Inline::Texte("étoile".to_string()),
+                Inline::Litteral("*".to_string()),
+                Inline::Texte(", un ".to_string()),
+                Inline::Litteral("@".to_string()),
+                Inline::Texte("grep et ".to_string()),
+                Inline::Litteral("{".to_string()),
+                Inline::Texte("accolades".to_string()),
+                Inline::Litteral("}".to_string()),
+                Inline::Texte(".".to_string()),
+            ])],
         };
 
         let texte = serialiser(&document);
@@ -317,7 +313,7 @@ mod tests {
         assert_eq!(
             texte,
             "Une \\*étoile\\*, un \\@grep et \\{accolades\\}.\n",
-            "les fermetures s'échappent autant que les ouvertures"
+            "chaque marqueur reprend sa barre"
         );
         assert_eq!(parse(&texte), document, "et le parseur le relit tel quel");
     }
@@ -326,12 +322,16 @@ mod tests {
     #[test]
     fn un_paragraphe_qui_commence_par_un_marqueur_reste_un_paragraphe() {
         let document = Document {
-            blocs: vec![Bloc::Paragraphe(vec![Inline::Texte(
-                "- pas une puce".to_string(),
-            )])],
+            blocs: vec![Bloc::Paragraphe(vec![
+                Inline::Litteral("-".to_string()),
+                Inline::Texte(" pas une puce".to_string()),
+            ])],
         };
 
-        assert_eq!(parse(&serialiser(&document)), document);
+        let texte = serialiser(&document);
+
+        assert_eq!(texte, "\\- pas une puce\n");
+        assert_eq!(parse(&texte), document, "et le parseur le relit tel quel");
     }
 
     /// Les blocs sont séparés par une ligne vide, sinon le parseur les
@@ -398,9 +398,26 @@ mod tests {
         "tab\\ulation", "^[]", "@a[p. 45]", "~~", "~~x~~", "¿", "une étoile * ici",
     ];
 
-    /// Un texte nu au hasard.
+    /// Un texte nu au hasard — jamais de marqueur : ils vivent dans les
+    /// littéraux, et c'est ce qui rend l'écriture univoque.
     fn texte_au_hasard(hasard: &mut Hasard) -> Inline {
-        Inline::Texte((*hasard.un_parmi(MOTS)).to_string())
+        let mots: Vec<&str> = MOTS
+            .iter()
+            .copied()
+            .filter(|mot| {
+                !mot.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+            })
+            .collect();
+
+        Inline::Texte((*hasard.un_parmi(&mots)).to_string())
+    }
+
+    /// Un littéral au hasard : ce que l'échappement insère mot à mot.
+    fn litteral_au_hasard(hasard: &mut Hasard) -> Inline {
+        Inline::Litteral((*hasard.un_parmi(&[
+            "*", "@", "^", "[", "]", "{", "}", "`", "_", "\\", "**", "a*b", "]]", "{}",
+        ]))
+        .to_string())
     }
 
     /// Des références groupées, comme un appel de citation.
@@ -484,6 +501,7 @@ mod tests {
 
             match (rangee.last_mut(), element) {
                 (Some(Inline::Texte(tenue)), Inline::Texte(autre)) => tenue.push_str(&autre),
+                (Some(Inline::Litteral(tenue)), Inline::Litteral(autre)) => tenue.push_str(&autre),
                 (_, element) => rangee.push(element),
             }
         }
@@ -509,7 +527,8 @@ mod tests {
         let portee = if dans_emphase { 7 } else { 9 };
 
         match hasard.entier(portee) {
-            0..=2 => texte_au_hasard(hasard),
+            0..=1 => texte_au_hasard(hasard),
+            2 => litteral_au_hasard(hasard),
             3 => Inline::Code(
                 (*hasard.un_parmi(&["x", "#f()", "arr[0]", "*ptr", "a]b", "}", ")"])).to_string(),
             ),
@@ -534,6 +553,25 @@ mod tests {
         }
     }
 
+/// Un paragraphe au hasard, dans la forme canonique : s'il commencerait
+    /// par un marqueur de bloc, le caractère se prend en littéral.
+    fn paragraphe_au_hasard(hasard: &mut Hasard) -> Vec<Inline> {
+        let mut contenu = inlines_au_hasard(hasard, false);
+
+        if let Some(Inline::Texte(texte)) = contenu.first_mut()
+            && crate::langage::schema::ouvre_un_bloc(texte) {
+                let premier = texte.remove(0);
+                let suite = texte.clone();
+                contenu[0] = Inline::Litteral(premier.to_string());
+
+                if !suite.is_empty() {
+                    contenu.insert(1, Inline::Texte(suite));
+                }
+            }
+
+        contenu
+    }
+
     /// Un bloc au hasard.
     fn bloc_au_hasard(hasard: &mut Hasard) -> Bloc {
         match hasard.entier(7) {
@@ -541,7 +579,7 @@ mod tests {
                 niveau: (1 + hasard.entier(6)) as u8,
                 contenu: inlines_au_hasard(hasard, false),
             },
-            1 => Bloc::Paragraphe(inlines_au_hasard(hasard, false)),
+            1 => Bloc::Paragraphe(paragraphe_au_hasard(hasard)),
             2 => Bloc::Citation(inlines_au_hasard(hasard, false)),
             3 => Bloc::ListePuce(
                 (0..1 + hasard.entier(3))
@@ -563,7 +601,7 @@ mod tests {
                 ]))
                 .to_string(),
             ),
-            _ => Bloc::Paragraphe(vec![texte_au_hasard(hasard)]),
+            _ => Bloc::Paragraphe(paragraphe_au_hasard(hasard)),
         }
     }
 

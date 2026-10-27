@@ -102,6 +102,27 @@ s'écrit comme du texte nu, sinon ses caractères feraient signe aux balayages
 qui l'entourent : un `*` de page refermerait l'italique du voisinage. La
 lecture déséchappe génériquement.
 
+**Un échappement fait un `Litteral`** : le caractère qui suit ne reçoit
+**aucune interprétation** — ni syntaxique, ni **typographique**. C'est la
+porte de sortie universelle : `\;` en français donne un point-virgule nu,
+sans l'espace insécable que la langue y mettrait. Les échappements qui se
+suivent forment un seul littéral, et le sérialiseur leur redonne leur barre.
+
+### Typographie selon la langue
+
+Les normes du document portent une **typographie** — `aucune`, `française`,
+`anglaise` — que le générateur applique au texte composé :
+
+- **française** : une espace insécable (`~` en Typst) devant `;`, `:`, `!`,
+  `?` et les guillemets `« »`, une espace normale après ;
+- **anglaise** : la ponctuation colle — aucune espace devant `;`, `:`, `!`,
+  `?`, une espace normale après ;
+- en toute langue, la virgule et le point ne s'ouvrent jamais — `3.14`
+  tient — et les suites d'espaces n'en font qu'un.
+
+Le code inline, les blocs bruts et les **littéraux** ne reçoivent aucune
+règle.
+
 ### Grammaire formelle
 
 **Priorité de lecture.** Le parseur inline lit dans cet ordre, à chaque
@@ -138,7 +159,9 @@ pour tout AST **canonique**, et pour lui seul — c'est `Document::est_canonique
 (`src/langage/schema.rs`) qui les énonce et les vérifie, règle par règle. Les
 dix règles, en résumé :
 
-1. un texte nu n'est jamais vide, et ne contient pas de saut de ligne ;
+1. un texte nu n'est jamais vide, ne contient pas de saut de ligne **ni de
+   marqueur** — les marqueurs vivent dans des littéraux échappés, et un
+   littéral est non vide ;
 2. une emphase est plate, non vide, sans blanc aux bords ;
 3. un code ne contient ni backtick ni saut de ligne ;
 4. le nom d'une couleur est simple : ni deux-points, ni marqueur ;
@@ -152,7 +175,10 @@ dix règles, en résumé :
 9. un texte ne suit jamais immédiatement un appel sans page par un caractère
    de clé — il grossirait la clé ;
 10. le `; ` d'un appel groupé est réservé : un texte « ; » ne sépare jamais
-    deux appels.
+    deux appels ;
+11. le premier élément d'un paragraphe n'est pas un `Texte` qui commence par
+    un marqueur de bloc : la barre de protection qui l'écrit se relirait
+    comme un littéral. Le caractère se prend donc en `Litteral`.
 
 Ces règles ne sont pas des manques : elles décrivent ce que la syntaxe peut
 dire sans ambiguïté. Tout autre AST est toléré à la lecture, mais repris à

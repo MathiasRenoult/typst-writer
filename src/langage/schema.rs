@@ -43,8 +43,18 @@ pub enum Bloc {
 /// Un élément inline, dans le texte d'un bloc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inline {
-    /// Du texte nu.
+    /// Du texte nu. Ne contient **jamais** de marqueur : ceux-ci vivent
+    /// dans des [`Inline::Litteral`].
     Texte(String),
+
+    /// Des caractères échappés, insérés mot à mot.
+    ///
+    /// Une barre oblique dans la syntaxe fait un littéral : le caractère qui
+    /// suit ne reçoit **aucune interprétation** — ni syntaxique, ni
+    /// typographique. C'est la porte de sortie universelle : écrire `\;` en
+    /// français donne un point-virgule nu, sans l'espace insécable que la
+    /// langue y mettrait.
+    Litteral(String),
     /// Du texte en gras.
     Gras(Vec<Inline>),
     /// Du texte en italique.
@@ -142,6 +152,10 @@ impl Document {
     ///     contenu rogné est « ; » ne sépare jamais deux appels — il serait
     ///     lu comme le séparateur du groupe, et deux formes ne peuvent pas
     ///     avoir la même écriture.
+    /// 11. le premier élément d'un paragraphe n'est pas un `Texte` qui
+    ///     commence par un marqueur de bloc : la barre de protection qui
+    ///     l'écrit se relirait comme un littéral. Le caractère se prend donc
+    ///     en `Litteral` — c'est sa forme canonique.
     #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
     pub fn est_canonique(&self) -> bool {
         self.blocs.iter().all(Bloc::est_canonique)
@@ -170,9 +184,12 @@ impl Bloc {
             Bloc::Titre { niveau, contenu } => {
                 (1..=6).contains(niveau) && inline_canonique(contenu)
             }
-            Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
-                !contenu.is_empty() && inline_canonique(contenu)
+            Bloc::Paragraphe(contenu) => {
+                !contenu.is_empty()
+                    && inline_canonique(contenu)
+                    && !commence_par_un_marqueur_de_bloc(contenu)
             }
+            Bloc::Citation(contenu) => !contenu.is_empty() && inline_canonique(contenu),
             Bloc::ListePuce(items) | Bloc::ListeNumero(items) => {
                 !items.is_empty() && items.iter().all(|item| inline_canonique(item))
             }
@@ -188,7 +205,14 @@ impl Inline {
     #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
     pub fn est_canonique(&self) -> bool {
         match self {
-            Inline::Texte(texte) => !texte.is_empty() && !texte.contains('\n'),
+            Inline::Texte(texte) => {
+                // Les marqueurs vivent dans les littéraux : un texte nu n'en
+                // porte aucun, c'est ce qui rend l'écriture univoque.
+                !texte.is_empty()
+                    && !texte.contains('\n')
+                    && !texte.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+            }
+            Inline::Litteral(texte) => !texte.is_empty() && !texte.contains('\n'),
             Inline::Gras(contenu) | Inline::Italique(contenu) | Inline::GrasItalique(contenu) => {
                 est_emphase_canonique(contenu)
             }
@@ -243,6 +267,40 @@ impl Reference {
     }
 }
 
+/// Le texte ouvrirait-il un bloc s'il tombait en tête de ligne ?
+///
+/// C'est la reconnaissance du sérialiseur, en une seule source : un
+/// paragraphe qui commencerait par un marqueur serait relu comme un autre
+/// bloc, et sa barre de protection se relirait comme un littéral.
+pub fn ouvre_un_bloc(texte: &str) -> bool {
+    let debut = texte.trim_start();
+
+    if debut.starts_with('>') || debut.starts_with("- ") || debut.starts_with("```") {
+        return true;
+    }
+
+    let dieses = debut
+        .chars()
+        .take_while(|caractere| *caractere == '#')
+        .count();
+
+    if (1..=6).contains(&dieses) && debut[dieses..].starts_with(' ') {
+        return true;
+    }
+
+    let chiffres = debut
+        .chars()
+        .take_while(|caractere| caractere.is_ascii_digit())
+        .count();
+
+    chiffres > 0 && debut[chiffres..].starts_with(". ")
+}
+
+/// Le contenu commence-t-il par un marqueur de bloc ?
+fn commence_par_un_marqueur_de_bloc(contenu: &[Inline]) -> bool {
+    matches!(&contenu.first(), Some(Inline::Texte(texte)) if ouvre_un_bloc(texte))
+}
+
 /// Une suite d'éléments inline est-elle canonique ?
 #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
 ///
@@ -257,7 +315,12 @@ fn inline_canonique(inline: &[Inline]) -> bool {
     for paire in inline.windows(2) {
         let (avant, apres) = (&paire[0], &paire[1]);
 
-        if matches!(avant, Inline::Texte(_)) && matches!(apres, Inline::Texte(_)) {
+        // Deux éléments de même nature se rejoignent à la lecture : jamais
+        // adjacents dans la forme canonique.
+        let memes_natures = (matches!(avant, Inline::Texte(_)) && matches!(apres, Inline::Texte(_)))
+            || (matches!(avant, Inline::Litteral(_)) && matches!(apres, Inline::Litteral(_)));
+
+        if memes_natures {
             return false;
         }
 
@@ -365,7 +428,7 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
 
     for element in inline {
         match element {
-            Inline::Texte(texte) => out.push_str(texte),
+            Inline::Texte(texte) | Inline::Litteral(texte) => out.push_str(texte),
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)

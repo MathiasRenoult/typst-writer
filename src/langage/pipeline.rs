@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{generer, parse};
+use super::{parse, typographie::Typographie, generer::generer_avec};
 
 /// Nom stable du fichier Typst temporaire injecté dans l'assemblage.
 pub const GENERATED_FILE: &str = "document.generated.typ";
@@ -37,7 +37,11 @@ pub fn compilation_unit_document(
         insert_generated_include(main, &include)
     };
     let entry = ensure_default_bibliography(root, &entry);
-    let generated = generer(document);
+
+    // La typographie se lit dans les normes du projet : c'est là qu'elle se
+    // choisit, et le générateur l'applique au texte qu'il compose.
+    let typographie = crate::mise_en_page::charger(root);
+    let generated = generer_avec(document, Typographie::depuis(&typographie.texte.typographie));
 
     (entry, vec![(root.join(GENERATED_FILE), generated)])
 }
@@ -187,6 +191,73 @@ fn bibliography_call_range(main: &str) -> Option<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// La typographie des normes s'applique au texte composé — et le `\`
+    /// de la syntaxe en exempte ce qu'il écrit.
+    #[test]
+    fn la_typographie_des_normes_s_applique_et_le_backslash_en_exempt() {
+        use super::super::generer::generer_avec;
+        use super::super::schema::{Bloc, Inline};
+        use super::super::typographie::Typographie;
+
+        // Le cas du programme : en français, « ; » est précédé d'une espace
+        // insécable et suivi d'une espace normale.
+        let document = super::super::parse("La foi ; l'espérance.\n");
+        let typst = generer_avec(&document, Typographie::Francaise);
+        assert!(
+            typst.contains("La foi~; l'espérance."),
+            "le français est strict : {typst}"
+        );
+
+        // Et la même chose en anglais colle.
+        let typst = generer_avec(&document, Typographie::Anglaise);
+        assert!(typst.contains("La foi; l'espérance."), "{typst}");
+
+        // Le `\` insère un caractère sans interprétation : la même phrase
+        // avec un point-virgule échappé garde ses espaces telles quelles.
+        let document = super::super::parse("La foi \\; l'espérance.\n");
+        let typst = generer_avec(&document, Typographie::Francaise);
+        assert!(
+            typst.contains("La foi ; l'espérance."),
+            "l'échappement exempte de la règle : {typst}"
+        );
+
+        // Le littéral est bien ce qui circule.
+        assert!(
+            document.blocs.iter().any(|bloc| matches!(
+                bloc,
+                Bloc::Paragraphe(contenu)
+                    if contenu.iter().any(|element| matches!(element, Inline::Litteral(_)))
+            )),
+            "{document:?}"
+        );
+    }
+
+    /// Les normes du projet portent la typographie jusqu'au générateur.
+    #[test]
+    fn les_normes_portent_la_typographie_jusqu_au_generateur() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-typo-normes-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+
+        std::fs::write(
+            root.join(crate::mise_en_page::REGLAGES),
+            "[texte]\ntypographie = \"française\"\n",
+        )
+        .expect("normes d'essai");
+
+        let document = super::super::parse("La foi ; l'espérance.\n");
+        let (_, fichiers) = super::compilation_unit_document(&root, "#show: mise-en-page\n", &document);
+        let corps = &fichiers[0].1;
+
+        assert!(corps.contains("La foi~; l'espérance."), "{corps}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
     use typst::foundations::NativeElement;
     use typst::introspection::Introspector;

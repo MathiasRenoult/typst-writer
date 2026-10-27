@@ -132,8 +132,14 @@ pub struct Texte {
     /// Les mots sont-ils coupés en fin de ligne ?
     pub coupure: bool,
 
-    /// La langue du texte, celle qui décide des règles typographiques.
+    /// La langue du texte, pour Typst (césure, guillemets…).
     pub langue: String,
+
+    /// La typographie appliquée au texte composé : `aucune`, `française`
+    /// ou `anglaise`. C'est elle qui porte les règles strictes de la langue
+    /// — l'espace insécable devant les signes doubles en français —, et le
+    /// `\\` de la syntaxe en exempte ce qu'il écrit.
+    pub typographie: String,
 }
 
 impl Default for Texte {
@@ -147,6 +153,7 @@ impl Default for Texte {
             justification: true,
             coupure: true,
             langue: "fr".to_string(),
+            typographie: "aucune".to_string(),
         }
     }
 }
@@ -340,6 +347,7 @@ pub enum Champ {
     TexteJustification,
     TexteCoupure,
     TexteLangue,
+    TexteTypographie,
     TitresPolice,
     TitresTaille1,
     TitresTaille2,
@@ -376,6 +384,7 @@ impl MiseEnPage {
             Champ::TexteJustification => self.texte.justification.to_string(),
             Champ::TexteCoupure => self.texte.coupure.to_string(),
             Champ::TexteLangue => self.texte.langue.clone(),
+            Champ::TexteTypographie => self.texte.typographie.clone(),
             Champ::TitresPolice => self.titres.police.clone(),
             Champ::TitresTaille1 => self.titres.taille_1.clone(),
             Champ::TitresTaille2 => self.titres.taille_2.clone(),
@@ -412,6 +421,7 @@ impl MiseEnPage {
             Champ::TexteJustification => self.texte.justification = valeur == "true",
             Champ::TexteCoupure => self.texte.coupure = valeur == "true",
             Champ::TexteLangue => self.texte.langue = valeur,
+            Champ::TexteTypographie => self.texte.typographie = valeur,
             Champ::TitresPolice => self.titres.police = valeur,
             Champ::TitresTaille1 => self.titres.taille_1 = valeur,
             Champ::TitresTaille2 => self.titres.taille_2 = valeur,

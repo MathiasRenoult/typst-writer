@@ -311,7 +311,7 @@ mod tests {
         let source = "= Titre\n\nUn *gras* et un paragraphe.\n\n- puce\n";
 
         let une_fois = importer_typst(source);
-        let regenere = super::super::generer(&une_fois);
+        let regenere = super::super::generer::generer(&une_fois);
         let deux_fois = importer_typst(&regenere);
 
         assert_eq!(deux_fois, une_fois, "migrer du migré reformate");
@@ -320,7 +320,7 @@ mod tests {
         let source = "#figure(image(\"a.png\"))\n";
 
         let une_fois = importer_typst(source);
-        let regenere = super::super::generer(&une_fois);
+        let regenere = super::super::generer::generer(&une_fois);
         let deux_fois = importer_typst(&regenere);
 
         assert_eq!(deux_fois, une_fois, "le brut revient au brut");
@@ -333,7 +333,7 @@ mod tests {
         let source = "#figure(image(\"images/graphe.png\", width: 80%), caption: [Le graphe])\n\n#let rappel = 2\n\nVoir @analyse.\n";
 
         let document = importer_typst(source);
-        let typst = super::super::generer(&document);
+        let typst = super::super::generer::generer(&document);
 
         assert!(typst.contains("images/graphe.png"), "{typst}");
         assert!(typst.contains("#let rappel = 2"), "{typst}");
@@ -349,7 +349,7 @@ mod tests {
         let source = "= Le titre\n\nUn paragraphe avec du *gras* et des mots reconnaissables.\n\n- une puce ici\n";
 
         let avant = compile(std::path::Path::new("/projet"), source, &[]);
-        let typst = super::super::generer(&importer_typst(source));
+        let typst = super::super::generer::generer(&importer_typst(source));
         let apres = compile(std::path::Path::new("/projet"), &typst, &[]);
 
         let pages = |outcome: &CompileOutcome| {

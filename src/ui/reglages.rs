@@ -24,6 +24,7 @@ const POSITIONS: &[&str] = &["haut", "bas"];
 const ALIGNEMENTS: &[&str] = &["gauche", "centre", "droite"];
 const CASSES: &[&str] = &["normale", "majuscules", "minuscules"];
 const LANGUES: &[&str] = &["fr", "en", "de", "es", "it", "pt", "nl", "la"];
+const TYPOGRAPHIES: &[&str] = &["aucune", "française", "anglaise"];
 const NUMEROTATIONS: &[&str] = &["1.1", "1.1.1", "I.i", "A.a", "1)", "(1)", "A.", "a."];
 
 /// La fenêtre, ou sa place vide.
@@ -124,6 +125,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     choix(LANGUES, reglages.texte.langue.as_str(), Champ::TexteLangue),
                 ]
                 .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Typographie",
+                "Les règles strictes de la langue, appliquées au texte composé : en français, une espace insécable devant ; : ! ? et dans les guillemets ; en anglais, la ponctuation colle. Un \\ devant un caractère l'exempte de toute règle.",
+                choix(
+                    TYPOGRAPHIES,
+                    reglages.texte.typographie.as_str(),
+                    Champ::TexteTypographie
+                )
             ),
             ligne(
                 palette,

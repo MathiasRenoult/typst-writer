@@ -19,8 +19,8 @@ pub mod parse;
 pub mod pipeline;
 pub mod schema;
 pub mod serialiser;
+pub mod typographie;
 
-pub use generer::generer;
 pub use parse::parse;
 pub use schema::Document;
 pub use serialiser::serialiser;

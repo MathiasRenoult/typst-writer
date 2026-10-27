@@ -14,40 +14,51 @@
 //! le sérialiseur produit.
 
 use super::schema::{Bloc, Document, Inline, Reference};
+use super::typographie::{Typographie, appliquer};
 
-/// Génère le corps Typst d'un document.
+/// Génère le corps Typst d'un document, sans règle de langue.
+#[allow(dead_code)] // Raccourci des tests et de la migration.
 pub fn generer(document: &Document) -> String {
+    generer_avec(document, Typographie::Aucune)
+}
+
+/// Génère le corps Typst d'un document, en appliquant la typographie de la
+/// langue choisie dans les normes.
+///
+/// Les littéraux (`\\x` dans la syntaxe) ne reçoivent **aucune** règle :
+/// c'est la porte de sortie universelle, promise par la grammaire.
+pub fn generer_avec(document: &Document, typographie: Typographie) -> String {
     let mut out = String::new();
 
     for bloc in &document.blocs {
-        generer_bloc(bloc, &mut out);
+        generer_bloc(bloc, &mut out, typographie);
     }
 
     out
 }
 
 /// Génère un bloc, suivi d'une ligne vide — la séparation de blocs de Typst.
-fn generer_bloc(bloc: &Bloc, out: &mut String) {
+fn generer_bloc(bloc: &Bloc, out: &mut String, typographie: Typographie) {
     match bloc {
         Bloc::Titre { niveau, contenu } => {
             out.push_str(&"=".repeat(*niveau as usize));
             out.push(' ');
-            generer_inline(contenu, out, false);
+            generer_inline(contenu, out, false, typographie);
             out.push_str("\n\n");
         }
         Bloc::Paragraphe(contenu) => {
-            generer_inline(contenu, out, true);
+            generer_inline(contenu, out, true, typographie);
             out.push_str("\n\n");
         }
         Bloc::Citation(contenu) => {
             out.push_str("#quote(block: true)[");
-            generer_inline(contenu, out, false);
+            generer_inline(contenu, out, false, typographie);
             out.push_str("]\n\n");
         }
         Bloc::ListePuce(items) => {
             for item in items {
                 out.push_str("- ");
-                generer_inline(item, out, false);
+                generer_inline(item, out, false, typographie);
                 out.push('\n');
             }
 
@@ -58,7 +69,7 @@ fn generer_bloc(bloc: &Bloc, out: &mut String) {
             // autant que l'usure des listes réordonnées.
             for item in items {
                 out.push_str("+ ");
-                generer_inline(item, out, false);
+                generer_inline(item, out, false, typographie);
                 out.push('\n');
             }
 
@@ -76,30 +87,47 @@ fn generer_bloc(bloc: &Bloc, out: &mut String) {
 /// `debut_de_ligne` dit que le premier caractère écrit tombe en tête de ligne :
 /// une `-`, un `+`, un `=` ou un `/` y ouvrirait une liste ou un titre, et doit
 /// donc être échappé.
-fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
+fn generer_inline(
+    inline: &[Inline],
+    out: &mut String,
+    debut_de_ligne: bool,
+    typographie: Typographie,
+) {
     let mut en_tete = debut_de_ligne;
 
     for element in inline {
         match element {
             Inline::Texte(texte) => {
+                // La typographie de la langue d'abord, l'échappement Typst
+                // ensuite — et l'insécable devient `~`. Un tilde tapé, lui,
+                // a été échappé : il reste un tilde.
+                let compose = appliquer(texte, typographie);
+                let mut echappe = String::new();
+                echapper_texte(&compose, &mut echappe, en_tete);
+                out.push_str(&echappe.replace('\u{A0}', "~"));
+                en_tete = false;
+            }
+            Inline::Litteral(texte) => {
+                // Un littéral est la promesse de la grammaire : aucune
+                // interprétation, ni syntaxique, ni typographique.
                 echapper_texte(texte, out, en_tete);
                 en_tete = false;
             }
             Inline::Gras(contenu) => {
                 out.push('*');
-                generer_inline(contenu, out, false);
+                generer_inline(contenu, out, false, typographie);
                 out.push('*');
                 en_tete = false;
             }
             Inline::Italique(contenu) => {
                 out.push('_');
-                generer_inline(contenu, out, false);
+                generer_inline(contenu, out, false, typographie);
                 out.push('_');
                 en_tete = false;
             }
             Inline::GrasItalique(contenu) => {
                 out.push_str("*_");
-                generer_inline(contenu, out, false);
+                generer_inline(contenu, out, false, typographie);
                 out.push_str("_*");
                 en_tete = false;
             }
@@ -113,7 +141,7 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
                 out.push_str("#text(fill: ");
                 out.push_str(couleur);
                 out.push_str(")[");
-                generer_inline(contenu, out, false);
+                generer_inline(contenu, out, false, typographie);
                 out.push(']');
                 en_tete = false;
             }
@@ -123,7 +151,7 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
             }
             Inline::Note(contenu) => {
                 out.push_str("#footnote[");
-                generer_inline(contenu, out, false);
+                generer_inline(contenu, out, false, typographie);
                 out.push(']');
                 en_tete = false;
             }
@@ -131,7 +159,7 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
                 out.push_str("#link(\"");
                 echapper_chaine(cible, out);
                 out.push_str("\")[");
-                generer_inline(texte, out, false);
+                generer_inline(texte, out, false, typographie);
                 out.push(']');
                 en_tete = false;
             }
