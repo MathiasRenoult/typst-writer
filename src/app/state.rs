@@ -57,6 +57,9 @@ pub struct State {
     /// dans un journal que personne ne lit.
     pub note: Option<Note>,
 
+    /// La recherche en cours, quand elle est ouverte.
+    pub recherche: Option<crate::app::recherche::Recherche>,
+
     /// Le panneau de liaison à Zotero, quand il est ouvert.
     pub liaison: Option<LiaisonZotero>,
 

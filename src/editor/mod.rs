@@ -385,6 +385,18 @@ impl EditorState {
     /// qu'en caractères : le texte d'avant la citation y passait. Pire,
     /// la suppression en caractère entier emporte une note en une seule
     /// frappe, et le reste des retours arrière rongeait le texte d'avant.
+    /// Sélectionne une plage, en décalages d'octets : montrer une
+    /// occurrence de recherche, et rien de plus.
+    pub fn selectionner_plage(&mut self, debut: usize, fin: usize) -> Task<EditorMessage> {
+        let debut = self.position_de_offset(debut);
+        let fin = self.position_de_offset(fin);
+
+        self.editor.selectionner(debut, fin);
+        self.refresh_document();
+
+        Task::none()
+    }
+
     pub fn replace_span(&mut self, start: usize, end: usize, text: &str) -> Task<EditorMessage> {
         let debut = self.position_de_offset(start);
         let fin = self.position_de_offset(end);

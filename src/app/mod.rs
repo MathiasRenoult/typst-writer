@@ -4,6 +4,7 @@ pub mod epreuves;
 mod fichiers;
 mod journal;
 pub mod message;
+pub mod recherche;
 mod reglages;
 pub mod state;
 mod themes;
@@ -126,6 +127,7 @@ impl State {
             theme: session.theme_mode,
             resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
                     liaison: None,
+            recherche: None,
             note: note_de_migration,
 };
 
@@ -1269,6 +1271,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ShowHover => request_hover(state),
 
+        Message::RechercheOuvrir
+        | Message::RechercheFermer
+        | Message::RechercheMotif(_)
+        | Message::RechercheRemplacement(_)
+        | Message::RechercheSuivant
+        | Message::RecherchePrecedent
+        | Message::RechercheRemplacer
+        | Message::RechercheRemplacerTout => recherche(state, message),
+
         Message::BlocMonter => state
             .editor
             .deplacer_le_bloc(true)
@@ -1386,6 +1397,155 @@ fn next_project_name(projects: &[crate::project::Project]) -> String {
 /// Ils n'agissent que sur des événements qu'aucun widget n'a consommés, donc
 /// jamais en conflit avec les raccourcis propres de l'éditeur.
 /// Le panneau de liaison à Zotero : ouvrir, lire, choisir, et ce qui cloche.
+/// La recherche : chercher, naviguer, remplacer.
+///
+/// Tout le travail est dans [`crate::app::recherche`], qui ne voit ni
+/// l'éditeur ni l'écran ; ici ne se font que les gestes.
+fn recherche(state: &mut State, message: Message) -> Task<Message> {
+    match message {
+        Message::RechercheOuvrir => {
+            state.recherche = Some(crate::app::recherche::Recherche::default());
+
+            return iced::widget::operation::focus(crate::ui::recherche::id_du_motif());
+        }
+
+        Message::RechercheFermer => {
+            state.recherche = None;
+        }
+
+        Message::RechercheMotif(motif) => {
+            if let Some(etat) = state.recherche.as_mut() {
+                etat.motif = motif;
+            }
+
+            return rafraichir_la_recherche(state);
+        }
+
+        Message::RechercheRemplacement(remplacement) => {
+            if let Some(etat) = state.recherche.as_mut() {
+                etat.remplacement = remplacement;
+            }
+        }
+
+        Message::RechercheSuivant => return sauter_dans_la_recherche(state, 1),
+        Message::RecherchePrecedent => return sauter_dans_la_recherche(state, -1),
+        Message::RechercheRemplacer => return remplacer_courant(state),
+        Message::RechercheRemplacerTout => return remplacer_tout(state),
+
+        _ => {}
+    }
+
+    Task::none()
+}
+
+/// Recompte les occurrences du motif dans le texte.
+fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
+    let Some(etat) = state.recherche.as_mut() else {
+        return Task::none();
+    };
+
+    let motif = etat.motif.clone();
+    let texte = state.editor.content();
+    let trouve = crate::app::recherche::occurrences(&motif, &texte);
+
+    let etat = state.recherche.as_mut().expect("recherche ouverte");
+    etat.courante = 0;
+
+    match trouve {
+        Ok(occurrences) => {
+            etat.occurrences = occurrences;
+            etat.erreur = None;
+        }
+        Err(erreur) => {
+            etat.occurrences = Vec::new();
+            etat.erreur = Some(erreur);
+        }
+    }
+
+    sauter_dans_la_recherche(state, 0)
+}
+
+/// Va à l'occurrence voulue, et la montre dans l'éditeur.
+fn sauter_dans_la_recherche(state: &mut State, direction: i8) -> Task<Message> {
+    let Some(etat) = state.recherche.as_mut() else {
+        return Task::none();
+    };
+
+    if etat.occurrences.is_empty() {
+        return Task::none();
+    }
+
+    let total = etat.occurrences.len();
+    if direction > 0 {
+        etat.courante = (etat.courante + 1) % total;
+    } else if direction < 0 {
+        etat.courante = (etat.courante + total - 1) % total;
+    }
+
+    let (debut, fin) = etat.occurrences[etat.courante];
+
+    state
+        .editor
+        .selectionner_plage(debut, fin)
+        .map(Message::Editor)
+}
+
+/// Remplace l'occurrence courante — les groupes du motif y sont rappelés.
+fn remplacer_courant(state: &mut State) -> Task<Message> {
+    let Some(etat) = state.recherche.as_ref() else {
+        return Task::none();
+    };
+
+    let Some((debut, fin)) = etat.occurrences.get(etat.courante).copied() else {
+        return Task::none();
+    };
+
+    let (motif, remplacement) = (etat.motif.clone(), etat.remplacement.clone());
+    let texte = state.editor.content();
+
+    let neuf = crate::app::recherche::remplacement(&motif, &remplacement, &texte, debut, fin);
+
+    match neuf {
+        Ok(neuf) => {
+            let tache = state.editor.replace_span(debut, fin, &neuf).map(Message::Editor);
+            Task::batch([tache, rafraichir_la_recherche(state)])
+        }
+        Err(erreur) => {
+            state.note = Some(crate::app::state::Note::erreur(erreur));
+            Task::none()
+        }
+    }
+}
+
+/// Remplace tout, d'un geste.
+fn remplacer_tout(state: &mut State) -> Task<Message> {
+    let Some(etat) = state.recherche.as_ref() else {
+        return Task::none();
+    };
+
+    let (motif, remplacement) = (etat.motif.clone(), etat.remplacement.clone());
+    let texte = state.editor.content();
+
+    let neuf = crate::app::recherche::remplacer_tout(&motif, &remplacement, &texte);
+
+    match neuf {
+        Ok(neuf) => {
+            let compte = etat.occurrences.len();
+            let tache = state.editor.replace_span(0, texte.len(), &neuf).map(Message::Editor);
+
+            state.note = Some(crate::app::state::Note::info(format!(
+                "{compte} occurrence(s) remplacée(s)."
+            )));
+
+            Task::batch([tache, rafraichir_la_recherche(state)])
+        }
+        Err(erreur) => {
+            state.note = Some(crate::app::state::Note::erreur(erreur));
+            Task::none()
+        }
+    }
+}
+
 fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::ZoteroLierOuvrir => {
@@ -1521,6 +1681,15 @@ fn handle_shortcut(
     // La fiche de référence, quand elle est ouverte : un formulaire se
     // conduit au clavier — `Tabulation` circule dans les champs, `Entrée`
     // enregistre, `Échap` ferme. Ses touches lui appartiennent.
+    if state.recherche.is_some()
+        && matches!(
+            key,
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+        )
+    {
+        return update(state, Message::RechercheFermer);
+    }
+
     if state.liaison.is_some() {
         use iced::keyboard::{Key, key::Named};
 
@@ -1668,6 +1837,9 @@ fn handle_shortcut_inner(
         "n" => update(state, Message::NewFile),
         "o" => update(state, Message::OpenFile),
         "e" => update(state, Message::ExportPdf),
+        // La recherche : le motif est une expression régulière, et le
+        // remplacement y rappelle ses groupes.
+        "f" => update(state, Message::RechercheOuvrir),
         // Le titre suivant, ou le précédent avec Maj : la table des matières
         // se parcourt sans quitter le clavier.
         "t" => {

@@ -714,7 +714,7 @@ impl CodeEditor {
             vim_enabled: false,
             vim_state: vim::VimState::default(),
             translations: Translations::default(),
-            search_replace_enabled: true,
+            search_replace_enabled: false,
             line_numbers_enabled: true,
             show_whitespace: true,
             show_indent_guides: true,

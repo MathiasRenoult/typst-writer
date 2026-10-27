@@ -1,4 +1,5 @@
 pub mod completion;
+pub mod recherche;
 pub mod editor;
 pub mod layout;
 pub mod preview;
@@ -53,6 +54,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         completion::view(state),
         reference::view(state),
         zotero::view(state),
+        recherche::view(state),
         reglages::view(state),
     ]
     .width(Length::Fill)

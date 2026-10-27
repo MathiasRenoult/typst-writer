@@ -181,6 +181,22 @@ pub enum Message {
     /// Va à un titre du sommaire (le rang dans la liste du document).
     GotoHeading(usize),
 
+    RechercheOuvrir,
+
+    RechercheFermer,
+
+    RechercheMotif(String),
+
+    RechercheRemplacement(String),
+
+    RechercheSuivant,
+
+    RecherchePrecedent,
+
+    RechercheRemplacer,
+
+    RechercheRemplacerTout,
+
     BlocMonter,
 
     BlocDescendre,

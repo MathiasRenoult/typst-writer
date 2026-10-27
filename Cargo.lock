@@ -5950,6 +5950,7 @@ dependencies = [
  "iced-code-editor",
  "lucide-icons",
  "mimalloc",
+ "regex",
  "rfd",
  "serde",
  "serde_json",

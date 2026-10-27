@@ -266,3 +266,10 @@ unité à égaliser.
 
 `editing/cursor.rs` (`selectionner`).
 
+
+## La recherche du crate est désactivée
+
+`search_replace_enabled` passe à `false` à la construction : la recherche
+propre au crate — sans expressions régulières ni rappel de groupes —
+laissait `Ctrl+F` sans emploi pour celle de l'application, qui en a. Le
+raccourci est donc libre, et la recherche de l'application le reprend.
