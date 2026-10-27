@@ -25,6 +25,10 @@ pub enum Erreur {
     /// Zotero ne répond pas : éteint, ou son API désactivée.
     Injoignable(std::io::Error),
 
+    /// Zotero répond, mais son API locale est fermée : c'est un réglage,
+    /// et il se reprend — même sans redémarrer.
+    ApiFermee,
+
     /// Zotero a répondu, mais pas d'une façon qu'on puisse lire.
     ReponseInvalide(String),
 }
@@ -34,8 +38,14 @@ impl std::fmt::Display for Erreur {
         match self {
             Erreur::Injoignable(_) => write!(
                 f,
-                "Zotero ne répond pas — est-il lancé, et son API activée ? \
+                "Zotero ne répond pas — est-il lancé ? \
                  (Réglages → Avancé → « Permettre aux autres applications de communiquer »)"
+            ),
+            Erreur::ApiFermee => write!(
+                f,
+                "L'API locale de Zotero est fermée : Réglages → Avancé → \
+                 « Permettre aux autres applications sur cet ordinateur de communiquer avec Zotero ». \
+                 La case prise, tout fonctionne — sans même redémarrer."
             ),
             Erreur::ReponseInvalide(motif) => {
                 write!(f, "La réponse de Zotero est illisible : {motif}")
@@ -235,6 +245,12 @@ fn corps_de(reponse: &str) -> Result<String, Erreur> {
         .ok_or_else(|| Erreur::ReponseInvalide("statut illisible".to_string()))?;
 
     if !(200..300).contains(&statut) {
+        // Le cas du monde réel : Zotero tourne, mais son API locale est
+        // un réglage, et il est éteint. Le corps le dit mot pour mot.
+        if corps.contains("Local API is not enabled") || statut == 403 {
+            return Err(Erreur::ApiFermee);
+        }
+
         return Err(Erreur::ReponseInvalide(format!("statut {statut}")));
     }
 
@@ -277,6 +293,25 @@ fn morceaux(corps: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Le cas du monde réel : Zotero tourne, son API locale est fermée.
+    /// Le remède se dit, pas un statut nu.
+    #[test]
+    fn une_api_fermee_dit_comment_l_ouvrir() {
+        let base = serveur2(
+            "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n",
+            "Local API is not enabled",
+        );
+
+        let erreur = collections_depuis(&base).expect_err("fermée");
+
+        assert!(matches!(erreur, Erreur::ApiFermee), "vu : {erreur:?}");
+        assert!(
+            erreur.to_string().contains("Permettre aux autres applications"),
+            "le remède se dit : {erreur}"
+        );
+    }
+
     use super::*;
     use std::io::Write;
     use std::net::TcpListener;
