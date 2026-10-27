@@ -31,8 +31,11 @@ pub struct MiseEnPage {
     /// Les titres de chapitres.
     pub titres: Titres,
 
-    /// Les couleurs du document.
+/// Les couleurs du document.
     pub couleurs: Couleurs,
+
+    /// La typographie du texte composé.
+    pub typographie: Typographie,
 }
 
 /// Le papier.
@@ -135,11 +138,11 @@ pub struct Texte {
     /// La langue du texte, pour Typst (césure, guillemets…).
     pub langue: String,
 
-    /// La typographie appliquée au texte composé : `aucune`, `française`
-    /// ou `anglaise`. C'est elle qui porte les règles strictes de la langue
-    /// — l'espace insécable devant les signes doubles en français —, et le
-    /// `\\` de la syntaxe en exempte ce qu'il écrit.
-    pub typographie: String,
+    /// La typographie d'avant la section dédiée, héritée des normes écrites
+    /// par une version précédente. La migration de [`MiseEnPage::lire`] la
+    /// porte dans la section `typographie` — ce champ ne s'écrit plus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typographie: Option<String>,
 }
 
 impl Default for Texte {
@@ -153,7 +156,7 @@ impl Default for Texte {
             justification: true,
             coupure: true,
             langue: "fr".to_string(),
-            typographie: "aucune".to_string(),
+            typographie: None,
         }
     }
 }
@@ -199,7 +202,105 @@ impl Default for Titres {
 }
 
 /// Les couleurs du document, en hexadécimal.
+/// La typographie appliquée au texte composé : un défaut de langue, et ses
+/// règles, reprises une par une.
+///
+/// Le défaut charge les règles de la langue choisie — `française`, `anglaise`,
+/// `aucune` — et chaque règle se reprend ensuite dans le panneau de
+/// typographie. Les guillemets se composent **par niveau d'imbrication** :
+/// `«`, `"` puis `'` en français.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Typographie {
+    /// Le défaut chargé : `aucune`, `française`, `anglaise`.
+    pub base: String,
+
+    /// L'espace devant les signes doubles `; : ! ?` : `aucune`, `normale`,
+    /// `insécable`.
+    pub avant_signes: String,
+
+    /// L'espace après les signes doubles.
+    pub apres_signes: String,
+
+    /// L'espace après la virgule et le point, hors nombres.
+    pub apres_virgule_point: String,
+
+    /// L'espace à l'intérieur des guillemets.
+    pub espace_guillemets: String,
+
+    /// Les paires de guillemets par niveau d'imbrication : deux caractères
+    /// par paire — ouvrant puis fermant — `«»`, `""`, `''`.
+    pub guillemets: Vec<String>,
+}
+
+impl Default for Typographie {
+    fn default() -> Self {
+        let base = crate::langage::typographie::Regles::aucune();
+
+        Self {
+            base: "aucune".to_string(),
+            avant_signes: base.avant_signes.nom().to_string(),
+            apres_signes: base.apres_signes.nom().to_string(),
+            apres_virgule_point: base.apres_virgule_point.nom().to_string(),
+            espace_guillemets: base.espace_guillemets.nom().to_string(),
+            guillemets: paires_en_texte(&base.guillemets),
+        }
+    }
+}
+
+impl Typographie {
+    /// Les règles de composition de ces normes.
+    pub fn regles(&self) -> crate::langage::typographie::Regles {
+        crate::langage::typographie::Regles {
+            avant_signes: crate::langage::typographie::Espace::depuis(&self.avant_signes),
+            apres_signes: crate::langage::typographie::Espace::depuis(&self.apres_signes),
+            apres_virgule_point: crate::langage::typographie::Espace::depuis(
+                &self.apres_virgule_point,
+            ),
+            espace_guillemets: crate::langage::typographie::Espace::depuis(&self.espace_guillemets),
+            guillemets: paires_depuis(&self.guillemets),
+        }
+    }
+
+    /// Reprend les règles d'un défaut de langue, en gardant la base nommée.
+    pub fn charger_le_defaut(&mut self, nom: &str) {
+        let regles = crate::langage::typographie::Regles::depuis(nom);
+
+        self.base = nom.to_string();
+        self.avant_signes = regles.avant_signes.nom().to_string();
+        self.apres_signes = regles.apres_signes.nom().to_string();
+        self.apres_virgule_point = regles.apres_virgule_point.nom().to_string();
+        self.espace_guillemets = regles.espace_guillemets.nom().to_string();
+        self.guillemets = paires_en_texte(&regles.guillemets);
+    }
+}
+
+/// Les paires de guillemets en deux caractères par champ.
+fn paires_en_texte(paires: &[(char, char)]) -> Vec<String> {
+    paires
+        .iter()
+        .map(|(ouvrant, fermant)| format!("{ouvrant}{fermant}"))
+        .collect()
+}
+
+/// Les paires de guillemets écrites dans les normes.
+fn paires_depuis(textes: &[String]) -> Vec<(char, char)> {
+    let mut paires: Vec<(char, char)> = textes
+        .iter()
+        .filter_map(|texte| {
+            let mut caracteres = texte.chars().filter(|c| !c.is_whitespace());
+            Some((caracteres.next()?, caracteres.next()?))
+        })
+        .collect();
+
+    if paires.is_empty() {
+        paires.push(('«', '»'));
+    }
+
+    paires
+}
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Couleurs {
     /// Le texte courant.
@@ -226,10 +327,34 @@ impl Default for Couleurs {
     }
 }
 
+/// La paire de guillemets d'un niveau, ou vide.
+fn paire_lue(paires: &[String], niveau: usize) -> String {
+    paires.get(niveau).cloned().unwrap_or_default()
+}
+
+/// Écrit la paire de guillemets d'un niveau.
+fn ecrire_paire(paires: &mut Vec<String>, niveau: usize, valeur: String) {
+    while paires.len() <= niveau {
+        paires.push(String::new());
+    }
+
+    paires[niveau] = valeur;
+}
+
 impl MiseEnPage {
     /// Lit une mise en page écrite au format TOML.
     pub fn lire(texte: &str) -> Result<Self, String> {
-        toml::from_str(texte).map_err(|erreur| erreur.to_string())
+        let mut mise_en_page: Self = toml::from_str(texte).map_err(|erreur| erreur.to_string())?;
+
+        // Une norme écrite par la version précédente : la typographie vivait
+        // dans `texte`. Elle porte dans sa section, sans quoi le réglage se
+        // perdrait à la lecture — et un réglage ne se perd pas.
+        if let Some(ancienne) = mise_en_page.texte.typographie.take()
+            && mise_en_page.typographie.base == "aucune" {
+                mise_en_page.typographie.charger_le_defaut(&ancienne);
+            }
+
+        Ok(mise_en_page)
     }
 
     /// L'écrit au format TOML — celui qui s'exporte et s'importe.
@@ -347,7 +472,14 @@ pub enum Champ {
     TexteJustification,
     TexteCoupure,
     TexteLangue,
-    TexteTypographie,
+    TypoBase,
+    TypoAvantSignes,
+    TypoApresSignes,
+    TypoApresVirgulePoint,
+    TypoEspaceGuillemets,
+    TypoGuillemets1,
+    TypoGuillemets2,
+    TypoGuillemets3,
     TitresPolice,
     TitresTaille1,
     TitresTaille2,
@@ -384,7 +516,14 @@ impl MiseEnPage {
             Champ::TexteJustification => self.texte.justification.to_string(),
             Champ::TexteCoupure => self.texte.coupure.to_string(),
             Champ::TexteLangue => self.texte.langue.clone(),
-            Champ::TexteTypographie => self.texte.typographie.clone(),
+            Champ::TypoBase => self.typographie.base.clone(),
+            Champ::TypoAvantSignes => self.typographie.avant_signes.clone(),
+            Champ::TypoApresSignes => self.typographie.apres_signes.clone(),
+            Champ::TypoApresVirgulePoint => self.typographie.apres_virgule_point.clone(),
+            Champ::TypoEspaceGuillemets => self.typographie.espace_guillemets.clone(),
+            Champ::TypoGuillemets1 => paire_lue(&self.typographie.guillemets, 0),
+            Champ::TypoGuillemets2 => paire_lue(&self.typographie.guillemets, 1),
+            Champ::TypoGuillemets3 => paire_lue(&self.typographie.guillemets, 2),
             Champ::TitresPolice => self.titres.police.clone(),
             Champ::TitresTaille1 => self.titres.taille_1.clone(),
             Champ::TitresTaille2 => self.titres.taille_2.clone(),
@@ -421,7 +560,14 @@ impl MiseEnPage {
             Champ::TexteJustification => self.texte.justification = valeur == "true",
             Champ::TexteCoupure => self.texte.coupure = valeur == "true",
             Champ::TexteLangue => self.texte.langue = valeur,
-            Champ::TexteTypographie => self.texte.typographie = valeur,
+            Champ::TypoBase => self.typographie.base = valeur,
+            Champ::TypoAvantSignes => self.typographie.avant_signes = valeur,
+            Champ::TypoApresSignes => self.typographie.apres_signes = valeur,
+            Champ::TypoApresVirgulePoint => self.typographie.apres_virgule_point = valeur,
+            Champ::TypoEspaceGuillemets => self.typographie.espace_guillemets = valeur,
+            Champ::TypoGuillemets1 => ecrire_paire(&mut self.typographie.guillemets, 0, valeur),
+            Champ::TypoGuillemets2 => ecrire_paire(&mut self.typographie.guillemets, 1, valeur),
+            Champ::TypoGuillemets3 => ecrire_paire(&mut self.typographie.guillemets, 2, valeur),
             Champ::TitresPolice => self.titres.police = valeur,
             Champ::TitresTaille1 => self.titres.taille_1 = valeur,
             Champ::TitresTaille2 => self.titres.taille_2 = valeur,
@@ -446,6 +592,61 @@ impl MiseEnPage {
 
 #[cfg(test)]
 mod tests {
+
+    /// La typographie d'avant la section dédiée se porte dans sa section :
+    /// un réglage ne se perd pas à la lecture.
+    #[test]
+    fn la_typographie_heritee_se_porte_dans_sa_section() {
+        let ancien = "[texte]\nlangue = \"fr\"\ntypographie = \"française\"\n";
+        let mise_en_page = MiseEnPage::lire(ancien).expect("lisible");
+
+        assert_eq!(mise_en_page.typographie.base, "française");
+        assert_eq!(mise_en_page.typographie.avant_signes, "insécable");
+        assert!(
+            !mise_en_page.ecrire().contains("typographie ="),
+            "le champ hérité ne se réécrit pas : {}",
+            mise_en_page.ecrire()
+        );
+    }
+
+    /// Le défaut de langue charge ses règles, qu'on reprend ensuite.
+    #[test]
+    fn un_defaut_charge_ses_regles_et_elles_se_prennent_une_par_une() {
+        let mut typo = Typographie::default();
+        typo.charger_le_defaut("française");
+
+        assert_eq!(typo.avant_signes, "insécable");
+        assert_eq!(typo.guillemets[0], "«»");
+
+        // Une reprise, sans toucher au reste.
+        typo.guillemets[0] = "“”".to_string();
+        let regles = typo.regles();
+        assert_eq!(regles.guillemets[0], ('“', '”'));
+        assert_eq!(regles.avant_signes, crate::langage::typographie::Espace::Insécable);
+
+        // L'anglais recharge ses règles.
+        typo.charger_le_defaut("anglaise");
+        assert_eq!(typo.avant_signes, "aucune");
+        assert_eq!(typo.guillemets[0], "\"\"");
+    }
+
+    /// Les champs de typographie se lisent et s'écrivent.
+    #[test]
+    fn les_champs_de_typographie_se_prennent() {
+        let mut mise_en_page = MiseEnPage::default();
+
+        assert_eq!(
+            mise_en_page.valeur(Champ::TypoGuillemets1),
+            mise_en_page.typographie.guillemets[0]
+        );
+
+        mise_en_page.modifier(Champ::TypoApresVirgulePoint, "insécable".to_string());
+        assert_eq!(mise_en_page.typographie.apres_virgule_point, "insécable");
+
+        mise_en_page.modifier(Champ::TypoGuillemets3, "‹›".to_string());
+        assert_eq!(mise_en_page.valeur(Champ::TypoGuillemets3), "‹›");
+    }
+
     use super::*;
 
     /// Une mise en page se lit, se perd, se retrouve.

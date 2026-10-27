@@ -183,6 +183,10 @@ pub enum Message {
     MiseEnPageAccrocher(bool),
 
     /// Applique la copie de travail au projet.
+    MiseEnPagePanneau(usize),
+
+    MiseEnPageTypographieDefaut(String),
+
     MiseEnPageAppliquer,
 
     /// Importe une mise en page depuis un fichier.

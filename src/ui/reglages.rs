@@ -24,7 +24,8 @@ const POSITIONS: &[&str] = &["haut", "bas"];
 const ALIGNEMENTS: &[&str] = &["gauche", "centre", "droite"];
 const CASSES: &[&str] = &["normale", "majuscules", "minuscules"];
 const LANGUES: &[&str] = &["fr", "en", "de", "es", "it", "pt", "nl", "la"];
-const TYPOGRAPHIES: &[&str] = &["aucune", "française", "anglaise"];
+const DEFAUTS: &[&str] = &["aucune", "française", "anglaise"];
+const ESPACES: &[&str] = &["aucune", "normale", "insécable"];
 const NUMEROTATIONS: &[&str] = &["1.1", "1.1.1", "I.i", "A.a", "1)", "(1)", "A.", "a."];
 
 /// La fenêtre, ou sa place vide.
@@ -40,8 +41,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let reglages = &dialogue.reglages;
 
     let entete = row![
-        palette.label("Mise en page du document").size(16),
+        palette.label("Normes du document").size(16),
         Space::new().width(Length::Fill),
+        onglet(palette, "Mise en page", 0, dialogue.panneau),
+        onglet(palette, "Typographie", 1, dialogue.panneau),
+        Space::new().width(8),
         button(text("Fermer").size(12))
             .on_press(Message::MiseEnPageFermer)
             .padding([6, 10]),
@@ -49,6 +53,86 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .spacing(8)
     .align_y(iced::Alignment::Center);
 
+    let corps = if dialogue.panneau == 1 {
+        corps_typographie(palette, reglages)
+    } else {
+        corps_mise_en_page(palette, reglages)
+    };
+    // ---- Le pied : ce qui ne va pas, et les gestes ----
+    let mut pied = column![].spacing(10);
+
+    let problemes = reglages.problemes();
+
+    if !problemes.is_empty() {
+        let mut liste = column![].spacing(4);
+
+        for (champ, probleme) in &problemes {
+            liste = liste.push(palette.label(format!("{champ} : {probleme}")).size(11));
+        }
+
+        pied = pied.push(liste);
+    }
+
+    if dialogue.regles_main > 0 {
+        pied = pied.push(
+            palette
+                .label(format!(
+                    "main.typ porte déjà {} règles #set écrites à la main : elles priment sur cette fenêtre.",
+                    dialogue.regles_main
+                ))
+                .size(11),
+        );
+    }
+
+    if dialogue.accroche_manquante {
+        pied = pied.push(
+            checkbox(dialogue.accrocher)
+                .label("Accrocher la mise en page à main.typ (deux lignes)")
+                .on_toggle(Message::MiseEnPageAccrocher),
+        );
+    }
+
+    pied = pied.push(
+        row![
+            button(text("Importer").size(12))
+                .on_press(Message::MiseEnPageImporter)
+                .padding([8, 12]),
+            button(text("Exporter").size(12))
+                .on_press(Message::MiseEnPageExporter)
+                .padding([8, 12]),
+            Space::new().width(Length::Fill),
+            button(text("Annuler").size(12))
+                .on_press(Message::MiseEnPageFermer)
+                .padding([8, 12]),
+            button(text("Appliquer").size(12))
+                .on_press(Message::MiseEnPageAppliquer)
+                .padding([8, 12]),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    );
+
+    let fenetre =
+        container(column![entete, scrollable(corps).height(Length::Fill), pied].spacing(16))
+            .padding(18)
+            .style(bubble_style(palette))
+            .width(Length::Fixed(760.0))
+            .height(Length::Fixed(640.0));
+
+    container(fenetre)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into()
+}
+
+/// Une section de la fenêtre : son titre et ses réglages.
+/// Le panneau de mise en page : la page, le texte, les titres, les couleurs.
+fn corps_mise_en_page(
+    palette: Palette,
+    reglages: &crate::mise_en_page::modele::MiseEnPage,
+) -> iced::widget::Column<'static, Message> {
     let mut corps = column![].spacing(20);
 
     // ---- La page ----
@@ -125,16 +209,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     choix(LANGUES, reglages.texte.langue.as_str(), Champ::TexteLangue),
                 ]
                 .spacing(8)
-            ),
-            ligne(
-                palette,
-                "Typographie",
-                "Les règles strictes de la langue, appliquées au texte composé : en français, une espace insécable devant ; : ! ? et dans les guillemets ; en anglais, la ponctuation colle. Un \\ devant un caractère l'exempte de toute règle.",
-                choix(
-                    TYPOGRAPHIES,
-                    reglages.texte.typographie.as_str(),
-                    Champ::TexteTypographie
-                )
             ),
             ligne(
                 palette,
@@ -366,76 +440,164 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .spacing(10),
     ));
 
-    // ---- Le pied : ce qui ne va pas, et les gestes ----
-    let mut pied = column![].spacing(10);
-
-    let problemes = reglages.problemes();
-
-    if !problemes.is_empty() {
-        let mut liste = column![].spacing(4);
-
-        for (champ, probleme) in &problemes {
-            liste = liste.push(palette.label(format!("{champ} : {probleme}")).size(11));
-        }
-
-        pied = pied.push(liste);
-    }
-
-    if dialogue.regles_main > 0 {
-        pied = pied.push(
-            palette
-                .label(format!(
-                    "main.typ porte déjà {} règles #set écrites à la main : elles priment sur cette fenêtre.",
-                    dialogue.regles_main
-                ))
-                .size(11),
-        );
-    }
-
-    if dialogue.accroche_manquante {
-        pied = pied.push(
-            checkbox(dialogue.accrocher)
-                .label("Accrocher la mise en page à main.typ (deux lignes)")
-                .on_toggle(Message::MiseEnPageAccrocher),
-        );
-    }
-
-    pied = pied.push(
-        row![
-            button(text("Importer").size(12))
-                .on_press(Message::MiseEnPageImporter)
-                .padding([8, 12]),
-            button(text("Exporter").size(12))
-                .on_press(Message::MiseEnPageExporter)
-                .padding([8, 12]),
-            Space::new().width(Length::Fill),
-            button(text("Annuler").size(12))
-                .on_press(Message::MiseEnPageFermer)
-                .padding([8, 12]),
-            button(text("Appliquer").size(12))
-                .on_press(Message::MiseEnPageAppliquer)
-                .padding([8, 12]),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-    );
-
-    let fenetre =
-        container(column![entete, scrollable(corps).height(Length::Fill), pied].spacing(16))
-            .padding(18)
-            .style(bubble_style(palette))
-            .width(Length::Fixed(760.0))
-            .height(Length::Fixed(640.0));
-
-    container(fenetre)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+    corps
 }
 
-/// Une section de la fenêtre : son titre et ses réglages.
+/// Le panneau de typographie : un défaut de langue, et ses règles.
+///
+/// Le défaut charge les règles de la langue choisie ; chaque règle se
+/// reprend ensuite. Les guillemets se composent par niveau d'imbrication :
+/// deux caractères par paire, ouvrant puis fermant.
+fn corps_typographie(
+    palette: Palette,
+    reglages: &crate::mise_en_page::modele::MiseEnPage,
+) -> iced::widget::Column<'static, Message> {
+    let typo = &reglages.typographie;
+
+    column![
+        section(
+            palette,
+            "Défaut",
+            ligne(
+                palette,
+                "Langue",
+                "Charge les règles de la langue choisie — qu'on reprend ensuite.",
+                choix_defaut(typo.base.as_str())
+            ),
+        ),
+        section(
+            palette,
+            "Espacements",
+            column![
+                ligne(
+                    palette,
+                    "Devant ; : ! ?",
+                    "En français, une espace insécable — `~` en Typst.",
+                    choix(ESPACES, typo.avant_signes.as_str(), Champ::TypoAvantSignes)
+                ),
+                ligne(
+                    palette,
+                    "Après ; : ! ?",
+                    "Une espace normale en français ; la ponctuation colle en anglais.",
+                    choix(ESPACES, typo.apres_signes.as_str(), Champ::TypoApresSignes)
+                ),
+                ligne(
+                    palette,
+                    "Après , .",
+                    "Hors nombres : `3.14` et `1,2` ne sont jamais touchés.",
+                    choix(
+                        ESPACES,
+                        typo.apres_virgule_point.as_str(),
+                        Champ::TypoApresVirgulePoint
+                    )
+                ),
+                ligne(
+                    palette,
+                    "Dans les guillemets",
+                    "L'espace entre le guillemet et le texte qu'il cite.",
+                    choix(
+                        ESPACES,
+                        typo.espace_guillemets.as_str(),
+                        Champ::TypoEspaceGuillemets
+                    )
+                ),
+            ]
+            .spacing(theme::jetons::PAS),
+        ),
+        section(
+            palette,
+            "Guillemets",
+            column![
+                ligne(
+                    palette,
+                    "Niveau 1",
+                    "Deux caractères : l'ouvrant puis le fermant — « » en français.",
+                    saisie(
+                        palette,
+                        &paire_lue(&typo.guillemets, 0),
+                        Champ::TypoGuillemets1,
+                        "«»"
+                    )
+                ),
+                ligne(
+                    palette,
+                    "Niveau 2",
+                    "Ce que la citation de niveau 1 contient — \" \" en français.",
+                    saisie(
+                        palette,
+                        &paire_lue(&typo.guillemets, 1),
+                        Champ::TypoGuillemets2,
+                        "\"\""
+                    )
+                ),
+                ligne(
+                    palette,
+                    "Niveau 3",
+                    "Et le suivant — ' ' en français.",
+                    saisie(
+                        palette,
+                        &paire_lue(&typo.guillemets, 2),
+                        Champ::TypoGuillemets3,
+                        "''"
+                    )
+                ),
+            ]
+            .spacing(theme::jetons::PAS),
+        ),
+    ]
+    .spacing(20)
+}
+
+/// La paire de guillemets d'un niveau, pour le champ.
+fn paire_lue(paires: &[String], niveau: usize) -> String {
+    paires.get(niveau).cloned().unwrap_or_default()
+}
+
+/// La liste des défauts de langue : le choix charge leurs règles.
+fn choix_defaut(valeur: &str) -> Element<'static, Message> {
+    let options: Vec<String> = DEFAUTS.iter().map(|option| option.to_string()).collect();
+    let valeur = valeur.to_string();
+
+    pick_list(options, Some(valeur), |choisi: String| {
+        Message::MiseEnPageTypographieDefaut(choisi)
+    })
+    .width(Length::Fixed(170.0))
+    .into()
+}
+
+/// Un onglet de la fenêtre des normes.
+fn onglet(
+    palette: Palette,
+    libelle: &'static str,
+    numero: usize,
+    courant: usize,
+) -> Element<'static, Message> {
+    let actif = numero == courant;
+
+    button(text(libelle).size(12).color(if actif {
+        palette.accent
+    } else {
+        palette.text_muted
+    }))
+    .on_press(Message::MiseEnPagePanneau(numero))
+    .padding([6, 12])
+    .style(move |_, _| button::Style {
+        background: None,
+        text_color: if actif { palette.accent } else { palette.text_muted },
+        border: iced::Border {
+            color: if actif {
+                palette.accent
+            } else {
+                iced::Color::TRANSPARENT
+            },
+            width: if actif { 1.5 } else { 1.0 },
+            radius: crate::ui::theme::jetons::RAYON.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
 fn section<'a>(
     palette: Palette,
     titre: &'a str,

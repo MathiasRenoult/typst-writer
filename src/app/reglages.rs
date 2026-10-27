@@ -19,6 +19,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
 
             state.mise_en_page = Some(DialogueMiseEnPage {
                 reglages,
+                panneau: 0,
                 accrocher: accroche_manquante,
                 accroche_manquante,
                 regles_main: mise_en_page::regles_ecrites_a_la_main(&state.project.dir),
@@ -52,6 +53,22 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageAccrocher(accrocher) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.accrocher = accrocher;
+            }
+
+            Task::none()
+        }
+
+        Message::MiseEnPagePanneau(panneau) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.panneau = panneau;
+            }
+
+            Task::none()
+        }
+
+        Message::MiseEnPageTypographieDefaut(defaut) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.reglages.typographie.charger_le_defaut(&defaut);
             }
 
             Task::none()

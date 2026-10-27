@@ -151,6 +151,9 @@ pub struct DialogueMiseEnPage {
     /// Les réglages en cours de réglage.
     pub reglages: crate::mise_en_page::modele::MiseEnPage,
 
+    /// Le panneau ouvert : 0 la mise en page, 1 la typographie.
+    pub panneau: usize,
+
     /// Accrocher la mise en page à `main.typ` lors de l'application.
     pub accrocher: bool,
 

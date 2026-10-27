@@ -392,6 +392,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::MiseEnPageFermer
         | Message::MiseEnPageChamp(_, _)
         | Message::MiseEnPageBascule(_)
+        | Message::MiseEnPagePanneau(_)
+        | Message::MiseEnPageTypographieDefaut(_)
         | Message::MiseEnPageAccrocher(_)
         | Message::MiseEnPageAppliquer
         | Message::MiseEnPageImporter

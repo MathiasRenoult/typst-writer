@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{parse, typographie::Typographie, generer::generer_avec};
+use super::{generer::generer_avec, parse};
 
 /// Nom stable du fichier Typst temporaire injecté dans l'assemblage.
 pub const GENERATED_FILE: &str = "document.generated.typ";
@@ -40,8 +40,8 @@ pub fn compilation_unit_document(
 
     // La typographie se lit dans les normes du projet : c'est là qu'elle se
     // choisit, et le générateur l'applique au texte qu'il compose.
-    let typographie = crate::mise_en_page::charger(root);
-    let generated = generer_avec(document, Typographie::depuis(&typographie.texte.typographie));
+    let normes = crate::mise_en_page::charger(root);
+    let generated = generer_avec(document, &normes.typographie.regles());
 
     (entry, vec![(root.join(GENERATED_FILE), generated)])
 }
@@ -201,25 +201,25 @@ mod tests {
     fn la_typographie_des_normes_s_applique_et_le_backslash_en_exempt() {
         use super::super::generer::generer_avec;
         use super::super::schema::{Bloc, Inline};
-        use super::super::typographie::Typographie;
+        use super::super::typographie::Regles;
 
         // Le cas du programme : en français, « ; » est précédé d'une espace
         // insécable et suivi d'une espace normale.
         let document = super::super::parse("La foi ; l'espérance.\n");
-        let typst = generer_avec(&document, Typographie::Francaise);
+        let typst = generer_avec(&document, &Regles::francaise());
         assert!(
             typst.contains("La foi~; l'espérance."),
             "le français est strict : {typst}"
         );
 
         // Et la même chose en anglais colle.
-        let typst = generer_avec(&document, Typographie::Anglaise);
+        let typst = generer_avec(&document, &Regles::anglaise());
         assert!(typst.contains("La foi; l'espérance."), "{typst}");
 
         // Le `\` insère un caractère sans interprétation : la même phrase
         // avec un point-virgule échappé garde ses espaces telles quelles.
         let document = super::super::parse("La foi \\; l'espérance.\n");
-        let typst = generer_avec(&document, Typographie::Francaise);
+        let typst = generer_avec(&document, &Regles::francaise());
         assert!(
             typst.contains("La foi ; l'espérance."),
             "l'échappement exempte de la règle : {typst}"

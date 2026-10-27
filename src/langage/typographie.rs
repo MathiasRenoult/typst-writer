@@ -1,11 +1,9 @@
-//! La typographie selon la langue : des règles strictes, choisies dans les
-//! normes du document.
+//! La typographie selon la langue : des règles strictes, **réglables**.
 //!
-//! L'orthographe française veut une espace **insécable** devant les signes
-//! doubles — `;`, `:`, `!`, `?` — et dans les guillemets ; l'anglaise veut,
-//! elle, aucune espace devant la ponctuation. Ce sont des règles de
-//! grammaire : elles se **choisissent** dans la fenêtre des normes, et le
-//! générateur les applique au texte qu'il compose.
+//! Les normes du document portent un jeu de règles — la typographie — que le
+//! générateur applique au texte composé. Un **défaut** de langue les charge
+//! (française, anglaise, aucune), et chaque règle se reprend ensuite : c'est
+//! le panneau de typographie de la fenêtre des normes.
 //!
 //! Deux portes de sortie, et elles suffisent à tout dire :
 //!
@@ -13,62 +11,158 @@
 //!   reçoit aucune règle : c'est l'escapement universel ;
 //! - le code inline et les blocs bruts sont littéraux par nature.
 //!
-//! L'espace insécable s'écrit `~` en Typst ; le moteur la porte en
-//! espace insécable Unicode pendant son travail, que le générateur traduit
-//! en `~` — un tilde tapé dans le texte reste un tilde.
+//! Les guillemets s'écrivent `«` et `»` dans la syntaxe — c'est la notation
+//! du langage, à l'abri des apostrophes —, et le moteur les **compose** avec
+//! les caractères choisis par niveau d'imbrication : `«`, `"` puis `'` en
+//! français ; `"`, `'` puis `"` en anglais.
+//!
+//! L'espace insécable s'écrit `~` en Typst ; le moteur la porte en insécable
+//! Unicode pendant son travail, que le générateur traduit en `~` — un tilde
+//! tapé dans le texte reste un tilde.
 
-/// La typographie appliquée au texte composé.
+/// La place d'une espace dans la composition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Typographie {
-    /// Aucune règle : le texte est pris tel quel.
+pub enum Espace {
+    /// Aucune espace : le signe colle.
     #[default]
     Aucune,
-
-    /// Le français : espace insécable devant les signes doubles et dans les
-    /// guillemets, espace normale après.
-    Francaise,
-
-    /// L'anglais : aucune espace devant la ponctuation, espace normale après.
-    Anglaise,
+    /// Une espace normale.
+    Normale,
+    /// Une espace insécable — `~` en Typst.
+    Insécable,
 }
 
-impl Typographie {
-    /// La typographie nommée dans les normes : `aucune`, `française`,
-    /// `anglaise`.
+impl Espace {
+    /// L'espace nommée dans les normes : `aucune`, `normale`, `insécable`.
     pub fn depuis(nom: &str) -> Self {
         match nom.trim().to_lowercase().as_str() {
-            "française" | "francaise" | "fr" => Typographie::Francaise,
-            "anglaise" | "anglaise " | "en" => Typographie::Anglaise,
-            _ => Typographie::Aucune,
+            "normale" => Espace::Normale,
+            "insécable" => Espace::Insécable,
+            _ => Espace::Aucune,
         }
     }
 
+    /// Le nom porté dans les normes.
+    pub fn nom(self) -> &'static str {
+        match self {
+            Espace::Aucune => "aucune",
+            Espace::Normale => "normale",
+            Espace::Insécable => "insécable",
+        }
+    }
+
+    /// Le caractère de l'espace, ou rien.
+    fn caractere(self) -> Option<char> {
+        match self {
+            Espace::Aucune => None,
+            Espace::Normale => Some(' '),
+            Espace::Insécable => Some(INSECABLE),
+        }
+    }
+}
+
+/// Les règles de typographie appliquées au texte composé.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Regles {
+    /// L'espace devant les signes doubles `; : ! ?`.
+    pub avant_signes: Espace,
+
+    /// L'espace après les signes doubles `; : ! ?`.
+    pub apres_signes: Espace,
+
+    /// L'espace après la virgule et le point, **hors nombres** : `3.14` et
+    /// `1,2` sont pris tels quels, `fin. La suite` reçoit sa espace.
+    pub apres_virgule_point: Espace,
+
+    /// L'espace à l'intérieur des guillemets.
+    pub espace_guillemets: Espace,
+
+    /// Les paires de guillemets, **par niveau d'imbrication** : la première
+    /// pour les citations les plus hautes, les suivantes pour ce qu'elles
+    /// contiennent. Le dernier niveau sert au-delà.
+    pub guillemets: Vec<(char, char)>,
+}
+
+impl Regles {
+    /// Aucune règle : le texte est pris tel quel.
+    pub fn aucune() -> Self {
+        Self {
+            avant_signes: Espace::Aucune,
+            apres_signes: Espace::Aucune,
+            apres_virgule_point: Espace::Aucune,
+            espace_guillemets: Espace::Aucune,
+            guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
+        }
+    }
+
+    /// Le français : insécable devant les signes doubles et à l'intérieur des
+    /// guillemets ; `«`, `"` puis `'` par niveau d'imbrication.
+    pub fn francaise() -> Self {
+        Self {
+            avant_signes: Espace::Insécable,
+            apres_signes: Espace::Normale,
+            apres_virgule_point: Espace::Normale,
+            espace_guillemets: Espace::Insécable,
+            guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
+        }
+    }
+
+    /// L'anglais : la ponctuation colle ; `"`, `'` puis `"` par niveau.
+    pub fn anglaise() -> Self {
+        Self {
+            avant_signes: Espace::Aucune,
+            apres_signes: Espace::Normale,
+            apres_virgule_point: Espace::Normale,
+            espace_guillemets: Espace::Aucune,
+            guillemets: vec![('"', '"'), ('\'', '\''), ('"', '"')],
+        }
+    }
+
+    /// Le défaut nommé dans les normes.
+    pub fn depuis(nom: &str) -> Self {
+        match nom.trim().to_lowercase().as_str() {
+            "française" | "francaise" | "fr" => Self::francaise(),
+            "anglaise" | "en" => Self::anglaise(),
+            _ => Self::aucune(),
+        }
+    }
 }
 
 /// L'espace insécable, portée en Unicode pendant le travail.
 const INSECABLE: char = '\u{A0}';
 
-/// Applique les règles de la langue à un texte nu.
+/// Applique les règles à un texte nu.
 ///
 /// Le résultat porte les insécables en [`INSECABLE`] : c'est au générateur
 /// de les traduire en `~` après son échappement, pour qu'un tilde tapé reste
 /// un tilde. Un texte sans règle à appliquer sort inchangé.
-pub fn appliquer(texte: &str, typographie: Typographie) -> String {
-    if typographie == Typographie::Aucune || texte.is_empty() {
+pub fn appliquer(texte: &str, regles: &Regles) -> String {
+    if *regles == Regles::aucune() || texte.is_empty() {
         return texte.to_string();
     }
 
-    let francais = typographie == Typographie::Francaise;
     let mut sortie = String::new();
+    let mut profondeur = 0usize;
+    let mut venant_du_guillemet = false;
     let caracteres: Vec<char> = texte.chars().collect();
 
     for (position, caractere) in caracteres.iter().enumerate() {
         let suivant = caracteres.get(position + 1);
 
+        if !caractere.is_whitespace() {
+            venant_du_guillemet = false;
+        }
+
         match caractere {
             // L'espace se réduit à une seule, et se pose **avant** le
             // prochain caractère utile — dont la règle décidera de sa nature.
             c if c.is_whitespace() => {
+                // L'espace qui suit un guillemet ouvrant est celui de la
+                // règle : le texte ne le redit pas.
+                if venant_du_guillemet {
+                    continue;
+                }
+
                 // La fin du texte : l'espace est du contenu, qui tient entre
                 // les éléments. Seules les suites s'absorbent.
                 let Some(&prochain) = suivant else {
@@ -79,76 +173,80 @@ pub fn appliquer(texte: &str, typographie: Typographie) -> String {
                     continue;
                 };
 
-                // Une suite d'espaces n'en fait qu'un.
                 if prochain.is_whitespace() {
                     continue;
                 }
 
-                // En français, l'espace d'avant un signe double est absorbée
-                // par l'insécable que le signe posera lui-même.
-                if francais && matches!(prochain, ';' | ':' | '!' | '?' | '»') {
+                // Ce que la suite posera elle-même n'en veut pas deux — sauf
+                // un nombre, que l'on ne touche pas.
+                if matches!(prochain, ';' | ':' | '!' | '?' | ',' | '.' | '»')
+                    && !est_un_nombre(&caracteres, position)
+                {
                     continue;
                 }
 
-                // Un signe qui se colle n'en veut pas davantage : sa branche
-                // aura déjà coupé, et il ne faut pas repousser la question.
-                if matches!(prochain, ',' | '.') {
-                    continue;
-                }
+
 
                 if !sortie.ends_with(' ') && !sortie.ends_with(INSECABLE) {
                     sortie.push(' ');
                 }
             }
 
-            // Les signes doubles : en français, insécable devant et espace
-            // normale après — l'exemple du programme. En anglais, la
-            // ponctuation colle : rien devant, une espace après.
+            // Les signes doubles : l'espace d'avant et l'espace d'après sont
+            // ceux que les règles ont choisis.
             ';' | ':' | '!' | '?' => {
                 while sortie.ends_with(' ') {
                     sortie.pop();
                 }
 
-                if francais && !sortie.is_empty() && !sortie.ends_with(INSECABLE) {
-                    sortie.push(INSECABLE);
-                }
+                if let Some(espace) = regles.avant_signes.caractere()
+                    && !sortie.is_empty() && !sortie.ends_with(espace) {
+                        sortie.push(espace);
+                    }
 
                 sortie.push(*caractere);
-
-                if suivant.is_some_and(|c| !c.is_whitespace()) {
-                    sortie.push(' ');
-                }
+                pousser_apres(regles.apres_signes, suivant, &mut sortie);
             }
 
-            // La virgule et le point ne s'ouvrent jamais — `3.14` tient —
-            // mais n'ajoutent pas d'espace après : leur voisinage est au
-            // texte (abréviations, décimales, initiales).
-            ',' | '.' => {
+            // La virgule et le point, hors nombres : la même discipline,
+            // avec l'espace qu'on leur a choisie. `3.14` et `1,2` sont des
+            // nombres — ils ne sont pas touchés.
+            ',' | '.' if !est_un_nombre(&caracteres, position) => {
                 while sortie.ends_with(' ') {
                     sortie.pop();
                 }
 
                 sortie.push(*caractere);
+                pousser_apres(regles.apres_virgule_point, suivant, &mut sortie);
             }
 
-            // Les guillemets français portent l'insécable dedans.
+            // Les guillemets s'écrivent `«` et `»` dans la syntaxe, et se
+            // **composent** avec les caractères choisis par niveau.
             '«' => {
-                sortie.push(*caractere);
+                profondeur += 1;
+                let (ouvrant, _) = paire(regles, profondeur);
+                sortie.push(ouvrant);
+                venant_du_guillemet = true;
 
-                if francais && suivant.is_some() && !sortie.ends_with(INSECABLE) {
-                    sortie.push(INSECABLE);
-                }
+                if let Some(espace) = regles.espace_guillemets.caractere()
+                    && suivant.is_some() {
+                        sortie.push(espace);
+                    }
             }
             '»' => {
                 while sortie.ends_with(' ') {
                     sortie.pop();
                 }
 
-                if francais && !sortie.is_empty() && !sortie.ends_with(INSECABLE) {
-                    sortie.push(INSECABLE);
-                }
+                let (_, fermant) = paire(regles, profondeur.max(1));
 
-                sortie.push(*caractere);
+                if let Some(espace) = regles.espace_guillemets.caractere()
+                    && !sortie.is_empty() && !sortie.ends_with(espace) {
+                        sortie.push(espace);
+                    }
+
+                sortie.push(fermant);
+                profondeur = profondeur.saturating_sub(1);
             }
 
             _ => {
@@ -160,6 +258,39 @@ pub fn appliquer(texte: &str, typographie: Typographie) -> String {
     sortie
 }
 
+/// Le signe est-il au milieu d'un nombre ?
+///
+/// Une virgule ou un point entre deux chiffres est décimal : `3.14`, `1,2`.
+/// Tout le reste — `fin.`, `a, b` — est de la ponctuation.
+fn est_un_nombre(caracteres: &[char], position: usize) -> bool {
+    let avant = position.checked_sub(1).and_then(|i| caracteres.get(i));
+    let apres = caracteres.get(position + 1);
+
+    avant.is_some_and(|c| c.is_ascii_digit()) && apres.is_some_and(|c| c.is_ascii_digit())
+}
+
+/// Pousse l'espace d'après un signe, si quelque chose suit.
+fn pousser_apres(espace: Espace, suivant: Option<&char>, sortie: &mut String) {
+    // Un guillemet fermant posera sa propre espace — jamais deux.
+    let suit = suivant.is_some_and(|c| !c.is_whitespace() && *c != '»');
+
+    if suit && !sortie.ends_with(' ') && !sortie.ends_with(INSECABLE)
+        && let Some(caractere) = espace.caractere() {
+            sortie.push(caractere);
+        }
+}
+
+/// La paire de guillemets du niveau demandé ; le dernier sert au-delà.
+fn paire(regles: &Regles, profondeur: usize) -> (char, char) {
+    let dernier = regles.guillemets.len().saturating_sub(1);
+    let index = profondeur.saturating_sub(1).min(dernier);
+    regles
+        .guillemets
+        .get(index)
+        .copied()
+        .unwrap_or(('«', '»'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,55 +299,79 @@ mod tests {
     /// insécable et suivi d'une espace normale — exactement.
     #[test]
     fn en_francais_le_point_virgule_est_strict() {
-        let typo = Typographie::Francaise;
+        let regles = Regles::francaise();
 
-        assert_eq!(appliquer("a; b", typo), format!("a{INSECABLE}; b"));
-        assert_eq!(appliquer("a ; b", typo), format!("a{INSECABLE}; b"));
-        assert_eq!(appliquer("a;b", typo), format!("a{INSECABLE}; b"));
-        assert_eq!(appliquer("a ;  b", typo), format!("a{INSECABLE}; b"));
+        assert_eq!(appliquer("a; b", &regles), format!("a{INSECABLE}; b"));
+        assert_eq!(appliquer("a ; b", &regles), format!("a{INSECABLE}; b"));
+        assert_eq!(appliquer("a;b", &regles), format!("a{INSECABLE}; b"));
+        assert_eq!(appliquer("a ;  b", &regles), format!("a{INSECABLE}; b"));
     }
 
-    /// Les signes doubles suivent la même règle, et les guillemets aussi.
+    /// Les signes doubles suivent la même règle.
     #[test]
-    fn en_francais_les_signes_doubles_et_les_guillemets() {
-        let typo = Typographie::Francaise;
+    fn en_francais_les_signes_doubles() {
+        let regles = Regles::francaise();
 
-        assert_eq!(appliquer("oui !", typo), format!("oui{INSECABLE}!"));
-        assert_eq!(appliquer("non ?", typo), format!("non{INSECABLE}?"));
-        assert_eq!(appliquer("12 : 30", typo), format!("12{INSECABLE}: 30"));
+        assert_eq!(appliquer("oui !", &regles), format!("oui{INSECABLE}!"));
+        assert_eq!(appliquer("non ?", &regles), format!("non{INSECABLE}?"));
+        assert_eq!(appliquer("12 : 30", &regles), format!("12{INSECABLE}: 30"));
+    }
+
+    /// La virgule et le point, hors nombres, reçoivent **systématiquement**
+    /// leur espace après. Les nombres sont pris tels quels.
+    #[test]
+    fn la_virgule_et_le_point_se_suivent_d_une_espace() {
+        let regles = Regles::francaise();
+
+        assert_eq!(appliquer("fin.", &regles), "fin.");
+        assert_eq!(appliquer("fin. La suite", &regles), "fin. La suite");
+        assert_eq!(appliquer("fin.Suite", &regles), "fin. Suite");
+        assert_eq!(appliquer("a,b", &regles), "a, b");
+        assert_eq!(appliquer("a , b", &regles), "a, b");
+
+        // Les nombres sont hors du compte.
+        assert_eq!(appliquer("3.14", &regles), "3.14");
+        assert_eq!(appliquer("1,2", &regles), "1,2");
+    }
+
+    /// Les guillemets se composent par niveau d'imbrication : `«`, `"` puis
+    /// `'` en français — la notation de la syntaxe reste `«` et `»`.
+    #[test]
+    fn les_guillemets_suivent_leur_niveau() {
+        let regles = Regles::francaise();
+
         assert_eq!(
-            appliquer("« bonjour »", typo),
-            format!("«{INSECABLE}bonjour{INSECABLE}»")
+            appliquer("« un « deux » fin »", &regles),
+            format!("«{INSECABLE}un \"{INSECABLE}deux{INSECABLE}\" fin{INSECABLE}»")
+        );
+
+        // La même notation compose autrement en anglais : le guillemet
+        // colle au texte qu'il cite.
+        let anglais = Regles::anglaise();
+        assert_eq!(
+            appliquer("« un « deux » fin »", &anglais),
+            "\"un 'deux' fin\""
         );
     }
 
-    /// La virgule et le point ne s'ouvrent jamais, en français comme en
-    /// anglais — et jamais d'espace forcée après : `3.14` doit tenir.
+    /// Les règles se prennent une par une : changer l'espace des signes
+    /// change la composition, sans toucher à la langue.
     #[test]
-    fn la_virgule_et_le_point_ne_s_ouvrent_jamais() {
-        for typo in [Typographie::Francaise, Typographie::Anglaise] {
-            assert_eq!(appliquer("a , b", typo), "a, b", "{typo:?}");
-            assert_eq!(appliquer("a,  b", typo), "a, b", "{typo:?}");
-            assert_eq!(appliquer("fin .", typo), "fin.", "{typo:?}");
-            assert_eq!(appliquer("3.14", typo), "3.14", "{typo:?}");
-            assert_eq!(appliquer("1,2", typo), "1,2", "{typo:?}");
-        }
+    fn les_regles_se_prennent_une_par_une() {
+        let mut regles = Regles::francaise();
+        regles.avant_signes = Espace::Aucune;
+
+        assert_eq!(appliquer("a; b", &regles), "a; b");
+
+        regles.apres_virgule_point = Espace::Insécable;
+        assert_eq!(appliquer("a,b", &regles), format!("a,{INSECABLE}b"));
     }
 
-    /// En anglais, la ponctuation colle : aucune espace devant, une après.
+    /// Sans règles, rien ne bouge.
     #[test]
-    fn en_anglais_la_ponctuation_colle() {
-        let typo = Typographie::Anglaise;
-
-        assert_eq!(appliquer("a ; b", typo), "a; b");
-        assert_eq!(appliquer("a:b", typo), "a: b");
-        assert_eq!(appliquer("Hello !", typo), "Hello!");
-        assert_eq!(appliquer("why ?", typo), "why?");
-    }
-
-    /// Sans typographie, rien ne bouge — et les doubles espaces restent.
-    #[test]
-    fn sans_typographie_rien_ne_bouge() {
-        assert_eq!(appliquer("a ;  b", Typographie::Aucune), "a ;  b");
+    fn sans_regles_rien_ne_bouge() {
+        let regles = Regles::aucune();
+        assert_eq!(appliquer("a ;  b", &regles), "a ;  b");
+        assert_eq!(appliquer("« x »", &regles), "« x »");
     }
 }
