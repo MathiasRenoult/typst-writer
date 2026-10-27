@@ -129,7 +129,7 @@ fn generer_inline(inline: &[Inline], out: &mut String, debut_de_ligne: bool) {
             }
             Inline::Lien { texte, cible } => {
                 out.push_str("#link(\"");
-                out.push_str(cible);
+                echapper_chaine(cible, out);
                 out.push_str("\")[");
                 generer_inline(texte, out, false);
                 out.push(']');
@@ -199,6 +199,21 @@ fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
     }
 }
 
+/// Écrit une cible de lien dans une chaîne Typst.
+///
+/// Une chaîne n'a que deux escapements — la barre oblique et le guillemet —,
+/// mais les deux y sont obligés : une cible qui en porterait un romprait la
+/// chaîne, et le document ne compilerait plus.
+fn echapper_chaine(texte: &str, out: &mut String) {
+    for caractere in texte.chars() {
+        if matches!(caractere, '\\' | '"') {
+            out.push('\\');
+        }
+
+        out.push(caractere);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +252,67 @@ mod tests {
                 .map(|erreur| erreur.message.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+/// L'échappement Typst, éprouvé **par contexte**.
+    ///
+    /// Chaque contexte a ses pièges : le code est pris au mot, la cible d'un
+    /// lien est une chaîne, une couleur est une expression, une note est un
+    /// bloc de contenu, un bloc brut est du Typst nu. Le compilateur est le
+    /// seul juge — et la forme écrite se relit telle quelle.
+    #[test]
+    fn l_echappement_est_eprouve_par_contexte() {
+        // Le code est littéral : ses signes Typst ne sont pas du balisage,
+        // et un crochet y est un crochet.
+        let document = Document {
+            blocs: vec![Bloc::Paragraphe(vec![Inline::Code("#f(x) * y]".to_string())])],
+        };
+        let typst = generer(&document);
+        assert!(typst.contains("`#f(x) * y]`"), "{typst}");
+        assert!(compiler(&typst).errors.is_empty(), "le code doit compiler");
+
+        // La cible d'un lien est une **chaîne** : le guillemet et la barre
+        // oblique y sont échappés, sans quoi la chaîne rompt.
+        let document = Document {
+            blocs: vec![Bloc::Paragraphe(vec![Inline::Lien {
+                texte: vec![Inline::Texte("lien".to_string())],
+                cible: "https://x.y/a\"b\\c".to_string(),
+            }])],
+        };
+        let typst = generer(&document);
+        assert!(typst.contains("#link(\"https://x.y/a\\\"b\\\\c\")"), "{typst}");
+        assert!(compiler(&typst).errors.is_empty(), "la chaîne doit tenir");
+
+        // Une couleur est une expression Typst ; son contenu est du texte
+        // échappé — ses signes ne sont pas du balisage.
+        let document = Document {
+            blocs: vec![Bloc::Paragraphe(vec![Inline::Couleur {
+                couleur: "red".to_string(),
+                contenu: vec![Inline::Texte("2 * 3 et #x et ] ici".to_string())],
+            }])],
+        };
+        let typst = generer(&document);
+        assert!(compiler(&typst).errors.is_empty(), "la couleur doit compiler");
+
+        // Une note est un bloc de contenu : son texte s'échappe, et un code
+        // qui y porte un crochet ne le referme pas.
+        let document = Document {
+            blocs: vec![Bloc::Paragraphe(vec![Inline::Note(vec![
+                Inline::Texte("2 * 3 et ".to_string()),
+                Inline::Code("a]b".to_string()),
+                Inline::Texte(" ici".to_string()),
+            ])])],
+        };
+        let typst = generer(&document);
+        assert!(compiler(&typst).errors.is_empty(), "la note doit compiler");
+
+        // Un bloc brut est du Typst nu : pris au mot, sans échappement.
+        let document = Document {
+            blocs: vec![Bloc::Brut("#let mystère = 2\n#let suite = 3".to_string())],
+        };
+        let typst = generer(&document);
+        assert!(typst.starts_with("#let mystère = 2"), "{typst}");
+        assert!(compiler(&typst).errors.is_empty(), "le brut doit compiler");
     }
 
     /// Le texte qui ressemble à du balisage ne devient pas du balisage.

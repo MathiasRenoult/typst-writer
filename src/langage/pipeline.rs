@@ -194,7 +194,42 @@ mod tests {
     /// Le `.tw` devient un include in-memory derrière l'en-tête, et compile par
     /// le même moteur Typst que les chapitres existants.
     #[test]
-    fn le_document_intermediaire_est_insere_et_compile() {
+/// L'assemblage est sécurisé : ce qui est nécessaire est préservé, ce
+    /// qui est déjà là n'est pas doublé, ce qui est choisi n'est pas repris.
+    #[test]
+    fn l_assemblage_preserve_et_ne_double_rien() {
+        let root = std::path::Path::new("/projet-inexistant");
+        let document = super::super::parse("Bonjour.\n");
+
+        // Une inclusion déjà présente est conservée, et l'inclusion générée
+        // ne s'ajoute qu'une fois — même après deux assemblages.
+        let main = "#include \"chapitre.typ\"\n\n#bibliography(\"references.bib\", style: \"chicago-notes\")\n";
+        let (entry, _) = super::compilation_unit_document(root, main, &document);
+        assert!(entry.contains("#include \"chapitre.typ\""), "{entry}");
+
+        let (encore, _) = super::compilation_unit_document(root, &entry, &document);
+        assert_eq!(
+            encore.matches("#include").count(),
+            2,
+            "l'inclusion héritée et la générée, jamais plus : {encore}"
+        );
+
+        // Une bibliographie déjà là ne se double pas.
+        assert_eq!(
+            encore.matches("#bibliography").count(),
+            1,
+            "une seule bibliographie : {encore}"
+        );
+
+        // Un style explicitement choisi reste le sien.
+        let main = "#set document(title: \"Essai\")\n\n#bibliography(\"references.bib\", style: \"ieee\")\n";
+        let (entry, _) = super::compilation_unit_document(root, main, &document);
+        assert!(entry.contains("style: \"ieee\""), "le style choisi tient : {entry}");
+        assert!(entry.contains("#set document(title: \"Essai\")"), "{entry}");
+        assert_eq!(entry.matches("#bibliography").count(), 1, "{entry}");
+    }
+
+        fn le_document_intermediaire_est_insere_et_compile() {
         let root = std::env::temp_dir().join(format!(
             "typst-writer-langage-pipeline-{}",
             std::process::id()
