@@ -850,10 +850,39 @@ impl RenderState {
         self.image_hashes.retain(|index, _| keep.contains(index));
     }
 
+    /// Combien de rasterisations mènent leur vie en même temps.
+    ///
+    /// Une page se rasterise en quelques dizaines de millisecondes ; en
+    /// laisser passer plus d'un petit nombre à la fois ne rend rien plus
+    /// vite, et charge la mémoire de tampons RGBA qui n'ont qu'à attendre.
+    /// Ce qui n'a pas eu de place reste périmé, et repart quand une place se
+    /// libère : la file est la même, seuls les départs sont espacés.
+    pub const SIMULTANEES: usize = 4;
+
     /// Réserve une rasterisation, sauf si elle est déjà en cours pour cette
-    /// révision et cette page.
+    /// révision et cette page — ou s'il n'y a plus de place : la page reste
+    /// alors périmée, et repartira quand une place se libérera.
     pub fn begin_page_render(&mut self, revision: u64, index: usize) -> bool {
+        if self.rendering.len() >= Self::SIMULTANEES {
+            return false;
+        }
+
         self.rendering.insert((revision, index))
+    }
+
+
+    /// Une image d'une révision passée n'est plus bonne à montrer.
+    ///
+    /// Elle se jette, et la page repart dans les périmées : c'est la
+    /// nouvelle révision qui la redessinera. `true` quand l'image est à
+    /// jeter.
+    pub fn image_perimee(&mut self, revision: u64, index: usize) -> bool {
+        if revision != self.revision {
+            self.stale.insert(index);
+            return true;
+        }
+
+        false
     }
 
     /// Libère la réservation exacte d'une rasterisation terminée.
@@ -991,6 +1020,103 @@ impl RenderState {
 
 #[cfg(test)]
 mod tests {
+
+    /// Le zoom ne redemande **pas** une compilation.
+    ///
+    /// Changer la densité du rendu est un affaire de rasterisation : le
+    /// document compilé est bon, seules les images se refont. C'est la
+    /// promesse du jalon, et la voici éprouvée.
+    #[test]
+    fn le_zoom_ne_redemande_pas_de_compilation() {
+        let mut render = RenderState {
+            content: "le texte déjà compilé".to_string(),
+            done: true,
+            ..Default::default()
+        };
+
+        let start = Instant::now();
+
+        for zoom in 0..10u64 {
+            let now = start + Duration::from_millis(zoom * 300);
+
+            // Le geste de zoom : les images sont périmées, la révision
+            // change — et le document compilé reste le bon.
+            render.invalidate_rasterization(300);
+
+            assert!(
+                !render.compile_due("le texte déjà compilé", 0, now),
+                "zoom {zoom} : le zoom ne doit pas recompiler"
+            );
+        }
+    }
+
+
+    /// Sur un document long, cinquante pages visibles ne partent pas
+    /// toutes ensemble : quatre départs, le reste attend sa place.
+    #[test]
+    fn un_document_long_ne_lance_pas_cinquante_rendus_d_un_coup() {
+        let mut render = RenderState {
+            visible: Some((0, 49)),
+            ..Default::default()
+        };
+        render.stale.extend(0..500);
+
+        let mut partis = 0;
+        for index in 0..50 {
+            if render.begin_page_render(0, index) {
+                partis += 1;
+            }
+        }
+
+        assert_eq!(partis, RenderState::SIMULTANEES);
+        assert_eq!(render.rendering.len(), RenderState::SIMULTANEES);
+
+        // Et ce qui attend reste périmé : la file n'est pas perdue.
+        assert!(render.stale.contains(&12), "la page 12 attend toujours");
+    }
+
+
+    /// Une image d'une révision passée se jette, et sa page repart dans les
+    /// périmées : c'est la révision courante qui la redessinera.
+    #[test]
+    fn une_image_perimee_ne_revient_pas() {
+        let mut render = RenderState {
+            revision: 3,
+            ..Default::default()
+        };
+
+        assert!(
+            render.image_perimee(2, 7),
+            "la révision 2 est passée"
+        );
+        assert!(render.stale.contains(&7), "la page repart en périmée");
+
+        assert!(!render.image_perimee(3, 7), "la révision courante est bonne");
+    }
+
+    /// Les rasterisations ne partent pas toutes d'un coup : il y a un
+    /// nombre de places, et ce qui n'en a pas reste périmé.
+    #[test]
+    fn les_rasterisations_partent_qu_il_y_a_de_la_place() {
+        let mut render = RenderState::default();
+
+        // Le premier tour remplit les places.
+        let prises: Vec<bool> = (0..RenderState::SIMULTANEES + 2)
+            .map(|index| render.begin_page_render(0, index))
+            .collect();
+
+        assert_eq!(
+            prises.iter().filter(|prise| **prise).count(),
+            RenderState::SIMULTANEES,
+            "seulement les places disponibles partent"
+        );
+        assert_eq!(render.rendering.len(), RenderState::SIMULTANEES);
+
+        // Une finie, une place se libère — et la suivante part.
+        render.finish_page_render(0, 0);
+        assert!(render.begin_page_render(0, RenderState::SIMULTANEES + 2));
+    }
+
     use super::*;
 
     #[test]

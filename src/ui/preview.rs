@@ -950,6 +950,80 @@ mod tests {
         assert_eq!(visible_pages(&[], 0.0, 300.0), (0, 0));
     }
 
+
+    /// Un document long : cinq cents pages, comme une thèse.
+    fn document_long() -> Vec<(f32, f32)> {
+        (0..500)
+            .map(|index| {
+                // Un peu de variété : une page sur vingt en paysage, une sur
+                // cinquante plus courte — les cumuls ne peuvent pas compter
+                // sur des hauteurs uniformes.
+                if index % 20 == 19 {
+                    (842.0, 595.0)
+                } else if index % 50 == 49 {
+                    (595.0, 300.0)
+                } else {
+                    (595.0, 842.0)
+                }
+            })
+            .collect()
+    }
+
+    /// Sur cinq cents pages, les cumuls de défilement ne dérivent pas : la
+    /// dernière page tombe là où le calcul dit, pas à quelques pages près.
+    #[test]
+    fn les_cumuls_sur_cinq_cents_pages_ne_derivent_pas() {
+        let sizes = document_long();
+
+        for index in [0, 1, 100, 250, 499] {
+            let attendu: f32 = PANEL_PADDING
+                + sizes[..index].iter().map(|(_, hauteur)| hauteur + PAGE_GAP).sum::<f32>();
+            let vu = page_offset(&sizes, index);
+
+            assert!(
+                (vu - attendu).abs() < 1.0,
+                "page {index} : {vu} au lieu de {attendu}"
+            );
+        }
+
+        // Et le défilement met la page voulue en haut — le geste du sommaire.
+        for index in [0, 7, 249, 498] {
+            let haut = scroll_offset_for_page(&sizes, index);
+            let (premiere, _) = visible_pages(&sizes, haut, haut + 842.0);
+
+            assert!(
+                premiere <= index,
+                "page {index} : la première visible est {premiere}"
+            );
+        }
+    }
+
+    /// Les trois modes d'affichage tiennent sur un document long : la
+    /// largeur, la hauteur, et le zoom libre restent dans leurs bornes,
+    /// page après page.
+    #[test]
+    fn les_modes_d_affichage_tiennent_sur_un_document_long() {
+        let sizes = document_long();
+        let box_size = default_viewport();
+
+        for index in [0, 250, 499] {
+            let page = (f64::from(sizes[index].0), f64::from(sizes[index].1));
+
+            for zoom in [
+                crate::app::state::PreviewZoomMode::FitWidth,
+                crate::app::state::PreviewZoomMode::FitHeight,
+                crate::app::state::PreviewZoomMode::Free(4.0),
+            ] {
+                let ratio = display_ratio_for_zoom(box_size, page, zoom);
+
+                assert!(
+                    (MIN_DISPLAY_RATIO..=MAX_DISPLAY_RATIO).contains(&ratio),
+                    "page {index}, zoom {zoom:?} : ratio {ratio}"
+                );
+            }
+        }
+    }
+
     /// Des pages de hauteurs différentes ne doivent pas fausser le calcul :
     /// c'est le cas des documents mixtes (titres, figures, sauts de page).
     #[test]

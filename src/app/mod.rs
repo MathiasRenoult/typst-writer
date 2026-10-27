@@ -936,10 +936,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // Une compilation est arrivée pendant le rendu : cette image
             // appartient à un document dépassé, on la jette plutôt que de
             // faire régresser l'affichage.
-            if revision != state.render.revision {
-                state.render.stale.insert(index);
-
-                return Task::none();
+            if state.render.image_perimee(revision, index) {
+                return rasterize_visible(state);
             }
 
             state.render.stale.remove(&index);
@@ -981,7 +979,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.render.bound_page_cache();
             }
 
-            Task::none()
+            // Une place s'est libérée : ce qui attendait part.
+            rasterize_visible(state)
         }
 
         Message::ViewportChanged(first, last, bounds) => {
@@ -1200,6 +1199,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::GoToDefinition => request_definition(state),
 
         Message::ShowHover => request_hover(state),
+
+        Message::TitreSuivant => sauter_titre(state, 1),
+        Message::TitrePrecedent => sauter_titre(state, -1),
 
         Message::GotoHeading(index) => {
             let Some(entry) = state.render.outline.get(index).cloned() else {
@@ -1558,7 +1560,40 @@ fn handle_shortcut_inner(
         "n" => update(state, Message::NewFile),
         "o" => update(state, Message::OpenFile),
         "e" => update(state, Message::ExportPdf),
+        // Le titre suivant, ou le précédent avec Maj : la table des matières
+        // se parcourt sans quitter le clavier.
+        "t" => {
+            if modifiers.shift() {
+                update(state, Message::TitrePrecedent)
+            } else {
+                update(state, Message::TitreSuivant)
+            }
+        }
         _ => Task::none(),
+    }
+}
+
+/// Va au titre suivant ou précédent : le curseur y va, l'aperçu suit —
+/// exactement le geste d'un clic au sommaire, sans quitter le clavier.
+fn sauter_titre(state: &mut State, direction: i8) -> Task<Message> {
+    let Some(path) = state.editor.path.clone() else {
+        return Task::none();
+    };
+
+    // Les lignes du sommaire sont celles du fichier : la ligne du curseur
+    // les rejoint à l'unité près.
+    let (ligne, _) = state.editor.editor.cursor_position();
+    let ligne = ligne + 1;
+
+    let index = if direction > 0 {
+        crate::typst::render::entry_suivant(&state.render.outline, &path, ligne)
+    } else {
+        crate::typst::render::entry_precedent(&state.render.outline, &path, ligne)
+    };
+
+    match index {
+        Some(index) => update(state, Message::GotoHeading(index)),
+        None => Task::none(),
     }
 }
 

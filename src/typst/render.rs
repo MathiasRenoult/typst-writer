@@ -175,6 +175,34 @@ pub fn entry_covering(
         .next_back()
 }
 
+/// L'entrée du sommaire qui suit la ligne donnée, dans le même fichier.
+pub fn entry_suivant(
+    outline: &[OutlineEntry],
+    file: &Path,
+    line: usize,
+) -> Option<usize> {
+    outline
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.file.as_deref() == Some(file) && entry.line > line)
+        .map(|(index, _)| index)
+        .next()
+}
+
+/// L'entrée du sommaire qui précède la ligne donnée, dans le même fichier.
+pub fn entry_precedent(
+    outline: &[OutlineEntry],
+    file: &Path,
+    line: usize,
+) -> Option<usize> {
+    outline
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.file.as_deref() == Some(file) && entry.line < line)
+        .map(|(index, _)| index)
+        .next_back()
+}
+
 /// Résultat de la compilation d'un document.
 #[derive(Debug, Clone, Default)]
 pub struct CompileOutcome {
@@ -666,6 +694,58 @@ impl World for PreviewWorld {
 
 #[cfg(test)]
 mod tests {
+
+    /// Un sommaire, pour éprouver les sauts de titre.
+    fn sommaire() -> Vec<OutlineEntry> {
+        let fichier = PathBuf::from("document.tw");
+        let autre = PathBuf::from("chapitre.tw");
+
+        [
+            (1, "Ouverture", fichier.clone(), 1, 0),
+            (2, "Première partie", fichier.clone(), 10, 1),
+            (2, "Seconde partie", fichier.clone(), 40, 4),
+            (1, "Ailleurs", autre, 3, 9),
+            (1, "Clôture", fichier, 80, 8),
+        ]
+        .into_iter()
+        .map(|(level, text, file, line, page)| OutlineEntry {
+            level,
+            text: text.to_string(),
+            file: Some(file),
+            line,
+            page,
+        })
+        .collect()
+    }
+
+    /// Le titre suivant saute au suivant du même fichier, jamais au
+    /// prochain d'un autre.
+    #[test]
+    fn le_titre_suivant_suit_le_meme_fichier() {
+        let sommaire = sommaire();
+        let fichier = Path::new("document.tw");
+
+        assert_eq!(entry_suivant(&sommaire, fichier, 1), Some(1));
+        assert_eq!(entry_suivant(&sommaire, fichier, 10), Some(2));
+        assert_eq!(
+            entry_suivant(&sommaire, fichier, 40),
+            Some(4),
+            "le titre d'un autre fichier est sauté"
+        );
+        assert_eq!(entry_suivant(&sommaire, fichier, 80), None, "le dernier");
+    }
+
+    /// Le titre précédent revient en arrière, dans le même fichier.
+    #[test]
+    fn le_titre_precedent_revient_dans_le_meme_fichier() {
+        let sommaire = sommaire();
+        let fichier = Path::new("document.tw");
+
+        assert_eq!(entry_precedent(&sommaire, fichier, 80), Some(2));
+        assert_eq!(entry_precedent(&sommaire, fichier, 10), Some(0));
+        assert_eq!(entry_precedent(&sommaire, fichier, 1), None, "le premier");
+    }
+
     use super::*;
 
     /// Ce que l'introspection donne réellement pour les titres d'un document.
