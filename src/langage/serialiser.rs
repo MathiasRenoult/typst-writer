@@ -409,7 +409,22 @@ mod tests {
             })
             .collect();
 
-        Inline::Texte((*hasard.un_parmi(&mots)).to_string())
+        let mut texte = (*hasard.un_parmi(&mots)).to_string();
+
+        // Un blanc aux bords, parfois : `parse` le rogne, donc ce n'est
+        // pas du canonique — et c'est exactement ce que la propriété doit
+        // rencontrer pour valoir quelque chose.
+        match hasard.entier(6) {
+            0 => texte.insert(0, ' '),
+            1 => texte.push(' '),
+            2 => {
+                texte.insert(0, ' ');
+                texte.push(' ');
+            }
+            _ => {}
+        }
+
+        Inline::Texte(texte)
     }
 
     /// Un littéral au hasard : ce que l'échappement insère mot à mot.
@@ -615,19 +630,24 @@ mod tests {
     }
 
     /// La garantie centrale : `parse(serialiser(AST)) == AST` pour tout AST
-    /// canonique. Le générateur n'en produit pas d'autre.
+    /// **canonique** — et pour lui seul. C'est le contrat réel : la
+    /// propriété ne promet rien aux formes que `parse` rogne à la lecture,
+    /// et doit en rencontrer pour valoir quelque chose.
     #[test]
     fn le_round_trip_tient_sur_tout_ast_canonique() {
         let mut hasard = Hasard(42);
-        let mut formes = 0;
+        let mut canoniques = 0;
+        let mut refuses = 0;
 
         for _ in 0..500 {
             let document = document_au_hasard(&mut hasard);
 
-            assert!(
-                document.est_canonique(),
-                "le générateur ne produit que du canonique : {document:?}"
-            );
+            if !document.est_canonique() {
+                refuses += 1;
+                continue;
+            }
+
+            canoniques += 1;
 
             let texte = serialiser(&document);
             let relu = parse(&texte);
@@ -644,10 +664,13 @@ mod tests {
                 texte,
                 "la forme écrite n'est pas stable :\n{texte}"
             );
-            formes += 1;
         }
 
-        assert_eq!(formes, 500);
+        assert!(
+            refuses > 0 && canoniques > 0,
+            "la propriété doit voir les deux côtés du contrat : \
+             {canoniques} canoniques, {refuses} refusés"
+        );
     }
 
     /// Toute sérialisation d'un document **non** canonique retombe sur un
@@ -662,13 +685,18 @@ mod tests {
 
         for _ in 0..500 {
             let document = document_au_hasard(&mut hasard);
+
+            // Une première passe normalise — un blanc aux bords y perd sa
+            // place, c'est écrit dans la grammaire. Ce qui compte est que
+            // **la seconde ne bouge plus** : le fichier tient.
             let premier = serialiser(&document);
             let second = serialiser(&parse(&premier));
+            let troisieme = serialiser(&parse(&second));
 
             assert_eq!(
+                troisieme,
                 second,
-                premier,
-                "rouvrir puis réécrire reformate :\n{premier}\n→\n{second}"
+                "rouvrir puis réécrire reformate sans fin :\n{second}\n→\n{troisieme}"
             );
         }
     }

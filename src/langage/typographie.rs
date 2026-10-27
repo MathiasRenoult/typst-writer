@@ -136,21 +136,73 @@ const INSECABLE: char = '\u{A0}';
 /// Le résultat porte les insécables en [`INSECABLE`] : c'est au générateur
 /// de les traduire en `~` après son échappement, pour qu'un tilde tapé reste
 /// un tilde. Un texte sans règle à appliquer sort inchangé.
+/// Ce qui entoure un texte, à travers les éléments d'un bloc.
+///
+/// La typographie ne se joue pas sur un mot isolé : l'insécable avant un
+/// `;`, l'espace après un `.`, le niveau d'un guillemet — tout cela court
+/// d'un élément à l'autre. Le contexte porte ce qui vient d'avant et ce
+/// qui vient d'après, et le niveau d'imbrication, **pour tout le bloc**.
+pub struct Contexte {
+    /// Le dernier caractère logique sorti du bloc.
+    pub precedent: Option<char>,
+
+    /// Le prochain caractère logique du bloc, s'il y en a un.
+    pub suivant: Option<char>,
+
+    /// Le prochain caractère qui vient du **texte** — pas d'un littéral,
+    /// ni d'un code.
+    ///
+    /// C'est lui qui décide de l'absorption : un signe du texte posera son
+    /// espace lui-même, un signe échappé non, et lui voler la sienne
+    /// collerait le mot d'avant.
+    pub suivant_texte: Option<char>,
+
+    /// Le niveau d'imbrication des guillemets.
+    pub profondeur: usize,
+
+    /// Un guillemet ouvrant vient d'être posé.
+    pub venant_du_guillemet: bool,
+}
+
+impl Contexte {
+    /// Un contexte neuf : le début d'un bloc.
+    pub fn neuf() -> Self {
+        Self {
+            precedent: None,
+            suivant: None,
+            suivant_texte: None,
+            profondeur: 0,
+            venant_du_guillemet: false,
+        }
+    }
+}
+
+/// La composition d'un texte isolé — celle des tests et de la lecture.
+///
+/// Le générateur, lui, travaille par [`appliquer_dans`], qui porte le
+/// contexte du bloc.
+#[allow(dead_code)]
 pub fn appliquer(texte: &str, regles: &Regles) -> String {
+    let mut contexte = Contexte::neuf();
+    appliquer_dans(texte, regles, &mut contexte)
+}
+
+/// La composition, dans le contexte du bloc.
+pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> String {
     if *regles == Regles::aucune() || texte.is_empty() {
         return texte.to_string();
     }
 
     let mut sortie = String::new();
-    let mut profondeur = 0usize;
-    let mut venant_du_guillemet = false;
     let caracteres: Vec<char> = texte.chars().collect();
 
     for (position, caractere) in caracteres.iter().enumerate() {
-        let suivant = caracteres.get(position + 1);
+        // La fin du texte n'est pas la fin du bloc : le contexte sait ce
+        // qui vient d'après, à travers le balisage.
+        let suivant = caracteres.get(position + 1).or(contexte.suivant.as_ref());
 
         if !caractere.is_whitespace() {
-            venant_du_guillemet = false;
+            contexte.venant_du_guillemet = false;
         }
 
         match caractere {
@@ -159,7 +211,7 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
             c if c.is_whitespace() => {
                 // L'espace qui suit un guillemet ouvrant est celui de la
                 // règle : le texte ne le redit pas.
-                if venant_du_guillemet {
+                if contexte.venant_du_guillemet {
                     continue;
                 }
 
@@ -179,8 +231,13 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
 
                 // Ce que la suite posera elle-même n'en veut pas deux — sauf
                 // un nombre, que l'on ne touche pas.
-                if matches!(prochain, ';' | ':' | '!' | '?' | ',' | '.' | '»')
-                    && !est_un_nombre(&caracteres, position)
+                if matches!(contexte.suivant_texte, Some(';' | ':' | '!' | '?' | ',' | '.' | '»'))
+                    && !est_un_nombre(
+                        &caracteres,
+                        position,
+                        contexte.precedent,
+                        contexte.suivant,
+                    )
                 {
                     continue;
                 }
@@ -199,10 +256,14 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                     sortie.pop();
                 }
 
-                if let Some(espace) = regles.avant_signes.caractere()
-                    && !sortie.is_empty() && !sortie.ends_with(espace) {
+                if let Some(espace) = regles.avant_signes.caractere() {
+                    let plein = !sortie.is_empty() || contexte.precedent.is_some();
+                    let deja = sortie.ends_with(espace) || contexte.precedent == Some(espace);
+
+                    if plein && !deja {
                         sortie.push(espace);
                     }
+                }
 
                 sortie.push(*caractere);
                 pousser_apres(regles.apres_signes, suivant, &mut sortie);
@@ -211,7 +272,14 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
             // La virgule et le point, hors nombres : la même discipline,
             // avec l'espace qu'on leur a choisie. `3.14` et `1,2` sont des
             // nombres — ils ne sont pas touchés.
-            ',' | '.' if !est_un_nombre(&caracteres, position) => {
+            ',' | '.'
+                if !est_un_nombre(
+                    &caracteres,
+                    position,
+                    contexte.precedent,
+                    contexte.suivant,
+                ) =>
+            {
                 while sortie.ends_with(' ') {
                     sortie.pop();
                 }
@@ -223,10 +291,10 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
             // Les guillemets s'écrivent `«` et `»` dans la syntaxe, et se
             // **composent** avec les caractères choisis par niveau.
             '«' => {
-                profondeur += 1;
-                let (ouvrant, _) = paire(regles, profondeur);
+                contexte.profondeur += 1;
+                let (ouvrant, _) = paire(regles, contexte.profondeur);
                 sortie.push(ouvrant);
-                venant_du_guillemet = true;
+                contexte.venant_du_guillemet = true;
 
                 if let Some(espace) = regles.espace_guillemets.caractere()
                     && suivant.is_some() {
@@ -238,7 +306,7 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                     sortie.pop();
                 }
 
-                let (_, fermant) = paire(regles, profondeur.max(1));
+                let (_, fermant) = paire(regles, contexte.profondeur.max(1));
 
                 if let Some(espace) = regles.espace_guillemets.caractere()
                     && !sortie.is_empty() && !sortie.ends_with(espace) {
@@ -246,7 +314,7 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                     }
 
                 sortie.push(fermant);
-                profondeur = profondeur.saturating_sub(1);
+                contexte.profondeur = contexte.profondeur.saturating_sub(1);
             }
 
             // Le guillemet droit : celui du clavier. Il s'ouvre devant ce
@@ -256,10 +324,10 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                 let ouvrant = suivant.is_some_and(|suivant| !suivant.is_whitespace());
 
                 if ouvrant {
-                    profondeur += 1;
-                    let (cote, _) = paire(regles, profondeur);
+                    contexte.profondeur += 1;
+                    let (cote, _) = paire(regles, contexte.profondeur);
                     sortie.push(cote);
-                    venant_du_guillemet = true;
+                    contexte.venant_du_guillemet = true;
 
                     if let Some(espace) = regles.espace_guillemets.caractere()
                         && suivant.is_some()
@@ -271,7 +339,7 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                         sortie.pop();
                     }
 
-                    let (_, fermant) = paire(regles, profondeur.max(1));
+                    let (_, fermant) = paire(regles, contexte.profondeur.max(1));
 
                     if let Some(espace) = regles.espace_guillemets.caractere()
                         && !sortie.is_empty()
@@ -281,7 +349,7 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
                     }
 
                     sortie.push(fermant);
-                    profondeur = profondeur.saturating_sub(1);
+                    contexte.profondeur = contexte.profondeur.saturating_sub(1);
                 }
             }
 
@@ -291,6 +359,8 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
         }
     }
 
+    contexte.precedent = sortie.chars().last().or(contexte.precedent);
+
     sortie
 }
 
@@ -298,9 +368,18 @@ pub fn appliquer(texte: &str, regles: &Regles) -> String {
 ///
 /// Une virgule ou un point entre deux chiffres est décimal : `3.14`, `1,2`.
 /// Tout le reste — `fin.`, `a, b` — est de la ponctuation.
-fn est_un_nombre(caracteres: &[char], position: usize) -> bool {
-    let avant = position.checked_sub(1).and_then(|i| caracteres.get(i));
-    let apres = caracteres.get(position + 1);
+fn est_un_nombre(
+    caracteres: &[char],
+    position: usize,
+    precedent: Option<char>,
+    suivant: Option<char>,
+) -> bool {
+    let avant = position
+        .checked_sub(1)
+        .and_then(|i| caracteres.get(i))
+        .copied()
+        .or(precedent);
+    let apres = caracteres.get(position + 1).copied().or(suivant);
 
     avant.is_some_and(|c| c.is_ascii_digit()) && apres.is_some_and(|c| c.is_ascii_digit())
 }

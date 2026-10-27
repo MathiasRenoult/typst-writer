@@ -14,7 +14,7 @@
 //! le sérialiseur produit.
 
 use super::schema::{Bloc, Document, Inline, Reference};
-use super::typographie::{Regles, appliquer};
+use super::typographie::{Regles, appliquer_dans};
 
 /// Génère le corps Typst d'un document, sans règle de langue.
 #[allow(dead_code)] // Raccourci des tests et de la migration.
@@ -38,27 +38,81 @@ pub fn generer_avec(document: &Document, regles: &Regles) -> String {
 }
 
 /// Génère un bloc, suivi d'une ligne vide — la séparation de blocs de Typst.
+/// Le premier caractère qui vient du **texte** : les littéraux et les
+/// codes sont sautés, car ils ne posent jamais l'espace d'un signe.
+fn premier_texte(inline: &[Inline]) -> Option<char> {
+    for element in inline {
+        let trouve = match element {
+            Inline::Texte(texte) => texte.chars().next(),
+            Inline::Gras(contenu)
+            | Inline::Italique(contenu)
+            | Inline::GrasItalique(contenu)
+            | Inline::Note(contenu)
+            | Inline::Couleur { contenu, .. } => premier_texte(contenu),
+            Inline::Lien { texte, .. } => premier_texte(texte),
+            _ => None,
+        };
+
+        if trouve.is_some() {
+            return trouve;
+        }
+    }
+
+    None
+}
+
+/// Le premier caractère logique d'une suite d'éléments — à travers le
+/// balisage, jusqu'au texte.
+///
+/// Une citation, qui n'a pas de texte, vaut un caractère : ce qui la suit
+/// mérite l'espace d'un mot, pas celle du vide.
+fn premier_caractere(inline: &[Inline]) -> Option<char> {
+    for element in inline {
+        let trouve = match element {
+            Inline::Texte(texte) | Inline::Litteral(texte) | Inline::Code(texte) => {
+                texte.chars().next()
+            }
+            Inline::Gras(contenu)
+            | Inline::Italique(contenu)
+            | Inline::GrasItalique(contenu)
+            | Inline::Note(contenu)
+            | Inline::Couleur { contenu, .. } => premier_caractere(contenu),
+            Inline::Lien { texte, .. } => premier_caractere(texte),
+            Inline::Citation(_) => Some('\u{2039}'),
+        };
+
+        if trouve.is_some() {
+            return trouve;
+        }
+    }
+
+    None
+}
+
 fn generer_bloc(bloc: &Bloc, out: &mut String, regles: &Regles) {
+    // La typographie court sur **tout le bloc** : le niveau des guillemets
+    // et les espaces traversent les éléments, jamais isolés.
+    let mut contexte = crate::langage::typographie::Contexte::neuf();
     match bloc {
         Bloc::Titre { niveau, contenu } => {
             out.push_str(&"=".repeat(*niveau as usize));
             out.push(' ');
-            generer_inline(contenu, out, false, regles);
+            generer_inline(contenu, out, false, regles, &mut contexte);
             out.push_str("\n\n");
         }
         Bloc::Paragraphe(contenu) => {
-            generer_inline(contenu, out, true, regles);
+            generer_inline(contenu, out, true, regles, &mut contexte);
             out.push_str("\n\n");
         }
         Bloc::Citation(contenu) => {
             out.push_str("#quote(block: true)[");
-            generer_inline(contenu, out, false, regles);
+            generer_inline(contenu, out, false, regles, &mut contexte);
             out.push_str("]\n\n");
         }
         Bloc::ListePuce(items) => {
             for item in items {
                 out.push_str("- ");
-                generer_inline(item, out, false, regles);
+                generer_inline(item, out, false, regles, &mut contexte);
                 out.push('\n');
             }
 
@@ -69,7 +123,7 @@ fn generer_bloc(bloc: &Bloc, out: &mut String, regles: &Regles) {
             // autant que l'usure des listes réordonnées.
             for item in items {
                 out.push_str("+ ");
-                generer_inline(item, out, false, regles);
+                generer_inline(item, out, false, regles, &mut contexte);
                 out.push('\n');
             }
 
@@ -92,22 +146,30 @@ fn generer_inline(
     out: &mut String,
     debut_de_ligne: bool,
     regles: &Regles,
+    contexte: &mut crate::langage::typographie::Contexte,
 ) {
     let mut en_tete = debut_de_ligne;
 
-    for element in inline {
+    for (rang, element) in inline.iter().enumerate() {
+        // Ce qui suit, à travers le balisage : la fin d'un élément n'est
+        // pas la fin du texte.
+        contexte.suivant = premier_caractere(&inline[rang + 1..]);
+        contexte.suivant_texte = premier_texte(&inline[rang + 1..]);
+
         match element {
             Inline::Texte(texte) => {
                 // La typographie de la langue d'abord, l'échappement Typst
                 // ensuite — et l'insécable devient `~`. Un tilde tapé, lui,
                 // a été échappé : il reste un tilde.
-                let compose = appliquer(texte, regles);
+                let compose = appliquer_dans(texte, regles, contexte);
                 let mut echappe = String::new();
                 echapper_texte(&compose, &mut echappe, en_tete);
                 out.push_str(&echappe.replace('\u{A0}', "~"));
                 en_tete = false;
             }
             Inline::Litteral(texte) => {
+                contexte.precedent = texte.chars().last().or(contexte.precedent);
+                contexte.venant_du_guillemet = false;
                 // Un littéral est la promesse de la grammaire : aucune
                 // interprétation, ni syntaxique, ni typographique.
                 echapper_texte(texte, out, en_tete);
@@ -115,19 +177,19 @@ fn generer_inline(
             }
             Inline::Gras(contenu) => {
                 out.push('*');
-                generer_inline(contenu, out, false, regles);
+                generer_inline(contenu, out, false, regles, contexte);
                 out.push('*');
                 en_tete = false;
             }
             Inline::Italique(contenu) => {
                 out.push('_');
-                generer_inline(contenu, out, false, regles);
+                generer_inline(contenu, out, false, regles, contexte);
                 out.push('_');
                 en_tete = false;
             }
             Inline::GrasItalique(contenu) => {
                 out.push_str("*_");
-                generer_inline(contenu, out, false, regles);
+                generer_inline(contenu, out, false, regles, contexte);
                 out.push_str("_*");
                 en_tete = false;
             }
@@ -136,12 +198,14 @@ fn generer_inline(
                 out.push_str(texte);
                 out.push('`');
                 en_tete = false;
+                contexte.precedent = texte.chars().last().or(contexte.precedent);
+                contexte.venant_du_guillemet = false;
             }
             Inline::Couleur { couleur, contenu } => {
                 out.push_str("#text(fill: ");
-                out.push_str(couleur);
+                out.push_str(&expression_couleur(couleur));
                 out.push_str(")[");
-                generer_inline(contenu, out, false, regles);
+                generer_inline(contenu, out, false, regles, contexte);
                 out.push(']');
                 en_tete = false;
             }
@@ -151,7 +215,7 @@ fn generer_inline(
             }
             Inline::Note(contenu) => {
                 out.push_str("#footnote[");
-                generer_inline(contenu, out, false, regles);
+                generer_inline(contenu, out, false, regles, contexte);
                 out.push(']');
                 en_tete = false;
             }
@@ -159,7 +223,7 @@ fn generer_inline(
                 out.push_str("#link(\"");
                 echapper_chaine(cible, out);
                 out.push_str("\")[");
-                generer_inline(texte, out, false, regles);
+                generer_inline(texte, out, false, regles, contexte);
                 out.push(']');
                 en_tete = false;
             }
@@ -242,8 +306,71 @@ fn echapper_chaine(texte: &str, out: &mut String) {
     }
 }
 
+/// La couleur, telle que Typst la veut dans une expression.
+///
+/// La syntaxe écrit `#ff0000` : c'est du texte pour Typst, dont `rgb()`
+/// est la seule voie. Les expressions déjà faites — `rgb(255, 0, 0)` — et
+/// les noms — `red` — passent tels quels.
+fn expression_couleur(couleur: &str) -> String {
+    let nu = couleur.trim();
+
+    if nu.starts_with('#') {
+        return format!("rgb(\"{nu}\")");
+    }
+
+    nu.to_string()
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// La typographie traverse les éléments : l'espace avant un signe, et
+    /// le niveau des guillemets, ne se perdent pas aux frontières.
+    #[test]
+    fn la_typographie_traverse_les_elements() {
+        // Le cas de l'audit : le `;` suit un gras, et son insécable se
+        // perdait — la règle ne voyait que l'élément isolé.
+        let document = crate::langage::parse("La foi *x* ; suite\n");
+        let typst = generer_avec(&document, &Regles::francaise());
+        assert!(
+            typst.contains("~; suite"),
+            "l'insécable traverse le gras : {typst}"
+        );
+
+        // L'espace après un point en fin d'élément se pose devant la suite.
+        let document = crate::langage::parse("Suite. *Et plus*\n");
+        let typst = generer_avec(&document, &Regles::francaise());
+        assert!(
+            typst.contains("Suite. "),
+            "l'espace après le point se pose : {typst}"
+        );
+    }
+
+
+    /// La couleur hex s'écrit `#ff0000` et doit compiler : c'est du texte
+    /// pour Typst, dont `rgb()` est la seule voie.
+    #[test]
+    fn la_couleur_hex_compile() {
+        let document = crate::langage::parse("{#ff0000: en rouge}");
+        let typst = generer(&document);
+
+        assert!(
+            typst.contains("rgb(\"#ff0000\")"),
+            "la couleur hex devient une expression : {typst}"
+        );
+
+        let outcome = compiler(&typst);
+        assert!(outcome.errors.is_empty(), "vu : {:?}", outcome.errors);
+    }
+
+    /// Une couleur exprimée ou nommée passe telle quelle.
+    #[test]
+    fn la_couleur_exprimee_passe_telle_quelle() {
+        assert_eq!(expression_couleur("red"), "red");
+        assert_eq!(expression_couleur("rgb(255, 0, 0)"), "rgb(255, 0, 0)");
+        assert_eq!(expression_couleur("#00ff00"), "rgb(\"#00ff00\")");
+    }
+
     use super::*;
     use crate::langage::parse::parse;
     use std::path::PathBuf;

@@ -307,8 +307,27 @@ fn commence_par_un_marqueur_de_bloc(contenu: &[Inline]) -> bool {
 /// Outre la canonicité de chaque élément, deux règles gouvernent la suite :
 /// deux textes nus ne s'adjacent pas, et un lien ne colle pas à un appel
 /// sans page. Voir [`Document::est_canonique`].
+/// Le bord du contenu est-il un blanc ? Il disparaîtrait à la lecture.
+fn bord_blanc(element: Option<&Inline>) -> bool {
+    match element {
+        Some(Inline::Texte(texte)) | Some(Inline::Litteral(texte)) => {
+            texte.starts_with(char::is_whitespace) || texte.ends_with(char::is_whitespace)
+        }
+        _ => false,
+    }
+}
+
 fn inline_canonique(inline: &[Inline]) -> bool {
     if !inline.iter().all(Inline::est_canonique) {
+        return false;
+    }
+
+    // Les bords du contenu : `parse` rogne chaque ligne, donc un blanc aux
+    // extrémités disparaît à la lecture — et le round-trip avec lui. Le
+    // pire est un littéral : `x\ ` se relit `x\`, et c'est un caractère
+    // qui change. Le code échappe à la règle : ses backticks protègent son
+    // contenu jusqu'au bord.
+    if bord_blanc(inline.first()) || bord_blanc(inline.last()) {
         return false;
     }
 
@@ -458,6 +477,51 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Les bords blancs ne sont pas canoniques : `parse` les rogne, donc
+    /// le round-trip les perdrait. Le pire, un littéral, y changerait de
+    /// caractère.
+    #[test]
+    fn les_bords_blancs_ne_sont_pas_canoniques() {
+        use crate::langage::parse;
+        use crate::langage::serialiser;
+
+        // Contre-exemples de l'audit, tous déclarés canoniques avant.
+        let formes = [
+            vec![Inline::Texte(" x".to_string())],
+            vec![Inline::Texte("x ".to_string())],
+            vec![
+                Inline::Texte("x".to_string()),
+                Inline::Litteral(" ".to_string()),
+            ],
+            vec![Inline::Litteral(" ".to_string())],
+        ];
+
+        for forme in formes {
+            let document = Document {
+                blocs: vec![Bloc::Paragraphe(forme.clone())],
+            };
+
+            assert!(
+                !document.est_canonique(),
+                "{forme:?} ne doit pas être canonique"
+            );
+        }
+
+        // Et la preuve par le vide : une forme proche, mais propre, se
+        // relit mot pour mot.
+        let document = Document {
+            blocs: vec![Bloc::Paragraphe(vec![
+                Inline::Texte("x".to_string()),
+                Inline::Litteral(" ".to_string()),
+                Inline::Texte("y".to_string()),
+            ])],
+        };
+
+        assert!(document.est_canonique(), "le milieu lui est permis");
+        assert_eq!(parse(&serialiser(&document)), document);
+    }
+
     use super::*;
 
     /// Le texte nu retire le balisage : c'est ce que compte le compteur de
