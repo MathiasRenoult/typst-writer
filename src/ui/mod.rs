@@ -8,6 +8,7 @@ mod rename;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;
+pub mod zotero;
 pub mod toolbar;
 
 use crate::app::{Message, State};
@@ -51,6 +52,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .height(Length::Fill),
         completion::view(state),
         reference::view(state),
+        zotero::view(state),
         reglages::view(state),
     ]
     .width(Length::Fill)

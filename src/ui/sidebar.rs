@@ -225,6 +225,56 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
     ));
 
+    // Un projet lié vit de sa collection : on le voit, et on peut s'en
+    // dédire. Sinon, la liaison se propose — pour une bibliothèque locale
+    // seulement, car une notice Zotero déjà pointée n'a pas de deuxième chef.
+    if let Some(lien) = state.project.zotero.as_ref() {
+        content = content.push(Space::new().height(6));
+        content = content.push(
+            row![
+                theme::icon(
+                    lucide_icons::iced::icon_book::<Theme>(),
+                    11.0,
+                    palette.success,
+                ),
+                palette
+                    .label(format!("Zotero · {}", lien.nom))
+                    .size(theme::jetons::CORPS),
+                Space::new().width(Fill),
+                button(
+                    palette
+                        .label("Délier")
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted)
+                )
+                .on_press(Message::ZoteroDelier)
+                .padding([4, 8]),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    } else if state.zotero.source == crate::zotero::Source::Locale {
+        content = content.push(Space::new().height(6));
+        content = content.push(
+            button(
+                row![
+                    theme::icon(
+                        lucide_icons::iced::icon_link::<Theme>(),
+                        11.0,
+                        palette.text_muted,
+                    ),
+                    palette.label("Lier à Zotero…").size(theme::jetons::CORPS),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::ZoteroLierOuvrir)
+            .padding([4, 8])
+            .width(Fill)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        );
+    }
+
     // Une notice s'ajoute quand la bibliothèque est la sienne : seule une
     // bibliothèque locale s'écrit.
     let locale = state.zotero.source == crate::zotero::Source::Locale;

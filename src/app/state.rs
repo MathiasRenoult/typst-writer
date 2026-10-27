@@ -50,6 +50,9 @@ pub struct State {
     /// références montrées.
     pub zotero: crate::zotero::Etat,
 
+    /// Le panneau de liaison à Zotero, quand il est ouvert.
+    pub liaison: Option<LiaisonZotero>,
+
     /// Résultat du rendu fidèle (compilation Typst en bibliothèque).
     pub render: RenderState,
 
@@ -220,6 +223,19 @@ pub struct EditionReference {
     /// La bibliographie est-elle locale ? Seule une bibliothèque locale
     /// s'écrit ; une notice Zotero se lit, jamais.
     pub locale: bool,
+}
+
+/// Le panneau de liaison à Zotero : où en est sa lecture.
+#[derive(Debug, Clone)]
+pub enum LiaisonZotero {
+    /// Les collections se lisent.
+    Chargement,
+
+    /// Elles sont là : il ne reste qu'à choisir.
+    Choix(Vec<crate::zotero::client::Collection>),
+
+    /// Quelque chose n'est pas allé — et c'est dit, jamais avale.
+    Erreur(String),
 }
 
 #[derive(Debug, Clone)]

@@ -71,6 +71,18 @@ pub enum Message {
     EditionReferenceEnregistrer,
 
     /// Ferme la fenêtre d'édition sans rien écrire.
+    ZoteroLierOuvrir,
+
+    ZoteroCollections(Result<Vec<crate::zotero::client::Collection>, String>),
+
+    ZoteroChoisir(String, String),
+
+    ZoteroExport(String, String, Result<String, String>),
+
+    ZoteroDelier,
+
+    ZoteroLiaisonFermer,
+
     EditionReferenceNouveau,
 
     EditionReferenceFermer,

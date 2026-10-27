@@ -68,6 +68,17 @@ impl State {
 
         let project = crate::project::load(&project.dir);
 
+        // Un projet déjà lié se retrouve : sa bibliothèque est celle de
+        // Zotero, lue — et les notices ne s'y écrivent pas.
+        let zotero = crate::zotero::Etat {
+            source: if project.zotero.is_some() {
+                crate::zotero::Source::Zotero
+            } else {
+                crate::zotero::Source::Locale
+            },
+            lie: project.zotero.is_some(),
+        };
+
         let mut state = Self {
             editor: crate::editor::EditorState::default(),
             export_status: None,
@@ -83,7 +94,7 @@ impl State {
             renommage: None,
             composeur: None,
             edition_reference: None,
-            zotero: crate::zotero::Etat::default(),
+            zotero,
             renaming: None,
             jump: None,
             render: Default::default(),
@@ -98,7 +109,8 @@ impl State {
             chosen: session.themes.clone(),
             theme: session.theme_mode,
             resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
-        };
+                    liaison: None,
+};
 
         // Le chapitre de la session, s'il appartient encore au projet ; sinon
         // le premier chapitre, sinon rien — le panneau proposera d'en créer un.
@@ -489,6 +501,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             Task::none()
         }
+        Message::ZoteroLierOuvrir
+        | Message::ZoteroCollections(_)
+        | Message::ZoteroChoisir(_, _)
+        | Message::ZoteroExport(_, _, _)
+        | Message::ZoteroDelier
+        | Message::ZoteroLiaisonFermer => liaison_zotero(state, message),
+
         Message::EditionReferenceNouveau => {
             // Seule une bibliothèque locale s'écrit : la création suppose
             // d'écrire, donc un fichier à soi.
@@ -1286,6 +1305,124 @@ fn next_project_name(projects: &[crate::project::Project]) -> String {
 ///
 /// Ils n'agissent que sur des événements qu'aucun widget n'a consommés, donc
 /// jamais en conflit avec les raccourcis propres de l'éditeur.
+/// Le panneau de liaison à Zotero : ouvrir, lire, choisir, et ce qui cloche.
+fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
+    match message {
+        Message::ZoteroLierOuvrir => {
+            // Seule une bibliothèque locale se lie : une notice Zotero
+            // déjà pointée n'a pas de deuxième chef.
+            if state.zotero.source != crate::zotero::Source::Locale {
+                return Task::none();
+            }
+
+            state.liaison = Some(crate::app::state::LiaisonZotero::Chargement);
+
+            Task::perform(
+                async { crate::zotero::client::collections() },
+                |resultat| Message::ZoteroCollections(resultat.map_err(|e| e.to_string())),
+            )
+        }
+
+        Message::ZoteroCollections(resultat) => match resultat {
+            Ok(collections) => {
+                state.liaison = Some(crate::app::state::LiaisonZotero::Choix(collections));
+                Task::none()
+            }
+            Err(erreur) => {
+                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(erreur));
+                Task::none()
+            }
+        },
+
+        Message::ZoteroChoisir(cle, nom) => {
+            // L'export vient de Zotero : on le demande avant d'écrire quoi
+            // que ce soit au projet.
+            state.liaison = Some(crate::app::state::LiaisonZotero::Chargement);
+
+            let (demande, rendu) = (cle.clone(), (cle, nom));
+
+            Task::perform(
+                async move {
+                    crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string())
+                },
+                move |resultat| Message::ZoteroExport(rendu.0, rendu.1, resultat),
+            )
+        }
+
+        Message::ZoteroExport(cle, nom, resultat) => match resultat {
+            Ok(bibtex) => {
+                let dir = state.project.dir.clone();
+
+                if let Err(erreur) =
+                    std::fs::write(dir.join("references-zotero.bib"), &bibtex)
+                {
+                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(format!(
+                        "La bibliothèque n'a pas pu être écrite : {erreur}"
+                    )));
+
+                    return Task::none();
+                }
+
+                if let Err(erreur) =
+                    crate::zotero::lier(&dir, &crate::zotero::Lien { cle, nom })
+                {
+                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(format!(
+                        "La liaison n'a pas pu être gardée : {erreur}"
+                    )));
+
+                    return Task::none();
+                }
+
+                // La liaison est faite : le projet la porte, et la
+                // bibliothèque montrée devient celle de Zotero — lue, jamais
+                // écrite.
+                state.project = crate::project::load(&dir);
+                state.bibliography = state
+                    .project
+                    .bibliography
+                    .as_ref()
+                    .map(|path| crate::project::parse_bibliography(path))
+                    .unwrap_or_default();
+                state.zotero = crate::zotero::Etat {
+                    source: crate::zotero::Source::Zotero,
+                    lie: true,
+                };
+                state.liaison = None;
+
+                Task::none()
+            }
+            Err(erreur) => {
+                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(erreur));
+                Task::none()
+            }
+        },
+
+        Message::ZoteroDelier => {
+            let dir = state.project.dir.clone();
+            crate::zotero::delier(&dir);
+
+            state.project = crate::project::load(&dir);
+            state.bibliography = state
+                .project
+                .bibliography
+                .as_ref()
+                .map(|path| crate::project::parse_bibliography(path))
+                .unwrap_or_default();
+            state.zotero = crate::zotero::Etat::default();
+            state.liaison = None;
+
+            Task::none()
+        }
+
+        Message::ZoteroLiaisonFermer => {
+            state.liaison = None;
+            Task::none()
+        }
+
+        _ => Task::none(),
+    }
+}
+
 fn handle_shortcut(
     state: &mut State,
     key: iced::keyboard::Key,
@@ -1294,6 +1431,14 @@ fn handle_shortcut(
     // La fiche de référence, quand elle est ouverte : un formulaire se
     // conduit au clavier — `Tabulation` circule dans les champs, `Entrée`
     // enregistre, `Échap` ferme. Ses touches lui appartiennent.
+    if state.liaison.is_some() {
+        use iced::keyboard::{Key, key::Named};
+
+        if let Key::Named(Named::Escape) = key {
+            return update(state, Message::ZoteroLiaisonFermer);
+        }
+    }
+
     if state.edition_reference.is_some() {
         use iced::keyboard::{Key, key::Named};
 

@@ -71,6 +71,9 @@ pub struct Project {
 
     /// Nombre d'entrées de la bibliographie.
     pub bibliography_entries: usize,
+
+    /// La collection Zotero à laquelle le projet est lié, s'il l'est.
+    pub zotero: Option<crate::zotero::Lien>,
 }
 
 impl Project {
@@ -185,7 +188,15 @@ pub fn load(dir: &Path) -> Project {
 
     let chapters = list_chapters(dir, &included);
 
-    let bibliography = find_bibliography(dir);
+    let zotero = crate::zotero::lien_du_projet(dir);
+
+    // Un projet lié vit de sa collection : l'export Zotero est sa
+    // bibliothèque. Sans lui, ou sans liaison, la locale fait foi.
+    let bibliography = zotero
+        .as_ref()
+        .map(|_| dir.join("references-zotero.bib"))
+        .filter(|path| path.is_file())
+        .or_else(|| find_bibliography(dir));
 
     let bibliography_entries = bibliography
         .as_ref()
@@ -198,6 +209,7 @@ pub fn load(dir: &Path) -> Project {
         main,
         document,
         document_words,
+        zotero,
         chapters,
         bibliography,
         bibliography_entries,
@@ -998,6 +1010,56 @@ pub const BIBLIOGRAPHY_TEMPLATE: &str = r#"// Une entrée par référence, au fo
 
 #[cfg(test)]
 mod tests {
+
+    /// Un projet lié lit sa collection : l'export Zotero est sa bibliographie,
+    /// et la locale ne prime plus.
+    #[test]
+    fn un_projet_lie_lit_sa_collection() {
+        let dir = std::env::temp_dir().join(format!("tw-lie-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier");
+
+        std::fs::write(dir.join("main.typ"), "").expect("main");
+        std::fs::write(
+            dir.join("references.bib"),
+            "@book{local,\n  title = {Local},\n}\n",
+        )
+        .expect("locale");
+        std::fs::write(
+            dir.join("references-zotero.bib"),
+            "@book{zotero,\n  title = {De Zotero},\n}\n",
+        )
+        .expect("zotero");
+
+        crate::zotero::lier(
+            &dir,
+            &crate::zotero::Lien {
+                cle: "AAAA1111".to_string(),
+                nom: "Ma thèse".to_string(),
+            },
+        )
+        .expect("liaison");
+
+        let projet = load(&dir);
+        assert_eq!(
+            projet.bibliography.as_deref(),
+            Some(dir.join("references-zotero.bib").as_path()),
+            "le projet lié lit sa collection"
+        );
+        assert_eq!(projet.zotero.as_ref().map(|l| l.nom.as_str()), Some("Ma thèse"));
+
+        // Délié, il retrouve sa bibliothèque locale.
+        crate::zotero::delier(&dir);
+        let projet = load(&dir);
+        assert!(projet.zotero.is_none());
+        assert_eq!(
+            projet.bibliography.as_deref(),
+            Some(dir.join("references.bib").as_path())
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     /// Un dossier de projet temporaire, isolé par test.
@@ -1063,7 +1125,8 @@ mod tests {
             chapters: vec![],
             bibliography: None,
             bibliography_entries: 0,
-        };
+                    zotero: None,
+};
         assert_eq!(find_label(&project, ""), None);
     }
 

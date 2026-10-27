@@ -22,7 +22,10 @@
 // partira avec le raccordement.
 #![allow(dead_code)]
 
+pub mod client;
 pub mod keys;
+
+use serde::{Deserialize, Serialize};
 pub mod styles;
 
 use std::path::PathBuf;
@@ -82,6 +85,40 @@ pub enum Source {
     Zotero,
 }
 
+/// La collection Zotero à laquelle un projet est lié.
+///
+/// C'est tout le contrat : sa clé — celle de Zotero, qui ne bouge plus — et
+/// son nom, pour se rappeler à quoi on a lié son travail. La notice vit dans
+/// `zotero.json`, à côté du projet : elle voyage avec lui.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lien {
+    /// La clé de collection, l'identifiant stable.
+    pub cle: String,
+
+    /// Son nom, tel que Zotero le montre.
+    pub nom: String,
+}
+
+/// Le nom du fichier qui tient la liaison.
+pub const FICHIER: &str = "zotero.json";
+
+/// La liaison d'un projet, s'il en a une.
+pub fn lien_du_projet(dir: &std::path::Path) -> Option<Lien> {
+    let texte = std::fs::read_to_string(dir.join(FICHIER)).ok()?;
+    serde_json::from_str(&texte).ok()
+}
+
+/// Lie un projet à une collection — et jamais à la place de l'utilisateur.
+pub fn lier(dir: &std::path::Path, lien: &Lien) -> std::io::Result<()> {
+    let texte = serde_json::to_string_pretty(lien).map_err(std::io::Error::other)?;
+    std::fs::write(dir.join(FICHIER), texte)
+}
+
+/// Délie un projet : il retrouve sa bibliothèque locale.
+pub fn delier(dir: &std::path::Path) {
+    std::fs::remove_file(dir.join(FICHIER)).ok();
+}
+
 /// L'état de la collaboration avec Zotero.
 #[derive(Debug, Clone, Default)]
 pub struct Etat {
@@ -94,6 +131,41 @@ pub struct Etat {
 
 #[cfg(test)]
 mod tests {
+
+    /// La liaison se garde à côté du projet, et se relit telle quelle.
+    #[test]
+    fn une_liaison_se_garde_et_se_relit() {
+        let dir = std::env::temp_dir().join(format!("tw-liaison-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier");
+
+        assert_eq!(lien_du_projet(&dir), None, "rien, tant qu'on n'a rien lié");
+
+        let lien = Lien {
+            cle: "AAAA1111".to_string(),
+            nom: "Ma thèse".to_string(),
+        };
+        lier(&dir, &lien).expect("liaison écrite");
+        assert_eq!(lien_du_projet(&dir), Some(lien));
+
+        delier(&dir);
+        assert_eq!(lien_du_projet(&dir), None, "délié, il n'y a plus rien");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Un fichier de liaison illisible n'est pas une panne : il n'y a
+    /// simplement pas de liaison.
+    #[test]
+    fn un_fichier_de_liaison_corrompu_ne_prote_rien() {
+        let dir = std::env::temp_dir().join(format!("tw-liaison-2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier");
+        std::fs::write(dir.join(FICHIER), "n'importe quoi").expect("fichier");
+
+        assert_eq!(lien_du_projet(&dir), None);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     use super::*;
 
     /// Le profil dit où vit la bibliothèque ; sans profil, la convention.
