@@ -940,10 +940,22 @@ fn relative_to_chapters(chapter: &Path) -> PathBuf {
 pub fn find_bibliography(dir: &Path) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
 
-    entries
+    let mut bibliotheques: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| path.is_file() && path.extension().map(|ext| ext == "bib").unwrap_or(false))
+        .filter(|path| path.is_file() && path.extension().map(|ext| ext == "bib").unwrap_or(false))
+        .collect();
+
+    // L'ordre de `read_dir` est celui du disque : une bibliothèque ne s'y
+    // prend jamais. La locale d'abord, l'export Zotero ensuite — c'est le
+    // projet qui dit laquelle vit.
+    bibliotheques.sort_by_key(|path| match path.file_name().and_then(|nom| nom.to_str()) {
+        Some("references.bib") => 0,
+        Some("references-zotero.bib") => 1,
+        _ => 2,
+    });
+
+    bibliotheques.into_iter().next()
 }
 
 /// Nombre de mots d'un contenu.

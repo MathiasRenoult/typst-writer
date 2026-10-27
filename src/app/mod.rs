@@ -535,6 +535,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ZoteroCollections(_)
         | Message::ZoteroChoisir(_, _)
         | Message::ZoteroExport(_, _, _)
+        | Message::ZoteroSynchroniser
         | Message::ZoteroDelier
         | Message::ZoteroLiaisonFermer => liaison_zotero(state, message),
 
@@ -1573,6 +1574,22 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             }
         },
+
+        Message::ZoteroSynchroniser => {
+            // La collection bouge avec Zotero : l'export du projet suit.
+            let Some(lien) = state.project.zotero.clone() else {
+                return Task::none();
+            };
+
+            let (demande, rendu) = (lien.cle.clone(), (lien.cle, lien.nom));
+
+            Task::perform(
+                async move {
+                    crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string())
+                },
+                move |resultat| Message::ZoteroExport(rendu.0, rendu.1, resultat),
+            )
+        }
 
         Message::ZoteroChoisir(cle, nom) => {
             // L'export vient de Zotero : on le demande avant d'écrire quoi

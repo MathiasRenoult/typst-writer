@@ -51,8 +51,15 @@ fn data_dir_from_profiles(home: &std::path::Path) -> Option<PathBuf> {
     let profiles = home.join(".zotero").join("zotero");
 
     for entry in std::fs::read_dir(profiles).ok()? {
-        let prefs = entry.ok()?.path().join("prefs.js");
-        let text = std::fs::read_to_string(prefs).ok()?;
+        // Un profil sans `prefs.js` lisible n'est pas une raison de
+        // renoncer : le suivant porte peut-être le réglage.
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let prefs = entry.path().join("prefs.js");
+        let Ok(text) = std::fs::read_to_string(prefs) else {
+            continue;
+        };
 
         for line in text.lines() {
             let Some(rest) = line

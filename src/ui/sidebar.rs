@@ -243,6 +243,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 Space::new().width(Fill),
                 button(
                     palette
+                        .label("Synchroniser")
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted)
+                )
+                .on_press(Message::ZoteroSynchroniser)
+                .padding([4, 8]),
+                button(
+                    palette
                         .label("Délier")
                         .size(theme::jetons::DETAIL)
                         .color(palette.text_muted)

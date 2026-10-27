@@ -786,6 +786,13 @@ pub fn import(source: &Path) -> Result<ThemeFile, String> {
 
     let destination = themes_dir().join(format!("{}.toml", crate::project::slug(&file.meta.name)));
 
+    // Un homonyme ne s'écrase pas : il part à la corbeille, d'où il se
+    // ravise. Écraser un thème écrit à la main est du travail perdu.
+    if destination.exists() {
+        crate::project::vers_la_corbeille(&destination)
+            .map_err(|error| format!("l'ancien thème ne part pas : {error}"))?;
+    }
+
     std::fs::copy(source, &destination)
         .map_err(|error| format!("copie vers {} : {error}", destination.display()))?;
 
@@ -806,7 +813,28 @@ pub fn remove(name: &str) -> Result<std::path::PathBuf, String> {
         ));
     }
 
-    let path = themes_dir().join(format!("{}.toml", crate::project::slug(name)));
+    let mut path = themes_dir().join(format!("{}.toml", crate::project::slug(name)));
+
+    // Le nom du fichier suit le nom du thème : s'ils ont divergé — le nom
+    // édité à la main — c'est le fichier que le thème occupe qui compte.
+    if !path.exists()
+        && let Ok(entrees) = std::fs::read_dir(themes_dir()) {
+            for entree in entrees.filter_map(Result::ok) {
+                let chemin = entree.path();
+
+                if chemin.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                    continue;
+                }
+
+                if ThemeFile::load(&chemin)
+                    .map(|fichier| fichier.meta.name == name)
+                    .unwrap_or(false)
+                {
+                    path = chemin;
+                    break;
+                }
+            }
+        }
 
     // La corbeille, jamais la destruction : un thème écrit à la main est
     // du travail, même quand on ne le veut plus sous les yeux.

@@ -139,12 +139,30 @@ se ferme d'elle-même.
     ~/.typst-writer/
     ├── session.json          l'état de la dernière session (projet ouvert, thème…)
     ├── themes/               les thèmes : livrés une fois, puis à vous
+    ├── corbeille/            les suppressions — rien ne part dans le vide
     └── projets/
         └── mon-travail/
-            ├── document.tw   ce que vous écrivez : la couche simple
-            ├── main.typ      les normes de mise en page, et l'assemblage
-            ├── references.bib la bibliographie
-            └── chapitres/    les sources .typ héritées du projet
+            ├── document.tw         ce que vous écrivez : la couche simple
+            ├── main.typ            l'assemblage, et les normes qu'il porte
+            ├── mise-en-page.toml   les normes, telles que vous les réglez
+            ├── mise-en-page.typ    leur traduction pour Typst — générée
+            ├── references.bib      la bibliographie locale
+            ├── references-zotero.bib l'export de la collection Zotero liée
+            ├── zotero.json         la collection Zotero à laquelle le projet est lié
+            └── chapitres/          les sources .typ héritées du projet
+
+## Les raccourcis
+
+    Ctrl+F          la recherche — expressions régulières, $1 rappelle un groupe
+    Ctrl+S          enregistrer
+    Ctrl+N / Ctrl+O le document d'écriture / charger un .typ dans le projet
+    Ctrl+E          exporter en PDF
+    Ctrl+I          l'assistance à la frappe
+    Ctrl+T          le titre suivant — Ctrl+Maj+T revient au précédent
+    Ctrl+Maj+Haut/Bas le bloc entier monte ou descend
+    F11 / F12       le mode focus / aller à la définition
+    Échap           fermer — la fenêtre ouverte, la liste, le mode focus
+    Tab, Entrée     dans les fiches : le champ suivant, enregistrer
 
 ## Notes pour les curieux
 

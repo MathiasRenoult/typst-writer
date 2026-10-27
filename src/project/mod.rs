@@ -699,13 +699,8 @@ const MIGRATED_PROJECT: &str = "mon-travail";
 ///
 /// Renvoie le dossier du projet créé, le cas échéant.
 pub fn migrate_flat_documents() -> Option<PathBuf> {
-    // Un projet existe déjà : le dossier a été migré, ou l'utilisateur a
-    // commencé à travailler dans la nouvelle organisation.
-    if !model::list_projects().is_empty() {
-        return None;
-    }
-
-    let flat = locate_flat_documents();
+    let work = work_dir();
+    let flat = locate_flat_documents(&work);
 
     if flat.is_empty() {
         return None;
@@ -715,7 +710,7 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
 
     // Une bibliographie restée à la racine doit rejoindre le projet : sans
     // cela, un chapitre qui la cite perdrait sa référence.
-    adopt_stray_bibliography(&dir);
+    adopt_stray_bibliography(&work, &dir);
 
     let chapters_dir = dir.join("chapitres");
 
@@ -732,7 +727,8 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
 
         if std::fs::rename(path, &destination).is_err() {
             // Un fichier qu'on n'a pas pu déplacer est laissé sur place plutôt
-            // que perdu : la migration reprendra au prochain démarrage.
+            // que perdu : les `.typ` encore à la racine font reprendre la
+            // migration au prochain démarrage.
             continue;
         }
 
@@ -763,8 +759,8 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
 /// Le fichier créé par `model::create` est un modèle vide : on ne le remplace
 /// que s'il est effectivement vide, pour ne jamais écraser des références
 /// existantes par un exemple commenté.
-fn adopt_stray_bibliography(project_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(work_dir()) else {
+fn adopt_stray_bibliography(work: &Path, project_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(work) else {
         return;
     };
 
@@ -778,9 +774,11 @@ fn adopt_stray_bibliography(project_dir: &Path) {
 
     let destination = project_dir.join("references.bib");
 
+    // Le modèle **intact**, et pas « sans `@` » : ses commentaires en
+    // portent un, et cette vérification-là ne pouvait jamais être vraie —
+    // la bibliothèque errante n'était donc jamais adoptée.
     let template_is_untouched = std::fs::read_to_string(&destination)
-        // Le modèle n'a que des lignes vides ou commentées : aucun `@`.
-        .map(|content| !content.contains('@'))
+        .map(|content| content.trim() == crate::project::model::BIBLIOGRAPHY_TEMPLATE.trim())
         .unwrap_or(false);
 
     if template_is_untouched {
@@ -789,8 +787,8 @@ fn adopt_stray_bibliography(project_dir: &Path) {
 }
 
 /// Les documents `.typ` restés à la racine du dossier de travail.
-fn locate_flat_documents() -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(work_dir()) else {
+fn locate_flat_documents(work: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(work) else {
         return Vec::new();
     };
 
@@ -810,6 +808,57 @@ fn locate_flat_documents() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    /// La bibliothèque errante est adoptée quand le modèle est intact —
+    /// et le modèle contient un `@` dans ses commentaires, ce que
+    /// l'ancienne vérification ne pardonnait pas.
+    #[test]
+    fn la_bibliotheque_errante_est_adoptee() {
+        let work = std::env::temp_dir().join(format!("tw-adopt-{}", std::process::id()));
+        let projet = work.join("mon-travail");
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&projet).expect("dossier");
+
+        // Le modèle intact, celui que `create` écrit.
+        std::fs::write(projet.join("references.bib"), crate::project::model::BIBLIOGRAPHY_TEMPLATE)
+            .expect("modèle");
+
+        // La bibliothèque errante, à la racine du dossier de travail.
+        std::fs::write(work.join("references.bib"), "@book{deja,\n  title = {Déjà},\n}\n")
+            .expect("errante");
+
+        super::adopt_stray_bibliography(&work, &projet);
+
+        let contenu = std::fs::read_to_string(projet.join("references.bib")).expect("lu");
+        assert!(
+            contenu.contains("Déjà"),
+            "la bibliothèque errante rejoint le projet : {contenu}"
+        );
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// Un modèle déjà travaillé n'est pas écrasé.
+    #[test]
+    fn un_modele_travaille_n_est_pas_ecrase() {
+        let work = std::env::temp_dir().join(format!("tw-adopt-2-{}", std::process::id()));
+        let projet = work.join("mon-travail");
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&projet).expect("dossier");
+
+        std::fs::write(projet.join("references.bib"), "@book{mien,\n  title = {Le mien},\n}\n")
+            .expect("travail");
+        std::fs::write(work.join("references.bib"), "@book{autre,\n  title = {Autre},\n}\n")
+            .expect("errante");
+
+        super::adopt_stray_bibliography(&work, &projet);
+
+        let contenu = std::fs::read_to_string(projet.join("references.bib")).expect("lu");
+        assert!(contenu.contains("Le mien"), "le travail reste : {contenu}");
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
 
     /// Une suppression n'est pas une destruction : le fichier va à la
     /// corbeille, le chemin est rendu, et rien ne se marche dessus.

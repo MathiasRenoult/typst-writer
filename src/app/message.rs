@@ -79,6 +79,8 @@ pub enum Message {
 
     ZoteroExport(String, String, Result<String, String>),
 
+    ZoteroSynchroniser,
+
     ZoteroDelier,
 
     ZoteroLiaisonFermer,
