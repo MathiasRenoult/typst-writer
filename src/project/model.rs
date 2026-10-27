@@ -223,13 +223,28 @@ pub fn load(dir: &Path) -> Project {
 /// migration crée une copie éditable, sans rendre l'ancien projet illisible.
 /// Les constructions Typst non reconnues sont conservées en blocs bruts.
 pub fn migrate_to_document(project: &Project) -> std::io::Result<PathBuf> {
+    migrate_to_document_avec_rapport(project).map(|(chemin, _)| chemin)
+}
+
+/// La même migration, avec le rapport de ce qu'elle n'a pas traduit.
+///
+/// « La migration ne se fait pas en silence » : le rapport existe, et doit
+/// remonter jusqu'à celui qui regarde l'écran.
+pub fn migrate_to_document_avec_rapport(
+    project: &Project,
+) -> std::io::Result<(PathBuf, crate::langage::migration::Rapport)> {
     let path = project.dir.join("document.tw");
+    let mut rapport = crate::langage::migration::Rapport {
+        elements_convertis: 0,
+        blocs_bruts: 0,
+        avertissements: Vec::new(),
+    };
 
     // Un document déjà rempli est la source de vérité. Un fichier vide,
     // en revanche, peut être le résidu d'une création antérieure et ne doit pas
     // empêcher la migration des chapitres qui contiennent le travail.
     if path.exists() && !std::fs::read_to_string(&path)?.trim().is_empty() {
-        return Ok(path);
+        return Ok((path, rapport));
     }
 
     let mut document = crate::langage::Document::vide();
@@ -244,9 +259,13 @@ pub fn migrate_to_document(project: &Project) -> std::io::Result<PathBuf> {
         };
 
         let source = std::fs::read_to_string(&chapter.path)?;
-        document
-            .blocs
-            .extend(crate::langage::migration::importer_typst(&source).blocs);
+        let (converti, rapport_chapitre) =
+            crate::langage::migration::importer_typst_avec_rapport(&source);
+
+        rapport.elements_convertis += rapport_chapitre.elements_convertis;
+        rapport.blocs_bruts += rapport_chapitre.blocs_bruts;
+        rapport.avertissements.extend(rapport_chapitre.avertissements);
+        document.blocs.extend(converti.blocs);
     }
 
     let serialized = crate::langage::serialiser(&document);
@@ -260,7 +279,7 @@ pub fn migrate_to_document(project: &Project) -> std::io::Result<PathBuf> {
         return Err(error);
     }
 
-    Ok(path)
+    Ok((path, rapport))
 }
 
 /// Importe un fichier `.tw` dans le projet sans écraser un texte existant.

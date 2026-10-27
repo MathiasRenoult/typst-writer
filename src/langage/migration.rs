@@ -142,7 +142,17 @@ fn importer(source: &str, avertissements: &mut Vec<String>) -> Document {
         }
 
         separer_bloc(&mut texte_tw);
-        texte_tw.push_str(&lignes_paragraphe.join(" "));
+
+        // Une ligne Typst « 1. Introduction » ou « - x » n'est pas une
+        // liste : c'est du texte, et la protéger l'empêche de devenir une
+        // structure que personne n'a demandée.
+        let paragraphe = lignes_paragraphe.join(" ");
+
+        if super::schema::ouvre_un_bloc(&paragraphe) {
+            texte_tw.push('\\');
+        }
+
+        texte_tw.push_str(&paragraphe);
     }
 
     parse(&texte_tw)
@@ -281,6 +291,37 @@ fn convertir_inline(texte: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Une ligne Typst qui ressemble à un marqueur de bloc reste du
+    /// texte : la migration ne fabrique pas de structure.
+    #[test]
+    fn la_migration_ne_fabrique_pas_de_liste() {
+        let source = "1. Introduction\n\nDu texte.\n";
+        let (document, _) = importer_typst_avec_rapport(source);
+
+        assert!(
+            document
+                .blocs
+                .iter()
+                .all(|bloc| !matches!(
+                    bloc,
+                    crate::langage::schema::Bloc::ListeNumero(_)
+                )),
+            "« 1. Introduction » est du texte : {document:?}"
+        );
+
+        // Et le sous-item indenté non plus.
+        let source = "  - un sous-item\n";
+        let (document, _) = importer_typst_avec_rapport(source);
+        assert!(
+            !document
+                .blocs
+                .iter()
+                .any(|bloc| matches!(bloc, crate::langage::schema::Bloc::ListePuce(_))),
+            "un item indenté reste du texte : {document:?}"
+        );
+    }
+
     use super::*;
 
     /// Le rapport dit ce qui s'est passé : converti ou brut, et pourquoi.

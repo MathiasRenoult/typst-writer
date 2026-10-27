@@ -165,7 +165,10 @@ fn generer_inline(
                 let mut echappe = String::new();
                 echapper_texte(&compose, &mut echappe, en_tete);
                 out.push_str(&echappe.replace('\u{A0}', "~"));
-                en_tete = false;
+
+                if compose.chars().any(|c| !c.is_whitespace()) {
+                    en_tete = false;
+                }
             }
             Inline::Litteral(texte) => {
                 contexte.precedent = texte.chars().last().or(contexte.precedent);
@@ -173,7 +176,10 @@ fn generer_inline(
                 // Un littéral est la promesse de la grammaire : aucune
                 // interprétation, ni syntaxique, ni typographique.
                 echapper_texte(texte, out, en_tete);
-                en_tete = false;
+
+                if texte.chars().any(|c| !c.is_whitespace()) {
+                    en_tete = false;
+                }
             }
             Inline::Gras(contenu) => {
                 out.push('*');
@@ -275,11 +281,16 @@ pub fn generer_citation(references: &[Reference], out: &mut String) {
 
 /// Écrit du texte en échappant ce que Typst lirait comme du balisage.
 fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
-    for (index, caractere) in texte.chars().enumerate() {
+    // La tête de ligne tient jusqu'au premier caractère utile : un
+    // marqueur après un blanc l'est tout autant qu'au premier rang, et
+    // Typst en ferait une liste ou un titre.
+    let mut tete = debut_de_ligne;
+
+    for caractere in texte.chars() {
         let echappe = match caractere {
             '\\' | '#' | '*' | '_' | '`' | '$' | '@' | '^' | '<' | '>' | '[' | ']' | '~' => true,
             // En tête de ligne seulement : ailleurs, ces signes sont du texte.
-            '-' | '+' | '=' | '/' => index == 0 && debut_de_ligne,
+            '-' | '+' | '=' | '/' => tete,
             _ => false,
         };
 
@@ -288,6 +299,10 @@ fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
         }
 
         out.push(caractere);
+
+        if !caractere.is_whitespace() {
+            tete = false;
+        }
     }
 }
 
@@ -323,6 +338,31 @@ fn expression_couleur(couleur: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// Un marqueur de bloc après un blanc est un marqueur : Typst en
+    /// ferait une liste. Le rempart tient toute la tête de ligne.
+    #[test]
+    fn le_repart_de_tete_tient_apres_un_blanc() {
+        use super::super::schema::{Bloc, Document, Inline};
+
+        let document = Document {
+            blocs: vec![Bloc::Paragraphe(vec![
+                Inline::Litteral(" ".to_string()),
+                Inline::Texte("- x".to_string()),
+            ])],
+        };
+
+        let typst = generer(&document);
+        assert!(
+            typst.contains("\\- x"),
+            "le tiret après un blanc doit être protégé : {typst}"
+        );
+
+        // Et le document compile sans devenir une liste.
+        let outcome = compiler(&typst);
+        assert!(outcome.errors.is_empty(), "vu : {:?}", outcome.errors);
+    }
+
 
     /// La typographie traverse les éléments : l'espace avant un signe, et
     /// le niveau des guillemets, ne se perdent pas aux frontières.

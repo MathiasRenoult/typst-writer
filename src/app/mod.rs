@@ -62,9 +62,25 @@ impl State {
             .or_else(|| projects.first().cloned())
             .unwrap_or_else(|| crate::project::load(&crate::project::projects_dir()));
 
-        if let Err(error) = crate::project::migrate_to_document(&project) {
-            eprintln!("Migration vers document.tw : {error}");
-        }
+        // La migration ne se fait pas en silence : ce qu'elle n'a pas
+        // traduit se dit, à l'écran, dès le démarrage.
+        let note_de_migration = match crate::project::migrate_to_document_avec_rapport(&project)
+        {
+            Ok((_, rapport)) => {
+                if rapport.avertissements.is_empty() {
+                    None
+                } else {
+                    Some(crate::app::state::Note::info(format!(
+                        "Migration : {} bloc(s) laissé(s) en Typst brut — {}",
+                        rapport.blocs_bruts,
+                        rapport.avertissements.join(" ; ")
+                    )))
+                }
+            }
+            Err(error) => Some(crate::app::state::Note::erreur(format!(
+                "Migration vers document.tw : {error}"
+            ))),
+        };
 
         let project = crate::project::load(&project.dir);
 
@@ -110,7 +126,7 @@ impl State {
             theme: session.theme_mode,
             resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
                     liaison: None,
-            note: None,
+            note: note_de_migration,
 };
 
         // Le chapitre de la session, s'il appartient encore au projet ; sinon
