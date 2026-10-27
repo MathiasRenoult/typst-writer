@@ -513,6 +513,10 @@ pub struct LspState {
     /// Une réponse est attendue : le battement d'écoute se resserre.
     pub awaiting: bool,
 
+    /// Depuis quand, pour ne pas attendre toujours : un serveur lent ou
+    /// muet ne doit pas tenir l'application en haleine.
+    pub depuis: Option<std::time::Instant>,
+
     /// La liste de complétion ouverte, s'il y en a une.
     pub completion: Option<Completion>,
 
@@ -541,6 +545,7 @@ impl LspState {
         }
 
         self.awaiting = false;
+        self.depuis = None;
         true
     }
 
@@ -548,6 +553,7 @@ impl LspState {
     pub(crate) fn cancel_completion_request(&mut self) {
         self.tokens = self.tokens.wrapping_add(1);
         self.awaiting = false;
+        self.depuis = None;
     }
 
     /// Purge tout ce que le serveur a pu laisser : document ouvert, diagnostics,
@@ -567,6 +573,7 @@ impl LspState {
         self.reported.clear();
         self.hover = None;
         self.awaiting = false;
+        self.depuis = None;
     }
 }
 

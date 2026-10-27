@@ -262,10 +262,18 @@ impl State {
         if let Some(session) = self.lsp.session.as_mut() {
             session.open_document(&path, &text);
             self.lsp.document = Some(session.uri().to_string());
+
+            // Les diagnostics du document précédent ne restent pas : ses
+            // boutons sauteraient aux anciennes lignes du nouveau.
             self.lsp.diagnostics.clear();
+            self.lsp.reported.clear();
 
             return;
         }
+
+        // Une panne n'est pas une disgrâce : changer de document tente de
+        // nouveau, et un serveur relancé est repris.
+        self.lsp.unavailable = false;
 
         if !crate::lsp::client::Session::is_available() {
             self.lsp.unavailable = true;
@@ -834,6 +842,21 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return tache;
             }
 
+            // Une attente qui dure est une attente morte : un serveur lent
+            // ou muet ne doit pas tenir l'application en haleine ni
+            // empêcher la liste de se fermer.
+            if state.lsp.awaiting
+                && state
+                    .lsp
+                    .depuis
+                    .is_some_and(|depuis| depuis.elapsed() > std::time::Duration::from_secs(5))
+            {
+                state.lsp.awaiting = false;
+                state.lsp.depuis = None;
+
+                return update(state, Message::CompletionDismiss);
+            }
+
             if let Some(tache) = crate::app::epreuves::driver_composeur(state) {
                 return tache;
             }
@@ -905,7 +928,14 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.render.content = outcome.content;
             state.render.errors = outcome.errors;
             state.render.warnings = outcome.warnings;
-            state.render.document = outcome.document;
+
+            // Un échec ne vide pas l'aperçu : la dernière image bonne
+            // reste affichée sous les erreurs, et ses textures gardent
+            // leur place jusqu'à ce qu'une nouvelle compilation les
+            // remplace. C'était la promesse du double tampon, tenue.
+            if outcome.document.is_some() {
+                state.render.document = outcome.document;
+            }
 
             // Nouveau document : toute image en cache est dorénavant suspecte.
             // On ne les supprime pas pour autant — elles restent affichées
@@ -1004,6 +1034,22 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::ViewportChanged(first, last, bounds) => {
+            // « Aucune page » envoie (0, 0) : ce n'est pas une plage,
+            // c'est l'absence d'information. Un document tenu dans la
+            // fenêtre n'en reçoit jamais d'autre, et ses pages 2+ ne
+            // venaient qu'après un défilement manuel.
+            let total = state
+                .render
+                .document
+                .as_deref()
+                .map_or(0, crate::typst::render::page_count);
+
+            let (first, last) = if (first, last) == (0, 0) && total > 1 {
+                (0, 2.min(total - 1))
+            } else {
+                (first, last)
+            };
+
             let unchanged = state.render.visible == Some((first, last))
                 && state.render.viewport == Some(bounds);
 

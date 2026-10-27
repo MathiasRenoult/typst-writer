@@ -144,6 +144,7 @@ pub(super) fn request_completion(
     );
 
     state.lsp.awaiting = true;
+    state.lsp.depuis = Some(std::time::Instant::now());
 
     // La liste précédente n'a plus lieu d'être, mais on la garde à l'écran
     // jusqu'à la réponse : la faire disparaître à chaque lettre ferait
@@ -613,8 +614,10 @@ pub(super) fn apply_lsp(state: &mut State, event: crate::lsp::client::Event) -> 
 
         Event::Gone { reason } => {
             // Le serveur est parti : l'application continue sans lui, et le
-            // dit. Rien de ce qui suit ne dépend de lui.
-            eprintln!("Le serveur de langage s'est arrêté : {reason}");
+            // dit — à l'écran, pas dans un journal que personne ne lit.
+            state.note = Some(crate::app::state::Note::erreur(format!(
+                "L'assistance à la frappe s'est arrêtée : {reason}"
+            )));
 
             state.lsp.session = None;
             state.lsp.unavailable = true;
