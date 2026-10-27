@@ -413,8 +413,8 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
         if let Some((texte_lien, cible, apres)) = lien(reste) {
             vider!();
             elements.push(Inline::Lien {
-                texte: parse_inline(texte_lien),
-                cible: cible.to_string(),
+                texte: parse_inline(&texte_lien),
+                cible,
             });
             reste = apres;
             continue;
@@ -453,17 +453,42 @@ fn emphasis<'a>(texte: &'a str, delim: &str) -> Option<(&'a str, &'a str)> {
         return None;
     }
 
-    let mut offset = 0;
+    let mut curseur = 0;
+    let mut dernier: Option<char> = None;
 
-    while let Some(trouve) = reste[offset..].find(delim) {
-        let index = offset + trouve;
-        let avant = reste[..index].chars().next_back();
+    while curseur < reste.len() {
+        let caractere = reste[curseur..].chars().next()?;
 
-        if index > 0 && avant.is_some_and(|c| !c.is_whitespace() && c != '\\') {
-            return Some((&reste[..index], &reste[index + delim.len()..]));
+        // Une barre oblique et le caractère qu'elle porte font un tout.
+        if caractere == '\\' {
+            if let Some(litteral) = reste[curseur + 1..].chars().next() {
+                dernier = Some(litteral);
+                curseur += 1 + litteral.len_utf8();
+                continue;
+            }
+
+            dernier = Some('\\');
+            curseur += 1;
+            continue;
         }
 
-        offset = index + delim.len();
+        // Un code est opaque : ce qui s'y trouve ne ferme pas l'emphase.
+        if caractere == '`'
+            && let Some(fin) = fin_du_code(reste, curseur) {
+                dernier = Some('`');
+                curseur = fin;
+                continue;
+            }
+
+        if reste[curseur..].starts_with(delim)
+            && curseur > 0
+            && dernier.is_some_and(|d| !d.is_whitespace())
+        {
+            return Some((&reste[..curseur], &reste[curseur + delim.len()..]));
+        }
+
+        dernier = Some(caractere);
+        curseur += caractere.len_utf8();
     }
 
     None
@@ -471,8 +496,9 @@ fn emphasis<'a>(texte: &'a str, delim: &str) -> Option<(&'a str, &'a str)> {
 
 /// Trouve un texte entre deux délimiteurs identiques, sans contrainte de blanc.
 ///
-/// Sert au code inline et au contenu des liens, où l'espacement n'a pas de
-/// valeur de frontière.
+/// Sert au code inline, dont le contenu est **littéral** : ni échappement ni
+/// balisage n'y sont reconnus. Sa seule règle est de ne pas contenir le
+/// délimiteur lui-même — un code ne contient pas de backtick.
 fn delimit<'a>(texte: &'a str, delim: &str) -> Option<(&'a str, &'a str)> {
     let reste = texte.strip_prefix(delim)?;
     let ferme = reste.find(delim)?;
@@ -481,11 +507,91 @@ fn delimit<'a>(texte: &'a str, delim: &str) -> Option<(&'a str, &'a str)> {
 }
 
 /// Une note : `^[texte]`.
+///
+/// Le crochet fermant se cherche à l'épreuve des échappements **et de
+/// l'imbrication** : une note peut contenir un lien `[x](y)` ou une autre
+/// note, dont les crochets se comptent par paire. Un crochet échappé n'en
+/// ferme aucun.
 fn note(texte: &str) -> Option<(&str, &str)> {
     let apres_ouverture = texte.strip_prefix("^[")?;
-    let fin = apres_ouverture.find(']')?;
+    let (contenu, reste) = jusqu_au_crochet_fermant(apres_ouverture)?;
 
-    Some((&apres_ouverture[..fin], &apres_ouverture[fin + 1..]))
+    Some((contenu, reste))
+}
+
+/// La fin d'un code inline ouvert par le backtick en `position`, s'il existe.
+///
+/// Un code est une **bande opaque** pour les balayages qui l'entourent : ce
+/// qui s'y trouve ne ferme ni une emphase, ni une note, ni une couleur. Un
+/// backtick jamais fermé n'ouvre pas de code — il reste du texte.
+fn fin_du_code(texte: &str, position: usize) -> Option<usize> {
+    let ferme = texte[position + 1..].find('`')?;
+    Some(position + 1 + ferme + 1)
+}
+
+/// Le contenu d'un `[` ouvert, jusqu'au `]` qui le ferme.
+///
+/// Les crochets se comptent par paire et les échappements par unité :
+/// `[un [deux] trois]` tient entier, comme `[un \] caché]`.
+fn jusqu_au_crochet_fermant(texte: &str) -> Option<(&str, &str)> {
+    let mut profondeur = 1;
+    let mut curseur = 0;
+
+    while curseur < texte.len() {
+        let caractere = texte[curseur..].chars().next()?;
+
+        if caractere == '\\' {
+            if let Some(litteral) = texte[curseur + 1..].chars().next() {
+                curseur += 1 + litteral.len_utf8();
+                continue;
+            }
+
+            curseur += 1;
+            continue;
+        }
+
+        // Un code est opaque : ce qui s'y trouve ne compte pas.
+        if caractere == '`'
+            && let Some(fin) = fin_du_code(texte, curseur) {
+                curseur = fin;
+                continue;
+            }
+
+        match caractere {
+            '[' => profondeur += 1,
+            ']' => {
+                profondeur -= 1;
+
+                if profondeur == 0 {
+                    return Some((&texte[..curseur], &texte[curseur + 1..]));
+                }
+            }
+            _ => {}
+        }
+
+        curseur += caractere.len_utf8();
+    }
+
+    None
+}
+
+/// Le contenu d'une `(` ouverte, jusqu'à la `)` qui la ferme, **déséchappé**.
+///
+/// Les parenthèses d'une cible de lien sont échappées à l'écriture ; la
+/// lecture les rend littérales. Une barre oblique y échappe ce qui suit.
+fn jusqu_au_parenthese_fermante(texte: &str) -> Option<(String, &str)> {
+    let mut contenu = String::new();
+    let mut caracteres = texte.chars();
+
+    while let Some(caractere) = caracteres.next() {
+        match caractere {
+            '\\' => contenu.push(caracteres.next()?),
+            ')' => return Some((contenu, caracteres.as_str())),
+            _ => contenu.push(caractere),
+        }
+    }
+
+    None
 }
 
 /// Un appel de citation : `@clé`, `@clé[p. 45]`, ou plusieurs références.
@@ -608,21 +714,26 @@ fn lire_page(texte: &str) -> Option<(String, &str)> {
 }
 
 /// Un lien : `[texte](cible)`.
-fn lien(texte: &str) -> Option<(&str, &str, &str)> {
+///
+/// Le texte se lit jusqu'au crochet fermant à l'épreuve de l'imbrication —
+/// il peut contenir une note ou un autre lien —, et la cible jusqu'à la
+/// parenthèse fermante, déséchappée.
+fn lien(texte: &str) -> Option<(String, String, &str)> {
     let apres_ouvert = texte.strip_prefix('[')?;
 
-    let ferme = apres_ouvert.find(']')?;
-    let texte_lien = &apres_ouvert[..ferme];
+    let (texte_lien, apres_ferme) = jusqu_au_crochet_fermant(apres_ouvert)?;
 
-    let apres_ferme = &apres_ouvert[ferme + 1..];
-    let apres_parenthèse = apres_ferme.strip_prefix('(')?;
-    let fin = apres_parenthèse.find(')')?;
-    let cible = &apres_parenthèse[..fin];
+    let apres_parenthese = apres_ferme.strip_prefix('(')?;
+    let (cible, reste) = jusqu_au_parenthese_fermante(apres_parenthese)?;
 
-    Some((texte_lien, cible, &apres_parenthèse[fin + 1..]))
+    Some((texte_lien.to_string(), cible, reste))
 }
 
 /// Une couleur : `{couleur:texte}`.
+///
+/// Le nom va jusqu'au premier deux-points — il n'en contient pas —, et le
+/// contenu jusqu'à l'accolade fermante, à l'épreuve de l'imbrication : une
+/// couleur peut en contenir une autre.
 fn couleur(texte: &str) -> Option<(&str, &str, &str)> {
     let apres_ouvert = texte.strip_prefix('{')?;
 
@@ -630,10 +741,55 @@ fn couleur(texte: &str) -> Option<(&str, &str, &str)> {
     let couleur = &apres_ouvert[..deux_points];
 
     let apres_deux_points = &apres_ouvert[deux_points + 1..];
-    let ferme = apres_deux_points.find('}')?;
-    let contenu = &apres_deux_points[..ferme];
+    let (contenu, reste) = jusqu_a_l_accolade_fermante(apres_deux_points)?;
 
-    Some((couleur, contenu, &apres_deux_points[ferme + 1..]))
+    Some((couleur, contenu, reste))
+}
+
+/// Le contenu d'une `{` ouverte, jusqu'à la `}` qui la ferme.
+///
+/// Les accolades se comptent par paire et les échappements par unité :
+/// `{red:{blue:x}}` tient entier.
+fn jusqu_a_l_accolade_fermante(texte: &str) -> Option<(&str, &str)> {
+    let mut profondeur = 1;
+    let mut curseur = 0;
+
+    while curseur < texte.len() {
+        let caractere = texte[curseur..].chars().next()?;
+
+        if caractere == '\\' {
+            if let Some(litteral) = texte[curseur + 1..].chars().next() {
+                curseur += 1 + litteral.len_utf8();
+                continue;
+            }
+
+            curseur += 1;
+            continue;
+        }
+
+        // Un code est opaque : ce qui s'y trouve ne compte pas.
+        if caractere == '`'
+            && let Some(fin) = fin_du_code(texte, curseur) {
+                curseur = fin;
+                continue;
+            }
+
+        match caractere {
+            '{' => profondeur += 1,
+            '}' => {
+                profondeur -= 1;
+
+                if profondeur == 0 {
+                    return Some((&texte[..curseur], &texte[curseur + 1..]));
+                }
+            }
+            _ => {}
+        }
+
+        curseur += caractere.len_utf8();
+    }
+
+    None
 }
 
 #[cfg(test)]

@@ -95,6 +95,76 @@ Le sérialiseur échappe les marqueurs inline et les débuts de bloc. Le texte n
 est lui aussi échappé pour la syntaxe Typst : une étoile, un `#` ou un crochet
 littéral ne devient pas une commande du document compilé.
 
+**L'escapement est uniforme** : les dix marqueurs —
+`\ * ` @ [ { } ] ^ _` — sont échappés partout où du texte est littéral, y
+compris les mentions de page et les cibles de lien. Une région littérale
+s'écrit comme du texte nu, sinon ses caractères feraient signe aux balayages
+qui l'entourent : un `*` de page refermerait l'italique du voisinage. La
+lecture déséchappe génériquement.
+
+### Grammaire formelle
+
+**Priorité de lecture.** Le parseur inline lit dans cet ordre, à chaque
+position : échappement `\x`, gras-italique `***`, gras `**`, italique `*`
+ou `_`, code `` ` ``, note `^[`, appel `@`, lien `[`, couleur `{`. Le premier
+marqueur reconnu l'emporte ; ce qui n'en est pas un s'accumule en texte nu,
+et les textes adjacents n'en font qu'un.
+
+**Imbrication.** Les conteneurs se lisent par descente récursive — un gras
+peut contenir une note, un lien, une couleur, un appel —, à une réserve près :
+l'emphase est **plate**. Aucune emphase ne descend dans une emphase, à aucun
+niveau — le balayage d'une emphase est plat, une étoile de la profondeur la
+refermerait avant l'heure. Le gras-italique se dit en `GrasItalique`
+(`***…***`), jamais en deux.
+
+**Délimiteurs incomplets.** Un marqueur jamais fermé n'en est pas un : `*x`
+reste du texte, `^[note` reste du texte, `@` sans clé reste un `@` nu, un
+fence jamais clôturé va jusqu'à la fin du document. Le parseur ne renvoie
+jamais d'erreur : ce qui ne se lit pas reste du texte, et un fichier abîmé ne
+doit pas empêcher d'ouvrir le projet.
+
+**Bandes opaques.** Un code inline est une bande opaque : ce qui s'y trouve
+ne ferme ni une emphase, ni une note, ni une couleur. Le balayage des
+délimiteurs saute les codes d'un bond — un `` `]` `` dans une note ne ferme
+rien du tout.
+
+**Listes.** Une ligne de liste est un élément : il n'y a pas de suite de
+ligne, et une ligne qui n'est plus un marqueur referme la liste et devient
+paragraphe. Les listes numérotées se réécrivent à la suite — `1.`, `2.`, …
+— quel que soit le numéro lu.
+
+**Forme canonique.** Le round-trip `parse(serialiser(AST)) == AST` est garanti
+pour tout AST **canonique**, et pour lui seul — c'est `Document::est_canonique`
+(`src/langage/schema.rs`) qui les énonce et les vérifie, règle par règle. Les
+dix règles, en résumé :
+
+1. un texte nu n'est jamais vide, et ne contient pas de saut de ligne ;
+2. une emphase est plate, non vide, sans blanc aux bords ;
+3. un code ne contient ni backtick ni saut de ligne ;
+4. le nom d'une couleur est simple : ni deux-points, ni marqueur ;
+5. une référence a une clé alphanumérique (tirets et underscores admis), et
+   sa page, si elle est, est non vide et déjà rognée ;
+6. un paragraphe, une citation de bloc et une liste ne sont pas vides ; un
+   titre est de niveau 1 à 6 ;
+7. deux textes nus ne sont jamais adjacents — le parseur les rassemble ;
+8. un lien ne suit jamais immédiatement un appel sans page — son crochet
+   ouvrant serait lu comme sa page ;
+9. un texte ne suit jamais immédiatement un appel sans page par un caractère
+   de clé — il grossirait la clé ;
+10. le `; ` d'un appel groupé est réservé : un texte « ; » ne sépare jamais
+    deux appels.
+
+Ces règles ne sont pas des manques : elles décrivent ce que la syntaxe peut
+dire sans ambiguïté. Tout autre AST est toléré à la lecture, mais repris à
+l'écriture — et la réécriture est idempotente : rouvrir puis réécrire ne
+reformate jamais deux fois.
+
+La propriété est éprouvée, non démontrée : un générateur produit cinq cents
+documents canoniques au hasard, que `parse` et `serialiser` doivent
+reconduire à l'identique (`src/langage/serialiser.rs`, tests
+`le_round_trip_tient_sur_tout_ast_canonique` et
+`la_canonicalisation_est_idempotente`).
+
 ## Schéma du Document
 
 `src/langage/schema.rs` définit :

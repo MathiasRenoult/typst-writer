@@ -104,6 +104,49 @@ impl Document {
         Self { blocs: Vec::new() }
     }
 
+    /// Le document est-il dans sa forme **canonique** ?
+    ///
+    /// C'est le domaine exact de la garantie de round-trip :
+    /// `parse(serialiser(document)) == document` pour tout document canonique,
+    /// et pour lui seul. La forme canonique est ce que le sérialiseur écrit et
+    /// ce que le parseur relit sans surprise — les autres formes sont tolérées
+    /// à la lecture, mais reprises à l'écriture.
+    ///
+    /// Les règles, une par une :
+    ///
+    /// 1. un texte nu n'est jamais vide, et ne contient pas de saut de ligne
+    ///    (une ligne est une ligne) ;
+    /// 2. une emphase est **plate** — elle ne contient pas d'emphase —, son
+    ///    contenu n'est pas vide et ne commence ni ne finit par un blanc ;
+    ///    le gras-italique se dit en `GrasItalique`, jamais en deux ;
+    /// 3. un code inline ne contient ni backtick ni saut de ligne : il est
+    ///    littéral, et son délimiteur n'y paraît pas ;
+    /// 4. le nom d'une couleur ne contient ni deux-points, ni accolade, ni
+    ///    barre oblique ;
+    /// 5. une référence a une clé alphanumérique (tirets et underscores
+    ///    admis), et sa page, si elle est, est non vide et déjà rognée ;
+    /// 6. un paragraphe, une citation de bloc et une liste ne sont pas vides ;
+    ///    un titre est de niveau 1 à 6 ;
+    /// 7. deux textes nus ne sont jamais adjacents — le parseur les
+    ///    rassemble, et deux formes ne peuvent pas avoir la même écriture ;
+    /// 8. un lien ne suit jamais immédiatement un appel sans mention de
+    ///    page : son crochet ouvrant serait lu comme la page de l'appel —
+    ///    `@clé[lien](x)` s'entend `@clé`, page « lien ». Un espace, ou une
+    ///    page, les sépare ;
+    /// 9. un texte ne suit jamais immédiatement un appel sans page par un
+    ///    caractère de clé (lettre, chiffre, tiret, underscore) : il
+    ///    grossirait la clé — `@dupont30` suivi de « 2. x » s'écrit
+    ///    `@dupont302. x`, qui se relit clé « dupont302 ». Un espace, ou une
+    ///    page, les sépare ;
+    /// 10. le `; ` d'un appel groupé est **réservé** : un texte dont le
+    ///     contenu rogné est « ; » ne sépare jamais deux appels — il serait
+    ///     lu comme le séparateur du groupe, et deux formes ne peuvent pas
+    ///     avoir la même écriture.
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn est_canonique(&self) -> bool {
+        self.blocs.iter().all(Bloc::est_canonique)
+    }
+
     /// Le texte visible du document, sans marqueurs ni blocs vides.
     ///
     /// C'est la base du compteur de mots : titres, citations et listes comptent,
@@ -117,6 +160,182 @@ impl Document {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+impl Bloc {
+    /// Le bloc est-il dans sa forme canonique ? Voir [`Document::est_canonique`].
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn est_canonique(&self) -> bool {
+        match self {
+            Bloc::Titre { niveau, contenu } => {
+                (1..=6).contains(niveau) && inline_canonique(contenu)
+            }
+            Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
+                !contenu.is_empty() && inline_canonique(contenu)
+            }
+            Bloc::ListePuce(items) | Bloc::ListeNumero(items) => {
+                !items.is_empty() && items.iter().all(|item| inline_canonique(item))
+            }
+            // Un bloc brut est pris tel quel : son délimiteur s'adapte à son
+            // contenu, tout lui est permis.
+            Bloc::Brut(_) => true,
+        }
+    }
+}
+
+impl Inline {
+    /// L'élément est-il dans sa forme canonique ? Voir [`Document::est_canonique`].
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn est_canonique(&self) -> bool {
+        match self {
+            Inline::Texte(texte) => !texte.is_empty() && !texte.contains('\n'),
+            Inline::Gras(contenu) | Inline::Italique(contenu) | Inline::GrasItalique(contenu) => {
+                est_emphase_canonique(contenu)
+            }
+            // Le code est littéral : son délimiteur n'y paraît pas.
+            Inline::Code(texte) => !texte.contains('`') && !texte.contains('\n'),
+            Inline::Couleur {
+                couleur,
+                contenu,
+            } => {
+                // Le nom va jusqu'au premier deux-points : un nom **simple**,
+                // lettres, chiffres et quelques signes — `red`, `#ff0000`,
+                // `rgb(1, 2, 0)`. Ni marqueur, qui ferait signe aux balayages
+                // du voisinage, ni deux-points, qui serait le séparateur.
+                !couleur.is_empty()
+                    && !couleur.contains([':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+                    && !couleur.contains('\n')
+                    && inline_canonique(contenu)
+            }
+            Inline::Citation(references) => {
+                !references.is_empty() && references.iter().all(Reference::est_canonique)
+            }
+            Inline::Note(contenu) => inline_canonique(contenu),
+            Inline::Lien { texte, cible } => {
+                inline_canonique(texte) && !cible.contains('\n')
+            }
+        }
+    }
+
+    /// L'élément est-il une emphase ? (Gras, italique, ou les deux.)
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn est_emphase(&self) -> bool {
+        matches!(
+            self,
+            Inline::Gras(_) | Inline::Italique(_) | Inline::GrasItalique(_)
+        )
+    }
+}
+
+impl Reference {
+    /// La référence est-elle dans sa forme canonique ? Voir
+    /// [`Document::est_canonique`].
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn est_canonique(&self) -> bool {
+        !self.cle.is_empty()
+            && self
+                .cle
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            && self.page.as_ref().is_none_or(|page| {
+                !page.is_empty() && !page.contains('\n') && page == page.trim()
+            })
+    }
+}
+
+/// Une suite d'éléments inline est-elle canonique ?
+#[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+///
+/// Outre la canonicité de chaque élément, deux règles gouvernent la suite :
+/// deux textes nus ne s'adjacent pas, et un lien ne colle pas à un appel
+/// sans page. Voir [`Document::est_canonique`].
+fn inline_canonique(inline: &[Inline]) -> bool {
+    if !inline.iter().all(Inline::est_canonique) {
+        return false;
+    }
+
+    for paire in inline.windows(2) {
+        let (avant, apres) = (&paire[0], &paire[1]);
+
+        if matches!(avant, Inline::Texte(_)) && matches!(apres, Inline::Texte(_)) {
+            return false;
+        }
+
+        if appel_sans_page(avant) {
+            // Un lien collé : son crochet serait la page de l'appel.
+            if matches!(apres, Inline::Lien { .. }) {
+                return false;
+            }
+
+            // Un texte collé : sa première lettre grossirait la clé.
+            if let Inline::Texte(texte) = apres
+                && texte.starts_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_') {
+                    return false;
+                }
+        }
+    }
+
+    // Un « ; » entre deux appels serait le séparateur du groupe.
+    for triplet in inline.windows(3) {
+        let est_un_point_virgule = matches!(&triplet[1], Inline::Texte(texte) if texte.trim() == ";");
+
+        if est_un_point_virgule
+            && matches!(triplet[0], Inline::Citation(_))
+            && matches!(triplet[2], Inline::Citation(_))
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// L'élément est-il un appel dont la dernière référence n'a pas de page ?
+#[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+fn appel_sans_page(element: &Inline) -> bool {
+    match element {
+        Inline::Citation(references) => references
+            .last()
+            .is_some_and(|derniere| derniere.page.is_none()),
+        _ => false,
+    }
+}
+
+/// Une emphase se trouve-t-elle **quelque part** sous ces éléments ?
+#[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+fn contient_emphase(inline: &[Inline]) -> bool {
+    inline.iter().any(|element| match element {
+        Inline::Gras(contenu)
+        | Inline::Italique(contenu)
+        | Inline::GrasItalique(contenu)
+        | Inline::Note(contenu)
+        | Inline::Couleur { contenu, .. } => contient_emphase(contenu) || element.est_emphase(),
+        Inline::Lien { texte, .. } => contient_emphase(texte),
+        _ => false,
+    })
+}
+
+/// Une emphase canonique : plate, non vide, sans blanc aux bords.
+///
+/// « Plate » — **aucune** emphase n'y descend, à aucun niveau : le balayage
+/// d'une emphase est plat, une étoile de la profondeur la refermerait avant
+/// l'heure. Le gras-italique se dit en `GrasItalique`. Les bords se jugent
+/// sur les éléments extrêmes : un texte nu détermine le premier et le
+/// dernier caractère sérialisés, et un délimiteur (code, note…) les garantit
+/// non blancs.
+#[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+fn est_emphase_canonique(contenu: &[Inline]) -> bool {
+    if contenu.is_empty() || contient_emphase(contenu) || !inline_canonique(contenu) {
+        return false;
+    }
+
+    let bord_blanc = match (&contenu.first(), &contenu.last()) {
+        (Some(Inline::Texte(premier)), _) if premier.starts_with(char::is_whitespace) => true,
+        (_, Some(Inline::Texte(dernier))) if dernier.ends_with(char::is_whitespace) => true,
+        _ => false,
+    };
+
+        !bord_blanc
 }
 
 impl Bloc {

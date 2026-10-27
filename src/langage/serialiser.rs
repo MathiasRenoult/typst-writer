@@ -11,10 +11,13 @@
 
 use super::schema::{Bloc, Document, Inline, Reference};
 
-/// Caractères qui ouvrent un marqueur inline, et qu'un texte nu doit échapper.
+/// Caractères qui ouvrent ou ferment un marqueur inline, et qu'un texte nu
+/// doit échapper.
 ///
-/// L'ordre n'importe pas : chacun est échappé individuellement.
-const MARQUEURS: [char; 7] = ['\\', '*', '`', '@', '[', '{', '^'];
+/// L'ordre n'importe pas : chacun est échappé individuellement. Les fermetures
+/// `]` et `}` y sont autant que les ouvertures — un crochet nu dans une note
+/// la refermerait avant l'heure —, et `_` ouvre l'italique bas.
+const MARQUEURS: [char; 10] = ['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'];
 
 /// Sérialise un document dans notre syntaxe.
 ///
@@ -175,7 +178,7 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 out.push('[');
                 ecrire_inline(texte, out);
                 out.push_str("](");
-                out.push_str(cible);
+                echapper_cible(cible, out);
                 out.push(')');
             }
         }
@@ -193,10 +196,19 @@ fn echapper_texte(texte: &str, out: &mut String) {
     }
 }
 
-/// Écrit une mention de page, en échappant ce qui romprait ses crochets.
+/// Écrit une mention de page, en échappant **tous** les marqueurs.
+///
+/// Une région littérale s'écrit comme du texte nu : sinon ses caractères
+/// feraient signe aux balayages qui l'entourent — un `*` de page refermerait
+/// l'italique du voisinage. La lecture déséchappe génériquement.
 fn echapper_page(page: &str, out: &mut String) {
-    for caractere in page.chars() {
-        if matches!(caractere, '\\' | ']') {
+    echapper_texte(page, out);
+}
+
+/// Écrit une cible de lien : les marqueurs, et sa propre parenthèse.
+fn echapper_cible(cible: &str, out: &mut String) {
+    for caractere in cible.chars() {
+        if MARQUEURS.contains(&caractere) || caractere == ')' {
             out.push('\\');
         }
 
@@ -302,7 +314,11 @@ mod tests {
 
         let texte = serialiser(&document);
 
-        assert_eq!(texte, "Une \\*étoile\\*, un \\@grep et \\{accolades}.\n");
+        assert_eq!(
+            texte,
+            "Une \\*étoile\\*, un \\@grep et \\{accolades\\}.\n",
+            "les fermetures s'échappent autant que les ouvertures"
+        );
         assert_eq!(parse(&texte), document, "et le parseur le relit tel quel");
     }
 
@@ -344,4 +360,283 @@ mod tests {
         assert!(source.starts_with("````typst\n"));
         assert_eq!(parse(&source), document);
     }
+
+    // ---- La propriété de round-trip, sur des documents au hasard ----
+    //
+    // Le programme de fiabilisation exige `parse(serialiser(AST)) == AST`
+    // pour tout AST canonique. Trois tests d'exemple ne prouvent rien : c'est
+    // un générateur qui produit les documents, et la propriété qui les juge.
+
+    /// Un congruentiel linéaire : le même fil de nombres à chaque suite, et
+    /// un échec reproductible sans dépendance de test.
+    struct Hasard(u64);
+
+    impl Hasard {
+        fn suivant(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+
+        fn entier(&mut self, max: usize) -> usize {
+            (self.suivant() % max as u64) as usize
+        }
+
+        fn un_parmi<'a, T>(&mut self, options: &'a [T]) -> &'a T {
+            &options[self.entier(options.len())]
+        }
+    }
+
+    /// Des mots de vraie vie — et ceux du langage lui-même, qui doivent
+    /// rester des mots.
+    const MOTS: &[&str] = &[
+        "Église", "théologie", "grâce", "un", "des", "fin.", "2 * 3", "a_b", "a*b", "un ]",
+        "{x}", "^y", "@z", "2. x", "- y", "# z", "> w", "1. v", "x\\y", "(parenthèse)", "10:30",
+        "…", "'apostrophe'", "3.14", "-2", "_italique_", "**gras**", "`` ` ``", "]}", ")(", ";",
+        "tab\\ulation", "^[]", "@a[p. 45]", "~~", "~~x~~", "¿", "une étoile * ici",
+    ];
+
+    /// Un texte nu au hasard.
+    fn texte_au_hasard(hasard: &mut Hasard) -> Inline {
+        Inline::Texte((*hasard.un_parmi(MOTS)).to_string())
+    }
+
+    /// Des références groupées, comme un appel de citation.
+    fn references_au_hasard(hasard: &mut Hasard) -> Vec<Reference> {
+        let nombre = 1 + hasard.entier(3);
+
+        (0..nombre)
+            .map(|_| {
+                let cle = format!(
+                    "{}{}",
+                    hasard.un_parmi(&["dupont", "martin", "x_1", "a-b", "cle9"]),
+                    hasard.entier(100)
+                );
+
+                match hasard.entier(3) {
+                    0 => Reference::new(cle),
+                    1 => Reference::new(cle).avec_page(format!("p. {}", 1 + hasard.entier(200))),
+                    _ => Reference::new(cle).avec_page(format!("pp. {}-{}", 3, 1 + hasard.entier(50))),
+                }
+            })
+            .collect()
+    }
+
+    /// Une emphase plate au hasard : son contenu ne contient aucune emphase.
+    fn emphase_au_hasard(hasard: &mut Hasard) -> Inline {
+        let contenu = inlines_au_hasard(hasard, true);
+
+        match hasard.entier(3) {
+            0 => Inline::Gras(contenu),
+            1 => Inline::Italique(contenu),
+            _ => Inline::GrasItalique(contenu),
+        }
+    }
+
+    /// Des éléments inline au hasard ; `dans_emphase` interdit l'emphase.
+    ///
+    /// La suite est normalisée après coup : deux textes s'y joignent, et un
+    /// lien collé à un appel sans page reçoit son espace de séparation. Le
+    /// générateur ne produit que du canonique — c'est la prédicat qui le
+    /// vérifie, et la propriété qui en découle.
+    fn inlines_au_hasard(hasard: &mut Hasard, dans_emphase: bool) -> Vec<Inline> {
+        let nombre = 1 + hasard.entier(3);
+
+        let mut suite: Vec<Inline> = (0..nombre)
+            .map(|_| inline_au_hasard(hasard, dans_emphase))
+            .collect();
+
+        normaliser_la_suite(&mut suite);
+        suite
+    }
+
+    /// Deux textes se joignent ; un lien sépare d'un appel sans page.
+    fn normaliser_la_suite(suite: &mut Vec<Inline>) {
+        let appel_nu = |element: &Inline| match element {
+            Inline::Citation(references) => references
+                .last()
+                .is_some_and(|derniere| derniere.page.is_none()),
+            _ => false,
+        };
+
+        let mut rangee: Vec<Inline> = Vec::new();
+
+        for element in suite.drain(..) {
+            // Collé à un appel sans page, un lien reçoit son espace — sinon
+            // son crochet serait lu comme la page —, et un texte qui
+            // commencerait par un caractère de clé aussi — sinon il
+            // grossirait la clé.
+            if rangee.last().is_some_and(appel_nu) {
+                let colle = match &element {
+                    Inline::Lien { .. } => true,
+                    Inline::Texte(texte) => {
+                        texte.starts_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_')
+                    }
+                    _ => false,
+                };
+
+                if colle {
+                    rangee.push(Inline::Texte(" ".to_string()));
+                }
+            }
+
+            match (rangee.last_mut(), element) {
+                (Some(Inline::Texte(tenue)), Inline::Texte(autre)) => tenue.push_str(&autre),
+                (_, element) => rangee.push(element),
+            }
+        }
+
+        // Dernière passe : un « ; » nu entre deux appels serait lu comme le
+        // séparateur du groupe. On lui donne un corps.
+        for i in 1..rangee.len().saturating_sub(1) {
+            let suspect = matches!(&rangee[i], Inline::Texte(texte) if texte.trim() == ";")
+                && matches!(rangee[i - 1], Inline::Citation(_))
+                && matches!(rangee[i + 1], Inline::Citation(_));
+
+            if suspect
+                && let Inline::Texte(texte) = &mut rangee[i] {
+                    texte.push_str(" .");
+                }
+        }
+
+        *suite = rangee;
+    }
+
+    fn inline_au_hasard(hasard: &mut Hasard, dans_emphase: bool) -> Inline {
+        // La portée des choix : sans emphase sous une emphase.
+        let portee = if dans_emphase { 7 } else { 9 };
+
+        match hasard.entier(portee) {
+            0..=2 => texte_au_hasard(hasard),
+            3 => Inline::Code(
+                (*hasard.un_parmi(&["x", "#f()", "arr[0]", "*ptr", "a]b", "}", ")"])).to_string(),
+            ),
+            4 => Inline::Couleur {
+                couleur: (*hasard.un_parmi(&["red", "#ff0000", "rgb(1, 2, 0)", "blue"])).to_string(),
+                contenu: inlines_au_hasard(hasard, dans_emphase),
+            },
+            5 => Inline::Note(inlines_au_hasard(hasard, dans_emphase)),
+            6 => Inline::Lien {
+                texte: inlines_au_hasard(hasard, dans_emphase),
+                cible: (*hasard.un_parmi(&[
+                    "https://x.y/a",
+                    "a(b)c",
+                    "p\\q",
+                    "x)y",
+                    "https://x.y/[z]",
+                ]))
+                .to_string(),
+            },
+            7 => Inline::Citation(references_au_hasard(hasard)),
+            _ => emphase_au_hasard(hasard),
+        }
+    }
+
+    /// Un bloc au hasard.
+    fn bloc_au_hasard(hasard: &mut Hasard) -> Bloc {
+        match hasard.entier(7) {
+            0 => Bloc::Titre {
+                niveau: (1 + hasard.entier(6)) as u8,
+                contenu: inlines_au_hasard(hasard, false),
+            },
+            1 => Bloc::Paragraphe(inlines_au_hasard(hasard, false)),
+            2 => Bloc::Citation(inlines_au_hasard(hasard, false)),
+            3 => Bloc::ListePuce(
+                (0..1 + hasard.entier(3))
+                    .map(|_| inlines_au_hasard(hasard, false))
+                    .collect(),
+            ),
+            4 => Bloc::ListeNumero(
+                (0..1 + hasard.entier(3))
+                    .map(|_| inlines_au_hasard(hasard, false))
+                    .collect(),
+            ),
+            5 => Bloc::Brut(
+                (*hasard.un_parmi(&[
+                    "#let x = 1",
+                    "#figure(\n  image(\"a.png\"),\n)",
+                    "```\nfence interne\n```",
+                    "",
+                    "une ligne\net une autre",
+                ]))
+                .to_string(),
+            ),
+            _ => Bloc::Paragraphe(vec![texte_au_hasard(hasard)]),
+        }
+    }
+
+    /// Un document au hasard.
+    fn document_au_hasard(hasard: &mut Hasard) -> Document {
+        Document {
+            blocs: (0..1 + hasard.entier(5))
+                .map(|_| bloc_au_hasard(hasard))
+                .collect(),
+        }
+    }
+
+    /// La garantie centrale : `parse(serialiser(AST)) == AST` pour tout AST
+    /// canonique. Le générateur n'en produit pas d'autre.
+    #[test]
+    fn le_round_trip_tient_sur_tout_ast_canonique() {
+        let mut hasard = Hasard(42);
+        let mut formes = 0;
+
+        for _ in 0..500 {
+            let document = document_au_hasard(&mut hasard);
+
+            assert!(
+                document.est_canonique(),
+                "le générateur ne produit que du canonique : {document:?}"
+            );
+
+            let texte = serialiser(&document);
+            let relu = parse(&texte);
+
+            assert_eq!(
+                relu, document,
+                "round-trip rompu.\nSérialisé :\n{texte}\nRelu :\n{relu:?}"
+            );
+
+            // Et la forme écrite est stable : rouvrir puis réécrire sans
+            // toucher ne reformate pas le fichier.
+            assert_eq!(
+                serialiser(&relu),
+                texte,
+                "la forme écrite n'est pas stable :\n{texte}"
+            );
+            formes += 1;
+        }
+
+        assert_eq!(formes, 500);
+    }
+
+    /// Toute sérialisation d'un document **non** canonique retombe sur un
+    /// point fixe : rouvrir puis réécrire ne bouge plus.
+    ///
+    /// C'est la stabilité textuelle : un fichier quelconque se normalise une
+    /// fois, puis tient. L'ouverture et la sauvegarde sans modification ne
+    /// reformateront jamais indéfiniment.
+    #[test]
+    fn la_canonicalisation_est_idempotente() {
+        let mut hasard = Hasard(1742);
+
+        for _ in 0..500 {
+            let document = document_au_hasard(&mut hasard);
+            let premier = serialiser(&document);
+            let second = serialiser(&parse(&premier));
+
+            assert_eq!(
+                second,
+                premier,
+                "rouvrir puis réécrire reformate :\n{premier}\n→\n{second}"
+            );
+        }
+    }
+
+
+
+
+
 }
