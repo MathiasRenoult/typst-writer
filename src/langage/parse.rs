@@ -395,8 +395,17 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
         }
 
         // Italique : `*texte*` ou `_texte_` (la seconde forme sert à
-        // l'imbrication : `**gras _et italique_**`).
-        if let Some((contenu, apres)) = emphasis(reste, "*").or_else(|| emphasis(reste, "_")) {
+        // l'imbrication : `**gras _et italique_**`). Le `_`, lui, n'ouvre
+        // qu'à une **frontière de mot** : `snake_case` est du texte
+        // technique, pas deux mots dont le second serait en italique.
+        let frontiere = {
+            let avant = &texte[..texte.len() - reste.len()];
+            !avant.chars().last().is_some_and(|c| c.is_alphanumeric())
+        };
+
+        if let Some((contenu, apres)) = emphasis(reste, "*")
+            .or_else(|| frontiere.then(|| emphasis(reste, "_")).flatten())
+        {
             vider!();
             elements.push(Inline::Italique(parse_inline(contenu)));
             reste = apres;
@@ -813,6 +822,31 @@ fn jusqu_a_l_accolade_fermante(texte: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Un `_` intramot est du texte : `snake_case` ne devient pas
+    /// `snake` + italique `case`, et ne se réécrit pas en le devenant.
+    #[test]
+    fn le_tiret_bas_intramot_est_du_texte() {
+        let document = parse("snake_case et _italique_ ici.\n");
+
+        let nu = document.texte_nu();
+        assert!(
+            nu.contains("snake_case"),
+            "le mot technique survit : {nu}"
+        );
+        assert!(
+            document.blocs.iter().any(|bloc| matches!(
+                bloc,
+                super::super::schema::Bloc::Paragraphe(contenu)
+                    if contenu.iter().any(|element| matches!(
+                        element,
+                        super::super::schema::Inline::Italique(_)
+                    ))
+            )),
+            "l'italique aux frontières compose : {document:?}"
+        );
+    }
+
     use super::*;
 
     /// Un document vide donne un Document vide.

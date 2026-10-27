@@ -228,17 +228,18 @@ pub fn remplacement(
         }
     };
 
-    let debut: usize = lignes[..bloc.lignes.start]
-        .iter()
-        .map(|ligne| ligne.len() + 1)
-        .sum();
-    let longueur: usize = lignes[bloc.lignes.clone()]
-        .iter()
-        .map(|ligne| ligne.len())
-        .sum::<usize>()
-        + (bloc.lignes.len().saturating_sub(1));
+    // Les décalages viennent de la source elle-même : `lines()` mange les
+    // `\r`, et un fichier CRLF se serait fait couper au mauvais octet.
+    let debuts = debuts_de_ligne(source);
+    let debut = debuts[bloc.lignes.start];
 
-    Some((debut..debut + longueur, remplacement.join("\n")))
+    let derniere = debuts[bloc.lignes.end - 1];
+    let fin = source[derniere..]
+        .find('\n')
+        .map(|relatif| derniere + relatif)
+        .unwrap_or(source.len());
+
+    Some((debut..fin, remplacement.join("\n")))
 }
 
 /// Le bloc devient le genre demandé, et la source toute neuve s'ensuit.
@@ -311,6 +312,19 @@ fn echanger(source: &str, bloc: &Bloc, vers_le_haut: bool) -> Option<(String, us
     };
 
     Some((sortante.join("\n"), premiere_ligne))
+}
+
+/// Les décalages de début de chaque ligne, fins de ligne comprises.
+fn debuts_de_ligne(source: &str) -> Vec<usize> {
+    let mut debuts = vec![0];
+
+    for (index, caractere) in source.char_indices() {
+        if caractere == '\n' {
+            debuts.push(index + caractere.len_utf8());
+        }
+    }
+
+    debuts
 }
 
 /// Le contenu d'une ligne, sans son marqueur de bloc.
@@ -409,6 +423,19 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// Sur un fichier CRLF, la plage coupée est celle du bloc — pas
+    /// décalée par les `\r` que `lines()` a mangés.
+    #[test]
+    fn les_plages_tiennent_sur_un_fichier_crlf() {
+        let source = "Un paragraphe.\r\n\r\n- puce";
+        let bloc = blocs(source)[1].clone();
+
+        let (plage, texte) = remplacement(source, &bloc, Genre::Paragraphe).expect("transformation");
+        assert_eq!(&source[plage], "- puce", "la plage est celle du bloc");
+        assert_eq!(texte, "puce");
+    }
+
     use super::*;
 
     /// Le découpage est celui du parseur : même nombre de blocs, même

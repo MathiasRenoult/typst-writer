@@ -418,6 +418,33 @@ impl MiseEnPage {
             )),
         }
 
+        // La typographie : une valeur inconnue se perdait en silence, et
+        // la règle tombait en « aucune » sans le dire à personne.
+        let espaces = [
+            ("espace devant les signes", &self.typographie.avant_signes),
+            ("espace après les signes", &self.typographie.apres_signes),
+            ("espace après virgule et point", &self.typographie.apres_virgule_point),
+            ("espace dans les guillemets", &self.typographie.espace_guillemets),
+        ];
+
+        for (nom, valeur) in espaces {
+            if !["aucune", "normale", "insécable"].contains(&valeur.as_str()) {
+                out.push((
+                    nom.to_string(),
+                    format!("« {valeur} » n'est pas une espace connue"),
+                ));
+            }
+        }
+
+        for (rang, paire) in self.typographie.guillemets.iter().enumerate() {
+            if paire.chars().count() != 2 {
+                out.push((
+                    format!("guillemets, niveau {}", rang + 1),
+                    format!("« {paire} » : deux caractères, ouvrant puis fermant"),
+                ));
+            }
+        }
+
         out
     }
 }

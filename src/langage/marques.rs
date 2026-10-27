@@ -111,7 +111,9 @@ fn appel_jusqu_a(texte: &str, debut: usize) -> Option<usize> {
         octet += 1;
         let cle_debut = octet;
         while let Some(c) = texte[octet..].chars().next() {
-            if c.is_alphanumeric() || matches!(c, '_' | ':' | '.' | '-' | '+') {
+            // Le même jeu que le parseur : un `.` ou un `:` n'est pas
+            // une clé, et les deux doivent s'arrêter au même endroit.
+            if c.is_alphanumeric() || matches!(c, '_' | '-') {
                 octet += c.len_utf8();
             } else {
                 break;
@@ -122,10 +124,13 @@ fn appel_jusqu_a(texte: &str, debut: usize) -> Option<usize> {
             return None; // Un `@` sans clé : ce n'est pas un appel.
         }
 
-        // La page, si elle est là : `[…]`, échappements compris.
-        if texte[octet..].starts_with('[') {
-            octet = crochet_fermant(texte, octet)?;
-        }
+        // La page, si elle est là : `[…]`, échappements compris. Non
+        // fermée, elle ne fait pas disparaître l'appel — le parseur, lui,
+        // en fait une citation sans page, et le glyphe suit.
+        if texte[octet..].starts_with('[')
+            && let Some(fin) = crochet_fermant(texte, octet) {
+                octet = fin;
+            }
 
         // Une autre référence suit-elle, par `; ` ?
         let reste = texte[octet..].trim_start_matches([' ', '\t']);
@@ -143,7 +148,11 @@ fn citer_jusqu_a(texte: &str, debut: usize) -> Option<usize> {
 
     loop {
         let ouvert = texte[octet..].find("#cite(")? + octet;
-        let mut profondeur = 0usize;
+
+        // La parenthèse de `#cite(` est **déjà ouverte** : partir de zéro
+        // faisait fermer l'appel sur la première parenthèse du contenu —
+        // `supplement: "p. (45)"` coupait la lecture au milieu.
+        let mut profondeur = 1usize;
         let mut curseur = ouvert + "#cite(".len();
 
         while curseur < texte.len() {
