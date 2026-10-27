@@ -933,7 +933,11 @@ impl RenderState {
     /// densité sera rasterisée pour les seules pages visibles.
     pub fn invalidate_rasterization(&mut self, total_pages: usize) {
         self.revision += 1;
-        self.rendering.clear();
+
+        // Les tâches en vol **gardent leur place** : les effacer rouvrait
+        // le plafond à chaque invalidation, et un redimensionnement
+        // continu lançait des rafales de rendus dont les précédents
+        // tournaient encore. Elles libéreront la leur en finissant.
         self.image_hashes.clear();
         self.stale.retain(|index| *index < total_pages);
         self.stale.extend(0..total_pages);
@@ -1053,6 +1057,47 @@ impl RenderState {
 
 #[cfg(test)]
 mod tests {
+
+    /// Une invalidation ne rouvre pas le plafond : les rendus en vol
+    /// gardent leur place, et c'est leur fin qui libère la suivante.
+    #[test]
+    fn une_invalidation_ne_rouvre_pas_le_plafond() {
+        let mut render = RenderState {
+            visible: Some((0, 49)),
+            ..Default::default()
+        };
+        render.stale.extend(0..50);
+
+        let mut partis = 0;
+        for index in 0..50 {
+            if render.begin_page_render(0, index) {
+                partis += 1;
+            }
+        }
+        assert_eq!(partis, RenderState::SIMULTANEES);
+
+        // Le zoom, ou le redimensionnement : la révision change.
+        render.invalidate_rasterization(50);
+
+        // Aucune place de plus : les quatre tâches tiennent toujours la
+        // leur, même périmées.
+        let mut de_suite = 0;
+        for index in 0..50 {
+            if render.begin_page_render(render.revision, index) {
+                de_suite += 1;
+            }
+        }
+        assert_eq!(
+            de_suite,
+            0,
+            "le plafond tient à travers l'invalidation"
+        );
+
+        // Une finie, une place s'ouvre — pour la nouvelle révision.
+        render.finish_page_render(0, 0);
+        assert!(render.begin_page_render(render.revision, 0));
+    }
+
 
     /// Le zoom ne redemande **pas** une compilation.
     ///
@@ -1305,7 +1350,10 @@ mod tests {
         render.invalidate_rasterization(4);
 
         assert_eq!(render.revision, 1);
-        assert!(render.rendering.is_empty());
+
+        // La tâche en vol garde sa place : le plafond tient à travers les
+        // générations, et c'est sa fin qui le rouvrira.
+        assert!(!render.rendering.is_empty());
         assert!(render.image_hashes.is_empty());
         assert_eq!(render.stale, (0..4).collect());
     }
