@@ -191,10 +191,7 @@ mod tests {
     use typst::foundations::NativeElement;
     use typst::introspection::Introspector;
 
-    /// Le `.tw` devient un include in-memory derrière l'en-tête, et compile par
-    /// le même moteur Typst que les chapitres existants.
-    #[test]
-/// L'assemblage est sécurisé : ce qui est nécessaire est préservé, ce
+    /// L'assemblage est sécurisé : ce qui est nécessaire est préservé, ce
     /// qui est déjà là n'est pas doublé, ce qui est choisi n'est pas repris.
     #[test]
     fn l_assemblage_preserve_et_ne_double_rien() {
@@ -229,7 +226,10 @@ mod tests {
         assert_eq!(entry.matches("#bibliography").count(), 1, "{entry}");
     }
 
-        fn le_document_intermediaire_est_insere_et_compile() {
+    /// Le `.tw` devient un include in-memory derrière l'en-tête, et compile par
+    /// le même moteur Typst que les chapitres existants.
+    #[test]
+    fn le_document_intermediaire_est_insere_et_compile() {
         let root = std::env::temp_dir().join(format!(
             "typst-writer-langage-pipeline-{}",
             std::process::id()
