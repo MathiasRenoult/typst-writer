@@ -50,6 +50,13 @@ pub struct State {
     /// références montrées.
     pub zotero: crate::zotero::Etat,
 
+    /// Le dernier mot de l'application : succès, information ou erreur.
+    ///
+    /// Il vit dans la barre d'état, **toujours visible** : un retour ne
+    /// doit jamais disparaître avec le panneau qui l'a produit, ni tomber
+    /// dans un journal que personne ne lit.
+    pub note: Option<Note>,
+
     /// Le panneau de liaison à Zotero, quand il est ouvert.
     pub liaison: Option<LiaisonZotero>,
 
@@ -223,6 +230,32 @@ pub struct EditionReference {
     /// La bibliographie est-elle locale ? Seule une bibliothèque locale
     /// s'écrit ; une notice Zotero se lit, jamais.
     pub locale: bool,
+}
+
+/// Ce que l'application vient de dire.
+#[derive(Debug, Clone)]
+pub struct Note {
+    /// Ce qui s'est passé, en une phrase.
+    pub texte: String,
+
+    /// Une erreur, ou pas : la couleur suit.
+    pub erreur: bool,
+}
+
+impl Note {
+    pub fn info(texte: impl Into<String>) -> Self {
+        Self {
+            texte: texte.into(),
+            erreur: false,
+        }
+    }
+
+    pub fn erreur(texte: impl Into<String>) -> Self {
+        Self {
+            texte: texte.into(),
+            erreur: true,
+        }
+    }
 }
 
 /// Le panneau de liaison à Zotero : où en est sa lecture.

@@ -111,12 +111,15 @@ pub fn lien_du_projet(dir: &std::path::Path) -> Option<Lien> {
 /// Lie un projet à une collection — et jamais à la place de l'utilisateur.
 pub fn lier(dir: &std::path::Path, lien: &Lien) -> std::io::Result<()> {
     let texte = serde_json::to_string_pretty(lien).map_err(std::io::Error::other)?;
-    std::fs::write(dir.join(FICHIER), texte)
+    crate::project::ecrire_atomique(&dir.join(FICHIER), &texte)
 }
 
 /// Délie un projet : il retrouve sa bibliothèque locale.
-pub fn delier(dir: &std::path::Path) {
-    std::fs::remove_file(dir.join(FICHIER)).ok();
+///
+/// La liaison part vers la corbeille, pas dans le vide : se délier est un
+/// geste qu'on fait parfois à tort.
+pub fn delier(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    crate::project::vers_la_corbeille(&dir.join(FICHIER)).ok()
 }
 
 /// L'état de la collaboration avec Zotero.

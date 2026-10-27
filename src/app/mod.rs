@@ -110,6 +110,7 @@ impl State {
             theme: session.theme_mode,
             resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
                     liaison: None,
+            note: None,
 };
 
         // Le chapitre de la session, s'il appartient encore au projet ; sinon
@@ -384,9 +385,11 @@ impl State {
 
     /// Écrit le contenu courant et enregistre la session.
     fn persist(&mut self) {
-        if let Some(path) = self.editor.path.clone() {
+        if self.editor.path.is_some() {
             if let Err(error) = self.editor.save() {
-                eprintln!("Sauvegarde de {path:?} : {error}");
+                self.note = Some(crate::app::state::Note::erreur(format!(
+                    "Sauvegarde impossible : {error}"
+                )));
             }
 
             self.save_session();
@@ -583,12 +586,20 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.bibliography = crate::project::parse_bibliography(&chemin);
             }
 
-            if let Err(erreur) = ecrit {
-                eprintln!("Enregistrement de la référence : {erreur}");
+            match ecrit {
+                Err(erreur) => {
+                    // La saisie reste : un formulaire qui se ferme en
+                    // échec jette le travail de l'utilisateur.
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Enregistrement de la référence impossible : {erreur}"
+                    )));
+                }
+                Ok(()) => {
+                    state.edition_reference = None;
+                    state.bibliography = crate::project::parse_bibliography(&chemin);
+                    state.note = Some(crate::app::state::Note::info("Référence enregistrée."));
+                }
             }
-
-            state.edition_reference = None;
-            state.bibliography = crate::project::parse_bibliography(&chemin);
 
             Task::none()
         }
@@ -873,7 +884,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::RenderDone(outcome) => {
             state.render.pending = false;
             state.render.done = true;
-            let compiled_ok = outcome.errors.is_empty();
             let chapter_page = outcome.chapter_page;
 
             state.render.content = outcome.content;
@@ -900,12 +910,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.render.stale.retain(|index| *index < total);
             }
 
-            // Sauvegarde différée plutôt qu'immédiate : écrire le fichier à
-            // chaque compilation, c'était une écriture disque toutes les
-            // 300 ms pendant la frappe.
-            if compiled_ok && state.editor.is_modified() {
-                state.render.save_pending = true;
-            }
 
             state.render.chapter_page = chapter_page;
             state.render.outline = source_outline(state, outcome.outline);
@@ -1058,11 +1062,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::SaveTick => {
             // Écriture différée : une seule par tick, et seulement si le
-            // document compile et a réellement changé.
-            if state.render.save_pending && state.editor.is_modified() {
+            // document a réellement changé. **La compilation ne décide de
+            // rien** : un document en erreur Typst s'écrit quand même, et
+            // c'est même là qu'il en a le plus besoin — une coupure ne
+            // doit jamais emporter ce qui a été tapé.
+            if state.editor.is_modified() {
                 state.persist();
                 state.refresh_context();
-                state.render.save_pending = false;
 
                 // Le serveur suit les écritures : c'est ainsi qu'il sait
                 // recompiler le projet, et que les diagnostics des *autres*
@@ -1365,7 +1371,10 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 let dir = state.project.dir.clone();
 
                 if let Err(erreur) =
-                    std::fs::write(dir.join("references-zotero.bib"), &bibtex)
+                    crate::project::ecrire_atomique(
+                        &dir.join("references-zotero.bib"),
+                        &bibtex,
+                    )
                 {
                     state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(format!(
                         "La bibliothèque n'a pas pu être écrite : {erreur}"
@@ -1410,7 +1419,14 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ZoteroDelier => {
             let dir = state.project.dir.clone();
-            crate::zotero::delier(&dir);
+            let destination = crate::zotero::delier(&dir);
+
+            if let Some(destination) = destination {
+                state.note = Some(crate::app::state::Note::info(format!(
+                    "Liaison déplacée vers la corbeille : {}",
+                    destination.display()
+                )));
+            }
 
             state.project = crate::project::load(&dir);
             state.bibliography = state

@@ -110,11 +110,20 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         }
 
         Message::MiseEnPageExporter => {
-            let texte = state
+            let texte = match state
                 .mise_en_page
                 .as_ref()
                 .map(|dialogue| dialogue.reglages.ecrire())
-                .unwrap_or_default();
+            {
+                Some(Ok(texte)) => texte,
+                Some(Err(erreur)) => {
+                    return update(
+                        state,
+                        Message::MiseEnPageNote(format!("Export impossible : {erreur}")),
+                    );
+                }
+                None => return None,
+            };
 
             Task::future(async move {
                 let Some(file) = rfd::AsyncFileDialog::new()

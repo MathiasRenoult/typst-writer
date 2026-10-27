@@ -358,8 +358,11 @@ impl MiseEnPage {
     }
 
     /// L'écrit au format TOML — celui qui s'exporte et s'importe.
-    pub fn ecrire(&self) -> String {
-        toml::to_string_pretty(self).unwrap_or_default()
+    ///
+    /// Une sérialisation qui échoue le **dit** : un `String` vide écrit à sa
+    /// place détruirait la valeur précédente du fichier.
+    pub fn ecrire(&self) -> Result<String, String> {
+        toml::to_string_pretty(self).map_err(|erreur| erreur.to_string())
     }
 
     /// Ce qui ne va pas, dit en une phrase par valeur : `[]` quand tout va.
@@ -605,9 +608,9 @@ mod tests {
         assert_eq!(mise_en_page.typographie.base, "française");
         assert_eq!(mise_en_page.typographie.avant_signes, "insécable");
         assert!(
-            !mise_en_page.ecrire().contains("typographie ="),
+            !mise_en_page.ecrire().expect("sérialisé").contains("typographie ="),
             "le champ hérité ne se réécrit pas : {}",
-            mise_en_page.ecrire()
+            mise_en_page.ecrire().expect("sérialisé")
         );
     }
 
@@ -660,7 +663,7 @@ mod tests {
         mise_en_page.titres.casse = "majuscules".to_string();
         mise_en_page.couleurs.texte = "#1e1e2e".to_string();
 
-        let texte = mise_en_page.ecrire();
+        let texte = mise_en_page.ecrire().expect("sérialisé");
         let relu = MiseEnPage::lire(&texte).expect("lisible");
 
         assert_eq!(relu, mise_en_page, "rien ne se perd en chemin");

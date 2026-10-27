@@ -253,7 +253,19 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::DeleteChapter(path) => {
-            let _ = crate::project::remove_chapter(&state.project, &path);
+            match crate::project::remove_chapter(&state.project, &path) {
+                Ok(destination) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Chapitre déplacé vers la corbeille : {}",
+                        destination.display()
+                    )));
+                }
+                Err(erreur) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Suppression impossible : {erreur}"
+                    )));
+                }
+            }
 
             state.refresh_context();
 
@@ -322,7 +334,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
                     let path = file.path().to_path_buf();
 
-                    std::fs::write(&path, &bytes)
+                    crate::project::ecrire_atomique_octets(&path, &bytes)
                         .map(|_| path.display().to_string())
                         .map_err(|error| format!("Écriture du PDF : {error}"))
                 },
@@ -473,7 +485,7 @@ fn save_as_task(state: &State) -> Task<Message> {
 
             let path = file.path().to_path_buf();
 
-            match std::fs::write(&path, content) {
+            match crate::project::ecrire_atomique(&path, &content) {
                 Ok(_) => Some(path),
                 Err(error) => {
                     eprintln!("Erreur lors de l'export : {error}");

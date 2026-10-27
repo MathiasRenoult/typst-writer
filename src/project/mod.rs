@@ -27,6 +27,75 @@ pub fn work_dir() -> PathBuf {
     dir
 }
 
+/// Le dossier des suppressions, à côté des projets.
+///
+/// Une suppression n'est pas une destruction : le fichier y va, et le
+/// chemin est rendu pour se raviser. C'est l'annulation du quotidien,
+/// celle qui ne demande pas de dialogue.
+pub fn corbeille() -> std::path::PathBuf {
+    let dossier = work_dir().join("corbeille");
+    let _ = std::fs::create_dir_all(&dossier);
+
+    dossier
+}
+
+/// Déplace un fichier vers la corbeille, et rend où il est allé.
+///
+/// Le nom y devient unique : deux « document.tw » supprimés ne se
+/// marchent pas dessus.
+pub fn vers_la_corbeille(
+    chemin: &std::path::Path,
+) -> std::io::Result<std::path::PathBuf> {
+    let nom = chemin
+        .file_name()
+        .and_then(|nom| nom.to_str())
+        .unwrap_or("fichier")
+        .to_string();
+
+    let mut destination = corbeille().join(&nom);
+    let mut numero = 2;
+
+    while destination.exists() {
+        destination = corbeille().join(format!("{nom}-{numero}"));
+        numero += 1;
+    }
+
+    std::fs::rename(chemin, &destination)?;
+    Ok(destination)
+}
+
+/// Écrit un fichier d'un seul tenant : temporaire, puis renommage.
+///
+/// Une écriture directe tronque le fichier si la machine s'arrête au
+/// milieu ; celle-ci n'écrit jamais qu'un temporaire, et l'ancien contenu
+/// tient jusqu'au bout. C'est la même voie que prennent déjà les
+/// migrations — un document d'écriture ne mérite pas moins.
+pub fn ecrire_atomique(chemin: &std::path::Path, contenu: &str) -> std::io::Result<()> {
+    let nom = chemin
+        .file_name()
+        .and_then(|nom| nom.to_str())
+        .unwrap_or("fichier");
+    let temporaire = chemin.with_file_name(format!(".{nom}.tmp"));
+
+    std::fs::write(&temporaire, contenu)?;
+    std::fs::rename(&temporaire, chemin)
+}
+
+/// La même voie, pour des octets qui ne sont pas du texte (un import).
+pub fn ecrire_atomique_octets(
+    chemin: &std::path::Path,
+    octets: &[u8],
+) -> std::io::Result<()> {
+    let nom = chemin
+        .file_name()
+        .and_then(|nom| nom.to_str())
+        .unwrap_or("fichier");
+    let temporaire = chemin.with_file_name(format!(".{nom}.tmp"));
+
+    std::fs::write(&temporaire, octets)?;
+    std::fs::rename(&temporaire, chemin)
+}
+
 /// Session de travail : ce qu'il faut rouvrir au démarrage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Session {
@@ -98,7 +167,7 @@ pub fn save_session_to(path: &Path, session: &Session) {
         }
     };
 
-    if let Err(error) = std::fs::write(path, text) {
+    if let Err(error) = ecrire_atomique(path, &text) {
         eprintln!("Enregistrement de la session : {error}");
     }
 }
@@ -254,7 +323,7 @@ pub fn maj_reference(
         curseur = fin;
     }
 
-    std::fs::write(chemin, sortie)
+    ecrire_atomique(chemin, &sortie)
 }
 
 /// Un champ optionnel : écrit quand il a une valeur, retiré sinon.
@@ -322,11 +391,29 @@ fn retirer_champ(bloc: &str, nom: &str) -> String {
         return bloc.to_string();
     };
 
-    // Le champ entier : sa virgule précédente jusqu'à la fin de la valeur.
-    let avant = bloc[..debut_valeur].rfind(',').map_or(0, |index| index);
+    // Le champ **entier** : depuis la fin du champ précédent — sa virgule
+    // ou l'ouverture de l'entrée — jusqu'après le délimiteur fermant de la
+    // valeur et sa virgule. Ne rien laisser : une accolade orpheline
+    // referme l'entrée avant l'heure et chasse le reste des champs, et une
+    // virgule oubliée en double corrompt le fichier aux yeux de Typst.
+    let debut = bloc[..debut_valeur]
+        .rfind(',')
+        .map(|index| index + 1)
+        .or_else(|| bloc.find('{').map(|index| index + 1))
+        .unwrap_or(0);
+
+    // Le délimiteur fermant est juste après la valeur : accolade ou
+    // guillemet, puis la virgule s'il y en a une.
+    let mut fin = (fin_valeur + 1).min(bloc.len());
+
+    let suite = bloc[fin..].chars().next();
+    if suite == Some(',') {
+        fin += 1;
+    }
+
     let mut sortie = String::with_capacity(bloc.len());
-    sortie.push_str(&bloc[..avant]);
-    sortie.push_str(&bloc[fin_valeur..]);
+    sortie.push_str(&bloc[..debut]);
+    sortie.push_str(&bloc[fin..]);
 
     sortie
 }
@@ -464,7 +551,7 @@ pub fn nouvelle_reference(
     }
     suite.push_str(&entree);
 
-    std::fs::write(chemin, suite)?;
+    ecrire_atomique(chemin, &suite)?;
     Ok(cle)
 }
 
@@ -723,6 +810,68 @@ fn locate_flat_documents() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Une suppression n'est pas une destruction : le fichier va à la
+    /// corbeille, le chemin est rendu, et rien ne se marche dessus.
+    #[test]
+    fn une_suppression_va_a_la_corbeille() {
+        let dir = std::env::temp_dir().join(format!("tw-corbeille-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier");
+
+        let fichier = dir.join("document.tw");
+        std::fs::write(&fichier, "le travail du jour").expect("fichier");
+
+        let ou = vers_la_corbeille(&fichier).expect("déplacé");
+        assert!(!fichier.exists(), "il a quitté sa place");
+        assert!(ou.exists(), "il est quelque part");
+        assert_eq!(
+            std::fs::read_to_string(&ou).expect("relu"),
+            "le travail du jour",
+            "rien n'est perdu"
+        );
+
+        // Un second du même nom ne se marche pas dessus.
+        std::fs::write(&fichier, "le lendemain").expect("fichier");
+        let ou_deux = vers_la_corbeille(&fichier).expect("déplacé");
+        assert_ne!(ou, ou_deux, "deux places, pas une");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    /// Vider un champ présent retire le champ entier — jamais son
+    /// accolade fermante, qui refermerait l'entrée et chasserait le reste.
+    #[test]
+    fn vider_un_champ_present_le_retire_entier() {
+        let entree = "@book{cle,\n  author = {Nom},\n  title = {Titre},\n  year = {2014},\n}\n";
+
+        let sans_annee = super::retirer_champ(entree, "year");
+        assert_eq!(
+            sans_annee,
+            "@book{cle,\n  author = {Nom},\n  title = {Titre},\n}\n",
+            "vu : {sans_annee}"
+        );
+
+        // Et le fichier reste lisible : le parseur y retrouve ses champs.
+        let entrees = parse_bibliography_text(&sans_annee);
+        assert_eq!(entrees.len(), 1);
+        assert_eq!(entrees[0].titre, "Titre");
+
+        // Sur une entrée d'une seule ligne aussi — la virgule de la clé
+        // reste, et c'est bon : `@book{cle,}` se relit comme `@book{cle}`.
+        let sans_auteur = super::retirer_champ("@book{cle, author = {Doe}}", "author");
+        assert_eq!(sans_auteur, "@book{cle,}");
+        assert_eq!(parse_bibliography_text(&sans_auteur).len(), 1);
+    }
+
+    /// Un champ retiré puis vidé à nouveau ne change plus rien.
+    #[test]
+    fn retirer_un_champ_absent_ne_change_rien() {
+        let entree = "@book{cle,\n  title = {Titre},\n}\n";
+        assert_eq!(super::retirer_champ(entree, "year"), entree);
+    }
+
 
     /// Une notice neuve s'écrit avec ses champs — type, éditeur, lieu, titre
     /// court — et le fichier reste lisible par Typst.

@@ -704,7 +704,7 @@ fn semer() {
         let chemin = themes_dir().join(nom);
 
         if !chemin.exists() {
-            let _ = std::fs::write(&chemin, contenu);
+            let _ = crate::project::ecrire_atomique(&chemin, contenu);
         }
     }
 }
@@ -799,7 +799,7 @@ pub fn import(source: &Path) -> Result<ThemeFile, String> {
 /// Les thèmes natifs n'ont pas de fichier : la tentative est refusée plutôt
 /// qu'ignorée, pour que l'interface ne propose jamais une suppression qui ne
 /// ferait rien.
-pub fn remove(name: &str) -> Result<(), String> {
+pub fn remove(name: &str) -> Result<std::path::PathBuf, String> {
     if is_reserved_name(name) {
         return Err(format!(
             "« {name} » est un thème natif et ne peut être supprimé"
@@ -808,7 +808,9 @@ pub fn remove(name: &str) -> Result<(), String> {
 
     let path = themes_dir().join(format!("{}.toml", crate::project::slug(name)));
 
-    std::fs::remove_file(&path)
+    // La corbeille, jamais la destruction : un thème écrit à la main est
+    // du travail, même quand on ne le veut plus sous les yeux.
+    crate::project::vers_la_corbeille(&path)
         .map_err(|error| format!("suppression de {} : {error}", path.display()))
 }
 
@@ -824,7 +826,7 @@ pub fn write_example() -> Result<PathBuf, String> {
         return Ok(path);
     }
 
-    std::fs::write(&path, EXAMPLE)
+    crate::project::ecrire_atomique(&path, EXAMPLE)
         .map_err(|error| format!("écriture de {} : {error}", path.display()))?;
 
     Ok(path)

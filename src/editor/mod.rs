@@ -689,7 +689,7 @@ impl EditorState {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        std::fs::write(&path, self.content())?;
+        crate::project::ecrire_atomique(&path, &self.content())?;
 
         self.editor.mark_saved();
 

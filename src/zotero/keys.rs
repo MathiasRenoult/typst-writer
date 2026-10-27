@@ -36,7 +36,9 @@ impl Keyring {
 
     /// Écrit le trousseau, tel qu'il sera relu.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        std::fs::write(path, serde_json::to_string_pretty(&self.keys).unwrap_or_default())
+        let texte = serde_json::to_string_pretty(&self.keys).map_err(std::io::Error::other)?;
+
+        crate::project::ecrire_atomique(path, &texte)
     }
 
     /// La clé d'une notice, qu'elle soit déjà attribuée ou à attribuer.

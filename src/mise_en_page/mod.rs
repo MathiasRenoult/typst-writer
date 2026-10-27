@@ -52,10 +52,17 @@ pub fn appliquer(
     mise_en_page: &modele::MiseEnPage,
     accrocher: bool,
 ) -> Result<Applique, String> {
-    std::fs::write(projet.join(REGLAGES), mise_en_page.ecrire())
+    let texte = mise_en_page
+        .ecrire()
+        .map_err(|erreur| format!("sérialiser les normes : {erreur}"))?;
+
+    crate::project::ecrire_atomique(&projet.join(REGLAGES), &texte)
         .map_err(|erreur| format!("écrire les réglages : {erreur}"))?;
 
-    std::fs::write(projet.join(gabarit::FICHIER), gabarit::generer(mise_en_page))
+    crate::project::ecrire_atomique(
+        &projet.join(gabarit::FICHIER),
+        &gabarit::generer(mise_en_page),
+    )
         .map_err(|erreur| format!("écrire l'en-tête : {erreur}"))?;
 
     let main = projet.join("main.typ");
@@ -73,7 +80,8 @@ pub fn appliquer(
         nouveau.push_str(reste);
     }
 
-    std::fs::write(&main, nouveau).map_err(|erreur| format!("accrocher main.typ : {erreur}"))?;
+    crate::project::ecrire_atomique(&main, &nouveau)
+        .map_err(|erreur| format!("accrocher main.typ : {erreur}"))?;
 
     Ok(Applique::AccrocheAjoutee)
 }

@@ -393,10 +393,15 @@ pub fn create_chapter(project: &Project, title: &str) -> std::io::Result<PathBuf
 }
 
 /// Retire un chapitre de l'assemblage, puis du disque.
-pub fn remove_chapter(project: &Project, path: &Path) -> std::io::Result<()> {
+pub fn remove_chapter(
+    project: &Project,
+    path: &Path,
+) -> std::io::Result<std::path::PathBuf> {
     remove_include(&project.main, path)?;
 
-    std::fs::remove_file(path)
+    // La corbeille, jamais la destruction : un chapitre supprimé par
+    // mégarde se retrouve.
+    super::vers_la_corbeille(path)
 }
 
 /// Le premier numéro de chapitre libre.

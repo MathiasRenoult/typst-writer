@@ -127,7 +127,12 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::DeleteTheme(name) => {
             match crate::theming::remove(&name) {
-                Ok(()) => {
+                Ok(destination) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Thème déplacé vers la corbeille : {}",
+                        destination.display()
+                    )));
+
                     // Le thème supprimé ne doit pas rester « retenu » : on
                     // l'oublie, sinon le repli désignerait éternellement un
                     // fichier absent.

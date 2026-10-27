@@ -46,6 +46,22 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .color(palette.text_muted),
     );
 
+    // Le dernier mot de l'application : succès ou erreur. La barre d'état
+    // est toujours là — c'est le seul endroit où un retour ne peut pas
+    // disparaître avec le panneau qui l'a produit.
+    if let Some(note) = state.note.as_ref() {
+        bar = bar.push(
+            palette
+                .label(note.texte.clone())
+                .size(12)
+                .color(if note.erreur {
+                    palette.danger
+                } else {
+                    palette.success
+                }),
+        );
+    }
+
     bar = bar.push(space::horizontal().width(Length::Fill));
 
     // Le compte de mots est le seul renseignement de fond utile pendant la
