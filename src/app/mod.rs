@@ -1200,6 +1200,15 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ShowHover => request_hover(state),
 
+        Message::BlocMonter => state
+            .editor
+            .deplacer_le_bloc(true)
+            .map(Message::Editor),
+        Message::BlocDescendre => state
+            .editor
+            .deplacer_le_bloc(false)
+            .map(Message::Editor),
+
         Message::TitreSuivant => sauter_titre(state, 1),
         Message::TitrePrecedent => sauter_titre(state, -1),
 
@@ -1518,6 +1527,26 @@ fn handle_shortcut_inner(
     // aucune combinaison — le geste reste d'une seule main.
     if let iced::keyboard::Key::Named(iced::keyboard::key::Named::F12) = key {
         return update(state, Message::GoToDefinition);
+    }
+
+    // Le bloc entier se déplace d'un bloc : `Ctrl+Maj+Haut/Bas`. Les
+    // flèches sont prises par le curseur et les lignes — celles-ci
+    // ajoutent la majuscule que rien d'autre ne réclame.
+    if modifiers.control()
+        && modifiers.shift()
+        && matches!(
+            key,
+            iced::keyboard::Key::Named(
+                iced::keyboard::key::Named::ArrowUp | iced::keyboard::key::Named::ArrowDown
+            )
+        )
+    {
+        let vers_le_haut = matches!(
+            key,
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp)
+        );
+
+        return update(state, if vers_le_haut { Message::BlocMonter } else { Message::BlocDescendre });
     }
 
     if let iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) = key {

@@ -193,7 +193,7 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
 ///
 /// `#` à `######` : un à six dièses, suivis d'une espace. Un `#` sans espace
 /// n'est pas un titre — c'est du texte.
-fn niveau_titre(ligne: &str) -> Option<u8> {
+pub fn niveau_titre(ligne: &str) -> Option<u8> {
     let debut = ligne.trim_start();
     let dièses = debut.chars().take_while(|c| *c == '#').count();
 
@@ -206,7 +206,7 @@ fn niveau_titre(ligne: &str) -> Option<u8> {
 }
 
 /// Une ligne est-elle le début d'une liste numérotée ?
-fn est_numero(ligne: &str) -> bool {
+pub fn est_numero(ligne: &str) -> bool {
     let debut = ligne.trim_start();
     let chiffres = debut.chars().take_while(|c| c.is_ascii_digit()).count();
 
@@ -214,7 +214,7 @@ fn est_numero(ligne: &str) -> bool {
 }
 
 /// Nombre de backticks consécutifs au début de la ligne, après indentation.
-fn longueur_fence(ligne: &str) -> usize {
+pub fn longueur_fence(ligne: &str) -> usize {
     ligne
         .trim_start()
         .chars()
@@ -223,7 +223,7 @@ fn longueur_fence(ligne: &str) -> usize {
 }
 
 /// Une clôture doit avoir au moins la longueur d'ouverture, sans suffixe.
-fn ferme_fence(ligne: &str, longueur_ouverture: usize) -> bool {
+pub fn ferme_fence(ligne: &str, longueur_ouverture: usize) -> bool {
     let debut = ligne.trim_start();
     let longueur = longueur_fence(ligne);
 

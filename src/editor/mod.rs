@@ -444,12 +444,18 @@ impl EditorState {
             }
             crate::app::message::FormatAction::Citation => self.insert_at_cursor("@"),
             crate::app::message::FormatAction::Note => self.wrap_selection("^[", "]"),
-            crate::app::message::FormatAction::Titre(niveau) => {
-                self.format_heading(niveau.clamp(1, 6))
+            crate::app::message::FormatAction::Titre(niveau) => self.formater_le_bloc(
+                crate::langage::blocs::Genre::Titre(niveau.clamp(1, 6)),
+            ),
+            crate::app::message::FormatAction::ListePuce => {
+                self.formater_le_bloc(crate::langage::blocs::Genre::Puce)
             }
-            crate::app::message::FormatAction::ListePuce => self.format_line_prefix("- "),
-            crate::app::message::FormatAction::ListeNumero => self.format_numbered_line(),
-            crate::app::message::FormatAction::CitationBloc => self.format_line_prefix("> "),
+            crate::app::message::FormatAction::ListeNumero => {
+                self.formater_le_bloc(crate::langage::blocs::Genre::Numero)
+            }
+            crate::app::message::FormatAction::CitationBloc => {
+                self.formater_le_bloc(crate::langage::blocs::Genre::Citation)
+            }
             crate::app::message::FormatAction::BlocTypst => self.format_raw_typst(),
         };
 
@@ -475,62 +481,6 @@ impl EditorState {
         Task::batch([paste, cursor])
     }
 
-    /// Applique ou retire un préfixe simple de bloc sur la ligne du curseur.
-    fn format_line_prefix(&mut self, prefix: &str) -> Task<EditorMessage> {
-        let (line, column) = self.editor.cursor_position();
-        let content = self.editor.content();
-        let current = content.lines().nth(line).unwrap_or_default();
-        let old = if current.starts_with(prefix) {
-            prefix.chars().count()
-        } else {
-            0
-        };
-        let replacement = if old == 0 { prefix } else { "" };
-
-        self.replace_line_prefix(line, column, old, replacement)
-    }
-
-    /// Applique ou retire un marqueur numéroté, quelle que soit sa valeur.
-    fn format_numbered_line(&mut self) -> Task<EditorMessage> {
-        let (line, column) = self.editor.cursor_position();
-        let content = self.editor.content();
-        let current = content.lines().nth(line).unwrap_or_default();
-        let digits = current.chars().take_while(char::is_ascii_digit).count();
-        let old = if digits > 0 && current[digits..].starts_with(". ") {
-            digits + 2
-        } else {
-            0
-        };
-        let replacement = if old == 0 { "1. " } else { "" };
-
-        self.replace_line_prefix(line, column, old, replacement)
-    }
-
-    /// Applique un niveau de titre sur la ligne courante ; répéter le même
-    /// niveau le retire.
-    fn format_heading(&mut self, niveau: u8) -> Task<EditorMessage> {
-        let (line, column) = self.editor.cursor_position();
-        let content = self.editor.content();
-        let current = content.lines().nth(line).unwrap_or_default();
-        let hashes = current
-            .chars()
-            .take_while(|character| *character == '#')
-            .count();
-        let old = if (1..=6).contains(&hashes) && current[hashes..].starts_with(' ') {
-            hashes + 1
-        } else {
-            0
-        };
-        let prefix = format!("{} ", "#".repeat(niveau as usize));
-        let replacement = if old == prefix.chars().count() {
-            "".to_string()
-        } else {
-            prefix
-        };
-
-        self.replace_line_prefix(line, column, old, &replacement)
-    }
-
     /// Insère un bloc Typst complet, en plaçant le caret dans son corps.
     fn format_raw_typst(&mut self) -> Task<EditorMessage> {
         if let Some(selection) = self.editor.selected_text().filter(|text| !text.is_empty()) {
@@ -548,29 +498,92 @@ impl EditorState {
         Task::batch([paste, cursor])
     }
 
-    fn replace_line_prefix(
-        &mut self,
-        line: usize,
-        column: usize,
-        old_characters: usize,
-        replacement: &str,
-    ) -> Task<EditorMessage> {
-        let mut tasks = vec![self.editor.set_cursor(line, 0)];
+    /// Transforme le bloc du curseur, **entier** — c'est l'unité de
+    /// l'éditeur de blocs. Le curseur suit, et l'historique ne voit qu'un
+    /// geste : la sélection que le remplacement fait sienne.
+    pub fn formater_le_bloc(&mut self, genre: crate::langage::blocs::Genre) -> Task<EditorMessage> {
+        use crate::langage::blocs;
 
-        for _ in 0..old_characters {
-            tasks.push(self.editor.update(&EditorMessage::Delete));
-        }
+        let (ligne, colonne) = self.editor.cursor_position();
+        let contenu = self.editor.content();
 
-        tasks.push(
-            self.editor
-                .update(&EditorMessage::Paste(replacement.to_string())),
-        );
-        tasks.push(self.editor.set_cursor(
-            line,
-            column.saturating_sub(old_characters) + replacement.chars().count(),
-        ));
+        let Some(index) = blocs::bloc_a(&contenu, ligne) else {
+            return Task::none();
+        };
 
-        Task::batch(tasks)
+        let tous = blocs::blocs(&contenu);
+        let Some(bloc) = tous.get(index) else {
+            return Task::none();
+        };
+
+        let Some((plage, texte)) = blocs::remplacement(&contenu, bloc, genre) else {
+            return Task::none();
+        };
+
+        // Le curseur garde sa place dans le bloc : sa ligne survit (au
+        // pire, elle devient la première), et sa colonne suit la marque —
+        // comme dans `replace_line_prefix`.
+        let rang = ligne - bloc.lignes.start;
+        let anciennes: Vec<&str> = contenu.lines().collect();
+        let neuves: Vec<&str> = texte.lines().collect();
+
+        let ligne_ancienne = anciennes.get(ligne).copied().unwrap_or_default();
+        let ancienne_marque = ligne_ancienne.chars().count()
+            - blocs::sans_marque(ligne_ancienne, bloc.genre).chars().count();
+
+        let rang = rang.min(neuves.len().saturating_sub(1));
+        let ligne_neuve = neuves.get(rang).copied().unwrap_or_default();
+        let nouvelle_marque = ligne_neuve.chars().count()
+            - blocs::sans_marque(ligne_neuve, blocs::genre_effectif(bloc.genre, genre)).chars().count();
+
+        let tache = self.replace_span(plage.start, plage.end, &texte);
+
+        Task::batch([
+            tache,
+            self.editor.set_cursor(
+                bloc.lignes.start + rang,
+                colonne
+                    .saturating_sub(ancienne_marque)
+                    .saturating_add(nouvelle_marque),
+            ),
+        ])
+    }
+
+    /// Déplace le bloc du curseur d'un cran, vers le haut ou le bas.
+    ///
+    /// Le curseur suit le bloc : c'est lui qu'on déplace, pas un texte
+    /// dont on se souviendrait.
+    pub fn deplacer_le_bloc(&mut self, vers_le_haut: bool) -> Task<EditorMessage> {
+        use crate::langage::blocs;
+
+        let (ligne, colonne) = self.editor.cursor_position();
+        let contenu = self.editor.content();
+
+        let Some(index) = blocs::bloc_a(&contenu, ligne) else {
+            return Task::none();
+        };
+
+        let tous = blocs::blocs(&contenu);
+        let Some(bloc) = tous.get(index) else {
+            return Task::none();
+        };
+
+        let deplacement = if vers_le_haut {
+            blocs::monter(&contenu, bloc)
+        } else {
+            blocs::descendre(&contenu, bloc)
+        };
+
+        let Some((neuf, premiere)) = deplacement else {
+            return Task::none();
+        };
+
+        // Le document entier change de place : une sélection totale, un
+        // seul geste d'annulation.
+        let fin = contenu.len();
+        let tache = self.replace_span(0, fin, &neuf);
+
+        Task::batch([tache, self.editor.set_cursor(premiere, colonne)])
     }
 
     /// Où le curseur se trouve **dans la vue**, et non dans le document.
@@ -1300,4 +1313,56 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    /// Une transformation de bloc touche le bloc entier — pas la ligne du
+    /// curseur — et le curseur reste au sien.
+    #[test]
+    fn une_transformation_touche_le_bloc_entier() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "une phrase\ndeux phrases.\n\nLa suite.".to_string(),
+        );
+        let _ = editor.editor.set_cursor(1, 3);
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
+
+        assert_eq!(editor.content(), "- une phrase\n- deux phrases.\n\nLa suite.");
+
+        // Le curseur est sur sa ligne, colonne ajustée de la puce.
+        assert_eq!(editor.editor.cursor_position(), (1, 5));
+    }
+
+    /// Un bloc se déplace d'un bloc, et le curseur le suit.
+    #[test]
+    fn un_bloc_se_deplace_et_le_curseur_le_suit() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "# Titre\n\nUn paragraphe.\n\nLa fin.".to_string(),
+        );
+        let _ = editor.editor.set_cursor(2, 4);
+
+        let _ = editor.deplacer_le_bloc(true);
+
+        assert_eq!(editor.content(), "Un paragraphe.\n\n# Titre\n\nLa fin.");
+        assert_eq!(
+            editor.editor.cursor_position(),
+            (0, 4),
+            "le curseur suit le bloc"
+        );
+    }
+
+    /// La bascule retire la marque, et le titre change de niveau sans se
+    /// perdre.
+    #[test]
+    fn la_bascule_et_le_niveau_se_font_au_bloc() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "## Deuxième".to_string());
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::Titre(2));
+        assert_eq!(editor.content(), "Deuxième", "redemander le niveau retire");
+
+        let _ = editor.apply_format(crate::app::message::FormatAction::Titre(4));
+        assert_eq!(editor.content(), "#### Deuxième");
+    }
+
 }

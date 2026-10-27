@@ -181,6 +181,10 @@ pub enum Message {
     /// Va à un titre du sommaire (le rang dans la liste du document).
     GotoHeading(usize),
 
+    BlocMonter,
+
+    BlocDescendre,
+
     TitreSuivant,
 
     TitrePrecedent,
