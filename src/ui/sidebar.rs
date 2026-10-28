@@ -238,6 +238,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .style(move |t, status| entry_style(t, status, palette, false)),
     );
 
+    // Un projet sans bibliographie la voit naître d'un geste.
+    if state.project.bibliography.is_none() {
+        content = content.push(
+            button(
+                palette
+                    .label("Créer la bibliographie locale")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::BibliographieCreer)
+            .padding([5, 10])
+            .width(Fill),
+        );
+    }
+
     if !state.references_repliees {
         content = content.push(
             text_input("chercher une référence", &state.references_filtre)

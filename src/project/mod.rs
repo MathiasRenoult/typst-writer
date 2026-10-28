@@ -1886,3 +1886,18 @@ pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)
 
     vignettes
 }
+
+#[cfg(test)]
+mod tests_du_parseur_vrai {
+    #[test]
+    fn le_parseur_lit_les_vrais_anciens_fichiers() {
+        for chemin in [
+            std::path::Path::new("/home/mat/.typst-writer/projets/mon-travail/references.bib"),
+            std::path::Path::new("/home/mat/.typst-writer/projets/projet/references.bib"),
+        ] {
+            let contenu = std::fs::read_to_string(chemin).expect("lu");
+            let entrees = crate::project::parse_bibliography_text(&contenu);
+            println!("{} : {} notices lues", chemin.display(), entrees.len());
+        }
+    }
+}

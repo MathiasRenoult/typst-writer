@@ -44,13 +44,20 @@ pub fn compilation_unit_document(
 
     let entry = corriger_le_typst(root, &entry, &cles);
     let mut corrections = corriger_les_inclus(root, &entry, &cles);
-    corrections.extend(guerir_les_bibliographies(root, &entry, &corrections));
     let entry = ensure_default_bibliography(root, &entry);
 
     // La typographie se lit dans les normes du projet : c'est là qu'elle se
     // choisit, et le générateur l'applique au texte qu'il compose.
     let normes = crate::mise_en_page::charger(root);
     let generated = generer_avec(document, &normes.typographie.regles(), &normes.decor);
+
+    // La guérison des `.bib` court enfin : la bibliographie
+    // conventionnelle existe déjà, et ses chemins sont vivants.
+    corrections.extend(guerir_les_bibliographies(root, &entry, &corrections));
+
+    // Le généré aussi : le document source peut porter sa propre
+    // directive, et elle y meurt comme ailleurs.
+    let generated = corriger_le_typst(root, &generated, &cles);
 
     corrections.push((root.join(GENERATED_FILE), generated));
 
@@ -710,50 +717,42 @@ fn guerir_les_bibliographies(
     entry: &str,
     corrections: &[(PathBuf, String)],
 ) -> Vec<(PathBuf, String)> {
-    // Les bibliographies citées, dans l'entrée et les fichiers corrigés.
+    // Les bibliographies citées, avec le dossier de celui qui les cite :
+    // un chemin est toujours relatif à **son** fichier.
     let mut citees = Vec::new();
 
-    for source in std::iter::once(entry.to_string()).chain(
+    let sources = std::iter::once((root.to_path_buf(), entry.to_string())).chain(
         corrections
             .iter()
             .filter(|(chemin, _)| chemin.extension().is_some_and(|ext| ext == "typ"))
-            .map(|(_, contenu)| contenu.clone()),
-    ) {
+            .map(|(chemin, contenu)| {
+                (
+                    chemin.parent().unwrap_or(root).to_path_buf(),
+                    contenu.clone(),
+                )
+            }),
+    );
+
+    for (base, source) in sources {
         for ligne in source.lines() {
             if !is_bibliography_directive(ligne) {
                 continue;
             }
 
             if let Some(chemin) = ligne.split('"').nth(1) {
-                citees.push(chemin.to_string());
+                citees.push(base.join(chemin));
             }
         }
     }
 
     let mut guerisons = Vec::new();
 
-    for citee in citees {
-        // Le chemin est relatif à celui qui le cite ; on cherche le
-        // fichier parmi les racines possibles — l'assemblage d'abord.
-        let chemin = root.join(&citee);
-
+    for chemin in citees {
         let Ok(contenu) = std::fs::read_to_string(&chemin) else {
             continue;
         };
 
-        let gueri: String = contenu
-            .lines()
-            .map(|ligne| {
-                let nu = ligne.trim_start();
-
-                if nu.starts_with("//") {
-                    format!("{}%{}", &ligne[..ligne.len() - nu.len()], nu.strip_prefix("//").unwrap_or(nu))
-                } else {
-                    ligne.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let gueri = guerir_commentaires(&contenu);
 
         if gueri != contenu {
             guerisons.push((chemin, gueri));
@@ -763,8 +762,12 @@ fn guerir_les_bibliographies(
     guerisons
 }
 
-/// Les clés de citation vivantes : celles que les bibliographies du
-/// projet portent réellement.
+/// Les `.bib` aux commentaires `//` — BibLaTeX ne connaît que `%`.
+///
+/// Notre propre modèle écrivait des `//` : chaque projet créé avant la
+/// correction porte un fichier que BibLaTeX refuse tout entier. La
+/// guérison se fait au compilateur, par substitution — le fichier sur
+/// disque n'est pas touché, et le document compile.
 fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String> {
     let mut cles = std::collections::BTreeSet::new();
 
@@ -862,3 +865,55 @@ fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String>
             String::from_utf8_lossy(&rendu.stderr)
         );
     }
+
+#[cfg(test)]
+mod tests_du_pipeline_vrai {
+    /// Le pipeline complet sur les vrais projets anciens : l'entrée, les
+    /// substitutions, et le compilateur réel.
+    #[test]
+    fn les_anciens_projets_compilent() {
+        for nom in ["mon-travail", "projet", "projet-2"] {
+            let source = std::path::PathBuf::from("/home/mat/.typst-writer/projets").join(nom);
+            let root = std::env::temp_dir().join(format!("tw-pipeline-{nom}"));
+            let _ = std::fs::remove_dir_all(&root);
+            copy_dir(&source, &root);
+
+            let main = std::fs::read_to_string(root.join("main.typ")).unwrap_or_default();
+            let document = super::super::parse(&std::fs::read_to_string(root.join("document.tw")).unwrap_or_default());
+            let (entry, corrections) = super::compilation_unit_document(&root, &main, &document);
+
+            std::fs::write(root.join("main.typ"), &entry).expect("entrée");
+            for (chemin, contenu) in &corrections {
+                std::fs::write(chemin, contenu).expect("correction");
+            }
+
+            let rendu = std::process::Command::new("typst")
+                .args(["compile", "main.typ"])
+                .current_dir(&root)
+                .output()
+                .expect("typst");
+
+            println!("{nom} : {}", if rendu.status.success() { "OK" } else { "ÉCHEC" });
+
+            if !rendu.status.success() {
+                println!("{}", String::from_utf8_lossy(&rendu.stderr));
+            }
+
+            assert!(rendu.status.success(), "{nom} doit compiler");
+        }
+    }
+
+    fn copy_dir(source: &std::path::Path, cible: &std::path::Path) {
+        std::fs::create_dir_all(cible).expect("dossier");
+        for entree in std::fs::read_dir(source).expect("lu") {
+            let entree = entree.expect("entrée");
+            let chemin = entree.path();
+            let dest = cible.join(entree.file_name());
+            if chemin.is_dir() {
+                copy_dir(&chemin, &dest);
+            } else {
+                std::fs::copy(&chemin, &dest).expect("copie");
+            }
+        }
+    }
+}

@@ -439,12 +439,16 @@ fn ecrire_proprietes_typst(
             "encadré" | "encadre" => {
                 arguments.push((
                     "stroke",
-                    format!("(paint: {}, thickness: {})", decor.couleur, decor.epaisseur),
+                    format!(
+                        "(paint: {}, thickness: {})",
+                        couleur_en_typst(&decor.couleur),
+                        decor.epaisseur
+                    ),
                 ));
                 arguments.push(("radius", decor.rayon.clone()));
                 arguments.push(("inset", decor.marge.clone()));
             }
-            "plein" => arguments.push(("fill", decor.remplissage.clone())),
+            "plein" => arguments.push(("fill", couleur_en_typst(&decor.remplissage))),
             // Un nom que le vocabulaire ne connaît pas n'ajoute rien :
             // il reste dans la source, et le jour où il prend sens, il
             // prendra ses mesures ici.
@@ -452,6 +456,8 @@ fn ecrire_proprietes_typst(
         }
     }
 
+    // Les paires libres : la valeur d'une couleur se compose, le reste
+    // est du Typst et ne bouge pas.
     for (cle, valeur) in &proprietes.paires {
         let argument = match cle.as_str() {
             "largeur" => "width",
@@ -506,6 +512,21 @@ fn expression_couleur(couleur: &str) -> String {
     }
 
     nu.to_string()
+}
+
+/// Une couleur, en Typst.
+///
+/// Un hexadécimal nu — `#1e1e2e` — est invalide dans le code Typst : le
+/// `#` y ouvre un appel. Il devient `rgb("#1e1e2e")`. Une expression —
+/// `rgb(...)`, un dégradé — est déjà du Typst, et ne bouge pas.
+fn couleur_en_typst(valeur: &str) -> String {
+    let valeur = valeur.trim();
+
+    if valeur.starts_with('#') {
+        format!("rgb(\"{valeur}\")")
+    } else {
+        valeur.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -898,3 +919,4 @@ mod tests {
         texte
     }
 }
+

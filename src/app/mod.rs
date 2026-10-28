@@ -665,6 +665,41 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // La bibliographie locale : un projet qui n'en a pas la voit
+        // naître d'un geste, au modèle.
+        Message::BibliographieCreer => {
+            let dir = state.project.dir.clone();
+            let chemin = dir.join("references.bib");
+
+            if chemin.is_file() {
+                state.note = Some(crate::app::state::Note::info(
+                    "Le projet a déjà sa bibliographie.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            match crate::project::ecrire_atomique(
+                &chemin,
+                crate::project::model::BIBLIOGRAPHY_TEMPLATE,
+            ) {
+                Ok(()) => {
+                    state.project = crate::project::load(&dir);
+                    state.bibliography =
+                        crate::project::parse_bibliography(&chemin);
+                    state.note = Some(crate::app::state::Note::info(
+                        "La bibliographie locale est créée — references.bib.".to_string(),
+                    ));
+                }
+                Err(erreur) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "La bibliographie n'a pas pu naître : {erreur}"
+                    )));
+                }
+            }
+
+            Task::none()
+        }
+
         Message::SurvolReference(cle) => {
             state.survol_reference = cle;
             Task::none()

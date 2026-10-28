@@ -569,7 +569,7 @@ mod tests {
 
         assert!(
             typst.contains(
-                "#block(stroke: (paint: #555, thickness: 2pt), radius: 6pt, inset: 10pt)["
+                "#block(stroke: (paint: rgb(\"#555\"), thickness: 2pt), radius: 6pt, inset: 10pt)["
             ),
             "les normes disent la mesure : {typst}"
         );
