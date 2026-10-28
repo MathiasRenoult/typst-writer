@@ -39,6 +39,9 @@ pub struct TableauDialogue {
 pub struct ProjetDialogue {
     /// La norme choisie pour le nouveau projet — vide : celle du modèle.
     pub norme: String,
+
+    /// L'étagère choisie — posée au projet à sa création.
+    pub etagere: String,
     /// Le nom en cours de frappe.
     pub nom: String,
 

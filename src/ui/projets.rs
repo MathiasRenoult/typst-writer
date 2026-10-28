@@ -52,7 +52,20 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
             etagere.clone()
         };
 
-        corps = corps.push(palette.label(titre).size(theme::jetons::SAILLANT));
+        corps = corps.push(
+            row![
+                palette.label(titre.clone()).size(theme::jetons::SAILLANT),
+                Space::new().width(Length::Fill),
+                button(
+                    palette
+                        .label("Nouveau projet ici")
+                        .size(theme::jetons::DETAIL)
+                )
+                .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
+                .padding([4, 10]),
+            ]
+            .align_y(iced::Alignment::Center),
+        );
 
         for projet in projets {
             corps = corps.push(
@@ -82,7 +95,20 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     }
 
     let fenetre = container(column![
-        palette.label("Les projets").size(theme::jetons::SAILLANT),
+        row![
+            palette
+                .label("Les projets")
+                .size(theme::jetons::SAILLANT),
+            Space::new().width(Length::Fill),
+            button(theme::icon(
+                lucide_icons::iced::icon_x::<iced::Theme>(),
+                12.0,
+                palette.text_muted,
+            ))
+            .on_press(Message::ProjetsVue)
+            .padding(6),
+        ]
+        .align_y(iced::Alignment::Center),
         Space::new().height(6),
         corps,
     ])

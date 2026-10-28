@@ -226,6 +226,7 @@ pub enum Message {
     EtagereDefinir(String, String),
 
     ProjetNorme(String),
+    ProjetDepuisEtagere(String),
     ProjetCreer,
     ProjetRenommer(std::path::PathBuf),
     ProjetValider,

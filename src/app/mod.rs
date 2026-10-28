@@ -691,6 +691,23 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // La création depuis une étagère : le dialogue s'ouvre déjà
+        // classé (bug 3 du rapport 2).
+        Message::ProjetDepuisEtagere(etagere) => {
+            state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
+                norme: String::new(),
+                etagere: etagere.clone(),
+                nom: String::new(),
+                cible: None,
+            });
+
+            state.note = Some(crate::app::state::Note::info(format!(
+                "Le projet rejoindra « {etagere} »."
+            )));
+
+            iced::widget::operation::focus(crate::ui::projet::id_du_nom())
+        }
+
         Message::ProjetNorme(nom) => {
             if let Some(dialogue) = state.projet_dialogue.as_mut() {
                 dialogue.norme = nom;
@@ -702,6 +719,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::ProjetCreer => {
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
                 norme: String::new(),
+                etagere: String::new(),
                 nom: String::new(),
                 cible: None,
             });
@@ -719,6 +737,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
                 norme: String::new(),
+                etagere: String::new(),
                 nom,
                 cible: Some(dir),
             });
@@ -757,6 +776,14 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                         && let Some(mise) = crate::project::norme(&dialogue.norme)
                     {
                         let _ = crate::mise_en_page::appliquer(&dir, &mise, false);
+                    }
+
+                    if dialogue.cible.is_none() && !dialogue.etagere.is_empty() {
+                        let nom = dir
+                            .file_name()
+                            .map(|nom| nom.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let _ = crate::project::definir_etagere(&nom, &dialogue.etagere);
                     }
 
                     update(state, Message::OpenProject(dir))
