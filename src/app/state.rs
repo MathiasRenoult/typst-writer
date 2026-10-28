@@ -110,6 +110,10 @@ pub struct State {
     /// bibliographie, ses normes, sa session.
     pub onglets: Vec<std::path::PathBuf>,
 
+    /// La référence survolée dans la bibliothèque — ses gestes ne
+    /// paraissent qu'à ce moment (bug 13 du rapport 2).
+    pub survol_reference: Option<String>,
+
     /// L'éditeur de thème : sa copie de travail, quand il est ouvert.
     pub editeur_theme: Option<crate::theming::ThemeFile>,
 

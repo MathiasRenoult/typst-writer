@@ -209,6 +209,8 @@ pub enum Message {
     ReferenceSupprimer(String),
 
     ProjetNom(String),
+    SurvolReference(Option<String>),
+
     ProjetsVue,
 
     OngletChoisir(std::path::PathBuf),

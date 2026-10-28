@@ -116,6 +116,7 @@ impl State {
             tableau: None,
             projets_vue: false,
             editeur_theme: None,
+            survol_reference: None,
             onglets: Vec::new(),
             etagere_brouillon: String::new(),
             geste_confirme: false,
@@ -651,6 +652,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             }
 
+            Task::none()
+        }
+
+        Message::SurvolReference(cle) => {
+            state.survol_reference = cle;
             Task::none()
         }
 

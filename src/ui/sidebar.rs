@@ -2,7 +2,7 @@ use crate::app::state::ChapterRename;
 use crate::app::{Message, State};
 use crate::project::{BibliographyEntry, Chapter};
 use crate::ui::theme::{self, Palette};
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, tooltip};
+use iced::widget::{mouse_area, Space, button, column, container, row, scrollable, text, text_input, tooltip};
 use iced::{Alignment, Element, Fill, Length, Theme};
 
 /// Hauteur d'une ligne.
@@ -372,7 +372,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 content = content.push(separation(palette));
             }
 
-            content = content.push(citation_row(entry, palette));
+            let survolee = state.survol_reference.as_deref() == Some(entry.key.as_str());
+            content = content.push(citation_row(entry, palette, survolee));
         }
     }
 
@@ -677,7 +678,7 @@ fn info_row<'a>(
 
 /// Une référence citable : un clic insère `@clé`, l'icône l'ouvre pour la
 /// modifier — dans une bibliothèque locale seulement.
-fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'a, Message> {
+fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette, survolee: bool) -> Element<'a, Message> {
     // Deux registres plutôt qu'une ligne coupée : l'auteur au premier,
     // l'ouvrage au second en retrait — l'œil suit, au lieu de deviner ce
     // que les trois points ont emporté. La clé reste dans l'infobulle,
@@ -714,23 +715,46 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'
         );
     }
 
-    let ligne = row![
+    // Les gestes — éditer, supprimer — ne paraissent qu'au survol : une
+    // liste de références est un texte à lire, pas une barre d'outils
+    // (bug 13 du rapport 2).
+    let mut ligne = row![
         button(registres)
             .on_press(Message::InsertCitation(entry.key.clone()))
             .width(Fill)
             .padding([7, 8])
             .style(move |t, status| entry_style(t, status, palette, false)),
-        button(theme::icon(
-            lucide_icons::iced::icon_pencil::<Theme>(),
-            12.0,
-            palette.text_muted,
-        ))
-        .on_press(Message::ModifierReference(entry.key.clone()))
-        .padding(6)
-        .style(move |t, status| entry_style(t, status, palette, false)),
     ]
     .spacing(2)
     .align_y(Alignment::Center);
+
+    if survolee {
+        ligne = ligne.push(
+            button(theme::icon(
+                lucide_icons::iced::icon_pencil::<Theme>(),
+                12.0,
+                palette.text_muted,
+            ))
+            .on_press(Message::ModifierReference(entry.key.clone()))
+            .padding(6)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        );
+
+        ligne = ligne.push(
+            button(theme::icon(
+                lucide_icons::iced::icon_trash_2::<Theme>(),
+                12.0,
+                palette.danger,
+            ))
+            .on_press(Message::ReferenceSupprimer(entry.key.clone()))
+            .padding(6)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        );
+    }
+
+    let ligne = mouse_area(ligne)
+        .on_enter(Message::SurvolReference(Some(entry.key.clone())))
+        .on_exit(Message::SurvolReference(None));
 
     tooltip(
         ligne,
