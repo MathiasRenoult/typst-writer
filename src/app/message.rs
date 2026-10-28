@@ -189,6 +189,11 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    NormesNom(String),
+    NormesAppliquer(String),
+    NormesEnregistrer(String),
+    NormesSupprimer(String),
+
     TableauOuvrir,
     TableauRangs(String),
     TableauColonnes(String),

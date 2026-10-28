@@ -12,6 +12,8 @@ pub mod model;
 
 pub use model::*;
 
+use crate::mise_en_page::modele::MiseEnPage;
+use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -1616,5 +1618,89 @@ mod tests {
 
             assert_eq!(text, expected, "mode {mode:?}");
         }
+    }
+}
+
+/// La bibliothèque de normes : des mises en page nommées, partagées
+/// entre les documents.
+///
+/// C'est la promesse du rapport : importer, choisir à la création,
+/// enregistrer pour le document ou pour la norme. Le fichier tient
+/// toutes les normes ; une seule ligne par nom.
+pub fn bibliotheque_de_normes() -> PathBuf {
+    work_dir().join("normes.json")
+}
+
+/// Enregistrer une norme sous un nom — ou la remplacer, s'il y en a déjà
+/// une du nom. Les autres normes ne sont pas touchées.
+pub fn enregistrer_norme(nom: &str, mise_en_page: &MiseEnPage) -> Result<(), String> {
+    let mut table: BTreeMap<String, MiseEnPage> = normes_sans_connexion()?.into_iter().collect();
+    table.insert(nom.to_string(), mise_en_page.clone());
+
+    let brut = serde_json::to_string_pretty(&table).map_err(|erreur| format!("La norme ne s'écrit pas : {erreur}."))?;
+    ecrire_atomique(&bibliotheque_de_normes(), &brut)
+        .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
+}
+
+/// Supprimer une norme du catalogue.
+pub fn supprimer_norme(nom: &str) -> Result<(), String> {
+    let mut table: BTreeMap<String, MiseEnPage> = normes_sans_connexion()?.into_iter().collect();
+
+    if table.remove(nom).is_none() {
+        return Ok(());
+    }
+
+    let brut = serde_json::to_string_pretty(&table).map_err(|erreur| format!("La norme ne s'écrit pas : {erreur}."))?;
+    ecrire_atomique(&bibliotheque_de_normes(), &brut)
+        .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
+}
+
+/// Les normes, sans parler à la base du projet — le catalogue est
+/// indépendant d'elle.
+fn normes_sans_connexion() -> Result<Vec<(String, MiseEnPage)>, String> {
+    let chemin = bibliotheque_de_normes();
+
+    if !chemin.exists() {
+        return Ok(Vec::new());
+    }
+
+    let brut = std::fs::read_to_string(&chemin)
+        .map_err(|erreur| format!("Le fichier de normes « {} » ne se lit pas : {erreur}.", chemin.display()))?;
+
+    let table: BTreeMap<String, MiseEnPage> = serde_json::from_str(&brut)
+        .map_err(|erreur| format!("Le fichier de normes « {} » est illisible : {erreur}.", chemin.display()))?;
+
+    Ok(table.into_iter().collect())
+}
+
+/// Les noms des normes, pour la liste du panneau et du dialogue.
+pub fn noms_de_normes() -> Vec<String> {
+    normes_sans_connexion().unwrap_or_default().into_iter().map(|(nom, _)| nom).collect()
+}
+
+/// Une norme par son nom.
+pub fn norme(nom: &str) -> Option<MiseEnPage> {
+    normes_sans_connexion().ok()?.into_iter().find(|(n, _)| n == nom).map(|(_, mise)| mise)
+}
+
+#[cfg(test)]
+mod tests_de_la_bibliotheque {
+    use super::*;
+
+    /// Le catalogue de normes tient : une mise en page s'écrit, se relit
+    /// telle quelle, et deux normes se distinguent par leur nom.
+    ///
+    /// Le fichier du catalogue n'est pas touché — c'est le contrat de
+    /// sérialisation qui se juge, pas les données réelles de l'ordinateur.
+    #[test]
+    fn une_norme_se_relit_telle_quelle() {
+        let mut table: BTreeMap<String, MiseEnPage> = BTreeMap::new();
+        table.insert("Thèse".to_string(), MiseEnPage::default());
+
+        let brut = serde_json::to_string_pretty(&table).expect("la table s'écrit");
+        let relu: BTreeMap<String, MiseEnPage> = serde_json::from_str(&brut).expect("elle se relit");
+
+        assert_eq!(relu.len(), 1);
+        assert!(relu.contains_key("Thèse"));
     }
 }

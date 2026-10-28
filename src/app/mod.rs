@@ -672,6 +672,83 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         // Un clic avalé par un voile de fenêtre.
         Message::Rien => Task::none(),
 
+        // La bibliothèque de normes : choisir, appliquer, enregistrer.
+        Message::NormesNom(nom) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.norme = nom;
+            }
+
+            Task::none()
+        }
+
+        Message::NormesAppliquer(nom) => {
+            match crate::project::norme(&nom) {
+                Some(mise) => {
+                    if let Some(dialogue) = state.mise_en_page.as_mut() {
+                        dialogue.reglages = mise;
+                    }
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "La norme « {nom} » est appliquée au document."
+                    )));
+                }
+                None => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "La norme « {nom} » n'existe pas."
+                    )));
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::NormesEnregistrer(nom) => {
+            let nom = nom.trim();
+
+            if nom.is_empty() {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Une norme a un nom.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            match crate::project::enregistrer_norme(
+                nom,
+                &state.mise_en_page.as_ref().map(|d| d.reglages.clone()).unwrap_or_default(),
+            ) {
+                Ok(()) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "La norme « {nom} » est dans la bibliothèque."
+                    )));
+                }
+                Err(message) => {
+                    state.note = Some(crate::app::state::Note::erreur(message));
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::NormesSupprimer(nom) => {
+            let nom = nom.trim();
+
+            if nom.is_empty() {
+                return Task::none();
+            }
+
+            match crate::project::supprimer_norme(nom) {
+                Ok(()) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "La norme « {nom} » a quitté la bibliothèque."
+                    )));
+                }
+                Err(message) => {
+                    state.note = Some(crate::app::state::Note::erreur(message));
+                }
+            }
+
+            Task::none()
+        }
+
         // La grille de tableau : la taille choisie, la forme s'écrit.
         Message::TableauOuvrir => {
             state.tableau = Some(crate::app::state::TableauDialogue {

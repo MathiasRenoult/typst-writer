@@ -106,6 +106,7 @@ pub struct State {
     /// L'outil de tableau : ses rangs et ses colonnes, en attente.
     pub tableau: Option<TableauDialogue>,
 
+
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,
 
@@ -222,6 +223,9 @@ pub struct State {
 pub struct DialogueMiseEnPage {
     /// Les réglages en cours de réglage.
     pub reglages: crate::mise_en_page::modele::MiseEnPage,
+
+    /// Le nom de la norme de la bibliothèque — appliquer, ou enregistrer.
+    pub norme: String,
 
     /// Le panneau ouvert : 0 la mise en page, 1 la typographie.
     pub panneau: usize,

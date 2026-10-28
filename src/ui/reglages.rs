@@ -60,7 +60,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let corps = match dialogue.panneau {
         1 => corps_typographie(palette, reglages),
         2 => corps_decor(palette, reglages),
-        _ => corps_mise_en_page(palette, reglages),
+        _ => corps_mise_en_page(palette, reglages, &dialogue.norme),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----
     let mut pied = column![].spacing(10);
@@ -143,6 +143,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 fn corps_mise_en_page(
     palette: Palette,
     reglages: &crate::mise_en_page::modele::MiseEnPage,
+    norme: &str,
 ) -> iced::widget::Column<'static, Message> {
     let mut corps = column![].spacing(20);
 
@@ -193,6 +194,44 @@ fn corps_mise_en_page(
             ),
         ]
         .spacing(10),
+    ));
+
+    // La bibliothèque de normes : un modèle s'applique, ou s'y enregistre.
+    let noms_normes = crate::project::noms_de_normes();
+
+    corps = corps.push(section(
+        palette,
+        "Modèles de normes",
+        column![
+            row![
+                pick_list(
+                    noms_normes.clone(),
+                    Some(norme.to_string()),
+                    Message::NormesAppliquer
+                )
+                .width(Length::Fixed(170.0)),
+                button(palette.label("Appliquer").size(theme::jetons::DETAIL))
+                    .on_press(Message::NormesAppliquer(norme.to_string()))
+                    .padding([5, 12]),
+                button(palette.label("Supprimer").size(theme::jetons::DETAIL))
+                    .on_press(Message::NormesSupprimer(norme.to_string()))
+                    .padding([5, 12]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            row![
+                text_input("nom du modèle", norme)
+                    .on_input(Message::NormesNom)
+                    .padding(5)
+                    .width(Length::Fill),
+                button(palette.label("Enregistrer").size(theme::jetons::DETAIL))
+                    .on_press(Message::NormesEnregistrer(norme.to_string()))
+                    .padding([5, 12]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(8),
     ));
 
     // ---- Le texte ----

@@ -18,6 +18,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             let accroche_manquante = mise_en_page::accroche_manquante(&state.project.dir);
 
             state.mise_en_page = Some(DialogueMiseEnPage {
+                norme: String::new(),
                 reglages,
                 panneau: 0,
                 accrocher: accroche_manquante,
