@@ -23,7 +23,7 @@ pub const BODY_SIZE: f32 = 17.0;
 pub const SYNTAX: &str = "typ";
 
 /// Extension de coloration Markdown utilisée par `document.tw`.
-pub const MARKDOWN_SYNTAX: &str = "md";
+pub const MARKDOWN_SYNTAX: &str = "tw";
 
 /// Traduit les plages d'octets des notes en marques de lignes.
 ///
@@ -1077,8 +1077,8 @@ mod tests {
         );
 
         let document = editor.document.as_ref().expect("AST du document.tw");
-        assert_eq!(editor.editor.syntax(), "md");
-        assert_eq!(editor.editor.syntax_name(), "Markdown");
+        assert_eq!(editor.editor.syntax(), MARKDOWN_SYNTAX);
+        assert_eq!(editor.editor.syntax_name(), "TW");
         assert_eq!(document.blocs.len(), 2);
         assert_eq!(document.texte_nu(), "Titre Un mot.");
     }
@@ -1092,7 +1092,7 @@ mod tests {
         assert!(!editor.editor.auto_close_brackets());
 
         editor.set_path(PathBuf::from("document.tw"));
-        assert_eq!(editor.editor.syntax(), "md");
+        assert_eq!(editor.editor.syntax(), MARKDOWN_SYNTAX);
         assert!(editor.editor.auto_close_brackets());
         assert!(!editor.editor.auto_close_apostrophes());
         assert!(editor.document.is_some());

@@ -190,6 +190,19 @@ révision qui invalide le cache d'habillage ; la lecture `marques()` rend
 les plages à l'hôte, pour qu'il ne les repose que si elles ont changé. La couleur des glyphes est
 `Style::mark_color`. Les tests du module prouvent la règle de largeur.
 
+### 14. La grammaire de l'éditeur `.tw`
+
+`src/canvas_editor/grammaire_tw.rs` (nouveau),
+`render/highlighting.rs`, `canvas_editor/mod.rs`.
+
+L'éditeur `.tw` se colorait en markdown nu : les formules `$…$` et
+`$$…$$` n'étaient que du texte. Une grammaire `tw` est désormais
+enregistrée dans le jeu de syntaxes : le markdown est inclus tel quel,
+et les formules sont portées par un **prototype** — ces règles suivent
+le texte jusque dans les contextes du markdown, là où une inclusion
+simple les perdrait. Les tests du module prouvent les deux formes, et
+que le markdown colore toujours.
+
 ## La feature `two-face` est nécessaire pour tester
 
 Les tests de ce crate **doivent** être lancés avec la feature, sinon il n'y a

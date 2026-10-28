@@ -46,6 +46,7 @@ mod bool_options;
 mod caches;
 mod config;
 mod editing;
+pub mod grammaire_tw;
 pub(crate) mod features;
 mod focus;
 mod input;

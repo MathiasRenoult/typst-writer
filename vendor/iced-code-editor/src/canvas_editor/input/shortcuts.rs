@@ -626,6 +626,9 @@ mod tests {
     }
 
     #[test]
+    // Éteint : typst-writer porte sa propre recherche (dans l'application),
+    // et a désactivé celle du crate — voir PATCHES.md.
+    #[ignore = "la recherche du crate est éteinte chez nous, à dessein"]
     fn test_every_single_character_shortcut_consults_the_modified_key() {
         let editor = CodeEditor::new("fn a() {\n}\n", "rs");
         let ctrl = keyboard::Modifiers::CTRL;
@@ -948,6 +951,9 @@ mod tests {
     }
 
     #[test]
+    // Éteint : typst-writer porte sa propre recherche (dans l'application),
+    // et a désactivé celle du crate — voir PATCHES.md.
+    #[ignore = "la recherche du crate est éteinte chez nous, à dessein"]
     fn test_dialog_shortcuts_open_dialogs_and_drive_find_next_previous() {
         let editor = CodeEditor::new("one\ntwo", "txt");
         let ctrl = keyboard::Modifiers::CTRL;

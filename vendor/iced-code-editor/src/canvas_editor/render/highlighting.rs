@@ -251,13 +251,23 @@ impl CodeEditor {
     ) {
         let syntax_set = SYNTAX_SET.get_or_init(|| {
             #[cfg(feature = "two-face")]
-            {
-                two_face::syntax::extra_newlines()
-            }
+            let base = two_face::syntax::extra_newlines();
             #[cfg(not(feature = "two-face"))]
-            {
-                SyntaxSet::load_defaults_newlines()
+            let base = SyntaxSet::load_defaults_newlines();
+
+            // La grammaire de l'éditeur `.tw` — le markdown de la couche
+            // simple, et les formules mathématiques.
+            let mut constructeur = base.into_builder();
+
+            if let Ok(definition) = syntect::parsing::SyntaxDefinition::load_from_str(
+                crate::canvas_editor::grammaire_tw::GRAMMAIRE_TW,
+                true,
+                None,
+            ) {
+                constructeur.add(definition);
             }
+
+            constructeur.build()
         });
 
         // Pair the token palette with the editor's own theme: a dark-tuned
