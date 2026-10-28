@@ -115,6 +115,9 @@ impl State {
             references_filtre: String::new(),
             tableau: None,
             projets_vue: false,
+            vignettes: Vec::new(),
+            drag_projet: None,
+            drag_etagere: None,
             editeur_theme: None,
             survol_reference: None,
             zotero_recherche: String::new(),
@@ -666,8 +669,57 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Les vignettes se rendent en arrière-plan : la vue les attend
+        // sans jamais bloquer l'écran.
         Message::ProjetsVue => {
             state.projets_vue = !state.projets_vue;
+
+            if state.projets_vue {
+                let dirs: Vec<std::path::PathBuf> =
+                    state.projects.iter().map(|projet| projet.dir.clone()).collect();
+
+                return Task::perform(
+                    async move { crate::project::vignettes(&dirs) },
+                    Message::VignettesFaites,
+                );
+            }
+
+            Task::none()
+        }
+
+        Message::VignettesFaites(vignettes) => {
+            state.vignettes = vignettes;
+            Task::none()
+        }
+
+        // Le glisser-déposer : prendre un projet, survoler une étagère,
+        // poser. Le geste dit où il en est — une ombre suit le projet.
+        Message::DragCommencer(nom) => {
+            state.drag_projet = Some(nom);
+            Task::none()
+        }
+
+        Message::DragSurvol(etagere) => {
+            state.drag_etagere = Some(etagere);
+            Task::none()
+        }
+
+        Message::DragPoser(etagere) => {
+            if let Some(projet) = state.drag_projet.take() {
+                state.drag_etagere = None;
+
+                match crate::project::definir_etagere(&projet, &etagere) {
+                    Ok(()) => {
+                        state.note = Some(crate::app::state::Note::info(format!(
+                            "« {projet} » rejoint « {etagere} »."
+                        )));
+                    }
+                    Err(message) => {
+                        state.note = Some(crate::app::state::Note::erreur(message));
+                    }
+                }
+            }
+
             Task::none()
         }
 

@@ -1858,3 +1858,31 @@ fn semer_normes(chemin: &std::path::Path) -> Result<(), String> {
     ecrire_atomique(chemin, &brut)
         .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
 }
+
+/// La vignette d'un projet : sa première page, en image.
+///
+/// Elle se rend par le même compilateur que le document : ce qui s'y
+/// voit est ce qui se compose. Un projet qui ne compile pas n'a pas de
+/// vignette — jamais une erreur à l'écran.
+pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)> {
+    let mut vignettes = Vec::new();
+
+    for dir in dirs {
+        let nom = dir
+            .file_name()
+            .map(|nom| nom.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let compilation = crate::typst::render::compile(dir, "main.typ", &[]);
+
+        let Some(document) = compilation.document else {
+            continue;
+        };
+
+        if let Some(image) = crate::typst::render::render_page(&document, 0, 0.35) {
+            vignettes.push((nom, image.pixels, image.width, image.height));
+        }
+    }
+
+    vignettes
+}

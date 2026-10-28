@@ -126,6 +126,16 @@ pub struct State {
     /// Le nom de l'étagère à poser sur un projet — la vue des projets.
     pub etagere_brouillon: String,
 
+    /// Les vignettes des projets : nom → pixels RGBA.
+    pub vignettes: Vec<(String, Vec<u8>, u32, u32)>,
+
+    /// Le projet qu'on déplace d'une étagère à l'autre — le geste du
+    /// glisser-déposer (bug 3 du rapport 2).
+    pub drag_projet: Option<String>,
+
+    /// L'étagère survolée pendant le déplacement.
+    pub drag_etagere: Option<String>,
+
     /// La vue des projets est-elle ouverte ?
     pub projets_vue: bool,
 

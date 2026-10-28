@@ -9,6 +9,33 @@ use crate::ui::theme;
 use iced::widget::{Space, button, column, container, row, text_input};
 use iced::{Element, Length};
 
+/// La vignette d'un projet : sa première page, quand elle est rendue.
+fn vignette<'a>(state: &'a crate::app::State, nom: &str) -> Element<'a, Message> {
+    let pixels = state
+        .vignettes
+        .iter()
+        .find(|(cle, ..)| cle == nom)
+        .cloned();
+
+    match pixels {
+        Some((_, pixels, largeur, hauteur)) => {
+            let handle = iced::widget::image::Handle::from_rgba(largeur, hauteur, pixels);
+
+            container(
+                iced::widget::image(handle).width(Length::Fixed(56.0)),
+            )
+            .style(theme::panneau(state.resolved.palette))
+            .padding(2)
+            .into()
+        }
+        None => container(
+            Space::new().width(Length::Fixed(56.0)).height(Length::Fixed(72.0)),
+        )
+        .style(theme::panneau(state.resolved.palette))
+        .into(),
+    }
+}
+
 /// La fenêtre, quand la vue des projets est ouverte.
 pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     let palette = state.resolved.palette;
@@ -52,40 +79,56 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
             etagere.clone()
         };
 
+        let etagere_bis = etagere.clone();
+        let etagere_ter = etagere.clone();
+
+        let bandeau = row![
+            palette.label(titre.clone()).size(theme::jetons::SAILLANT),
+            Space::new().width(Length::Fill),
+            button(
+                palette
+                    .label("Nouveau projet ici")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
+            .padding([4, 10]),
+        ]
+        .align_y(iced::Alignment::Center);
+
         corps = corps.push(
-            row![
-                palette.label(titre.clone()).size(theme::jetons::SAILLANT),
-                Space::new().width(Length::Fill),
-                button(
-                    palette
-                        .label("Nouveau projet ici")
-                        .size(theme::jetons::DETAIL)
-                )
-                .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
-                .padding([4, 10]),
-            ]
-            .align_y(iced::Alignment::Center),
+            iced::widget::mouse_area(bandeau)
+                .on_enter(Message::DragSurvol(etagere_bis))
+                .on_release(Message::DragPoser(etagere_ter)),
         );
 
         for projet in projets {
-            corps = corps.push(
-                row![
-                    button(palette.label(&projet.name).size(theme::jetons::CORPS))
-                        .on_press(Message::OpenProject(projet.dir.clone()))
-                        .padding([5, 10]),
-                    button(
-                        palette
-                            .label("Poser sur l'étagère")
-                            .size(theme::jetons::DETAIL)
-                    )
-                    .on_press(Message::EtagereDefinir(
-                        projet.name.clone(),
-                        state.etagere_brouillon.clone()
-                    ))
+            let nom = projet.name.clone();
+            let nom_bis = projet.name.clone();
+            let dir = projet.dir.clone();
+
+            // Le glisser-déposer : la prise à la souris, la pose sur
+            // l'étagère (bug 3 du rapport 2).
+            let ligne = row![
+                vignette(state, &projet.name),
+                button(palette.label(&projet.name).size(theme::jetons::CORPS))
+                    .on_press(Message::OpenProject(dir))
                     .padding([5, 10]),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
+                button(
+                    palette
+                        .label("Poser sur l'étagère")
+                        .size(theme::jetons::DETAIL)
+                )
+                .on_press(Message::EtagereDefinir(
+                    nom.clone(),
+                    state.etagere_brouillon.clone()
+                ))
+                .padding([5, 10]),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center);
+
+            corps = corps.push(
+                iced::widget::mouse_area(ligne).on_press(Message::DragCommencer(nom_bis)),
             );
         }
     }

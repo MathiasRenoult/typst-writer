@@ -213,6 +213,11 @@ pub enum Message {
     ZoteroRecherche(String),
 
     ProjetsVue,
+    VignettesFaites(Vec<(String, Vec<u8>, u32, u32)>),
+
+    DragCommencer(String),
+    DragSurvol(String),
+    DragPoser(String),
 
     OngletChoisir(std::path::PathBuf),
     OngletFermer(std::path::PathBuf),
