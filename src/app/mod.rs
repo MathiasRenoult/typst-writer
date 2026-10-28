@@ -713,7 +713,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
             match crate::project::enregistrer_norme(
                 nom,
-                &state.mise_en_page.as_ref().map(|d| d.reglages.clone()).unwrap_or_default(),
+                &state
+                    .mise_en_page
+                    .as_ref()
+                    .map(|d| d.reglages.clone())
+                    .unwrap_or_default(),
             ) {
                 Ok(()) => {
                     state.note = Some(crate::app::state::Note::info(format!(

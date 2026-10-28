@@ -49,6 +49,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         onglet(palette, "Mise en page", 0, dialogue.panneau),
         onglet(palette, "Typographie", 1, dialogue.panneau),
         onglet(palette, "Décor", 2, dialogue.panneau),
+        onglet(palette, "En-tête et pied", 3, dialogue.panneau),
         Space::new().width(8),
         button(text("Fermer").size(12))
             .on_press(Message::MiseEnPageFermer)
@@ -60,6 +61,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let corps = match dialogue.panneau {
         1 => corps_typographie(palette, reglages),
         2 => corps_decor(palette, reglages),
+        3 => corps_entete_pied(palette, reglages),
         _ => corps_mise_en_page(palette, reglages, &dialogue.norme),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----
@@ -140,6 +142,98 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 /// Une section de la fenêtre : son titre et ses réglages.
 /// Le panneau de mise en page : la page, le texte, les titres, les couleurs.
+/// Les formes de numérotation que Typst sait composer.
+const FORMES_NUMEROTATION: &[&str] = &["1", "a", "A", "i", "I", "α", "Α", "א"];
+
+/// L'en-tête et le pied de page : leurs trois places, et la forme du
+/// numéro.
+fn corps_entete_pied(
+    palette: Palette,
+    reglages: &crate::mise_en_page::modele::MiseEnPage,
+) -> iced::widget::Column<'static, Message> {
+    let entete_pied = &reglages.entete_pied;
+
+    let mut corps = column![].spacing(20);
+
+    // Un lieu — gauche, centre, droite — est une ligne de saisie, et son
+    // titre dit la place.
+    fn lieu(
+        palette: Palette,
+        titre: &'static str,
+        valeur: &str,
+        champ: Champ,
+    ) -> Element<'static, Message> {
+        row![
+            palette
+                .label(titre)
+                .size(theme::jetons::DETAIL)
+                .width(Length::Fixed(60.0)),
+            saisie(palette, valeur, champ, "vide"),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    corps = corps.push(section(
+        palette,
+        "En-tête",
+        column![
+            lieu(
+                palette,
+                "Gauche",
+                &entete_pied.entete.gauche,
+                Champ::EnteteGauche
+            ),
+            lieu(
+                palette,
+                "Centre",
+                &entete_pied.entete.centre,
+                Champ::EnteteCentre
+            ),
+            lieu(
+                palette,
+                "Droite",
+                &entete_pied.entete.droite,
+                Champ::EnteteDroite
+            ),
+        ]
+        .spacing(8),
+    ));
+
+    corps = corps.push(section(
+        palette,
+        "Pied de page",
+        column![
+            lieu(palette, "Gauche", &entete_pied.pied.gauche, Champ::PiedGauche),
+            lieu(palette, "Centre", &entete_pied.pied.centre, Champ::PiedCentre),
+            lieu(palette, "Droite", &entete_pied.pied.droite, Champ::PiedDroite),
+            palette.label(
+                "Le numéro s'écrit {page}, le total {pages} — « p. {page} », « page {page} sur {pages} », « {page}/{pages} »."
+            ).size(theme::jetons::DETAIL),
+        ]
+        .spacing(8),
+    ));
+
+    corps = corps.push(section(
+        palette,
+        "La forme du numéro",
+        column![
+            choix(
+                FORMES_NUMEROTATION,
+                entete_pied.numerotation.as_str(),
+                Champ::EntetePiedNumerotation
+            ),
+            palette
+                .label("1, a, A, i, I, α, Α, א — les formes que Typst compose.")
+                .size(theme::jetons::DETAIL),
+        ]
+        .spacing(8),
+    ));
+
+    corps
+}
+
 fn corps_mise_en_page(
     palette: Palette,
     reglages: &crate::mise_en_page::modele::MiseEnPage,

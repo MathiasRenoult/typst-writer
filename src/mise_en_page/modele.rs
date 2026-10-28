@@ -25,6 +25,11 @@ pub struct MiseEnPage {
     /// Les numéros de page.
     pub numerotation: NumerotationPage,
 
+    /// L'en-tête et le pied de page : leur contenu exact, et la forme des
+    /// numéros. `{page}` y est le numéro courant, `{pages}` le nombre de
+    /// pages — « p. {page} », « page {page} sur {pages} », « {page}/{pages} ».
+    pub entete_pied: EntetePiedDePage,
+
     /// Le texte courant.
     pub texte: Texte,
 
@@ -152,6 +157,56 @@ impl Default for NumerotationPage {
 }
 
 /// Le texte courant.
+/// L'en-tête et le pied de page : ce qu'ils portent, et comment le numéro
+/// s'écrit.
+///
+/// La source dit l'intention, les normes disent la mesure : le contenu est
+/// du texte libre où `{page}` et `{pages}` prennent leur place, et la
+/// numérotation est une **forme** — `1`, `a`, `A`, `i`, `I`, `α`, `א` —
+/// celles que Typst sait composer. Les formes parlées (« p. 1 », « page 1
+/// sur 12 », « 1/12 ») sont des motifs de contenu, pas des numérotations :
+/// la mesure reste au gabarit, le choix à la personne.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EntetePiedDePage {
+    /// L'en-tête, en ses trois places — vides : pas d'en-tête.
+    pub entete: Emplacement,
+
+    /// Le pied de page, en ses trois places — vides : la numérotation
+    /// seule, comme avant que ce champ existe.
+    pub pied: Emplacement,
+
+    /// La forme du numéro : `1`, `a`, `A`, `i`, `I`, `α`, `א`.
+    pub numerotation: String,
+}
+
+/// Les trois places d'un en-tête ou d'un pied de page : ce qui va à
+/// gauche, au centre, à droite.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Emplacement {
+    pub gauche: String,
+    pub centre: String,
+    pub droite: String,
+}
+
+impl Emplacement {
+    /// Les trois places sont-elles vides ?
+    pub fn est_vide(&self) -> bool {
+        self.gauche.is_empty() && self.centre.is_empty() && self.droite.is_empty()
+    }
+}
+
+impl Default for EntetePiedDePage {
+    fn default() -> Self {
+        Self {
+            entete: Emplacement::default(),
+            pied: Emplacement::default(),
+            numerotation: "1".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Texte {
@@ -562,6 +617,13 @@ pub enum Champ {
     NumerotationForme,
     NumerotationPosition,
     NumerotationAlignement,
+    EnteteGauche,
+    EnteteCentre,
+    EnteteDroite,
+    PiedGauche,
+    PiedCentre,
+    PiedDroite,
+    EntetePiedNumerotation,
     TextePolice,
     TexteTaille,
     TexteInterligne,
@@ -616,6 +678,13 @@ impl MiseEnPage {
             Champ::NumerotationForme => self.numerotation.forme.clone(),
             Champ::NumerotationPosition => self.numerotation.position.clone(),
             Champ::NumerotationAlignement => self.numerotation.alignement.clone(),
+            Champ::EnteteGauche => self.entete_pied.entete.gauche.clone(),
+            Champ::EnteteCentre => self.entete_pied.entete.centre.clone(),
+            Champ::EnteteDroite => self.entete_pied.entete.droite.clone(),
+            Champ::PiedGauche => self.entete_pied.pied.gauche.clone(),
+            Champ::PiedCentre => self.entete_pied.pied.centre.clone(),
+            Champ::PiedDroite => self.entete_pied.pied.droite.clone(),
+            Champ::EntetePiedNumerotation => self.entete_pied.numerotation.clone(),
             Champ::TextePolice => self.texte.police.clone(),
             Champ::TexteTaille => self.texte.taille.clone(),
             Champ::TexteInterligne => self.texte.interligne.clone(),
@@ -670,6 +739,13 @@ impl MiseEnPage {
             Champ::NumerotationForme => self.numerotation.forme = valeur,
             Champ::NumerotationPosition => self.numerotation.position = valeur,
             Champ::NumerotationAlignement => self.numerotation.alignement = valeur,
+            Champ::EnteteGauche => self.entete_pied.entete.gauche = valeur,
+            Champ::EnteteCentre => self.entete_pied.entete.centre = valeur,
+            Champ::EnteteDroite => self.entete_pied.entete.droite = valeur,
+            Champ::PiedGauche => self.entete_pied.pied.gauche = valeur,
+            Champ::PiedCentre => self.entete_pied.pied.centre = valeur,
+            Champ::PiedDroite => self.entete_pied.pied.droite = valeur,
+            Champ::EntetePiedNumerotation => self.entete_pied.numerotation = valeur,
             Champ::TextePolice => self.texte.police = valeur,
             Champ::TexteTaille => self.texte.taille = valeur,
             Champ::TexteInterligne => self.texte.interligne = valeur,

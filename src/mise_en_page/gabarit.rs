@@ -91,7 +91,22 @@ fn page(mise_en_page: &MiseEnPage) -> String {
         ));
     }
 
-    if mise_en_page.numerotation.actif {
+    // L'en-tête et le pied de page rédigés : leurs trois places, et le
+    // numéro qu'ils portent. S'ils ne disent rien, la numérotation de
+    // toujours continue de parler.
+    let entete_pied = entete_pied(mise_en_page);
+
+    if !entete_pied.is_empty() {
+        for ligne in entete_pied.lines() {
+            lignes.push(ligne.to_string());
+        }
+    }
+
+    // Le pied rédigé porte déjà son numéro : la numérotation de la page
+    // ne se répéterait pas.
+    let pied_redige = !mise_en_page.entete_pied.pied.est_vide();
+
+    if mise_en_page.numerotation.actif && !pied_redige {
         lignes.push(format!(
             "    numbering: \"{}\",",
             forme_numerotation(&mise_en_page.numerotation.forme)
@@ -245,6 +260,92 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
     }
 
     out.push('\n');
+    out
+}
+
+/// L'en-tête et le pied de page : leurs trois places, et la forme du
+/// numéro.
+///
+/// `{page}` devient le numéro courant, `{pages}` le nombre de pages —
+/// tous deux dans la forme choisie (`1`, `a`, `A`, `i`, `I`, `α`, `א`,
+/// celles que Typst sait composer). Le texte du voisinage est du texte :
+/// « p. {page} » donne « p. 3 », « page {page} sur {pages} » donne
+/// « page 3 sur 12 ».
+fn entete_pied(mise_en_page: &MiseEnPage) -> String {
+    let entete_pied = &mise_en_page.entete_pied;
+
+    if entete_pied.entete.est_vide() && entete_pied.pied.est_vide() {
+        return String::new();
+    }
+
+    let forme = entete_pied.numerotation.trim();
+    let forme = if forme.is_empty() { "1" } else { forme };
+
+    /// Un lieu — gauche, centre, droite — composé : `{page}` et `{pages}`
+    /// prennent leur place dans le texte, le reste est du texte.
+    fn lieu(texte: &str, forme: &str) -> String {
+        /// Le texte d'un lieu est du texte : les caractères qui signifient
+        /// quelque chose pour Typst s'échappent, le reste ne bouge pas.
+        fn echapper(texte: &str) -> String {
+            let mut out = String::new();
+
+            for caractere in texte.chars() {
+                if matches!(caractere, '\\' | '[' | ']' | '#' | '$' | '_' | '*') {
+                    out.push('\\');
+                }
+
+                out.push(caractere);
+            }
+
+            out
+        }
+
+        let mut out = String::new();
+
+        for (rang, morceau) in texte.split("{page}").enumerate() {
+            if rang > 0 {
+                out.push_str(&format!("#counter(page).display(\"{forme}\")"));
+            }
+
+            let morceau = morceau.replace("{pages}", "\\x00");
+
+            for (rang, morceau) in morceau.split("\\x00").enumerate() {
+                if rang > 0 {
+                    out.push_str(&format!("#numbering(\"{forme}\", ..counter(page).final())"));
+                }
+
+                out.push_str(&echapper(morceau));
+            }
+        }
+
+        out
+    }
+
+    let grille = |empl: &crate::mise_en_page::modele::Emplacement| -> String {
+        format!(
+            "grid(columns: (1fr, 1fr, 1fr), align: (left, center, right), [{gauche}], [{centre}], [{droite}])",
+            gauche = lieu(&empl.gauche, forme),
+            centre = lieu(&empl.centre, forme),
+            droite = lieu(&empl.droite, forme),
+        )
+    };
+
+    let mut out = String::new();
+
+    if !entete_pied.entete.est_vide() {
+        out.push_str(&format!(
+            "    header: context align(center, {}),\n",
+            grille(&entete_pied.entete)
+        ));
+    }
+
+    if !entete_pied.pied.est_vide() {
+        out.push_str(&format!(
+            "    footer: context align(center, {}),\n",
+            grille(&entete_pied.pied)
+        ));
+    }
+
     out
 }
 
@@ -484,4 +585,37 @@ mod tests {
             "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n"
         );
     }
+}
+
+/// Le pied de page rédigé se compose : ses trois places, et le numéro
+/// qu'il porte, dans la forme choisie.
+#[test]
+fn un_pied_redige_porte_son_numero() {
+    let mut mise = MiseEnPage::default();
+    mise.entete_pied.pied.droite = "p. {page}".to_string();
+    mise.entete_pied.numerotation = "a".to_string();
+
+    let sortie = generer(&mise);
+    assert!(
+        sortie.contains("footer: context align(center, grid("),
+        "le pied se compose : {sortie}"
+    );
+    assert!(
+        sortie.contains("counter(page).display(\"a\")"),
+        "le numéro est dans la forme choisie : {sortie}"
+    );
+    assert!(
+        sortie.contains("p. "),
+        "le texte du pied s'y trouve : {sortie}"
+    );
+
+    // Le total, lui, se prend par {pages}.
+    let mut mise = MiseEnPage::default();
+    mise.entete_pied.pied.centre = "page {page} sur {pages}".to_string();
+
+    let sortie = generer(&mise);
+    assert!(
+        sortie.contains("counter(page).final()"),
+        "le total s'y trouve : {sortie}"
+    );
 }

@@ -13,8 +13,8 @@ pub mod model;
 pub use model::*;
 
 use crate::mise_en_page::modele::MiseEnPage;
-use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Dossier de travail de l'application : les projets y vivent.
@@ -1637,7 +1637,8 @@ pub fn enregistrer_norme(nom: &str, mise_en_page: &MiseEnPage) -> Result<(), Str
     let mut table: BTreeMap<String, MiseEnPage> = normes_sans_connexion()?.into_iter().collect();
     table.insert(nom.to_string(), mise_en_page.clone());
 
-    let brut = serde_json::to_string_pretty(&table).map_err(|erreur| format!("La norme ne s'écrit pas : {erreur}."))?;
+    let brut = serde_json::to_string_pretty(&table)
+        .map_err(|erreur| format!("La norme ne s'écrit pas : {erreur}."))?;
     ecrire_atomique(&bibliotheque_de_normes(), &brut)
         .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
 }
@@ -1650,7 +1651,8 @@ pub fn supprimer_norme(nom: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let brut = serde_json::to_string_pretty(&table).map_err(|erreur| format!("La norme ne s'écrit pas : {erreur}."))?;
+    let brut = serde_json::to_string_pretty(&table)
+        .map_err(|erreur| format!("La norme ne s'écrit pas : {erreur}."))?;
     ecrire_atomique(&bibliotheque_de_normes(), &brut)
         .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
 }
@@ -1664,23 +1666,39 @@ fn normes_sans_connexion() -> Result<Vec<(String, MiseEnPage)>, String> {
         return Ok(Vec::new());
     }
 
-    let brut = std::fs::read_to_string(&chemin)
-        .map_err(|erreur| format!("Le fichier de normes « {} » ne se lit pas : {erreur}.", chemin.display()))?;
+    let brut = std::fs::read_to_string(&chemin).map_err(|erreur| {
+        format!(
+            "Le fichier de normes « {} » ne se lit pas : {erreur}.",
+            chemin.display()
+        )
+    })?;
 
-    let table: BTreeMap<String, MiseEnPage> = serde_json::from_str(&brut)
-        .map_err(|erreur| format!("Le fichier de normes « {} » est illisible : {erreur}.", chemin.display()))?;
+    let table: BTreeMap<String, MiseEnPage> = serde_json::from_str(&brut).map_err(|erreur| {
+        format!(
+            "Le fichier de normes « {} » est illisible : {erreur}.",
+            chemin.display()
+        )
+    })?;
 
     Ok(table.into_iter().collect())
 }
 
 /// Les noms des normes, pour la liste du panneau et du dialogue.
 pub fn noms_de_normes() -> Vec<String> {
-    normes_sans_connexion().unwrap_or_default().into_iter().map(|(nom, _)| nom).collect()
+    normes_sans_connexion()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(nom, _)| nom)
+        .collect()
 }
 
 /// Une norme par son nom.
 pub fn norme(nom: &str) -> Option<MiseEnPage> {
-    normes_sans_connexion().ok()?.into_iter().find(|(n, _)| n == nom).map(|(_, mise)| mise)
+    normes_sans_connexion()
+        .ok()?
+        .into_iter()
+        .find(|(n, _)| n == nom)
+        .map(|(_, mise)| mise)
 }
 
 #[cfg(test)]
@@ -1698,7 +1716,8 @@ mod tests_de_la_bibliotheque {
         table.insert("Thèse".to_string(), MiseEnPage::default());
 
         let brut = serde_json::to_string_pretty(&table).expect("la table s'écrit");
-        let relu: BTreeMap<String, MiseEnPage> = serde_json::from_str(&brut).expect("elle se relit");
+        let relu: BTreeMap<String, MiseEnPage> =
+            serde_json::from_str(&brut).expect("elle se relit");
 
         assert_eq!(relu.len(), 1);
         assert!(relu.contains_key("Thèse"));

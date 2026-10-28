@@ -106,7 +106,6 @@ pub struct State {
     /// L'outil de tableau : ses rangs et ses colonnes, en attente.
     pub tableau: Option<TableauDialogue>,
 
-
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,
 
