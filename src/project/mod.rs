@@ -77,7 +77,9 @@ pub fn creer_au_nom(parent: &Path, nom: &str) -> Result<PathBuf, String> {
     let dossier = parent.join(&plie);
 
     if dossier.exists() {
-        return Err(format!("« {plie} » existe déjà — un autre nom, ou l'ouvrir."));
+        return Err(format!(
+            "« {plie} » existe déjà — un autre nom, ou l'ouvrir."
+        ));
     }
 
     std::fs::create_dir_all(&dossier)

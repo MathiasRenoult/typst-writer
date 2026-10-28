@@ -463,11 +463,7 @@ pub fn sans_marque(ligne: &str, genre: Genre) -> String {
             }
         }
         // L'image garde sa forme entière : c'est sa donnée.
-        Genre::Brut
-        | Genre::Paragraphe
-        | Genre::Image
-        | Genre::Tableau
-        | Genre::Formule => None,
+        Genre::Brut | Genre::Paragraphe | Genre::Image | Genre::Tableau | Genre::Formule => None,
     };
 
     retire.unwrap_or(ligne).to_string()

@@ -524,7 +524,10 @@ mod tests {
         let document = super::super::parse("| a | b |\n| c | d |");
 
         assert!(
-            matches!(document.blocs[..], [Bloc::Paragraphe(_)] | [Bloc::Paragraphe(_), Bloc::Paragraphe(_)]),
+            matches!(
+                document.blocs[..],
+                [Bloc::Paragraphe(_)] | [Bloc::Paragraphe(_), Bloc::Paragraphe(_)]
+            ),
             "vu : {:?}",
             document.blocs
         );

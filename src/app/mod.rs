@@ -109,7 +109,7 @@ impl State {
         };
 
         let mut state = Self {
-            projet_nom: String::new(),
+            projet_dialogue: None,
             geste_confirme: false,
             confirmation: None,
             verrou,
@@ -517,12 +517,45 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         // Les projets : le nom en frappe, puis les trois gestes.
         Message::ProjetNom(nom) => {
-            state.projet_nom = nom;
+            if let Some(dialogue) = state.projet_dialogue.as_mut() {
+                dialogue.nom = nom;
+            }
+
             Task::none()
         }
 
+        // Le dialogue s'ouvre sur le vide, ou sur le nom du projet visé.
         Message::ProjetCreer => {
-            let nom = state.projet_nom.trim().to_string();
+            state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
+                nom: String::new(),
+                cible: None,
+            });
+
+            iced::widget::operation::focus(crate::ui::projet::id_du_nom())
+        }
+
+        Message::ProjetRenommer(dir) => {
+            let nom = state
+                .projects
+                .iter()
+                .find(|projet| projet.dir == dir)
+                .map(|projet| projet.name.clone())
+                .unwrap_or_default();
+
+            state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
+                nom,
+                cible: Some(dir),
+            });
+
+            iced::widget::operation::focus(crate::ui::projet::id_du_nom())
+        }
+
+        Message::ProjetValider => {
+            let Some(dialogue) = state.projet_dialogue.clone() else {
+                return Task::none();
+            };
+
+            let nom = dialogue.nom.trim().to_string();
 
             if nom.is_empty() {
                 state.note = Some(crate::app::state::Note::erreur(
@@ -531,9 +564,14 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            match crate::project::creer_au_nom(&crate::project::projects_dir(), &nom) {
+            let rendu = match &dialogue.cible {
+                None => crate::project::creer_au_nom(&crate::project::projects_dir(), &nom),
+                Some(dir) => crate::project::renommer(dir, &nom),
+            };
+
+            match rendu {
                 Ok(dir) => {
-                    state.projet_nom = String::new();
+                    state.projet_dialogue = None;
                     update(state, Message::OpenProject(dir))
                 }
                 Err(probleme) => {
@@ -543,26 +581,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
         }
 
-        Message::ProjetRenommer => {
-            let nom = state.projet_nom.trim().to_string();
-
-            if nom.is_empty() {
-                state.note = Some(crate::app::state::Note::erreur(
-                    "Un projet porte un nom.".to_string(),
-                ));
-                return Task::none();
-            }
-
-            match crate::project::renommer(&state.project.dir, &nom) {
-                Ok(dir) => {
-                    state.projet_nom = String::new();
-                    update(state, Message::OpenProject(dir))
-                }
-                Err(probleme) => {
-                    state.note = Some(crate::app::state::Note::erreur(probleme));
-                    Task::none()
-                }
-            }
+        Message::ProjetAnnuler => {
+            state.projet_dialogue = None;
+            Task::none()
         }
 
         Message::ProjetSupprimer(dir) => {
@@ -585,9 +606,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     )));
 
                     // Le projet ouvert disparaît : un autre prend sa place.
-                    state
-                        .projects
-                        .retain(|projet| projet.dir != dir);
+                    state.projects.retain(|projet| projet.dir != dir);
 
                     match state.projects.first() {
                         Some(projet) => update(state, Message::OpenProject(projet.dir.clone())),
@@ -877,8 +896,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::OpenThemesFolder
         | Message::SelectTheme(_)
         | Message::LoadTheme
-        | Message::ThemeLoaded(_)
- => crate::app::themes::update(state, message),
+        | Message::ThemeLoaded(_) => crate::app::themes::update(state, message),
 
         Message::Editor(message) => {
             let content_changed = crate::editor::EditorState::message_may_change_content(&message);
@@ -1983,6 +2001,8 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
 /// table n'a pas à savoir — et c'est ce qui la rend vérifiable.
 #[derive(Debug, Default, Clone, Copy)]
 struct Situation {
+    /// Le dialogue de projet est ouvert — `Échap` annule.
+    projet: bool,
     /// Une confirmation attend son mot — `Échap` est « Annuler ».
     confirmation: bool,
     /// Le composeur est ouvert : sa frappe est à lui.
@@ -2004,6 +2024,7 @@ struct Situation {
 impl Situation {
     fn de(state: &State) -> Self {
         Situation {
+            projet: state.projet_dialogue.is_some(),
             confirmation: state.confirmation.is_some(),
             composeur: state.composeur.is_some(),
             fenetre: fenetre_ouverte(state),
@@ -2152,6 +2173,10 @@ fn plan_touche(
 
 /// Le message de fermeture de la fenêtre du dessus de la pile.
 fn fermeture_du_dessus(etat: Situation) -> Message {
+    if etat.projet {
+        return Message::ProjetAnnuler;
+    }
+
     if etat.confirmation {
         return Message::ConfirmationAnnuler;
     }
@@ -2173,7 +2198,8 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 
 /// Quelque fenêtre est-elle ouverte ?
 fn fenetre_ouverte(state: &State) -> bool {
-    state.confirmation.is_some()
+    state.projet_dialogue.is_some()
+        || state.confirmation.is_some()
         || state.aide
         || state.recherche.is_some()
         || state.liaison.is_some()

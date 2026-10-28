@@ -349,6 +349,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .padding([4, 8])
                     .style(move |t, status| entry_style(t, status, palette, is_current)),
                 button(theme::icon(
+                    lucide_icons::iced::icon_pencil::<Theme>(),
+                    12.0,
+                    palette.text_muted,
+                ))
+                .on_press(Message::ProjetRenommer(other.dir.clone()))
+                .padding([4, 6])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+                button(theme::icon(
                     lucide_icons::iced::icon_trash_2::<Theme>(),
                     12.0,
                     palette.text_muted,
@@ -361,27 +369,26 @@ pub fn view(state: &State) -> Element<'_, Message> {
         );
     }
 
-    // Le nom en frappe commande les deux gestes : un projet se crée au nom
-    // choisi, et le projet ouvert se renomme du même mot.
+    // Un seul bouton : la création ouvre sa fenêtre, plutôt que de tenir
+    // champs et boutons en permanence dans le panneau.
     content = content.push(
-        text_input("nom du projet", &state.projet_nom)
-            .on_input(Message::ProjetNom)
-            .on_submit(Message::ProjetCreer)
-            .padding(5)
-            .size(theme::jetons::CORPS)
-            .width(Fill),
-    );
-
-    content = content.push(
-        row![
-            button(palette.label("Créer").size(theme::jetons::DETAIL))
-                .on_press(Message::ProjetCreer)
-                .padding([4, 10]),
-            button(palette.label("Renommer").size(theme::jetons::DETAIL))
-                .on_press(Message::ProjetRenommer)
-                .padding([4, 10]),
-        ]
-        .spacing(theme::jetons::PAS),
+        button(
+            row![
+                theme::icon(
+                    lucide_icons::iced::icon_plus::<Theme>(),
+                    13.0,
+                    palette.text_muted
+                ),
+                palette.label("Nouveau projet").size(theme::jetons::CORPS),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::ProjetCreer)
+        .width(Fill)
+        .height(Length::Fixed(ENTRY_HEIGHT))
+        .padding([4, 8])
+        .style(move |t, status| entry_style(t, status, palette, false)),
     );
 
     container(scrollable(content).width(Fill).height(Fill))

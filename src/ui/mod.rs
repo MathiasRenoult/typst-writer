@@ -4,6 +4,7 @@ pub mod confirmation;
 pub mod editor;
 pub mod layout;
 pub mod preview;
+pub mod projet;
 pub mod recherche;
 pub mod reference;
 mod reglages;
@@ -60,6 +61,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         reglages::view(state),
         aide::view(state),
         confirmation::view(state),
+        projet::view(state),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

@@ -27,6 +27,16 @@ pub enum PreviewZoomMode {
     Free(f64),
 }
 
+/// Le dialogue de projet : créer, ou renommer celui qu'on nomme.
+#[derive(Clone)]
+pub struct ProjetDialogue {
+    /// Le nom en cours de frappe.
+    pub nom: String,
+
+    /// `None` pour créer ; le dossier pour renommer.
+    pub cible: Option<std::path::PathBuf>,
+}
+
 /// Un geste qui défait quelque chose, en attente de son mot.
 ///
 /// La corbeille garde tout — mais un geste qui part au clic reste un
@@ -74,8 +84,8 @@ pub struct State {
     /// deux instances ne s'écrasent jamais leur texte.
     pub verrou: Option<crate::project::Verrou>,
 
-    /// Le nom en cours de frappe pour un projet — créer, ou renommer.
-    pub projet_nom: String,
+    /// Le dialogue de projet ouvert — créer, ou renommer `cible`.
+    pub projet_dialogue: Option<ProjetDialogue>,
 
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,

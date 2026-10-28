@@ -193,7 +193,9 @@ pub enum Message {
 
     ProjetNom(String),
     ProjetCreer,
-    ProjetRenommer,
+    ProjetRenommer(std::path::PathBuf),
+    ProjetValider,
+    ProjetAnnuler,
     ProjetSupprimer(std::path::PathBuf),
 
     ConfirmationConfirmer,

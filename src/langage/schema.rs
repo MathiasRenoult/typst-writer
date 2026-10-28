@@ -378,7 +378,8 @@ impl Inline {
                 // porte aucun, c'est ce qui rend l'écriture univoque.
                 !texte.is_empty()
                     && !texte.contains('\n')
-                    && !texte.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
+                    && !texte
+                        .contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
             }
             Inline::Litteral(texte) => !texte.is_empty() && !texte.contains('\n'),
             Inline::Gras(contenu) | Inline::Italique(contenu) | Inline::GrasItalique(contenu) => {
@@ -394,7 +395,9 @@ impl Inline {
                 // `rgb(1, 2, 0)`. Ni marqueur, qui ferait signe aux balayages
                 // du voisinage, ni deux-points, qui serait le séparateur.
                 !couleur.is_empty()
-                    && !couleur.contains([':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
+                    && !couleur.contains([
+                        ':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$',
+                    ])
                     && !couleur.contains('\n')
                     && inline_canonique(contenu)
             }
