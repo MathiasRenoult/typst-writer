@@ -83,6 +83,10 @@ fn fenetre<'a>(edition: &'a EditionReference, palette: Palette) -> Element<'a, M
         } else {
             saisie
                 .on_input(move |texte| Message::EditionReferenceChamp(nom.to_string(), texte))
+                // Un champ **capture** `Entrée` sans `on_submit` : la touche
+                // n'arrivait au contrat qu'après un Tab, ce qui forçait à
+                // tabuler avant d'enregistrer.
+                .on_submit(Message::EditionReferenceEnregistrer)
                 .into()
         }
     };
@@ -109,6 +113,7 @@ fn fenetre<'a>(edition: &'a EditionReference, palette: Palette) -> Element<'a, M
                             .on_input(|texte| {
                                 Message::EditionReferenceChamp("cle".to_string(), texte)
                             })
+                            .on_submit(Message::EditionReferenceEnregistrer)
                             .into()
                     };
 
@@ -163,6 +168,9 @@ fn fenetre<'a>(edition: &'a EditionReference, palette: Palette) -> Element<'a, M
                 .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
             Space::new().width(Length::Fill),
+            button(palette.label("Supprimer").size(theme::jetons::CORPS))
+                .on_press(Message::ReferenceSupprimer(edition.cle.clone()))
+                .padding([6, 12]),
             button(palette.label("Enregistrer").size(theme::jetons::CORPS))
                 .on_press(Message::EditionReferenceEnregistrer)
                 .padding([6, 12]),

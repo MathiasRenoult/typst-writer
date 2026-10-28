@@ -609,6 +609,55 @@ fn champ_plage(bloc: &str, nom: &str) -> Option<(usize, usize)> {
 }
 
 /// Les entrées d'un texte BibTeX.
+/// Supprime une notice de la bibliothèque locale — vers la corbeille.
+///
+/// Une notice n'est pas un fichier : elle part **avec** son entrée, et le
+/// fichier reste propre. La suppression ne touche jamais à une bibliothèque
+/// Zotero : elle, se lit seulement.
+pub fn supprimer_reference(path: &Path, cle: &str) -> Result<(), String> {
+    let contenu = std::fs::read_to_string(path).map_err(|e| format!("{e}"))?;
+    let (ouverture, fermeture) =
+        plage_de_notice(&contenu, cle).ok_or_else(|| format!("« {cle} » introuvable."))?;
+
+    // L'entière : sa tête, ses champs, et la ligne qui les sépare du reste.
+    let mut fin = fermeture;
+
+    while fin < contenu.len() && contenu[fin..].starts_with('\n') {
+        fin += 1;
+    }
+
+    let mut reste = contenu[..ouverture].to_string();
+    reste.push_str(&contenu[fin..]);
+
+    ecrire_atomique(path, &reste).map_err(|e| format!("{e}"))
+}
+
+/// L'étendue d'une notice : sa tête `@type{clé,` et son accolade fermante.
+fn plage_de_notice(contenu: &str, cle: &str) -> Option<(usize, usize)> {
+    let motif = format!("{{{cle},");
+    let tete = contenu.find(&motif)? - 1;
+    // La tête commence au `@` qui précède.
+    let ouverture = contenu[..=tete].rfind('@')?;
+
+    let mut profondeur = 0usize;
+
+    for (position, caractere) in contenu[ouverture..].char_indices() {
+        match caractere {
+            '{' => profondeur += 1,
+            '}' => {
+                profondeur = profondeur.saturating_sub(1);
+
+                if profondeur == 0 {
+                    return Some((ouverture, ouverture + position + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 pub fn parse_bibliography_text(content: &str) -> Vec<BibliographyEntry> {
     let mut entrees = Vec::new();
     let octets = content.as_bytes();

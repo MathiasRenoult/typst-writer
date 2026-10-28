@@ -312,7 +312,9 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
 
             // Le guillemet droit : celui du clavier. Il s'ouvre devant ce
             // qui n'est pas un blanc, et se ferme ailleurs — sur le même
-            // empilement que les marques explicites.
+            // empilement que les marques explicites. **Jamais d'espace** :
+            // l'espace de composition n'appartient qu'aux `«»`, et un
+            // guillemet droit, comme une apostrophe, colle à son texte.
             '"' => {
                 let ouvrant = suivant.is_some_and(|suivant| !suivant.is_whitespace());
 
@@ -321,26 +323,12 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                     let (cote, _) = paire(regles, contexte.profondeur);
                     sortie.push(cote);
                     contexte.venant_du_guillemet = true;
-
-                    if let Some(espace) = regles.espace_guillemets.caractere()
-                        && suivant.is_some()
-                    {
-                        sortie.push(espace);
-                    }
                 } else {
                     while sortie.ends_with(' ') {
                         sortie.pop();
                     }
 
                     let (_, fermant) = paire(regles, contexte.profondeur.max(1));
-
-                    if let Some(espace) = regles.espace_guillemets.caractere()
-                        && !sortie.is_empty()
-                        && !sortie.ends_with(espace)
-                    {
-                        sortie.push(espace);
-                    }
-
                     sortie.push(fermant);
                     contexte.profondeur = contexte.profondeur.saturating_sub(1);
                 }
@@ -462,14 +450,16 @@ mod tests {
     }
 
     /// Le guillemet droit du clavier compose lui aussi, sur le même
-    /// empilement : ce qui s'ouvre devant un mot se ferme après lui.
+    /// empilement : ce qui s'ouvre devant un mot se ferme après lui. Mais
+    /// **jamais d'espace** autour de lui : l'espace de composition
+    /// n'appartient qu'aux `«»`, et un guillemet droit colle à son texte.
     #[test]
     fn le_guillemet_droit_du_clavier_compose() {
         let française = Regles::francaise();
 
         assert_eq!(
             appliquer("\"Double \"Insertion\" et quotes\"", &française),
-            format!("«{INSECABLE}Double \"{INSECABLE}Insertion{INSECABLE}\" et quotes{INSECABLE}»")
+            "«Double \"Insertion\" et quotes»"
         );
 
         let anglaise = Regles::anglaise();

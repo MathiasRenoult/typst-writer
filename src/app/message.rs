@@ -189,6 +189,8 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    ReferenceSupprimer(String),
+
     ProjetNom(String),
     ProjetCreer,
     ProjetRenommer,

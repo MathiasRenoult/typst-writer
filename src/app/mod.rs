@@ -473,6 +473,48 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // Une notice locale se supprime — vers la corbeille, avec son mot.
+        Message::ReferenceSupprimer(cle) => {
+            if !state.geste_confirme {
+                state.confirmation = Some(crate::app::state::Confirmation {
+                    question: format!("Supprimer la notice « {cle} » ? Elle part à la corbeille."),
+                    action: Message::ReferenceSupprimer(cle),
+                });
+
+                return Task::none();
+            }
+
+            state.geste_confirme = false;
+
+            // Une notice Zotero ne se supprime pas ici : elle est à Zotero.
+            if state.zotero.source == crate::zotero::Source::Zotero {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Une notice Zotero se supprime dans Zotero.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            let Some(bibliotheque) = state.project.bibliography.clone() else {
+                return Task::none();
+            };
+
+            match crate::project::supprimer_reference(&bibliotheque, &cle) {
+                Ok(()) => {
+                    state.bibliography = crate::project::parse_bibliography(&bibliotheque);
+                    state.edition_reference = None;
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "La notice « {cle} » part à la corbeille."
+                    )));
+                    state.refresh_context();
+                    Task::none()
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                    Task::none()
+                }
+            }
+        }
+
         // Les projets : le nom en frappe, puis les trois gestes.
         Message::ProjetNom(nom) => {
             state.projet_nom = nom;
