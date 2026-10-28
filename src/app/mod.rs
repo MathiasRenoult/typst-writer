@@ -716,6 +716,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::RenameChanged(_)
         | Message::RenameCommit
         | Message::RenameCancel
+        | Message::ImageInserer
+        | Message::ImageChoisie(_)
         | Message::InsertCitation(_)
         | Message::SaveFile
         | Message::SaveAs

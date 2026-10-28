@@ -189,6 +189,9 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    ImageInserer,
+    ImageChoisie(Option<std::path::PathBuf>),
+
     ReferenceSupprimer(String),
 
     ProjetNom(String),

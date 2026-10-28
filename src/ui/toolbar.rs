@@ -178,6 +178,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::BlocTypst,
             palette,
         ));
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_image::<Theme>(),
+            "Insérer une image",
+            Message::ImageInserer,
+            palette,
+            false,
+        ));
     }
 
     // Le remplissage pousse les clusters de droite au bord : la

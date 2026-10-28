@@ -284,6 +284,40 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::ImageInserer => Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "svg", "webp"])
+                    .pick_file()
+                    .await
+                    .map(|file| file.path().to_path_buf())
+            },
+            Message::ImageChoisie,
+        ),
+
+        Message::ImageChoisie(result) => {
+            let Some(chemin) = result else {
+                return Task::none();
+            };
+
+            // Le chemin est relatif au projet quand il y vit : un document
+            // se déplace avec son projet.
+            let relatif = chemin
+                .strip_prefix(&state.project.dir)
+                .map(|reste| reste.to_path_buf())
+                .unwrap_or_else(|_| chemin.clone());
+
+            let legende = chemin
+                .file_stem()
+                .and_then(|nom| nom.to_str())
+                .unwrap_or_default()
+                .replace(['_', '-'], " ");
+
+            let image = format!("![{legende}]({})", relatif.display());
+
+            state.editor.insert_at_cursor(&image).map(Message::Editor)
+        }
+
         Message::InsertCitation(key) => state
             .editor
             .insert_at_cursor(&format!("@{key}"))
