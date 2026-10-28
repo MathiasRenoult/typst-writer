@@ -191,6 +191,12 @@ fn requete(base: &str, chemin: &str) -> Result<String, Erreur> {
     flux.set_write_timeout(Some(PATIENCE))
         .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
 
+    // Le chemin de la base fait partie de la demande : une base
+    // `http://hôte:port/api` demande `/api/users/…`, jamais `/users/…` —
+    // c'était le 404, et les serveurs factices ne le voyaient pas.
+    let racine = chemin_de_base(base);
+    let chemin = format!("{racine}{chemin}");
+
     let demande = format!(
         "GET {chemin} HTTP/1.1\r\n\
          Host: {hote}:{port}\r\n\
@@ -205,6 +211,19 @@ fn requete(base: &str, chemin: &str) -> Result<String, Erreur> {
         .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
 
     corps_de(&reponse)
+}
+
+/// Le chemin d'une adresse de base : `/api` pour `http://hôte:port/api`.
+fn chemin_de_base(base: &str) -> &str {
+    let sans_protocole = base
+        .strip_prefix("http://")
+        .or_else(|| base.strip_prefix("https://"))
+        .unwrap_or(base);
+
+    match sans_protocole.find('/') {
+        Some(position) => &sans_protocole[position..],
+        None => "",
+    }
 }
 
 /// L'hôte et le port d'une adresse `http://hôte:port/…`.
@@ -293,6 +312,16 @@ fn morceaux(corps: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Le vrai Zotero, quand il tourne : la base `/api` doit s'y trouver.
+    #[test]
+    #[ignore]
+    fn le_vrai_zotero_repond() {
+        match collections() {
+            Ok(collections) => println!("{} collection(s)", collections.len()),
+            Err(erreur) => panic!("le vrai Zotero : {erreur}"),
+        }
+    }
+
 
     /// Le cas du monde réel : Zotero tourne, son API locale est fermée.
     /// Le remède se dit, pas un statut nu.
