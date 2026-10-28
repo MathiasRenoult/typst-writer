@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Les normes — Typst Writer</title>
+<style>
+  :root { --texte: #2c2b28; --adouci: #7a766c; --lisiere: #e3ded2; --fond: #faf8f3; --bois: #f2eee5; --accent: #5f7d55; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.65 Georgia, "Times New Roman", serif; color: var(--texte); background: var(--fond); }
+  .page { display: flex; min-height: 100vh; }
+  nav { width: 250px; padding: 2rem 1.5rem; background: var(--bois); border-right: 1px solid var(--lisiere); }
+  nav h1 { font-size: 1.05rem; margin: 0 0 1.25rem; }
+  nav a { display: block; padding: .35rem 0; color: var(--texte); text-decoration: none; border-bottom: 1px solid var(--lisiere); }
+  nav a:hover { color: var(--accent); }
+  nav a.courant { color: var(--accent); font-weight: bold; }
+  main { flex: 1; padding: 3rem clamp(1.5rem, 6vw, 5rem); max-width: 46rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--lisiere); padding-bottom: .35rem; }
+  a { color: var(--accent); }
+  code { background: var(--bois); padding: .1em .35em; border-radius: 4px; font: .9em ui-monospace, monospace; }
+  pre { background: var(--bois); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--lisiere); }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--lisiere); padding: .45rem .65rem; text-align: left; }
+  th { background: var(--bois); }
+  blockquote { margin: 1rem 0; padding: .25rem 1rem; border-left: 3px solid var(--accent); background: var(--bois); }
+</style>
+</head>
+<body>
+<div class="page">
+<nav>
+<h1>Typst Writer</h1>
+<a href="index.html">Le manuel</a>
+<a href="prise-en-main.html">Prise en main</a>
+<a href="ecrire.html">Écrire</a>
+<a href="bibliographie.html">La bibliographie</a>
+<a href="normes.html" class="courant">Les normes</a>
+<a href="recherche.html">Rechercher et remplacer</a>
+<a href="raccourcis.html">Les raccourcis</a>
+<a href="fichiers.html">Les fichiers</a>
+</nav>
+<main>
+<h1>Les normes</h1>
+<p>La fenêtre des normes — <code>Ctrl+P</code>, ou le bouton de la barre — tient trois onglets : <strong>Mise en page</strong>, <strong>Typographie</strong>, <strong>Décor</strong>. Ce qu&#x27;elle montre est une copie de travail : seul « Appliquer » touche le projet, et les valeurs fautives sont dites champ par champ avant que quoi que ce soit ne soit écrit.</p>
+<h2>Mise en page</h2>
+<p>Le papier (format, orientation), les marges, les numéros de page, le texte courant (police, taille, interligne, retrait, justification, langue), les titres de chapitres (police, tailles, gras, casse, numérotation) et les couleurs.</p>
+<p>Les choix finis sont des <strong>listes déroulantes</strong> ; chaque paramètre porte son <strong>infobulle</strong> — laisser la souris dit ce qu&#x27;il règle et sous quelle forme l&#x27;écrire. Toute mesure Typst est acceptée : <code>2cm</code>, <code>1in</code>, <code>24pt</code>.</p>
+<h2>Typographie</h2>
+<p>La composition du texte réglée <strong>par langue</strong> : un défaut — <code>française</code>, <code>anglaise</code>, <code>aucune</code> — puis les réglages fins, un par un.</p>
+<p>En français : une espace insécable devant <code>; : ! ?</code> et les guillemets, normale après ; en anglais : la ponctuation colle. En toute langue, la virgule et le point ne s&#x27;ouvrent jamais — <code>3.14</code> tient. Les guillemets se choisissent par niveau d&#x27;imbrication : <code>«»</code>, <code>&quot;&quot;</code>, <code>&#x27;&#x27;</code>.</p>
+<p>Le code inline, les blocs bruts et les caractères échappés ne reçoivent aucune règle.</p>
+<h2>Décor</h2>
+<p>Les mesures que la source ne porte jamais : <strong>couleur de bordure, épaisseur, rayon des coins, marge intérieure, remplissage</strong>. C&#x27;est là qu&#x27;un <code>{encadré}</code> prend sa tenue ; changer une valeur ici change le document entier, sans toucher à une ligne.</p>
+<p>Voir <a href="ecrire.md">Écrire</a>.</p>
+</main>
+</div>
+</body>
+</html>

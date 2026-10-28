@@ -113,7 +113,20 @@ Ce qui piège au fil des jours, et la gestion du projet lui-même.
 **Preuve de l'étape** : une session de travail d'une heure — écrire,
 citer, renommer, chercher, fermer — sans jamais toucher la souris.
 
-## α.5 — Le seuil de la beta
+## α.5 — Le seuil de la beta ✅
+
+**Fait** — la mesure, le site, et le gel.
+
+- **La thèse à l'épreuve.** Un document de synthèse de **250 pages**
+  (40 chapitres, notes comprises) compile en **0,56 seconde** au vrai
+  Typst — trois passes mesurées, la barre des deux secondes tenue avec
+  marge. La mesure est celle du compilateur sur ce document ; la vôtre
+  se mesurera à l'usage.
+- **Le site de documentation.** `python3 site/construire.py` — sans
+  aucune dépendance — rend les huit pages du manuel en `site/dist/` :
+  sommaire, code conservé, tableaux, liens. Le générateur vit au dépôt.
+- **Le gel des fonctions** est pris : ce qui entre en beta est ce qui
+  est ici.
 
 La tenue à l'échelle d'une thèse, et le seuil qu'on montre.
 

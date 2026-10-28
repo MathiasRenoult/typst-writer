@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La bibliographie — Typst Writer</title>
+<style>
+  :root { --texte: #2c2b28; --adouci: #7a766c; --lisiere: #e3ded2; --fond: #faf8f3; --bois: #f2eee5; --accent: #5f7d55; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.65 Georgia, "Times New Roman", serif; color: var(--texte); background: var(--fond); }
+  .page { display: flex; min-height: 100vh; }
+  nav { width: 250px; padding: 2rem 1.5rem; background: var(--bois); border-right: 1px solid var(--lisiere); }
+  nav h1 { font-size: 1.05rem; margin: 0 0 1.25rem; }
+  nav a { display: block; padding: .35rem 0; color: var(--texte); text-decoration: none; border-bottom: 1px solid var(--lisiere); }
+  nav a:hover { color: var(--accent); }
+  nav a.courant { color: var(--accent); font-weight: bold; }
+  main { flex: 1; padding: 3rem clamp(1.5rem, 6vw, 5rem); max-width: 46rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--lisiere); padding-bottom: .35rem; }
+  a { color: var(--accent); }
+  code { background: var(--bois); padding: .1em .35em; border-radius: 4px; font: .9em ui-monospace, monospace; }
+  pre { background: var(--bois); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--lisiere); }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--lisiere); padding: .45rem .65rem; text-align: left; }
+  th { background: var(--bois); }
+  blockquote { margin: 1rem 0; padding: .25rem 1rem; border-left: 3px solid var(--accent); background: var(--bois); }
+</style>
+</head>
+<body>
+<div class="page">
+<nav>
+<h1>Typst Writer</h1>
+<a href="index.html">Le manuel</a>
+<a href="prise-en-main.html">Prise en main</a>
+<a href="ecrire.html">Écrire</a>
+<a href="bibliographie.html" class="courant">La bibliographie</a>
+<a href="normes.html">Les normes</a>
+<a href="recherche.html">Rechercher et remplacer</a>
+<a href="raccourcis.html">Les raccourcis</a>
+<a href="fichiers.html">Les fichiers</a>
+</nav>
+<main>
+<h1>La bibliographie</h1>
+<h2>Les références du projet</h2>
+<p>Le panneau de gauche liste les références de la bibliographie — par <strong>auteur et par titre</strong>, jamais par clé — séparées par un filet, l&#x27;auteur au premier registre, l&#x27;ouvrage au second. Un clic sur la ligne insère <code>@cle</code> au curseur.</p>
+<h2>La fiche de référence</h2>
+<p>Le crayon d&#x27;une ligne ouvre sa fiche ; <strong>Nouvelle référence</strong> en crée une (la clé se numérote d&#x27;elle-même, et ne se réutilise jamais). La fiche porte : le type de document en liste (livre, article, chapitre, actes, thèse, rapport, en ligne, autre), le nom, le prénom, le titre, le titre court, l&#x27;année, <strong>l&#x27;éditeur</strong> et <strong>le lieu</strong>.</p>
+<p>La fiche se conduit au clavier : <code>Tabulation</code> circule dans les champs, <code>Maj+Tabulation</code> revient, <code>Entrée</code> enregistre, <code>Échap</code> ferme sans rien écrire. Une notice neuve est jugée par le parseur bibliographique avant d&#x27;être acceptée.</p>
+<h2>Les deux sources</h2>
+<ul>
+<li>une <strong>bibliothèque locale</strong> (<code>references.bib</code>) s&#x27;écrit : la fiche</li>
+</ul>
+<p>  réécrit les champs de son entrée, et rien d&#x27;autre ;</p>
+<ul>
+<li>une collection <strong>Zotero</strong> liée se lit <strong>seulement</strong> — c&#x27;est Zotero qui</li>
+</ul>
+<p>  la maîtrise, et la synchronisation reprendrait de toute façon ses   valeurs.</p>
+<h2>Lier un projet à Zotero</h2>
+<p>Le bouton « Lier à Zotero… » liste les <strong>collections</strong> de la bibliothèque Zotero ouverte — leur nom, leur chemin (« Thèse / Chapitre 2 »), leur nombre de notices. Une collection choisie s&#x27;exporte dans le projet, et le bouton « Synchroniser » reprend l&#x27;export quand la collection bouge.</p>
+<p>La liaison vit dans <code>zotero.json</code>, à côté du projet ; « Délier » la retire. Pour que la liaison trouve Zotero, l&#x27;application peut poser elle- même le réglage nécessaire — le panneau le propose d&#x27;un clic, et la note dit ce qui reste à faire.</p>
+<h2>La bibliographie imprimée</h2>
+<p>Le style du projet est <code>chicago-notes</code> : les appels deviennent des notes de bas de page, et la bibliographie s&#x27;imprime à la fin du document. Un style défini explicitement dans <code>main.typ</code> reste prioritaire.</p>
+</main>
+</div>
+</body>
+</html>

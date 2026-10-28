@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Les raccourcis — Typst Writer</title>
+<style>
+  :root { --texte: #2c2b28; --adouci: #7a766c; --lisiere: #e3ded2; --fond: #faf8f3; --bois: #f2eee5; --accent: #5f7d55; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.65 Georgia, "Times New Roman", serif; color: var(--texte); background: var(--fond); }
+  .page { display: flex; min-height: 100vh; }
+  nav { width: 250px; padding: 2rem 1.5rem; background: var(--bois); border-right: 1px solid var(--lisiere); }
+  nav h1 { font-size: 1.05rem; margin: 0 0 1.25rem; }
+  nav a { display: block; padding: .35rem 0; color: var(--texte); text-decoration: none; border-bottom: 1px solid var(--lisiere); }
+  nav a:hover { color: var(--accent); }
+  nav a.courant { color: var(--accent); font-weight: bold; }
+  main { flex: 1; padding: 3rem clamp(1.5rem, 6vw, 5rem); max-width: 46rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--lisiere); padding-bottom: .35rem; }
+  a { color: var(--accent); }
+  code { background: var(--bois); padding: .1em .35em; border-radius: 4px; font: .9em ui-monospace, monospace; }
+  pre { background: var(--bois); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--lisiere); }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--lisiere); padding: .45rem .65rem; text-align: left; }
+  th { background: var(--bois); }
+  blockquote { margin: 1rem 0; padding: .25rem 1rem; border-left: 3px solid var(--accent); background: var(--bois); }
+</style>
+</head>
+<body>
+<div class="page">
+<nav>
+<h1>Typst Writer</h1>
+<a href="index.html">Le manuel</a>
+<a href="prise-en-main.html">Prise en main</a>
+<a href="ecrire.html">Écrire</a>
+<a href="bibliographie.html">La bibliographie</a>
+<a href="normes.html">Les normes</a>
+<a href="recherche.html">Rechercher et remplacer</a>
+<a href="raccourcis.html" class="courant">Les raccourcis</a>
+<a href="fichiers.html">Les fichiers</a>
+</nav>
+<main>
+<h1>Les raccourcis</h1>
+<p><code>F1</code> ouvre cette même carte dans l&#x27;application. Les infobulles de la barre d&#x27;outils portent leurs combinaisons.</p>
+<h2>Écrire et le document</h2>
+<table><thead><tr>
+<th>Touches</th>
+<th>Effet</th>
+</tr></thead><tbody>
+<tr><td><code>Ctrl+S</code></td><td>enregistrer</td></tr>
+<tr><td><code>Ctrl+Z</code> / <code>Ctrl+Y</code></td><td>annuler / refaire</td></tr>
+<tr><td><code>Ctrl+N</code></td><td>le document d&#x27;écriture</td></tr>
+<tr><td><code>Ctrl+O</code></td><td>charger un <code>.typ</code> dans le projet</td></tr>
+<tr><td><code>Ctrl+E</code></td><td>exporter en PDF</td></tr>
+<tr><td><code>Ctrl+P</code></td><td>les normes du document</td></tr>
+<tr><td><code>Ctrl+T</code> / <code>Ctrl+Maj+T</code></td><td>le titre suivant / précédent</td></tr>
+<tr><td><code>Ctrl+Maj+Haut</code> / <code>Bas</code></td><td>le bloc entier monte ou descend</td></tr>
+<tr><td><code>F2</code></td><td>renommer le symbole sous le curseur</td></tr>
+<tr><td><code>F12</code></td><td>aller à la définition</td></tr>
+<tr><td><code>Ctrl+I</code></td><td>l&#x27;assistance à la frappe</td></tr>
+</tbody></table>
+<h2>Chercher</h2>
+<table><thead><tr>
+<th>Touches</th>
+<th>Effet</th>
+</tr></thead><tbody>
+<tr><td><code>Ctrl+F</code></td><td>la recherche</td></tr>
+<tr><td><code>F3</code> / <code>Maj+F3</code></td><td>le résultat suivant / précédent</td></tr>
+<tr><td><code>Entrée</code></td><td>dans le motif : le suivant — dans le remplacement : remplacer</td></tr>
+</tbody></table>
+<h2>L&#x27;affichage</h2>
+<table><thead><tr>
+<th>Touches</th>
+<th>Effet</th>
+</tr></thead><tbody>
+<tr><td><code>F11</code></td><td>le mode focus — le texte seul ; <code>Échap</code> en sort</td></tr>
+<tr><td><code>Ctrl+=</code> / <code>Ctrl+-</code></td><td>agrandir / réduire l&#x27;aperçu</td></tr>
+<tr><td><code>Ctrl+0</code></td><td>ajuster l&#x27;aperçu à la largeur</td></tr>
+<tr><td><code>Ctrl+Maj+L</code></td><td>l&#x27;aperçu suit le chapitre — ou ne le suit plus</td></tr>
+</tbody></table>
+<h2>Les fenêtres</h2>
+<p>Toutes se conduisent de même.</p>
+<table><thead><tr>
+<th>Touches</th>
+<th>Effet</th>
+</tr></thead><tbody>
+<tr><td><code>Tab</code> / <code>Maj+Tab</code></td><td>le champ suivant / précédent</td></tr>
+<tr><td><code>Entrée</code></td><td>valider</td></tr>
+<tr><td><code>Échap</code></td><td>fermer celle du dessus</td></tr>
+</tbody></table>
+<p>Dans le composeur de notes : les flèches parcourent la note puis les clés, <code>Échap</code> abandonne sans rien écrire. Dans les listes de complétion : les flèches parcourent, <code>Entrée</code> ou <code>Tab</code> accepte, <code>Ctrl+Espace</code> accepte aussi, <code>Échap</code> ferme.</p>
+</main>
+</div>
+</body>
+</html>

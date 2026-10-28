@@ -64,6 +64,14 @@ L'assistance à la frappe s'appuie sur
 Le manuel d'usage est dans [`docs/guide/`](docs/guide/index.md) — prise
 en main, écriture, bibliographie, normes, recherche, raccourcis, fichiers.
 
+Il devient un site d'une commande, sans dépendance :
+
+```sh
+python3 site/construire.py
+```
+
+Le site se lit dans `site/dist/`.
+
 ## Limites connues
 
 - les diagnostics du compilateur ne sont pas soulignés dans le texte :

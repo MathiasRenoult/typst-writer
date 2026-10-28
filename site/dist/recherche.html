@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rechercher et remplacer — Typst Writer</title>
+<style>
+  :root { --texte: #2c2b28; --adouci: #7a766c; --lisiere: #e3ded2; --fond: #faf8f3; --bois: #f2eee5; --accent: #5f7d55; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.65 Georgia, "Times New Roman", serif; color: var(--texte); background: var(--fond); }
+  .page { display: flex; min-height: 100vh; }
+  nav { width: 250px; padding: 2rem 1.5rem; background: var(--bois); border-right: 1px solid var(--lisiere); }
+  nav h1 { font-size: 1.05rem; margin: 0 0 1.25rem; }
+  nav a { display: block; padding: .35rem 0; color: var(--texte); text-decoration: none; border-bottom: 1px solid var(--lisiere); }
+  nav a:hover { color: var(--accent); }
+  nav a.courant { color: var(--accent); font-weight: bold; }
+  main { flex: 1; padding: 3rem clamp(1.5rem, 6vw, 5rem); max-width: 46rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--lisiere); padding-bottom: .35rem; }
+  a { color: var(--accent); }
+  code { background: var(--bois); padding: .1em .35em; border-radius: 4px; font: .9em ui-monospace, monospace; }
+  pre { background: var(--bois); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--lisiere); }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--lisiere); padding: .45rem .65rem; text-align: left; }
+  th { background: var(--bois); }
+  blockquote { margin: 1rem 0; padding: .25rem 1rem; border-left: 3px solid var(--accent); background: var(--bois); }
+</style>
+</head>
+<body>
+<div class="page">
+<nav>
+<h1>Typst Writer</h1>
+<a href="index.html">Le manuel</a>
+<a href="prise-en-main.html">Prise en main</a>
+<a href="ecrire.html">Écrire</a>
+<a href="bibliographie.html">La bibliographie</a>
+<a href="normes.html">Les normes</a>
+<a href="recherche.html" class="courant">Rechercher et remplacer</a>
+<a href="raccourcis.html">Les raccourcis</a>
+<a href="fichiers.html">Les fichiers</a>
+</nav>
+<main>
+<h1>Rechercher et remplacer</h1>
+<p><code>Ctrl+F</code> ouvre la barre de recherche ; <code>Échap</code> la ferme. Elle flotte sur le texte, et le reste de l&#x27;éditeur continue de vivre derrière elle.</p>
+<h2>Le motif est une expression régulière</h2>
+<p>Chercher, c&#x27;est écrire une expression régulière — <code>chapitre \d+</code>, <code>^# </code>, <code>\bthéologie\b</code>. Les deux champs — le motif et le remplacement — sont conduits au clavier :</p>
+<ul>
+<li><code>Entrée</code> dans le motif cherche le <strong>suivant</strong> ;</li>
+<li><code>Entrée</code> dans le remplacement <strong>remplace l&#x27;occurrence courante</strong> ;</li>
+<li><code>F3</code> et <code>Maj+F3</code> vont au suivant et au précédent, même la barre fermée</li>
+</ul>
+<p>  — <code>F3</code> la rouvre au besoin.</p>
+<p>Le compte — <code>3/17</code> — suit ce qu&#x27;on visite.</p>
+<h2>Le remplacement rappelle ses groupes</h2>
+<p>Un motif peut <strong>capturer</strong> : <code>(\w+)@(\w+)</code> prend deux groupes. Le remplacement les rappelle au dollar : <code>$1-$2</code>. Tout se fait du dernier au premier — <strong>Tout remplacer</strong> ne décale jamais les occurrences restantes.</p>
+<p>Un motif fautif se dit dans la barre, en rouge, sans jamais effacer ce qui est cherché.</p>
+</main>
+</div>
+</body>
+</html>

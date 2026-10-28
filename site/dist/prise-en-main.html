@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prise en main — Typst Writer</title>
+<style>
+  :root { --texte: #2c2b28; --adouci: #7a766c; --lisiere: #e3ded2; --fond: #faf8f3; --bois: #f2eee5; --accent: #5f7d55; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.65 Georgia, "Times New Roman", serif; color: var(--texte); background: var(--fond); }
+  .page { display: flex; min-height: 100vh; }
+  nav { width: 250px; padding: 2rem 1.5rem; background: var(--bois); border-right: 1px solid var(--lisiere); }
+  nav h1 { font-size: 1.05rem; margin: 0 0 1.25rem; }
+  nav a { display: block; padding: .35rem 0; color: var(--texte); text-decoration: none; border-bottom: 1px solid var(--lisiere); }
+  nav a:hover { color: var(--accent); }
+  nav a.courant { color: var(--accent); font-weight: bold; }
+  main { flex: 1; padding: 3rem clamp(1.5rem, 6vw, 5rem); max-width: 46rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--lisiere); padding-bottom: .35rem; }
+  a { color: var(--accent); }
+  code { background: var(--bois); padding: .1em .35em; border-radius: 4px; font: .9em ui-monospace, monospace; }
+  pre { background: var(--bois); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--lisiere); }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--lisiere); padding: .45rem .65rem; text-align: left; }
+  th { background: var(--bois); }
+  blockquote { margin: 1rem 0; padding: .25rem 1rem; border-left: 3px solid var(--accent); background: var(--bois); }
+</style>
+</head>
+<body>
+<div class="page">
+<nav>
+<h1>Typst Writer</h1>
+<a href="index.html">Le manuel</a>
+<a href="prise-en-main.html" class="courant">Prise en main</a>
+<a href="ecrire.html">Écrire</a>
+<a href="bibliographie.html">La bibliographie</a>
+<a href="normes.html">Les normes</a>
+<a href="recherche.html">Rechercher et remplacer</a>
+<a href="raccourcis.html">Les raccourcis</a>
+<a href="fichiers.html">Les fichiers</a>
+</nav>
+<main>
+<h1>Prise en main</h1>
+<h2>Lancer</h2>
+<p>L&#x27;application s&#x27;ouvre sur le dernier projet ouvert, ou sur un projet neuf au premier lancement. Tout ce que vous écrivez est enregistré automatiquement, une seconde après la frappe : rien ne se perd à fermer.</p>
+<h2>Les trois gestes du quotidien</h2>
+<ol>
+<li><strong>Écrire</strong> dans le panneau central. Le texte est du <code>document.tw</code> —</li>
+</ol>
+<p>   la syntaxe est dans <a href="ecrire.md">Écrire</a>.</p>
+<ol>
+<li><strong>Voir</strong> à droite : la page se compose dès que l&#x27;écriture s&#x27;arrête,</li>
+</ol>
+<p>   et l&#x27;aperçu suit le chapitre sous le curseur. <code>Ctrl+=</code>, <code>Ctrl+-</code> et    <code>Ctrl+0</code> en gouvernent la taille.</p>
+<ol>
+<li><strong>Exporter</strong> en PDF — <code>Ctrl+E</code> — quand le document est prêt.</li>
+</ol>
+<h2>Ce qui se voit tout de suite</h2>
+<ul>
+<li>la <strong>barre d&#x27;état</strong>, en bas : le compte de mots, les diagnostics du</li>
+</ul>
+<p>  compilateur, et ce que l&#x27;application a à dire (une erreur, une   confirmation) — jamais de silence ;</p>
+<ul>
+<li>à gauche, le <strong>panneau de travail</strong> : le sommaire du document, les</li>
+</ul>
+<p>  références de la bibliographie, les autres projets ;</p>
+<ul>
+<li>les <strong>touches</strong> se découvrent d&#x27;elles-mêmes : <code>F1</code> ouvre la carte des</li>
+</ul>
+<p>  raccourcis, et les infobulles de la barre d&#x27;outils portent leurs   combinaisons.</p>
+<h2>Ouvrir le document, ou un chapitre</h2>
+<p><code>Ctrl+N</code> ouvre le document d&#x27;écriture du projet. <code>Ctrl+O</code> charge un fichier <code>.typ</code> existant dans le projet — pour une migration, ou pour un chapitre hérité. Voir <a href="fichiers.md">Les fichiers</a>.</p>
+<h2>En cas de doute</h2>
+<p><code>Échap</code> ferme toujours ce qui s&#x27;est ouvert en dernier. Les fenêtres — recherche, normes, fiche de référence — se conduisent toutes de même : <code>Tabulation</code> circule, <code>Entrée</code> valide. Il n&#x27;y a rien à retenir de plus.</p>
+</main>
+</div>
+</body>
+</html>
