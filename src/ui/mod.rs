@@ -1,5 +1,6 @@
 pub mod aide;
 pub mod completion;
+pub mod confirmation;
 pub mod editor;
 pub mod layout;
 pub mod preview;
@@ -58,6 +59,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         recherche::view(state),
         reglages::view(state),
         aide::view(state),
+        confirmation::view(state),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

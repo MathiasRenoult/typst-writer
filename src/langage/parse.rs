@@ -122,10 +122,7 @@ pub fn parse(texte: &str) -> Document {
             && ligne.trim_start().starts_with("![")
             && let Some((légende, cible)) = lire_image(ligne)
         {
-            blocs.push(habiller(
-                Bloc::Image { légende, cible },
-                &mut en_attente,
-            ));
+            blocs.push(habiller(Bloc::Image { légende, cible }, &mut en_attente));
             index += 1;
             continue;
         }

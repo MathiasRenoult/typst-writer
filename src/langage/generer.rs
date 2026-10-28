@@ -379,10 +379,7 @@ fn ecrire_proprietes_typst(
             "encadré" | "encadre" => {
                 arguments.push((
                     "stroke",
-                    format!(
-                        "(paint: {}, thickness: {})",
-                        decor.couleur, decor.epaisseur
-                    ),
+                    format!("(paint: {}, thickness: {})", decor.couleur, decor.epaisseur),
                 ));
                 arguments.push(("radius", decor.rayon.clone()));
                 arguments.push(("inset", decor.marge.clone()));
@@ -485,7 +482,11 @@ mod tests {
         // Le cas de l'audit : le `;` suit un gras, et son insécable se
         // perdait — la règle ne voyait que l'élément isolé.
         let document = crate::langage::parse("La foi *x* ; suite\n");
-        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
+        let typst = generer_avec(
+            &document,
+            &Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
         assert!(
             typst.contains("~; suite"),
             "l'insécable traverse le gras : {typst}"
@@ -493,7 +494,11 @@ mod tests {
 
         // L'espace après un point en fin d'élément se pose devant la suite.
         let document = crate::langage::parse("Suite. *Et plus*\n");
-        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
+        let typst = generer_avec(
+            &document,
+            &Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
         assert!(
             typst.contains("Suite. "),
             "l'espace après le point se pose : {typst}"

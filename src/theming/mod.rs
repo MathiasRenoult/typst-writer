@@ -852,11 +852,21 @@ pub fn remove(name: &str) -> Result<std::path::PathBuf, String> {
 /// puisqu'ils n'ont pas de fichier, et partir d'un fichier vide obligerait à
 /// deviner le format.
 pub fn write_example() -> Result<PathBuf, String> {
-    let path = themes_dir().join("exemple.toml");
+    write_example_depuis(&themes_dir())
+}
+
+/// Le même exemple, dans un dossier choisi — celui des tests.
+///
+/// Jamais les données réelles : une épreuve qui écrit chez l'utilisateur
+/// n'est pas une épreuve, c'est un dégât qui se cache.
+pub fn write_example_depuis(dossier: &Path) -> Result<PathBuf, String> {
+    let path = dossier.join("exemple.toml");
 
     if path.exists() {
         return Ok(path);
     }
+
+    std::fs::create_dir_all(dossier).map_err(|error| format!("{} : {error}", dossier.display()))?;
 
     crate::project::ecrire_atomique(&path, EXAMPLE)
         .map_err(|error| format!("écriture de {} : {error}", path.display()))?;
@@ -1460,13 +1470,16 @@ mod tests {
     /// Le thème d'exemple s'écrit, et n'écrase pas un fichier existant.
     #[test]
     fn the_example_is_written_once() {
-        let path = write_example().expect("écriture de l'exemple");
+        let dossier = std::env::temp_dir().join(format!("tw-exemple-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dossier);
+
+        let path = write_example_depuis(&dossier).expect("écriture de l'exemple");
 
         assert!(path.exists());
 
         std::fs::write(&path, "# modifié par l'utilisateur\n").unwrap();
 
-        let again = write_example().expect("seconde écriture");
+        let again = write_example_depuis(&dossier).expect("seconde écriture");
 
         assert_eq!(again, path);
         assert_eq!(

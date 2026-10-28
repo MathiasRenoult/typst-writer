@@ -70,6 +70,120 @@ impl Keyring {
         self.keys.insert(item.to_string(), key.clone());
         key
     }
+
+    /// Réécrit un export BibTeX en clés stables, et dit le nombre de notices vues.
+    ///
+    /// **Une clé attribuée ne bouge plus.** L'identité d'une notice est celle
+    /// que l'export porte : sa clé Zotero quand Better BibTeX l'écrit dans le
+    /// champ `zotero`, sinon sa clé d'export — auquel cas la stabilité est
+    /// celle de l'export lui-même, et elle le reste dite. Chaque notice vue
+    /// une fois reçoit sa clé, et la garde.
+    ///
+    /// `pris` porte les clés déjà données ailleurs — la bibliothèque locale,
+    /// d'abord : une clé de notice ne vient jamais heurter celle d'un livre
+    /// que l'écrivain tient lui-même.
+    pub fn stabiliser(
+        &mut self,
+        bibtex: &str,
+        pris: &std::collections::BTreeSet<String>,
+    ) -> String {
+        let mut sortie = String::new();
+        let mut vues = 0usize;
+
+        for entree in split_entries(bibtex) {
+            let Some(ancienne) = key_of(entree) else {
+                sortie.push_str(entree);
+                continue;
+            };
+
+            let identite = item_of(entree).unwrap_or_else(|| ancienne.clone());
+            let (auteur, annee, titre) = champs_of(entree);
+            let nouvelle = self.key_for(
+                &identite,
+                auteur.as_deref(),
+                annee.as_deref(),
+                titre.as_deref().unwrap_or_default(),
+                pris,
+            );
+
+            vues += 1;
+
+            // La tête change — `@type{ancienne,` — et rien d'autre.
+            let ouverture = entree.find('{').map(|i| i + 1).unwrap_or(0);
+            let virgule = entree[ouverture..]
+                .find(',')
+                .map(|i| ouverture + i)
+                .unwrap_or(entree.len());
+
+            sortie.push_str(&entree[..ouverture]);
+            sortie.push_str(&nouvelle);
+            sortie.push_str(&entree[virgule..]);
+        }
+
+        let _ = vues;
+        sortie
+    }
+}
+
+/// Découpe un export en entrées : chacune commence par `@` en tête de ligne.
+fn split_entries(bibtex: &str) -> Vec<&str> {
+    let mut entrees = Vec::new();
+    let mut courant = 0usize;
+
+    for (position, _) in bibtex.match_indices('\n') {
+        let suivant = position + 1;
+
+        if bibtex[suivant..].starts_with('@') {
+            entrees.push(&bibtex[courant..suivant]);
+            courant = suivant;
+        }
+    }
+
+    entrees.push(&bibtex[courant..]);
+    entrees.retain(|e| !e.trim().is_empty());
+    entrees
+}
+
+/// La clé de la tête d'une entrée : `@type{clé,`.
+fn key_of(entree: &str) -> Option<String> {
+    let ouverture = entree.find('{')?;
+    let virgule = entree[ouverture..].find(',').map(|i| ouverture + i)?;
+
+    let cle = entree[ouverture + 1..virgule].trim().to_string();
+
+    (!cle.is_empty()).then_some(cle)
+}
+
+/// L'identifiant Zotero de la notice, quand l'export le porte.
+fn item_of(entree: &str) -> Option<String> {
+    let bas = entree.to_lowercase();
+    let position = bas.find("zotero = {")?;
+    let debut = position + "zotero = {".len();
+    let fin = entree[debut..].find('}')?;
+
+    let identite = entree[debut..debut + fin].trim().to_string();
+
+    (!identite.is_empty()).then_some(identite)
+}
+
+/// Auteur, année, titre — pour la proposition de clé.
+fn champs_of(entree: &str) -> (Option<String>, Option<String>, Option<String>) {
+    fn champ(entree: &str, nom: &str) -> Option<String> {
+        let bas = entree.to_lowercase();
+        let motif = format!("{nom} = {{");
+        let position = bas.find(&motif)?;
+        let debut = position + motif.len();
+        let fin = entree[debut..].find('}')?;
+
+        let valeur = entree[debut..debut + fin].trim().to_string();
+        (!valeur.is_empty()).then_some(valeur)
+    }
+
+    (
+        champ(entree, "author"),
+        champ(entree, "year").or_else(|| champ(entree, "date")),
+        champ(entree, "title"),
+    )
 }
 
 /// La clé qu'une notice mérite : `nom2023premiermot`.
@@ -156,6 +270,84 @@ fn suffix(rang: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Une clé attribuée ne bouge plus : la notice revient avec une clé
+    /// d'export différente, la sienne reste.
+    #[test]
+    fn une_cle_attribuee_ne_bouge_plus() {
+        let mut trousseau = Keyring::default();
+        let pris = std::collections::BTreeSet::new();
+
+        let premier = trousseau.stabiliser(
+            "@book{zotero01,\n  zotero = {ABCD1234},\n  author = {Dupont},\n  title = {Le titre}\n}\n",
+            &pris,
+        );
+
+        // La collection bouge : la clé d'export change, la notice non.
+        let second = trousseau.stabiliser(
+            "@book{autreCle,\n  zotero = {ABCD1234},\n  author = {Dupont},\n  title = {Le titre corrigé}\n}\n",
+            &pris,
+        );
+
+        let cle = |texte: &str| {
+            let ouverture = texte.find('{').unwrap() + 1;
+            let virgule = texte[ouverture..].find(',').unwrap() + ouverture;
+            texte[ouverture..virgule].to_string()
+        };
+
+        assert_eq!(
+            cle(&premier),
+            cle(&second),
+            "la clé suit la notice : {second}"
+        );
+    }
+
+    /// La clé ne vient jamais heurter celle de la bibliothèque locale.
+    #[test]
+    fn la_cle_locale_est_respectee() {
+        let mut trousseau = Keyring::default();
+        let mut pris = std::collections::BTreeSet::new();
+        pris.insert("dupont2023titre".to_string());
+
+        let rendu = trousseau.stabiliser(
+            "@book{x,\n  zotero = {ABCD1234},\n  author = {Dupont},\n  year = {2023},\n  title = {Le titre}\n}\n",
+            &pris,
+        );
+
+        assert!(
+            !rendu.contains("@book{dupont2023titre,"),
+            "la clé locale est prise : {rendu}"
+        );
+    }
+
+    /// Plusieurs notices d'un même auteur, la même année, ne portent pas
+    /// la même clé.
+    #[test]
+    fn deux_notices_ne_partagent_pas_une_cle() {
+        let mut trousseau = Keyring::default();
+        let pris = std::collections::BTreeSet::new();
+
+        let rendu = trousseau.stabiliser(
+            "@book{a,\n  zotero = {A1},\n  author = {Dupont},\n  year = {2023},\n  title = {Le titre}\n}\n\n@book{b,\n  zotero = {B2},\n  author = {Dupont},\n  year = {2023},\n  title = {Le titre}\n}\n",
+            &pris,
+        );
+
+        let premier = rendu.matches('@').count();
+        assert_eq!(premier, 2, "deux entrées : {rendu}");
+
+        // Les clés sont dans les têtes : `@book{clé,`.
+        let cles: Vec<&str> = rendu
+            .match_indices("@book{")
+            .map(|(i, _)| {
+                let ouverture = i + "@book{".len();
+                let fin = rendu[ouverture..].find(',').unwrap() + ouverture;
+                &rendu[ouverture..fin]
+            })
+            .collect();
+
+        assert_eq!(cles.len(), 2, "deux têtes : {rendu}");
+        assert_ne!(cles[0], cles[1], "deux clés, jamais une : {rendu}");
+    }
+
     use super::*;
 
     /// Une clé lisible : nom, année, mot du titre.

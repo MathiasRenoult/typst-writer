@@ -368,7 +368,10 @@ mod tests {
         ));
 
         let typst = crate::langage::generer::generer(&document);
-        assert!(typst.contains("#figure(image(\"figs/planche.png\"), caption: ["), "vu : {typst}");
+        assert!(
+            typst.contains("#figure(image(\"figs/planche.png\"), caption: ["),
+            "vu : {typst}"
+        );
         assert_eq!(super::super::parse(&super::serialiser(&document)), document);
     }
 
@@ -417,7 +420,9 @@ mod tests {
         );
 
         assert!(
-            typst.contains("#block(stroke: (paint: #555, thickness: 2pt), radius: 6pt, inset: 10pt)["),
+            typst.contains(
+                "#block(stroke: (paint: #555, thickness: 2pt), radius: 6pt, inset: 10pt)["
+            ),
             "les normes disent la mesure : {typst}"
         );
     }

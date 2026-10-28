@@ -28,7 +28,13 @@ détruit rien de ce qui existe.
 
 Les thèmes sont des fichiers TOML, modifiables à la main ou depuis
 l'application ; une mise à jour ne réécrit jamais un thème à vous. Les
-suppressions partent à la **corbeille** — les projets comme les thèmes.
+suppressions partent à la **corbeille** — les projets comme les thèmes —
+et un geste qui défait quelque chose **demande son mot** avant de partir :
+`Échap` est toujours « Annuler ».
+
+Une seule instance travaille sur un projet à la fois : la seconde
+s'ouvre **en lecture seule**, et la raison s'affiche en barre d'état.
+Deux écritures ne se dévorent jamais leur texte.
 
 ## Exporter
 

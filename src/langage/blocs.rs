@@ -126,9 +126,7 @@ pub fn blocs(source: &str) -> Vec<Bloc> {
         // Une ligne d'attributs habille le bloc qui suit : elle en fait
         // partie, pour qu'un déplacement emporte son manteau. La première
         // garde le début, les autres se fondent avec elle.
-        if !echappee
-            && crate::langage::parse::lire_proprietes_ligne(ligne).is_some()
-        {
+        if !echappee && crate::langage::parse::lire_proprietes_ligne(ligne).is_some() {
             if manteau.is_none() {
                 manteau = Some(index);
             }

@@ -27,7 +27,13 @@ manque à son travail, vers ce qui fait bonne figure.
 
 ---
 
-## α.1 — La parole donnée (la donnée)
+## α.1 — La parole donnée (la donnée) ✅
+
+**Fait** — les six pièces, éprouvées : le test de thèmes écrit en dossier
+temporaire, le trousseau stabilise les clés (et deux notices ne partagent
+jamais la leur), les fichiers corrompus se disent (session, liaison,
+projet), les suppressions demandent leur mot, le verrou d'instance ferme
+l'écriture à qui ne le tient pas.
 
 Ce qui peut perdre ou salir un texte part le premier. C'est l'étape que
 la beta doit pouvoir garantir par serment.

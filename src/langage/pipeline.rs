@@ -203,20 +203,32 @@ mod tests {
         // Le cas du programme : en français, « ; » est précédé d'une espace
         // insécable et suivi d'une espace normale.
         let document = super::super::parse("La foi ; l'espérance.\n");
-        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
+        let typst = generer_avec(
+            &document,
+            &Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
         assert!(
             typst.contains("La foi~; l'espérance."),
             "le français est strict : {typst}"
         );
 
         // Et la même chose en anglais colle.
-        let typst = generer_avec(&document, &Regles::anglaise(), &crate::mise_en_page::modele::Decor::default());
+        let typst = generer_avec(
+            &document,
+            &Regles::anglaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
         assert!(typst.contains("La foi; l'espérance."), "{typst}");
 
         // Le `\` insère un caractère sans interprétation : la même phrase
         // avec un point-virgule échappé garde ses espaces telles quelles.
         let document = super::super::parse("La foi \\; l'espérance.\n");
-        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
+        let typst = generer_avec(
+            &document,
+            &Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
         assert!(
             typst.contains("La foi ; l'espérance."),
             "l'échappement exempte de la règle : {typst}"

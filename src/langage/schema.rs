@@ -412,7 +412,6 @@ pub fn ouvre_un_bloc(texte: &str) -> bool {
         || debut.starts_with("```")
 }
 
-
 /// Le contenu commence-t-il par un marqueur de bloc ?
 fn commence_par_un_marqueur_de_bloc(contenu: &[Inline]) -> bool {
     matches!(&contenu.first(), Some(Inline::Texte(texte)) if ouvre_un_bloc(texte))

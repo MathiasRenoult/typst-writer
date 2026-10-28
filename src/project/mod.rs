@@ -62,6 +62,64 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
     Ok(destination)
 }
 
+/// Le verrou d'un projet : une seule instance y travaille.
+///
+/// Deux instances s'écrasent leurs auto-sauvegardes — le texte de l'une
+/// efface celui de l'autre, sans qu'on sache lequel a gagné. Le verrou est
+/// un fichier qui porte le processus qui le tient : un mort le libère, un
+/// vivant le garde.
+#[derive(Debug)]
+pub struct Verrou {
+    chemin: std::path::PathBuf,
+}
+
+impl Verrou {
+    /// Prend le verrou d'un projet. `Err` si une instance vivante le tient.
+    pub fn prendre(dir: &Path) -> Result<Self, String> {
+        let chemin = dir.join(".verrou");
+
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&chemin)
+        {
+            Ok(mut fichier) => {
+                use std::io::Write;
+                let _ = writeln!(fichier, "{}", std::process::id());
+                Ok(Self { chemin })
+            }
+
+            Err(_) => {
+                // Il existe : qui le tient ? Un mort l'a laissé, on le reprend.
+                let contenu = std::fs::read_to_string(&chemin).unwrap_or_default();
+                let pid: i32 = contenu.trim().parse().unwrap_or(0);
+
+                if pid > 0 && process_vivant(pid) {
+                    return Err(format!(
+                        "Une autre instance travaille sur ce projet (processus {pid})."
+                    ));
+                }
+
+                std::fs::write(&chemin, format!("{}\n", std::process::id()))
+                    .map_err(|erreur| format!("{} : {erreur}", chemin.display()))?;
+
+                Ok(Self { chemin })
+            }
+        }
+    }
+}
+
+impl Drop for Verrou {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.chemin);
+    }
+}
+
+/// Un processus existe-t-il encore ? Un mort ne tient pas de verrou.
+fn process_vivant(pid: i32) -> bool {
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
 /// Écrit un fichier d'un seul tenant : temporaire, puis renommage.
 ///
 /// Une écriture directe tronque le fichier si la machine s'arrête au
@@ -126,7 +184,7 @@ fn session_path() -> PathBuf {
 
 /// Charge la session enregistrée.
 pub fn load_session() -> Session {
-    load_session_from(&session_path())
+    load_session_from(&session_path()).unwrap_or_default()
 }
 
 /// Charge une session depuis un fichier donné.
@@ -137,11 +195,19 @@ pub fn load_session() -> Session {
 ///
 /// Le chemin est un paramètre plutôt qu'une constante pour que la persistance
 /// soit vérifiable sur un fichier réel, et non seulement en mémoire.
-pub fn load_session_from(path: &Path) -> Session {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+/// Relit la session. **Une session absente est normale** ; une session
+/// illisible est un problème, et elle le dit — jamais de repli muet qui
+/// laisserait croire que tout va bien.
+pub fn load_session_from(path: &Path) -> Result<Session, String> {
+    let texte = match std::fs::read_to_string(path) {
+        Ok(texte) => texte,
+        Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Session::default());
+        }
+        Err(erreur) => return Err(format!("{} : {erreur}", path.display())),
+    };
+
+    serde_json::from_str(&texte).map_err(|erreur| format!("{} : {erreur}", path.display()))
 }
 
 /// Enregistre la session.
@@ -804,6 +870,44 @@ fn locate_flat_documents(work: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// Une seule instance tient le verrou ; un mort le libère.
+    #[test]
+    fn le_verrou_garde_le_projet() {
+        let dir = std::env::temp_dir().join(format!("tw-verrou-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier");
+
+        let fichier = dir.join(".verrou");
+        let premier = Verrou::prendre(&dir).expect("premier verrou");
+
+        // Un mort l'a laissé : le verrou se reprend.
+        std::fs::write(&fichier, "999999999\n").expect("un mort");
+        drop(premier);
+
+        let repris = Verrou::prendre(&dir).expect("un mort libère");
+        drop(repris);
+
+        // Et parti, le fichier n'est plus.
+        assert!(!fichier.exists(), "le verrou part avec l'instance");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une instance vivante est refusée — et le refus nomme le processus.
+    #[test]
+    fn une_instance_vivante_est_refusee() {
+        let dir = std::env::temp_dir().join(format!("tw-verrou-2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier");
+
+        // Un processus vivant : celui du test lui-même.
+        std::fs::write(dir.join(".verrou"), format!("{}\n", std::process::id())).expect("verrou");
+
+        let probleme = Verrou::prendre(&dir).expect_err("refusé");
+        assert!(probleme.contains("autre instance"), "vu : {probleme}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// La bibliothèque errante est adoptée quand le modèle est intact —
     /// et le modèle contient un `@` dans ses commentaires, ce que
@@ -1293,7 +1397,7 @@ mod tests {
         );
 
         // 2. L'application redémarre et relit la session.
-        let restored = load_session_from(&path);
+        let restored = load_session_from(&path).expect("session lisible");
 
         assert_eq!(restored.theme_mode, crate::ui::theme::ThemeMode::Dark);
 
@@ -1318,7 +1422,8 @@ mod tests {
         );
 
         // 4. Une session absente retombe sur les défauts, sans échouer.
-        let missing = load_session_from(&dir.join("absent.json"));
+        let missing =
+            load_session_from(&dir.join("absent.json")).expect("absente, et c'est normal");
 
         assert_eq!(missing.theme_mode, crate::ui::theme::ThemeMode::System);
         assert_eq!(missing.themes, crate::theming::Chosen::default());

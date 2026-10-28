@@ -27,6 +27,19 @@ pub enum PreviewZoomMode {
     Free(f64),
 }
 
+/// Un geste qui défait quelque chose, en attente de son mot.
+///
+/// La corbeille garde tout — mais un geste qui part au clic reste un
+/// geste qu'on fait parfois à tort. La question est courte, la réponse
+/// nette, et `Échap` est toujours une réponse.
+pub struct Confirmation {
+    /// Ce qu'on demande, en une phrase.
+    pub question: String,
+
+    /// Ce que « Confirmer » fera.
+    pub action: crate::app::Message,
+}
+
 /// L'état de l'application.
 ///
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
@@ -56,6 +69,13 @@ pub struct State {
     /// doit jamais disparaître avec le panneau qui l'a produit, ni tomber
     /// dans un journal que personne ne lit.
     pub note: Option<Note>,
+
+    /// Le verrou du projet, s'il est tenu. Sans lui, rien ne s'écrit :
+    /// deux instances ne s'écrasent jamais leur texte.
+    pub verrou: Option<crate::project::Verrou>,
+
+    /// La confirmation en cours, quand un geste défait quelque chose.
+    pub confirmation: Option<Confirmation>,
 
     /// La carte des raccourcis, quand elle est demandée (`F1`).
     pub aide: bool,

@@ -110,9 +110,22 @@ pub struct Lien {
 pub const FICHIER: &str = "zotero.json";
 
 /// La liaison d'un projet, s'il en a une.
-pub fn lien_du_projet(dir: &std::path::Path) -> Option<Lien> {
-    let texte = std::fs::read_to_string(dir.join(FICHIER)).ok()?;
-    serde_json::from_str(&texte).ok()
+/// La liaison d'un projet — `None` s'il n'en a pas.
+///
+/// Un fichier corrompu n'est pas « pas de liaison » : c'est un problème,
+/// et il le dit. Ce qui est perdu se sait.
+pub fn lien_du_projet(dir: &std::path::Path) -> Result<Option<Lien>, String> {
+    let chemin = dir.join(FICHIER);
+
+    let texte = match std::fs::read_to_string(&chemin) {
+        Ok(texte) => texte,
+        Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(erreur) => return Err(format!("{} : {erreur}", chemin.display())),
+    };
+
+    serde_json::from_str(&texte)
+        .map(Some)
+        .map_err(|erreur| format!("{} : {erreur}", chemin.display()))
 }
 
 /// Lie un projet à une collection — et jamais à la place de l'utilisateur.
@@ -272,30 +285,42 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tw-liaison-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dossier");
 
-        assert_eq!(lien_du_projet(&dir), None, "rien, tant qu'on n'a rien lié");
+        assert_eq!(
+            lien_du_projet(&dir).expect("lecture"),
+            None,
+            "rien, tant qu'on n'a rien lié"
+        );
 
         let lien = Lien {
             cle: "AAAA1111".to_string(),
             nom: "Ma thèse".to_string(),
         };
         lier(&dir, &lien).expect("liaison écrite");
-        assert_eq!(lien_du_projet(&dir), Some(lien));
+        assert_eq!(lien_du_projet(&dir).expect("lecture"), Some(lien));
 
         delier(&dir);
-        assert_eq!(lien_du_projet(&dir), None, "délié, il n'y a plus rien");
+        assert_eq!(
+            lien_du_projet(&dir).expect("lecture"),
+            None,
+            "délié, il n'y a plus rien"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Un fichier de liaison illisible n'est pas une panne : il n'y a
-    /// simplement pas de liaison.
+    /// Un fichier de liaison corrompu n'est pas « pas de liaison » : c'est
+    /// un problème, et il le dit. Ce qui est perdu se sait.
     #[test]
-    fn un_fichier_de_liaison_corrompu_ne_prote_rien() {
+    fn un_fichier_corrompu_dit_son_probleme() {
         let dir = std::env::temp_dir().join(format!("tw-liaison-2-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dossier");
         std::fs::write(dir.join(FICHIER), "n'importe quoi").expect("fichier");
 
-        assert_eq!(lien_du_projet(&dir), None);
+        let probleme = lien_du_projet(&dir).expect_err("corrompu");
+        assert!(
+            probleme.contains(FICHIER),
+            "le fichier est nommé : {probleme}"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

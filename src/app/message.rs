@@ -189,6 +189,9 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    ConfirmationConfirmer,
+    ConfirmationAnnuler,
+
     AideBasculer,
 
     RechercheFermer,

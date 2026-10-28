@@ -51,6 +51,10 @@ pub struct Project {
     /// Dossier du projet.
     pub dir: PathBuf,
 
+    /// Ce qui n'a pas pu se lire en chargeant le projet — dit à l'écran,
+    /// jamais avale. Un fichier corrompu n'est pas « pas de liaison ».
+    pub problemes: Vec<String>,
+
     /// Nom du projet (nom du dossier).
     pub name: String,
 
@@ -188,7 +192,11 @@ pub fn load(dir: &Path) -> Project {
 
     let chapters = list_chapters(dir, &included);
 
-    let zotero = crate::zotero::lien_du_projet(dir);
+    let mut problemes = Vec::new();
+    let zotero = crate::zotero::lien_du_projet(dir).unwrap_or_else(|probleme| {
+        problemes.push(probleme);
+        None
+    });
 
     // Un projet lié vit de sa collection : l'export Zotero est sa
     // bibliothèque. Sans lui, ou sans liaison, la locale fait foi.
@@ -204,6 +212,7 @@ pub fn load(dir: &Path) -> Project {
         .unwrap_or(0);
 
     Project {
+        problemes,
         dir: dir.to_path_buf(),
         name,
         main,
@@ -1155,6 +1164,7 @@ mod tests {
     #[test]
     fn une_etiquette_vide_ne_matche_rien() {
         let project = Project {
+            problemes: Vec::new(),
             dir: PathBuf::new(),
             name: String::new(),
             main: PathBuf::new(),

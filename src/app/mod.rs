@@ -52,6 +52,7 @@ impl State {
             }
         }
 
+        let mut note_au_demarrage: Option<crate::app::state::Note> = None;
         let session = crate::project::load_session();
 
         // Le projet de la session s'il existe toujours, sinon le plus récent.
@@ -95,7 +96,21 @@ impl State {
             lie: project.zotero.is_some(),
         };
 
+        // Le verrou du projet : une seule instance y travaille. Refusé,
+        // rien ne s'écrira — et c'est dit, plutôt que de se dévorer.
+        let verrou = match crate::project::Verrou::prendre(&project.dir) {
+            Ok(verrou) => Some(verrou),
+            Err(probleme) => {
+                note_au_demarrage = Some(crate::app::state::Note::erreur(format!(
+                    "{probleme} Ce projet est ouvert en lecture seule."
+                )));
+                None
+            }
+        };
+
         let mut state = Self {
+            confirmation: None,
+            verrou,
             aide: false,
             editor: crate::editor::EditorState::default(),
             export_status: None,
@@ -130,6 +145,23 @@ impl State {
             recherche: None,
             note: note_de_migration,
         };
+
+        // Ce qui n'a pas pu se lire au chargement se dit — jamais avale.
+        // Un fichier corrompu n'est pas « pas de liaison », et l'utilisateur
+        // doit le savoir avant de croire que tout va bien.
+        let problemes: Vec<String> = state
+            .projects
+            .iter()
+            .flat_map(|projet| projet.problemes.iter().cloned())
+            .collect();
+
+        if let Some(premier) = problemes.into_iter().next() {
+            state.note = Some(crate::app::state::Note::erreur(premier));
+        }
+
+        if state.note.is_none() {
+            state.note = note_au_demarrage;
+        }
 
         // Le chapitre de la session, s'il appartient encore au projet ; sinon
         // le premier chapitre, sinon rien — le panneau proposera d'en créer un.
@@ -412,6 +444,12 @@ impl State {
 
     /// Écrit le contenu courant et enregistre la session.
     fn persist(&mut self) {
+        // Sans verrou, rien ne s'écrit : deux instances ne se dévorent
+        // jamais leur texte. La raison a été dite au démarrage.
+        if self.verrou.is_none() {
+            return;
+        }
+
         if self.editor.path.is_some() {
             if let Err(error) = self.editor.save() {
                 self.note = Some(crate::app::state::Note::erreur(format!(
@@ -429,6 +467,47 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // Ce qui défait demande son mot — la corbeille est derrière, mais
+        // un geste qu'on fait parfois à tort mérite la question.
+        Message::DeleteChapter(path) => {
+            state.confirmation = Some(crate::app::state::Confirmation {
+                question: "Supprimer ce document ? Il part à la corbeille.".to_string(),
+                action: Message::DeleteChapter(path),
+            });
+
+            Task::none()
+        }
+
+        Message::DeleteTheme(name) => {
+            state.confirmation = Some(crate::app::state::Confirmation {
+                question: "Supprimer ce thème ? Il part à la corbeille.".to_string(),
+                action: Message::DeleteTheme(name),
+            });
+
+            Task::none()
+        }
+
+        Message::ZoteroDelier => {
+            state.confirmation = Some(crate::app::state::Confirmation {
+                question: "Délier ce projet de Zotero ? Il retrouvera sa bibliothèque locale."
+                    .to_string(),
+                action: Message::ZoteroDelier,
+            });
+
+            Task::none()
+        }
+
+        // La confirmation : le geste attendu part, l'autre s'efface.
+        Message::ConfirmationConfirmer => match state.confirmation.take() {
+            Some(confirmation) => update(state, confirmation.action),
+            None => Task::none(),
+        },
+
+        Message::ConfirmationAnnuler => {
+            state.confirmation = None;
+            Task::none()
+        }
+
         // La carte des raccourcis : une bascule, rien de plus.
         Message::AideBasculer => {
             state.aide = !state.aide;
@@ -461,7 +540,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::NewProject
         | Message::OpenProject(_)
         | Message::RefreshProject
-        | Message::DeleteChapter(_)
         | Message::StartRename(_)
         | Message::RenameChanged(_)
         | Message::RenameCommit
@@ -543,7 +621,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ZoteroExport(_, _, _)
         | Message::ZoteroActiverApi
         | Message::ZoteroSynchroniser
-        | Message::ZoteroDelier
         | Message::ZoteroLiaisonFermer => liaison_zotero(state, message),
 
         Message::EditionReferenceNouveau => {
@@ -648,7 +725,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::SelectTheme(_)
         | Message::LoadTheme
         | Message::ThemeLoaded(_)
-        | Message::DeleteTheme(_) => crate::app::themes::update(state, message),
+ => crate::app::themes::update(state, message),
 
         Message::Editor(message) => {
             let content_changed = crate::editor::EditorState::message_may_change_content(&message);
@@ -1646,6 +1723,27 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
             Ok(bibtex) => {
                 let dir = state.project.dir.clone();
 
+                // Les clés se stabilisent avant l'écriture : une clé
+                // attribuée ne bouge plus, quoi que la collection devienne.
+                // Les clés de la bibliothèque locale sont prises d'abord —
+                // une notice Zotero ne vient jamais heurter un livre tenu
+                // par l'écrivain lui-même.
+                let mut pris = std::collections::BTreeSet::new();
+
+                for entree in &state.bibliography {
+                    pris.insert(entree.key.clone());
+                }
+
+                let chemin = dir.join("citations.json");
+                let mut trousseau = crate::zotero::keys::Keyring::load(&chemin);
+                let bibtex = trousseau.stabiliser(&bibtex, &pris);
+
+                if let Err(erreur) = trousseau.save(&chemin) {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Les clés de citation n'ont pas pu être gardées : {erreur}"
+                    )));
+                }
+
                 if let Err(erreur) =
                     crate::project::ecrire_atomique(&dir.join("references-zotero.bib"), &bibtex)
                 {
@@ -1732,6 +1830,8 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
 /// table n'a pas à savoir — et c'est ce qui la rend vérifiable.
 #[derive(Debug, Default, Clone, Copy)]
 struct Situation {
+    /// Une confirmation attend son mot — `Échap` est « Annuler ».
+    confirmation: bool,
     /// Le composeur est ouvert : sa frappe est à lui.
     composeur: bool,
     /// Une fenêtre est ouverte — c'est le contrat qui s'applique.
@@ -1751,6 +1851,7 @@ struct Situation {
 impl Situation {
     fn de(state: &State) -> Self {
         Situation {
+            confirmation: state.confirmation.is_some(),
             composeur: state.composeur.is_some(),
             fenetre: fenetre_ouverte(state),
             fiche: state.edition_reference.is_some(),
@@ -1785,7 +1886,11 @@ enum Action {
 }
 
 /// La table du clavier, dans l'ordre où les choses la prennent.
-fn plan_touche(etat: Situation, key: &iced::keyboard::Key, modifiers: iced::keyboard::Modifiers) -> Action {
+fn plan_touche(
+    etat: Situation,
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Action {
     use iced::keyboard::{Key, key::Named};
 
     // Le composeur, quand il est ouvert, prend ses touches : sa frappe est
@@ -1885,13 +1990,19 @@ fn plan_touche(etat: Situation, key: &iced::keyboard::Key, modifiers: iced::keyb
         // Le zoom : les touches de tout lecteur de document.
         "+" | "=" => Action::Message(Message::PreviewZoomStep(1)),
         "-" => Action::Message(Message::PreviewZoomStep(-1)),
-        "0" => Action::Message(Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth)),
+        "0" => Action::Message(Message::PreviewZoom(
+            crate::app::state::PreviewZoomMode::FitWidth,
+        )),
         _ => Action::Rien,
     }
 }
 
 /// Le message de fermeture de la fenêtre du dessus de la pile.
 fn fermeture_du_dessus(etat: Situation) -> Message {
+    if etat.confirmation {
+        return Message::ConfirmationAnnuler;
+    }
+
     if etat.aide {
         return Message::AideBasculer;
     }
@@ -1909,7 +2020,8 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 
 /// Quelque fenêtre est-elle ouverte ?
 fn fenetre_ouverte(state: &State) -> bool {
-    state.aide
+    state.confirmation.is_some()
+        || state.aide
         || state.recherche.is_some()
         || state.liaison.is_some()
         || state.edition_reference.is_some()
@@ -2476,7 +2588,11 @@ mod tests {
         let vide = Situation::default();
 
         assert!(matches!(
-            plan_touche(vide, &nomme(iced::keyboard::key::Named::F1), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                vide,
+                &nomme(iced::keyboard::key::Named::F1),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::Message(Message::AideBasculer)
         ));
 
@@ -2488,7 +2604,11 @@ mod tests {
         };
 
         assert!(matches!(
-            plan_touche(fenetre, &nomme(iced::keyboard::key::Named::F1), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                fenetre,
+                &nomme(iced::keyboard::key::Named::F1),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::Message(Message::AideBasculer)
         ));
     }
@@ -2505,7 +2625,11 @@ mod tests {
 
         // La carte est au-dessus : elle part la première.
         assert!(matches!(
-            plan_touche(deux, &nomme(iced::keyboard::key::Named::Escape), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                deux,
+                &nomme(iced::keyboard::key::Named::Escape),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::Message(Message::AideBasculer)
         ));
 
@@ -2516,7 +2640,11 @@ mod tests {
         };
 
         assert!(matches!(
-            plan_touche(une, &nomme(iced::keyboard::key::Named::Escape), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                une,
+                &nomme(iced::keyboard::key::Named::Escape),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::Message(Message::RechercheFermer)
         ));
     }
@@ -2530,7 +2658,11 @@ mod tests {
         };
 
         assert!(matches!(
-            plan_touche(fenetre, &nomme(iced::keyboard::key::Named::Tab), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                fenetre,
+                &nomme(iced::keyboard::key::Named::Tab),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::FocusSuivant
         ));
         assert!(matches!(
@@ -2549,7 +2681,11 @@ mod tests {
         let vide = Situation::default();
 
         assert!(matches!(
-            plan_touche(vide, &nomme(iced::keyboard::key::Named::F3), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                vide,
+                &nomme(iced::keyboard::key::Named::F3),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::Message(Message::RechercheOuvrir)
         ));
 
@@ -2560,7 +2696,11 @@ mod tests {
         };
 
         assert!(matches!(
-            plan_touche(ouverte, &nomme(iced::keyboard::key::Named::F3), iced::keyboard::Modifiers::empty()),
+            plan_touche(
+                ouverte,
+                &nomme(iced::keyboard::key::Named::F3),
+                iced::keyboard::Modifiers::empty()
+            ),
             Action::Message(Message::RechercheSuivant)
         ));
         assert!(matches!(
