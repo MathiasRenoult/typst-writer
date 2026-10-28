@@ -87,6 +87,9 @@ pub struct State {
     /// Le dialogue de projet ouvert — créer, ou renommer `cible`.
     pub projet_dialogue: Option<ProjetDialogue>,
 
+    /// `Ctrl` est-il tenu ? La molette du zoom n'en dit rien elle-même.
+    pub controle_tenu: bool,
+
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,
 

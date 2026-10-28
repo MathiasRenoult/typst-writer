@@ -205,6 +205,12 @@ pub enum Message {
     /// passer à ce qui est derrière.
     Rien,
 
+    /// `Ctrl` tenu ou relâché — la molette du zoom le demande.
+    ControleTenu(bool),
+
+    /// La molette de la souris : le zoom avec `Ctrl`, le reste au défilement.
+    Molette(f32),
+
     ConfirmationConfirmer,
     ConfirmationAnnuler,
 

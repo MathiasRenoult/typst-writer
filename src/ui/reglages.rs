@@ -22,6 +22,19 @@ const ORIENTATIONS: &[&str] = &["portrait", "paysage"];
 const FORMES: &[&str] = &["1", "I", "i", "A", "a"];
 const POSITIONS: &[&str] = &["haut", "bas"];
 const ALIGNEMENTS: &[&str] = &["gauche", "centre", "droite"];
+const COULEURS: &[&str] = &[
+    "",
+    "black",
+    "white",
+    "gray",
+    "red",
+    "green",
+    "blue",
+    "orange",
+    "purple",
+    "#1e1e2e",
+    "#f2eee5",
+];
 const CASSES: &[&str] = &[
     "normale",
     "majuscules",
@@ -498,7 +511,7 @@ fn corps_decor(
                 palette,
                 "Couleur de bordure",
                 "Une valeur Typst : `gray`, `#555`, `luma(160)`.",
-                saisie(palette, &decor.couleur, Champ::DecorCouleur, "gray")
+                saisie_couleur(palette, &decor.couleur, Champ::DecorCouleur, "gray")
             ),
             ligne(
                 palette,
@@ -521,12 +534,12 @@ fn corps_decor(
             ligne(
                 palette,
                 "Remplissage",
-                "La teinte de fond : `aucun`, `luma(248)`, `#fdf6e3`.",
-                saisie(
+                "La teinte de fond : `aucun`, une couleur — ou un dégradé, écrit en valeur Typst (gradient.linear(#a, #b)).",
+                saisie_couleur(
                     palette,
                     &decor.remplissage,
                     Champ::DecorRemplissage,
-                    "aucun"
+                    "aucun, ou une couleur — un dégradé s'écrit en valeur"
                 )
             ),
         ]
@@ -712,6 +725,43 @@ fn section<'a>(
         .into()
 }
 
+/// Une saisie de couleur, avec son carré de prévisualisation.
+///
+/// Le nom d'abord — les couleurs de la liste — puis la valeur libre,
+/// hexadécimale ou expression Typst. Le carré dit ce qu'elle donne ; un
+/// dégradé n'a pas de carré, mais il compose.
+fn saisie_couleur(
+    palette: Palette,
+    valeur: &str,
+    champ: Champ,
+    exemple: &str,
+) -> Element<'static, Message> {
+    // La teinte est calculée une fois : le style ne garde pas la valeur.
+    let teinte = couleur_depuis(valeur).unwrap_or(palette.text_muted);
+
+    let apercu = container(Space::new())
+        .width(Length::Fixed(18.0))
+        .height(Length::Fixed(18.0))
+        .style(move |_| container::Style {
+            background: Some(teinte.into()),
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        });
+
+    row![
+        choix(COULEURS, valeur, champ),
+        saisie(palette, valeur, champ, exemple),
+        apercu,
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
 /// Une ligne : son libellé, son infobulle, et son contrôle.
 ///
 /// L'infobulle vient au survol : la fenêtre reste dépouillée, mais rien
@@ -815,6 +865,25 @@ fn pastille(valeur: &str) -> Element<'static, Message> {
 }
 
 /// Une couleur `#rrggbb` ou `#rgb`, en couleur d'écran.
+/// Une couleur, par son nom ou son hexadécimal — le nuancier la suit.
+fn couleur_depuis(valeur: &str) -> Option<iced::Color> {
+    let nom = valeur.trim().to_lowercase();
+
+    let connue = match nom.as_str() {
+        "black" | "noir" => Some(iced::Color::BLACK),
+        "white" | "blanc" => Some(iced::Color::WHITE),
+        "gray" | "gris" => Some(iced::Color::from_rgb8(128, 128, 128)),
+        "red" | "rouge" => Some(iced::Color::from_rgb8(200, 60, 60)),
+        "green" | "vert" => Some(iced::Color::from_rgb8(70, 140, 80)),
+        "blue" | "bleu" => Some(iced::Color::from_rgb8(60, 90, 180)),
+        "orange" => Some(iced::Color::from_rgb8(220, 140, 50)),
+        "purple" | "violet" => Some(iced::Color::from_rgb8(130, 80, 160)),
+        _ => None,
+    };
+
+    connue.or_else(|| couleur_depuis_hexa(valeur))
+}
+
 fn couleur_depuis_hexa(valeur: &str) -> Option<iced::Color> {
     let hexa = valeur.trim().strip_prefix('#')?;
 

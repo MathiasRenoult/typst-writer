@@ -110,6 +110,7 @@ impl State {
 
         let mut state = Self {
             projet_dialogue: None,
+            controle_tenu: false,
             geste_confirme: false,
             confirmation: None,
             verrou,
@@ -667,6 +668,24 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         // Un clic avalé par un voile de fenêtre.
         Message::Rien => Task::none(),
+
+        Message::ControleTenu(tenu) => {
+            state.controle_tenu = tenu;
+            Task::none()
+        }
+
+        Message::Molette(pas) => {
+            // Sans `Ctrl`, la molette est au défilement — et elle l'est
+            // déjà, prise par ce qui défile.
+            if !state.controle_tenu {
+                return Task::none();
+            }
+
+            update(
+                state,
+                Message::PreviewZoomStep(if pas > 0.0 { 1 } else { -1 }),
+            )
+        }
 
         // La confirmation : le geste attendu part, l'autre s'efface. Le
         // témoin fait passer le geste au travers de la question.
@@ -2648,14 +2667,35 @@ fn subscription_window() -> Subscription<Message> {
 }
 
 fn subscription_keys() -> Subscription<Message> {
-    iced::event::listen_with(|event, status, _window| match status {
-        Status::Ignored => match event {
-            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                Some(Message::RawKey(key, modifiers))
+    iced::event::listen_with(|event, status, _window| match event {
+        Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+            // Le modificateur se suit lui-même : la molette du zoom ne
+            // porte pas ses touches.
+            if modifiers.control() {
+                return Some(Message::ControleTenu(true));
             }
-            _ => None,
-        },
-        Status::Captured => None,
+
+            match status {
+                Status::Ignored => Some(Message::RawKey(key, modifiers)),
+                Status::Captured => None,
+            }
+        }
+
+        Event::Keyboard(keyboard::Event::KeyReleased { modifiers, .. }) if !modifiers.control() => {
+            Some(Message::ControleTenu(false))
+        }
+
+        // La molette tient le zoom — `Ctrl` de la souris, comme dans tout
+        // lecteur de document. Le défilement reste au reste.
+        Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
+            let pas = match delta {
+                iced::mouse::ScrollDelta::Lines { y, .. } | iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+            };
+
+            (pas != 0.0).then_some(Message::Molette(pas))
+        }
+
+        _ => None,
     })
 }
 
