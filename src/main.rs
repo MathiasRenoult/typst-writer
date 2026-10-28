@@ -26,7 +26,19 @@ fn main() -> iced::Result {
         app::update,
         ui::view,
     )
-    .title("Typst Writer")
+    // Le titre nomme ce qu'on écrit — le kit le reprend à chaque image,
+    // et il suit le document ouvert sans qu'on ait à y penser.
+    .title(|state: &app::State| {
+        let nom = state
+            .editor
+            .path
+            .as_ref()
+            .and_then(|chemin| chemin.file_name())
+            .and_then(|nom| nom.to_str())
+            .unwrap_or("Sans titre");
+
+        format!("{nom} — Typst Writer")
+    })
     .window(iced::window::Settings {
         // Une taille de départ qui montre l'éditeur, le panneau de travail et
         // l'aperçu côte à côte : la mesure de lecture fait 760 px, les panneaux

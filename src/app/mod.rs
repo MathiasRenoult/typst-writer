@@ -109,6 +109,8 @@ impl State {
         };
 
         let mut state = Self {
+            projet_nom: String::new(),
+            geste_confirme: false,
             confirmation: None,
             verrou,
             aide: false,
@@ -467,9 +469,100 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // Les projets : le nom en frappe, puis les trois gestes.
+        Message::ProjetNom(nom) => {
+            state.projet_nom = nom;
+            Task::none()
+        }
+
+        Message::ProjetCreer => {
+            let nom = state.projet_nom.trim().to_string();
+
+            if nom.is_empty() {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Un projet porte un nom.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            match crate::project::creer_au_nom(&crate::project::projects_dir(), &nom) {
+                Ok(dir) => {
+                    state.projet_nom = String::new();
+                    update(state, Message::OpenProject(dir))
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                    Task::none()
+                }
+            }
+        }
+
+        Message::ProjetRenommer => {
+            let nom = state.projet_nom.trim().to_string();
+
+            if nom.is_empty() {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Un projet porte un nom.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            match crate::project::renommer(&state.project.dir, &nom) {
+                Ok(dir) => {
+                    state.projet_nom = String::new();
+                    update(state, Message::OpenProject(dir))
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                    Task::none()
+                }
+            }
+        }
+
+        Message::ProjetSupprimer(dir) => {
+            if !state.geste_confirme {
+                state.confirmation = Some(crate::app::state::Confirmation {
+                    question: "Supprimer ce projet ? Il part à la corbeille.".to_string(),
+                    action: Message::ProjetSupprimer(dir),
+                });
+
+                return Task::none();
+            }
+
+            state.geste_confirme = false;
+
+            match crate::project::supprimer(&dir) {
+                Ok(corbeille) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Le projet part à la corbeille : {}",
+                        corbeille.display()
+                    )));
+
+                    // Le projet ouvert disparaît : un autre prend sa place.
+                    state
+                        .projects
+                        .retain(|projet| projet.dir != dir);
+
+                    match state.projects.first() {
+                        Some(projet) => update(state, Message::OpenProject(projet.dir.clone())),
+                        None => Task::none(),
+                    }
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                    Task::none()
+                }
+            }
+        }
+
         // Ce qui défait demande son mot — la corbeille est derrière, mais
         // un geste qu'on fait parfois à tort mérite la question.
         Message::DeleteChapter(path) => {
+            if state.geste_confirme {
+                state.geste_confirme = false;
+                return crate::app::fichiers::update(state, Message::DeleteChapter(path));
+            }
+
             state.confirmation = Some(crate::app::state::Confirmation {
                 question: "Supprimer ce document ? Il part à la corbeille.".to_string(),
                 action: Message::DeleteChapter(path),
@@ -479,6 +572,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::DeleteTheme(name) => {
+            if state.geste_confirme {
+                state.geste_confirme = false;
+                return crate::app::themes::update(state, Message::DeleteTheme(name));
+            }
+
             state.confirmation = Some(crate::app::state::Confirmation {
                 question: "Supprimer ce thème ? Il part à la corbeille.".to_string(),
                 action: Message::DeleteTheme(name),
@@ -488,6 +586,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::ZoteroDelier => {
+            if state.geste_confirme {
+                state.geste_confirme = false;
+                return liaison_zotero(state, Message::ZoteroDelier);
+            }
+
             state.confirmation = Some(crate::app::state::Confirmation {
                 question: "Délier ce projet de Zotero ? Il retrouvera sa bibliothèque locale."
                     .to_string(),
@@ -497,9 +600,13 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        // La confirmation : le geste attendu part, l'autre s'efface.
+        // La confirmation : le geste attendu part, l'autre s'efface. Le
+        // témoin fait passer le geste au travers de la question.
         Message::ConfirmationConfirmer => match state.confirmation.take() {
-            Some(confirmation) => update(state, confirmation.action),
+            Some(confirmation) => {
+                state.geste_confirme = true;
+                update(state, confirmation.action)
+            }
             None => Task::none(),
         },
 

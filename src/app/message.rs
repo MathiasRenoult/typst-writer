@@ -189,6 +189,11 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    ProjetNom(String),
+    ProjetCreer,
+    ProjetRenommer,
+    ProjetSupprimer(std::path::PathBuf),
+
     ConfirmationConfirmer,
     ConfirmationAnnuler,
 

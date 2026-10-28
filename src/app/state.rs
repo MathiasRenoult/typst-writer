@@ -74,8 +74,15 @@ pub struct State {
     /// deux instances ne s'écrasent jamais leur texte.
     pub verrou: Option<crate::project::Verrou>,
 
+    /// Le nom en cours de frappe pour un projet — créer, ou renommer.
+    pub projet_nom: String,
+
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,
+
+    /// Le geste attendu vient d'être confirmé : il passe au travers de la
+    /// question, qui ne se reposera pas.
+    pub geste_confirme: bool,
 
     /// La carte des raccourcis, quand elle est demandée (`F1`).
     pub aide: bool,

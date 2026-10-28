@@ -62,6 +62,77 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
     Ok(destination)
 }
 
+/// Crée un projet au nom choisi — et jamais sur un dossier existant.
+///
+/// Le nom est celui du dossier, plié à une forme qui tient partout :
+/// minuscules, sans espace ni barre. Un dossier existant n'est pas
+/// réutilisé en silence : c'est peut-être le travail de quelqu'un.
+pub fn creer_au_nom(parent: &Path, nom: &str) -> Result<PathBuf, String> {
+    let plie = plier_nom(nom);
+
+    if plie.is_empty() {
+        return Err("Le nom du projet est vide.".to_string());
+    }
+
+    let dossier = parent.join(&plie);
+
+    if dossier.exists() {
+        return Err(format!("« {plie} » existe déjà — un autre nom, ou l'ouvrir."));
+    }
+
+    std::fs::create_dir_all(&dossier)
+        .map_err(|erreur| format!("{} : {erreur}", dossier.display()))?;
+
+    Ok(dossier)
+}
+
+/// Renomme un projet — le dossier suit, et tout ce qui y vit avec lui.
+pub fn renommer(dir: &Path, nom: &str) -> Result<PathBuf, String> {
+    let plie = plier_nom(nom);
+
+    if plie.is_empty() {
+        return Err("Le nom du projet est vide.".to_string());
+    }
+
+    let parent = dir
+        .parent()
+        .ok_or_else(|| "Pas de dossier parent.".to_string())?;
+    let cible = parent.join(&plie);
+
+    if cible == dir {
+        return Ok(dir.to_path_buf());
+    }
+
+    if cible.exists() {
+        return Err(format!("« {plie} » existe déjà — un autre nom."));
+    }
+
+    std::fs::rename(dir, &cible).map_err(|erreur| format!("{erreur}"))?;
+    Ok(cible)
+}
+
+/// Supprime un projet — vers la corbeille, comme tout le reste.
+pub fn supprimer(dir: &Path) -> Result<PathBuf, String> {
+    vers_la_corbeille(dir).map_err(|erreur| format!("{erreur}"))
+}
+
+/// Un nom de dossier : minuscules, tirets, sans espace ni barre.
+pub fn plier_nom(nom: &str) -> String {
+    let plie: String = nom
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            ' ' | '_' => '-',
+            '/' | '\\' | ':' => '-',
+            autre => autre,
+        })
+        .filter(|c| c.is_alphanumeric() || *c == '-')
+        .collect();
+
+    plie.trim_matches('-').to_string()
+}
+
 /// Le verrou d'un projet : une seule instance y travaille.
 ///
 /// Deux instances s'écrasent leurs auto-sauvegardes — le texte de l'une
@@ -870,6 +941,56 @@ fn locate_flat_documents(work: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// Un projet se crée au nom choisi, et jamais sur un autre.
+    #[test]
+    fn un_projet_se_cree_au_nom_choisi() {
+        let parent = std::env::temp_dir().join(format!("tw-projets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(&parent).expect("parent");
+
+        let dossier = creer_au_nom(&parent, "Ma Thèse").expect("création");
+        assert_eq!(dossier.file_name().unwrap(), "ma-thèse", "le nom suit");
+
+        // Un dossier existant n'est pas réutilisé en silence.
+        let probleme = creer_au_nom(&parent, "Ma Thèse").expect_err("refus");
+        assert!(probleme.contains("existe"), "vu : {probleme}");
+
+        let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    /// Un projet se renomme — le dossier suit.
+    #[test]
+    fn un_projet_se_renomme() {
+        let parent = std::env::temp_dir().join(format!("tw-projets-2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(&parent).expect("parent");
+
+        let dossier = creer_au_nom(&parent, "ancien").expect("création");
+        let renomme = renommer(&dossier, "nouveau").expect("renommage");
+
+        assert_eq!(renomme.file_name().unwrap(), "nouveau");
+        assert!(renomme.exists());
+
+        let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    /// Un projet supprimé part à la corbeille — jamais dans le vide.
+    #[test]
+    fn un_projet_supprime_part_a_la_corbeille() {
+        let parent = std::env::temp_dir().join(format!("tw-projets-3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(&parent).expect("parent");
+
+        let dossier = creer_au_nom(&parent, "a-supprimer").expect("création");
+        let corbeille = supprimer(&dossier).expect("suppression");
+
+        assert!(!dossier.exists());
+        assert!(corbeille.exists(), "la corbeille le garde");
+
+        let _ = std::fs::remove_dir_all(&parent);
+        let _ = std::fs::remove_file(&corbeille);
+    }
+
     /// Une seule instance tient le verrou ; un mort le libère.
     #[test]
     fn le_verrou_garde_le_projet() {

@@ -36,12 +36,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .color(palette.text_muted),
     );
 
+    // Le compte de mots vit à la barre d'état, où il est vivant — le
+    // répéter en tête ne fait pas une information de plus.
     content = content.push(
         row![
-            palette
-                .label(format!("{} mots", format_count(state.word_count())))
-                .size(theme::jetons::SAILLANT)
-                .color(palette.text),
             Space::new().width(Length::Fill),
             palette
                 .label(if project.document.is_some() {
@@ -343,33 +341,47 @@ pub fn view(state: &State) -> Element<'_, Message> {
         let is_current = other.dir == project.dir;
 
         content = content.push(
-            button(palette.label(other.name.clone()).size(theme::jetons::CORPS))
-                .on_press(Message::OpenProject(other.dir.clone()))
-                .width(Fill)
-                .height(Length::Fixed(ENTRY_HEIGHT))
-                .padding([4, 8])
-                .style(move |t, status| entry_style(t, status, palette, is_current)),
+            row![
+                button(palette.label(other.name.clone()).size(theme::jetons::CORPS))
+                    .on_press(Message::OpenProject(other.dir.clone()))
+                    .width(Fill)
+                    .height(Length::Fixed(ENTRY_HEIGHT))
+                    .padding([4, 8])
+                    .style(move |t, status| entry_style(t, status, palette, is_current)),
+                button(theme::icon(
+                    lucide_icons::iced::icon_trash_2::<Theme>(),
+                    12.0,
+                    palette.text_muted,
+                ))
+                .on_press(Message::ProjetSupprimer(other.dir.clone()))
+                .padding([4, 6])
+                .style(move |t, status| delete_style(t, status, palette)),
+            ]
+            .spacing(2),
         );
     }
 
+    // Le nom en frappe commande les deux gestes : un projet se crée au nom
+    // choisi, et le projet ouvert se renomme du même mot.
     content = content.push(
-        button(
-            row![
-                theme::icon(
-                    lucide_icons::iced::icon_plus::<Theme>(),
-                    13.0,
-                    palette.text_muted
-                ),
-                palette.label("Nouveau projet").size(theme::jetons::CORPS),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .on_press(Message::NewProject)
-        .width(Fill)
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .padding([4, 8])
-        .style(move |t, status| entry_style(t, status, palette, false)),
+        text_input("nom du projet", &state.projet_nom)
+            .on_input(Message::ProjetNom)
+            .on_submit(Message::ProjetCreer)
+            .padding(5)
+            .size(theme::jetons::CORPS)
+            .width(Fill),
+    );
+
+    content = content.push(
+        row![
+            button(palette.label("Créer").size(theme::jetons::DETAIL))
+                .on_press(Message::ProjetCreer)
+                .padding([4, 10]),
+            button(palette.label("Renommer").size(theme::jetons::DETAIL))
+                .on_press(Message::ProjetRenommer)
+                .padding([4, 10]),
+        ]
+        .spacing(theme::jetons::PAS),
     );
 
     container(scrollable(content).width(Fill).height(Fill))
