@@ -189,6 +189,9 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    ReferencesReplier,
+    ReferencesFiltrer(String),
+
     ImageInserer,
     ImageChoisie(Option<std::path::PathBuf>),
 

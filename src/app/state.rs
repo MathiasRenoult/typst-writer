@@ -90,6 +90,12 @@ pub struct State {
     /// `Ctrl` est-il tenu ? La molette du zoom n'en dit rien elle-même.
     pub controle_tenu: bool,
 
+    /// La liste des références est-elle repliée ?
+    pub references_repliees: bool,
+
+    /// Le filtre de la liste des références — elle se cherche.
+    pub references_filtre: String,
+
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,
 

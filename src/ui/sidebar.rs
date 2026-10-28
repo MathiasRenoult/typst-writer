@@ -212,7 +212,41 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     // ---- La bibliographie ----
     content = content.push(Space::new().height(18));
-    content = content.push(section_title("Bibliographie", palette));
+
+    // Le titre replie la liste, et le filtre la cherche : une thèse a
+    // des centaines de notices, et une liste qui ne se cherche pas est un
+    // mur.
+    content = content.push(
+        button(
+            row![
+                theme::icon(
+                    if state.references_repliees {
+                        lucide_icons::iced::icon_chevron_right::<Theme>()
+                    } else {
+                        lucide_icons::iced::icon_chevron_down::<Theme>()
+                    },
+                    12.0,
+                    palette.text_muted,
+                ),
+                palette.label("Bibliographie").size(theme::jetons::SAILLANT),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::ReferencesReplier)
+        .padding([2, 4])
+        .style(move |t, status| entry_style(t, status, palette, false)),
+    );
+
+    if !state.references_repliees {
+        content = content.push(
+            text_input("chercher une référence", &state.references_filtre)
+                .on_input(Message::ReferencesFiltrer)
+                .padding(5)
+                .size(theme::jetons::DETAIL)
+                .width(Fill),
+        );
+    }
 
     let missing = project.bibliography.is_none();
 
@@ -319,13 +353,27 @@ pub fn view(state: &State) -> Element<'_, Message> {
     }
 
     // Les clés citables, quand la bibliographie en contient : un clic insère
-    // `@clé` au curseur. Tant que le fichier est vide, il n'y a rien à citer.
-    for (rang, entry) in state.bibliography.iter().enumerate() {
-        if rang > 0 {
-            content = content.push(separation(palette));
-        }
+    // `@clé` au curseur. Le filtre cherche l'auteur, le titre ou la clé.
+    let filtre = state.references_filtre.trim().to_lowercase();
 
-        content = content.push(citation_row(entry, palette));
+    let visibles = state.bibliography.iter().filter(|entry| {
+        filtre.is_empty()
+            || entry.key.to_lowercase().contains(&filtre)
+            || entry.titre.to_lowercase().contains(&filtre)
+            || entry
+                .auteurs
+                .iter()
+                .any(|(nom, prenom)| format!("{nom} {prenom}").to_lowercase().contains(&filtre))
+    });
+
+    if !state.references_repliees {
+        for (rang, entry) in visibles.enumerate() {
+            if rang > 0 {
+                content = content.push(separation(palette));
+            }
+
+            content = content.push(citation_row(entry, palette));
+        }
     }
 
     // ---- Les projets ----

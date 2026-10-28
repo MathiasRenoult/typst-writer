@@ -111,6 +111,8 @@ impl State {
         let mut state = Self {
             projet_dialogue: None,
             controle_tenu: false,
+            references_repliees: false,
+            references_filtre: String::new(),
             geste_confirme: false,
             confirmation: None,
             verrou,
@@ -668,6 +670,16 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         // Un clic avalé par un voile de fenêtre.
         Message::Rien => Task::none(),
+
+        Message::ReferencesReplier => {
+            state.references_repliees = !state.references_repliees;
+            Task::none()
+        }
+
+        Message::ReferencesFiltrer(filtre) => {
+            state.references_filtre = filtre;
+            Task::none()
+        }
 
         Message::ControleTenu(tenu) => {
             state.controle_tenu = tenu;
