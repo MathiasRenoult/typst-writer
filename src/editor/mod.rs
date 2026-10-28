@@ -284,10 +284,8 @@ impl EditorState {
         // immobile ne dérange pas le cache d'habillage, et c'est ce qui
         // rend la mise à jour à chaque tic sans prix.
         let attendues = marques_du_contenu(&contenu, &notes);
-        let formes: Vec<iced_code_editor::Marque> = attendues
-            .iter()
-            .map(|(marque, _)| marque.clone())
-            .collect();
+        let formes: Vec<iced_code_editor::Marque> =
+            attendues.iter().map(|(marque, _)| marque.clone()).collect();
 
         if self.editor.marques() != formes.as_slice() {
             self.set_marques(&notes);

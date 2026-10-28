@@ -189,6 +189,12 @@ pub enum Message {
 
     RechercheOuvrir,
 
+    TableauOuvrir,
+    TableauRangs(String),
+    TableauColonnes(String),
+    TableauInserer,
+    TableauAnnuler,
+
     ReferencesReplier,
     ReferencesFiltrer(String),
 

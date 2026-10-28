@@ -11,6 +11,7 @@ mod reglages;
 pub mod rename;
 pub mod sidebar;
 pub mod status_bar;
+pub mod tableau;
 pub mod theme;
 pub mod toolbar;
 pub mod zotero;
@@ -73,6 +74,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         aide::view(state),
         confirmation::view(state),
         projet::view(state),
+        tableau::view(state),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

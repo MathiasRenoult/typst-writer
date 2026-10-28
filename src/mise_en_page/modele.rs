@@ -496,8 +496,7 @@ impl MiseEnPage {
         ];
 
         for (nom, valeur) in espaces {
-            if !["aucune", "normale", "insécable", "fine-insécable"]
-                .contains(&valeur.as_str()) {
+            if !["aucune", "normale", "insécable", "fine-insécable"].contains(&valeur.as_str()) {
                 out.push((
                     nom.to_string(),
                     format!("« {valeur} » n'est pas une espace connue"),

@@ -27,6 +27,13 @@ pub enum PreviewZoomMode {
     Free(f64),
 }
 
+/// L'outil de tableau : la grille s'écrit, il n'y a qu'à choisir sa taille.
+#[derive(Clone)]
+pub struct TableauDialogue {
+    pub rangs: String,
+    pub colonnes: String,
+}
+
 /// Le dialogue de projet : créer, ou renommer celui qu'on nomme.
 #[derive(Clone)]
 pub struct ProjetDialogue {
@@ -95,6 +102,9 @@ pub struct State {
 
     /// Le filtre de la liste des références — elle se cherche.
     pub references_filtre: String,
+
+    /// L'outil de tableau : ses rangs et ses colonnes, en attente.
+    pub tableau: Option<TableauDialogue>,
 
     /// La confirmation en cours, quand un geste défait quelque chose.
     pub confirmation: Option<Confirmation>,

@@ -113,6 +113,7 @@ impl State {
             controle_tenu: false,
             references_repliees: false,
             references_filtre: String::new(),
+            tableau: None,
             geste_confirme: false,
             confirmation: None,
             verrou,
@@ -670,6 +671,63 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         // Un clic avalé par un voile de fenêtre.
         Message::Rien => Task::none(),
+
+        // La grille de tableau : la taille choisie, la forme s'écrit.
+        Message::TableauOuvrir => {
+            state.tableau = Some(crate::app::state::TableauDialogue {
+                rangs: "3".to_string(),
+                colonnes: "3".to_string(),
+            });
+
+            Task::none()
+        }
+
+        Message::TableauRangs(valeur) => {
+            if let Some(tableau) = state.tableau.as_mut() {
+                tableau.rangs = valeur;
+            }
+
+            Task::none()
+        }
+
+        Message::TableauColonnes(valeur) => {
+            if let Some(tableau) = state.tableau.as_mut() {
+                tableau.colonnes = valeur;
+            }
+
+            Task::none()
+        }
+
+        Message::TableauAnnuler => {
+            state.tableau = None;
+            Task::none()
+        }
+
+        Message::TableauInserer => {
+            let Some(tableau) = state.tableau.take() else {
+                return Task::none();
+            };
+
+            let rangs: usize = tableau.rangs.trim().parse().unwrap_or(0).clamp(1, 200);
+            let colonnes: usize = tableau.colonnes.trim().parse().unwrap_or(0).clamp(1, 20);
+
+            if colonnes == 0 {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Un tableau a au moins une colonne.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            let entete = format!("| {} |", vec![" "; colonnes].join(" | "));
+            let trait_ = format!("| {} |", vec!["---"; colonnes].join(" | "));
+            let rang = format!("| {} |", vec![" "; colonnes].join(" | "));
+
+            let mut grille = vec![entete, trait_];
+            grille.extend(std::iter::repeat_n(rang, rangs.saturating_sub(1)));
+            let grille = grille.join("\n");
+
+            state.editor.insert_at_cursor(&grille).map(Message::Editor)
+        }
 
         Message::ReferencesReplier => {
             state.references_repliees = !state.references_repliees;
@@ -2043,6 +2101,8 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
 /// table n'a pas à savoir — et c'est ce qui la rend vérifiable.
 #[derive(Debug, Default, Clone, Copy)]
 struct Situation {
+    /// L'outil de tableau est ouvert — `Échap` annule.
+    tableau: bool,
     /// Le dialogue de projet est ouvert — `Échap` annule.
     projet: bool,
     /// Une confirmation attend son mot — `Échap` est « Annuler ».
@@ -2066,6 +2126,7 @@ struct Situation {
 impl Situation {
     fn de(state: &State) -> Self {
         Situation {
+            tableau: state.tableau.is_some(),
             projet: state.projet_dialogue.is_some(),
             confirmation: state.confirmation.is_some(),
             composeur: state.composeur.is_some(),
@@ -2215,6 +2276,10 @@ fn plan_touche(
 
 /// Le message de fermeture de la fenêtre du dessus de la pile.
 fn fermeture_du_dessus(etat: Situation) -> Message {
+    if etat.tableau {
+        return Message::TableauAnnuler;
+    }
+
     if etat.projet {
         return Message::ProjetAnnuler;
     }
@@ -2240,7 +2305,8 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 
 /// Quelque fenêtre est-elle ouverte ?
 fn fenetre_ouverte(state: &State) -> bool {
-    state.projet_dialogue.is_some()
+    state.tableau.is_some()
+        || state.projet_dialogue.is_some()
         || state.confirmation.is_some()
         || state.aide
         || state.recherche.is_some()
@@ -2701,7 +2767,8 @@ fn subscription_keys() -> Subscription<Message> {
         // lecteur de document. Le défilement reste au reste.
         Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
             let pas = match delta {
-                iced::mouse::ScrollDelta::Lines { y, .. } | iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+                iced::mouse::ScrollDelta::Lines { y, .. }
+                | iced::mouse::ScrollDelta::Pixels { y, .. } => y,
             };
 
             (pas != 0.0).then_some(Message::Molette(pas))

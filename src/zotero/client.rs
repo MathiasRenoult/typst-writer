@@ -322,7 +322,6 @@ mod tests {
         }
     }
 
-
     /// Le cas du monde réel : Zotero tourne, son API locale est fermée.
     /// Le remède se dit, pas un statut nu.
     #[test]

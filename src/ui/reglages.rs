@@ -23,24 +23,9 @@ const FORMES: &[&str] = &["1", "I", "i", "A", "a"];
 const POSITIONS: &[&str] = &["haut", "bas"];
 const ALIGNEMENTS: &[&str] = &["gauche", "centre", "droite"];
 const COULEURS: &[&str] = &[
-    "",
-    "black",
-    "white",
-    "gray",
-    "red",
-    "green",
-    "blue",
-    "orange",
-    "purple",
-    "#1e1e2e",
-    "#f2eee5",
+    "", "black", "white", "gray", "red", "green", "blue", "orange", "purple", "#1e1e2e", "#f2eee5",
 ];
-const CASSES: &[&str] = &[
-    "normale",
-    "majuscules",
-    "minuscules",
-    "petites-majuscules",
-];
+const CASSES: &[&str] = &["normale", "majuscules", "minuscules", "petites-majuscules"];
 const LANGUES: &[&str] = &["fr", "en", "de", "es", "it", "pt", "nl", "la"];
 const DEFAUTS: &[&str] = &["aucune", "française", "anglaise"];
 const ESPACES: &[&str] = &["aucune", "normale", "insécable", "fine-insécable"];
@@ -436,12 +421,7 @@ fn corps_mise_en_page(
                 "La couleur du texte en gras — vide : celle du texte.",
                 row![
                     pastille(&reglages.couleurs.gras),
-                    saisie(
-                        palette,
-                        &reglages.couleurs.gras,
-                        Champ::CouleurGras,
-                        "vide"
-                    )
+                    saisie(palette, &reglages.couleurs.gras, Champ::CouleurGras, "vide")
                 ]
                 .spacing(8)
             ),
@@ -802,21 +782,17 @@ fn ligne<'a>(
 
     // Le fond de l'infobulle : sans lui, du texte nu se perdait dans ce
     // qui est derrière. Une boîte, une lisière, et la lecture est tenue.
-    let bulle = container(
-        text(note)
-            .size(theme::jetons::DETAIL)
-            .color(palette.text),
-    )
-    .padding(8)
-    .style(move |_| container::Style {
-        background: Some(palette.surface.into()),
-        border: iced::Border {
-            color: palette.border,
-            width: 1.0,
-            radius: crate::ui::theme::jetons::RAYON.into(),
-        },
-        ..Default::default()
-    });
+    let bulle = container(text(note).size(theme::jetons::DETAIL).color(palette.text))
+        .padding(8)
+        .style(move |_| container::Style {
+            background: Some(palette.surface.into()),
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: crate::ui::theme::jetons::RAYON.into(),
+            },
+            ..Default::default()
+        });
 
     let etiquette = tooltip(
         palette.label(libelle).size(12),
@@ -893,13 +869,10 @@ fn choix_police(valeur: &str, champ: Champ) -> Element<'static, Message> {
         })
     };
 
-    row![
-        liste,
-        apercu,
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center)
-    .into()
+    row![liste, apercu,]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into()
 }
 
 /// La pastille d'une couleur, à côté de sa saisie.

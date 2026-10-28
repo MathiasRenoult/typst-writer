@@ -185,6 +185,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             false,
         ));
+
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_table::<Theme>(),
+            "Insérer un tableau",
+            Message::TableauOuvrir,
+            palette,
+            false,
+        ));
     }
 
     // Le remplissage pousse les clusters de droite au bord : la

@@ -41,9 +41,7 @@ impl Espace {
         match nom.trim().to_lowercase().as_str() {
             "normale" => Espace::Normale,
             "insécable" => Espace::Insécable,
-            "fine-insécable" | "fine" | "fine insécable" => {
-                Espace::FineInsécable
-            }
+            "fine-insécable" | "fine" | "fine insécable" => Espace::FineInsécable,
             _ => Espace::Aucune,
         }
     }
