@@ -593,7 +593,7 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// Lit les chemins inclus par un fichier d'assemblage.
-fn read_includes(main: &Path) -> Vec<PathBuf> {
+pub(crate) fn read_includes(main: &Path) -> Vec<PathBuf> {
     let Ok(content) = std::fs::read_to_string(main) else {
         return Vec::new();
     };
@@ -1042,14 +1042,17 @@ pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 "#;
 
 /// Bibliographie d'un nouveau projet.
-pub const BIBLIOGRAPHY_TEMPLATE: &str = r#"// Une entrée par référence, au format BibTeX.
-// La clé (ici « exemple2026 ») est ce qui se cite dans le texte : @exemple2026.
-//
-// @article{exemple2026,
-//   title = {Un titre},
-//   author = {Nom, Prénom},
-//   year = {2026},
-// }
+pub const BIBLIOGRAPHY_TEMPLATE: &str = r#"% Une entrée par référence, au format BibTeX.
+% La clé (ici « exemple2026 ») est ce qui se cite dans le texte : @exemple2026.
+%
+% Les commentaires d'un fichier .bib commencent par % — BibLaTeX refuse
+% tout autre, et le document entier avec.
+%
+% @article{exemple2026,
+%   title = {Un titre},
+%   author = {Nom, Prénom},
+%   year = {2026},
+% }
 "#;
 
 #[cfg(test)]

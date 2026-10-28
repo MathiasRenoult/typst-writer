@@ -36,7 +36,15 @@ pub fn compilation_unit_document(
     } else {
         insert_generated_include(main, &include)
     };
-    let entry = corriger_les_bibliographies(root, &entry);
+    // Les clés vivantes : celles des bibliographies du projet. Une
+    // citation inconnue ne casse jamais le document — elle se montre
+    // telle quelle, et le problème se dit ailleurs qu'en une erreur de
+    // compilateur.
+    let cles = cles_vivantes(root, &entry);
+
+    let entry = corriger_le_typst(root, &entry, &cles);
+    let mut corrections = corriger_les_inclus(root, &entry, &cles);
+    corrections.extend(guerir_les_bibliographies(root, &entry, &corrections));
     let entry = ensure_default_bibliography(root, &entry);
 
     // La typographie se lit dans les normes du projet : c'est là qu'elle se
@@ -44,7 +52,9 @@ pub fn compilation_unit_document(
     let normes = crate::mise_en_page::charger(root);
     let generated = generer_avec(document, &normes.typographie.regles(), &normes.decor);
 
-    (entry, vec![(root.join(GENERATED_FILE), generated)])
+    corrections.push((root.join(GENERATED_FILE), generated));
+
+    (entry, corrections)
 }
 
 /// Place l'include avant la première bibliographie, ou à la fin de l'en-tête.
@@ -503,94 +513,352 @@ mod tests {
 /// devient celle du projet, sa vraie bibliographie ; s'il n'y en a pas,
 /// elle se commente — le document compile, et le problème se dit ailleurs
 /// qu'en une erreur de compilateur.
-fn corriger_les_bibliographies(root: &Path, main: &str) -> String {
+fn corriger_le_typst(
+    root: &Path,
+    main: &str,
+    cles: &std::collections::BTreeSet<String>,
+) -> String {
+    // `#cite(<cle>)` d'abord, sur le bloc entier : la clé peut couvrir
+    // plusieurs lignes, et une citation inconnue ne casse jamais le
+    // document. On construit la sortie en balayant — rien n'est masqué,
+    // rien n'est déplacé.
+    let mut main_corrige = String::new();
+    let mut curseur = 0usize;
+
+    while let Some(position) = main[curseur..].find("#cite(<") {
+        let position = curseur + position;
+        let debut = position + "#cite(<".len();
+
+        let Some(fin_label) = main[debut..].find(">") else {
+            break;
+        };
+
+        let cle = main[debut..debut + fin_label].to_string();
+
+        // L'appel entier : `#cite(<cle>, style: "…")` — la parenthèse
+        // fermante le ferme, quoi qu'il y ait entre les deux.
+        let apres = debut + fin_label + 1;
+        let fin = match main[apres..].find(')') {
+            Some(fermeture) => apres + fermeture + 1,
+            None => apres,
+        };
+
+        main_corrige.push_str(&main[curseur..position]);
+
+        if cles.contains(&cle) {
+            main_corrige.push_str(&main[position..fin]);
+        } else {
+            main_corrige.push_str(&format!("[{cle}]"));
+        }
+
+        curseur = fin;
+    }
+
+    main_corrige.push_str(&main[curseur..]);
+    let main = main_corrige;
+
     let mut sortie = String::new();
 
     for ligne in main.split_inclusive('\n') {
-        if !is_bibliography_directive(ligne) {
-            sortie.push_str(ligne);
+        if is_bibliography_directive(ligne) {
+            // Le chemin : la première chaîne de la directive.
+            let chemin = ligne
+                .split('"')
+                .nth(1)
+                .map(|chemin| chemin.to_string())
+                .unwrap_or_default();
+
+            if chemin.is_empty() || root.join(&chemin).is_file() {
+                sortie.push_str(ligne);
+                continue;
+            }
+
+            // Le chemin est mort : la bibliographie du projet le
+            // remplace, trouvée par son nom, comme toujours.
+            match crate::project::find_bibliography(root) {
+                Some(vraie) => {
+                    let nom = vraie
+                        .file_name()
+                        .map(|nom| nom.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "references.bib".to_string());
+
+                    sortie.push_str(&ligne.replace(&format!("\"{chemin}\""), &format!("\"{nom}\"")));
+                }
+                None => {
+                    // Aucune bibliographie : la directive se commente.
+                    let sans_fin = ligne.trim_end_matches('\n');
+                    sortie.push_str(&format!("// {sans_fin}\n"));
+                }
+            }
+
             continue;
         }
 
-        // Le chemin : la première chaîne de la directive.
-        let chemin = ligne
-            .split('"')
-            .nth(1)
-            .map(|chemin| chemin.to_string())
-            .unwrap_or_default();
+        // Les citations inconnues : `@cle` et `#cite(<cle>)` deviennent
+        // `[cle]` — un texte, pas une référence. Une adresse
+        // électronique a un point, et n'est jamais une clé.
+        let mut ligne_sortie = String::new();
+        let octets = ligne.as_bytes();
+        let mut curseur = 0usize;
 
-        if chemin.is_empty() || root.join(&chemin).is_file() {
-            sortie.push_str(ligne);
-            continue;
+        while curseur < octets.len() {
+            if octets[curseur] == b'@' {
+                let mut fin_cle = curseur + 1;
+
+                while fin_cle < octets.len()
+                    && (octets[fin_cle].is_ascii_alphanumeric() || octets[fin_cle] == b'_' || octets[fin_cle] == b'-')
+                {
+                    fin_cle += 1;
+                }
+
+                let cle = &ligne[curseur + 1..fin_cle];
+
+                if !cle.is_empty() && !cle.contains('.') && !cles.contains(cle) {
+                    ligne_sortie.push_str(&format!("[{cle}]"));
+                    curseur = fin_cle;
+                    continue;
+                }
+            }
+
+            let caractere = ligne[curseur..].chars().next().unwrap_or('\n');
+            ligne_sortie.push(caractere);
+            curseur += caractere.len_utf8();
         }
 
-        // Le chemin est mort : la bibliographie du projet le remplace,
-        // et elle est cherchée par son nom, comme toujours.
-        match crate::project::find_bibliography(root) {
-            Some(vraie) => {
-                let nom = vraie
-                    .file_name()
-                    .map(|nom| nom.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "references.bib".to_string());
-
-                let corrigee = ligne.replace(&format!("\"{chemin}\""), &format!("\"{nom}\""));
-                sortie.push_str(&corrigee);
-            }
-            None => {
-                // Aucune bibliographie : la directive se commente. Le
-                // document compile, et c'est tout ce qu'on lui demande.
-                let sans_fin = ligne.trim_end_matches('\n');
-                sortie.push_str(&format!("// {sans_fin}\n"));
-            }
-        }
+        sortie.push_str(&ligne_sortie);
     }
 
     sortie
 }
 
-#[cfg(test)]
-mod tests_des_chemins_morts {
-    use super::*;
+/// Les bibliographies mortes des fichiers **inclus**.
+///
+/// Un chapitre porte parfois sa propre directive — et le chemin mort y
+/// est relatif à **sa** place, pas à celle de l'assemblage. La
+/// substitution se fait au compilateur : le fichier sur disque n'est
+/// jamais touché, et la bibliographie du projet est trouvée par son nom.
+fn corriger_les_inclus(
+    root: &Path,
+    entry: &str,
+    cles: &std::collections::BTreeSet<String>,
+) -> Vec<(PathBuf, String)> {
+    let mut corrections = Vec::new();
+    let mut vus = std::collections::HashSet::new();
+    let mut a_voir: Vec<PathBuf> = crate::project::model::read_includes(&root.join("main.typ"));
 
-    /// Un chemin mort ne casse jamais le document : la bibliographie du
-    /// projet le remplace, et le compilateur trouve le fichier (bug «
-    /// aucun document ne compile » du rapport 2).
-    #[test]
-    fn un_chemin_mort_ne_casse_jamais_le_document() {
-        let root = std::env::temp_dir().join("typst-writer-epreuve-chemin-mort");
-        let _ = std::fs::create_dir_all(&root);
-        std::fs::write(root.join("references.bib"), "@book{a, title = {A}}\n").expect("bib");
-
-        let main = "#include \"document.generated.typ\"\n\n#bibliography(\"Bibliographie/Adoption spirituelle.bib\", title: \"Bibliographie\")\n";
-        let document = super::super::parse("Un texte.\n");
-        let (entry, _) = compilation_unit_document(&root, main, &document);
-
-        assert!(
-            entry.contains("\"references.bib\""),
-            "le chemin mort est remplacé : {entry}"
-        );
-        assert!(
-            !entry.contains("Adoption spirituelle"),
-            "le chemin mort n'y est plus : {entry}"
-        );
-
-        // Et le document se compile : c'est le compilateur qui juge.
-        std::fs::write(root.join("document.generated.typ"), "Un texte.\n").expect("généré");
-        let rendu = std::process::Command::new("typst")
-            .args(["compile", root.join("main.typ").to_str().unwrap()])
-            .current_dir(&root)
-            .output();
-
-        // `main.typ` n'existe pas encore sur disque — c'est l'entrée qui
-        // se juge : elle est prête, et ses chemins sont vivants.
-        assert!(entry.lines().all(|ligne| {
-            !is_bibliography_directive(ligne)
-                || ligne
-                    .split('"')
-                    .nth(1)
-                    .is_some_and(|chemin| root.join(chemin).is_file())
-        }), "chaque bibliographie pointe sur un fichier vivant : {entry}");
-
-        let _ = rendu;
+    // L'entrée peut elle-même en porter.
+    for ligne in entry.lines() {
+        if let Some(reste) = ligne.trim().strip_prefix("#include")
+            && let Some(chemin) = reste.trim().trim_matches('"').lines().next()
+        {
+            a_voir.push(PathBuf::from(chemin));
+        }
     }
+
+    while let Some(relatif) = a_voir.pop() {
+        if !vus.insert(relatif.clone()) {
+            continue;
+        }
+
+        let chemin = root.join(&relatif);
+        let Ok(contenu) = std::fs::read_to_string(&chemin) else {
+            continue;
+        };
+
+        // Les inclusions du chapitre, pour que la récursion suive.
+        for sous in crate::project::model::read_includes(&chemin) {
+            a_voir.push(relatif.parent().unwrap_or(Path::new("")).join(sous));
+        }
+
+        let base = chemin.parent().unwrap_or(root).to_path_buf();
+        let corrige = corriger_le_typst(&base, &contenu, cles);
+
+        if corrige != contenu {
+            corrections.push((chemin, corrige));
+        }
+    }
+
+    corrections
 }
+
+/// Les `.bib` aux commentaires `//` — BibLaTeX ne connaît que `%`.
+///
+/// Notre propre modèle écrivait des `//` : chaque projet créé avant la
+/// correction porte un fichier que BibLaTeX refuse tout entier. La
+/// guérison se fait au compilateur, par substitution — le fichier sur
+/// disque n'est pas touché, et le document compile.
+/// Les commentaires `//` d'un `.bib` deviennent `%` — BibLaTeX ne
+/// connaît que ceux-ci.
+fn guerir_commentaires(contenu: &str) -> String {
+    contenu
+        .lines()
+        .map(|ligne| {
+            let nu = ligne.trim_start();
+
+            if nu.starts_with("//") {
+                format!("{}%{}", &ligne[..ligne.len() - nu.len()], nu.strip_prefix("//").unwrap_or(nu))
+            } else {
+                ligne.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn guerir_les_bibliographies(
+    root: &Path,
+    entry: &str,
+    corrections: &[(PathBuf, String)],
+) -> Vec<(PathBuf, String)> {
+    // Les bibliographies citées, dans l'entrée et les fichiers corrigés.
+    let mut citees = Vec::new();
+
+    for source in std::iter::once(entry.to_string()).chain(
+        corrections
+            .iter()
+            .filter(|(chemin, _)| chemin.extension().is_some_and(|ext| ext == "typ"))
+            .map(|(_, contenu)| contenu.clone()),
+    ) {
+        for ligne in source.lines() {
+            if !is_bibliography_directive(ligne) {
+                continue;
+            }
+
+            if let Some(chemin) = ligne.split('"').nth(1) {
+                citees.push(chemin.to_string());
+            }
+        }
+    }
+
+    let mut guerisons = Vec::new();
+
+    for citee in citees {
+        // Le chemin est relatif à celui qui le cite ; on cherche le
+        // fichier parmi les racines possibles — l'assemblage d'abord.
+        let chemin = root.join(&citee);
+
+        let Ok(contenu) = std::fs::read_to_string(&chemin) else {
+            continue;
+        };
+
+        let gueri: String = contenu
+            .lines()
+            .map(|ligne| {
+                let nu = ligne.trim_start();
+
+                if nu.starts_with("//") {
+                    format!("{}%{}", &ligne[..ligne.len() - nu.len()], nu.strip_prefix("//").unwrap_or(nu))
+                } else {
+                    ligne.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if gueri != contenu {
+            guerisons.push((chemin, gueri));
+        }
+    }
+
+    guerisons
+}
+
+/// Les clés de citation vivantes : celles que les bibliographies du
+/// projet portent réellement.
+fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String> {
+    let mut cles = std::collections::BTreeSet::new();
+
+    // Toutes les bibliographies citées, et la conventionnelle.
+    let mut citees = vec![crate::project::find_bibliography(root)];
+
+    for ligne in entry.lines() {
+        if is_bibliography_directive(ligne)
+            && let Some(chemin) = ligne.split('"').nth(1)
+        {
+            citees.push(Some(root.join(chemin)));
+        }
+    }
+
+    for chemin in citees.into_iter().flatten() {
+        if let Ok(contenu) = std::fs::read_to_string(&chemin) {
+            // Le contenu guéri d'abord : un `.bib` aux commentaires `//`
+            // fait perdre ses clés au parseur, et une clé perdue devient
+            // une citation neutralisée à tort.
+            let gueri = guerir_commentaires(&contenu);
+
+            for entree in crate::project::parse_bibliography_text(&gueri) {
+                cles.insert(entree.key);
+            }
+        }
+    }
+
+    cles
+}
+
+    /// **Un document ne compile jamais mal, quoi qu'il arrive** — les
+    /// trois fautes réelles du rapport, ensemble, jugées par le vrai
+    /// compilateur : le chemin mort d'un chapitre, le `.bib` aux
+    /// commentaires `//`, et les citations inconnues sous leurs deux
+    /// formes.
+    #[test]
+    fn un_document_ne_compile_jamais_mal_quoi_qu_il_arrive() {
+        let root = std::env::temp_dir().join("typst-writer-epreuve-trois-fautes");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("chapitres")).expect("dossier");
+
+        // La bibliographie du projet, aux commentaires `//` — notre
+        // propre modèle d'avant la correction.
+        std::fs::write(
+            root.join("references.bib"),
+            "// Une entrée par référence, au format BibTeX.\n//\n@book{vivante, title = {Vivante}}\n",
+        )
+        .expect("bib");
+
+        // Le chapitre : le chemin mort, et les deux formes de citation
+        // inconnue — l'une couvrant plusieurs lignes.
+        std::fs::write(
+            root.join("chapitres/1.typ"),
+            "Un texte @grudemInconnu.\n\n#cite(<inconnueMultiLignes>,\n  style: \"chicago-notes\")\n\n#cite(<vivante>)\n",
+        )
+        .expect("chapitre");
+
+        std::fs::write(
+            root.join("main.typ"),
+            "#include \"chapitres/1.typ\"\n\n#bibliography(\"Bibliographie/Adoption spirituelle.bib\")\n",
+        )
+        .expect("main");
+
+        let document = parse("Un texte.\n");
+        let (entry, corrections) =
+            compilation_unit_document(&root, &std::fs::read_to_string(root.join("main.typ")).expect("main"), &document);
+
+        // Les substitutions sont prêtes, et le disque n'a pas bougé.
+        assert!(
+            std::fs::read_to_string(root.join("chapitres/1.typ"))
+                .expect("lu")
+                .contains("@grudemInconnu"),
+            "le fichier sur disque n'est jamais touché"
+        );
+
+        // Tout se pose, et le compilateur juge.
+        std::fs::write(root.join("main.typ"), &entry).expect("entrée");
+        std::fs::write(root.join(GENERATED_FILE), "Un texte.\n").expect("généré");
+
+        for (chemin, contenu) in &corrections {
+            if chemin != &root.join(GENERATED_FILE) {
+                std::fs::write(chemin, contenu).expect("correction");
+            }
+        }
+
+        let rendu = std::process::Command::new("typst")
+            .args(["compile", "main.typ"])
+            .current_dir(&root)
+            .output()
+            .expect("typst s'exécute");
+
+        assert!(
+            rendu.status.success(),
+            "le document compile toujours : {}",
+            String::from_utf8_lossy(&rendu.stderr)
+        );
+    }
