@@ -261,6 +261,12 @@ impl CodeEditor {
         self.marques_revision = self.marques_revision.wrapping_add(1);
     }
 
+    /// Les marques posées, pour que l'hôte les compare aux siennes et ne
+    /// dérange pas le cache d'habillage quand rien n'a bougé.
+    pub fn marques(&self) -> &[Marque] {
+        &self.marques
+    }
+
     /// Le nombre de glyphes posés — pour l'hôte, qui doit pouvoir vérifier
     /// qu'il n'y a jamais de texte à nu là où un glyphe devrait être.
     pub fn nombre_de_marques(&self) -> usize {

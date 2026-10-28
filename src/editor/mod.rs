@@ -261,6 +261,13 @@ impl EditorState {
     /// citation, la complétion qui insère une clé, la frappe, l'annulation —
     /// parce qu'un contenu sans son glyphe est un texte à nu : le Suppr y
     /// grignote les caractères de la clé, et le `.tw` s'abîme.
+    ///
+    /// Elle est appelée à **chaque tic** : les éditions qui ne viennent pas
+    /// du clavier — une citation insérée, un remplacement, un bloc déplacé —
+    /// ne passent par aucun message d'éditeur, et c'étaient elles qui
+    /// laissaient des glyphes sur du texte qui n'était plus le leur.
+    /// La comparaison fait qu'un document immobile ne dérange jamais le
+    /// cache d'habillage.
     pub fn marques_a_jour(&mut self) {
         use crate::langage::marques::Nature;
 
@@ -273,7 +280,18 @@ impl EditorState {
             })
             .collect::<Vec<_>>();
 
-        self.set_marques(&notes);
+        // Ne reposer les marques que si elles ont changé : un document
+        // immobile ne dérange pas le cache d'habillage, et c'est ce qui
+        // rend la mise à jour à chaque tic sans prix.
+        let attendues = marques_du_contenu(&contenu, &notes);
+        let formes: Vec<iced_code_editor::Marque> = attendues
+            .iter()
+            .map(|(marque, _)| marque.clone())
+            .collect();
+
+        if self.editor.marques() != formes.as_slice() {
+            self.set_marques(&notes);
+        }
     }
 
     /// Le nombre de glyphes posés sur le document.

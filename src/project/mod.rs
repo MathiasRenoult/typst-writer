@@ -637,9 +637,10 @@ pub fn supprimer_reference(path: &Path, cle: &str) -> Result<(), String> {
 /// L'étendue d'une notice : sa tête `@type{clé,` et son accolade fermante.
 fn plage_de_notice(contenu: &str, cle: &str) -> Option<(usize, usize)> {
     let motif = format!("{{{cle},");
-    let tete = contenu.find(&motif)? - 1;
-    // La tête commence au `@` qui précède.
-    let ouverture = contenu[..=tete].rfind('@')?;
+    // Jamais de `find - 1` : un motif en tête de fichier soustrairait un
+    // à zéro. La tête commence au `@` qui précède.
+    let tete = contenu.find(&motif)?;
+    let ouverture = contenu[..tete].rfind('@')?;
 
     let mut profondeur = 0usize;
 

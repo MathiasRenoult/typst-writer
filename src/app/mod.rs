@@ -1137,6 +1137,12 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             // tics, et seulement quand le texte a changé. Le calculer chez elle,
             // c'était cloner le document entier à chaque image — deux fois,
             // puisque la barre d'état et le panneau le demandent chacun.
+            // Les glyphes suivent le texte, **quel que soit** le chemin qui
+            // l'a changé : frappe, citation insérée, remplacement, bloc
+            // déplacé. Leur repose est sensible au changement : un document
+            // immobile ne coûte rien, et il n'y a plus de chemin oublié.
+            state.editor.marques_a_jour();
+
             if state.render.words_pending {
                 let content = state.editor.content();
 

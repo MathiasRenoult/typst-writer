@@ -186,7 +186,8 @@ qui passent tous par là. Le dessin marche en *bouts* — ce qui se lit, puis le
 glyphe — pour que le texte fondu sorte du tracé sans laisser de trou.
 
 La prise `set_marques(Vec<Marque>)` porte les plages et fait monter une
-révision qui invalide le cache d'habillage. La couleur des glyphes est
+révision qui invalide le cache d'habillage ; la lecture `marques()` rend
+les plages à l'hôte, pour qu'il ne les repose que si elles ont changé. La couleur des glyphes est
 `Style::mark_color`. Les tests du module prouvent la règle de largeur.
 
 ## La feature `two-face` est nécessaire pour tester
