@@ -36,6 +36,7 @@ pub fn compilation_unit_document(
     } else {
         insert_generated_include(main, &include)
     };
+    let entry = corriger_les_bibliographies(root, &entry);
     let entry = ensure_default_bibliography(root, &entry);
 
     // La typographie se lit dans les normes du projet : c'est là qu'elle se
@@ -491,5 +492,105 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// Les bibliographies aux chemins morts.
+///
+/// Un document importé porte souvent le chemin de son ancienne machine —
+/// `Bibliographie/Adoption spirituelle.bib` — et le fichier n'existe
+/// plus ici. **Un document ne compile jamais mal** : la directive morte
+/// devient celle du projet, sa vraie bibliographie ; s'il n'y en a pas,
+/// elle se commente — le document compile, et le problème se dit ailleurs
+/// qu'en une erreur de compilateur.
+fn corriger_les_bibliographies(root: &Path, main: &str) -> String {
+    let mut sortie = String::new();
+
+    for ligne in main.split_inclusive('\n') {
+        if !is_bibliography_directive(ligne) {
+            sortie.push_str(ligne);
+            continue;
+        }
+
+        // Le chemin : la première chaîne de la directive.
+        let chemin = ligne
+            .split('"')
+            .nth(1)
+            .map(|chemin| chemin.to_string())
+            .unwrap_or_default();
+
+        if chemin.is_empty() || root.join(&chemin).is_file() {
+            sortie.push_str(ligne);
+            continue;
+        }
+
+        // Le chemin est mort : la bibliographie du projet le remplace,
+        // et elle est cherchée par son nom, comme toujours.
+        match crate::project::find_bibliography(root) {
+            Some(vraie) => {
+                let nom = vraie
+                    .file_name()
+                    .map(|nom| nom.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "references.bib".to_string());
+
+                let corrigee = ligne.replace(&format!("\"{chemin}\""), &format!("\"{nom}\""));
+                sortie.push_str(&corrigee);
+            }
+            None => {
+                // Aucune bibliographie : la directive se commente. Le
+                // document compile, et c'est tout ce qu'on lui demande.
+                let sans_fin = ligne.trim_end_matches('\n');
+                sortie.push_str(&format!("// {sans_fin}\n"));
+            }
+        }
+    }
+
+    sortie
+}
+
+#[cfg(test)]
+mod tests_des_chemins_morts {
+    use super::*;
+
+    /// Un chemin mort ne casse jamais le document : la bibliographie du
+    /// projet le remplace, et le compilateur trouve le fichier (bug «
+    /// aucun document ne compile » du rapport 2).
+    #[test]
+    fn un_chemin_mort_ne_casse_jamais_le_document() {
+        let root = std::env::temp_dir().join("typst-writer-epreuve-chemin-mort");
+        let _ = std::fs::create_dir_all(&root);
+        std::fs::write(root.join("references.bib"), "@book{a, title = {A}}\n").expect("bib");
+
+        let main = "#include \"document.generated.typ\"\n\n#bibliography(\"Bibliographie/Adoption spirituelle.bib\", title: \"Bibliographie\")\n";
+        let document = super::super::parse("Un texte.\n");
+        let (entry, _) = compilation_unit_document(&root, main, &document);
+
+        assert!(
+            entry.contains("\"references.bib\""),
+            "le chemin mort est remplacé : {entry}"
+        );
+        assert!(
+            !entry.contains("Adoption spirituelle"),
+            "le chemin mort n'y est plus : {entry}"
+        );
+
+        // Et le document se compile : c'est le compilateur qui juge.
+        std::fs::write(root.join("document.generated.typ"), "Un texte.\n").expect("généré");
+        let rendu = std::process::Command::new("typst")
+            .args(["compile", root.join("main.typ").to_str().unwrap()])
+            .current_dir(&root)
+            .output();
+
+        // `main.typ` n'existe pas encore sur disque — c'est l'entrée qui
+        // se juge : elle est prête, et ses chemins sont vivants.
+        assert!(entry.lines().all(|ligne| {
+            !is_bibliography_directive(ligne)
+                || ligne
+                    .split('"')
+                    .nth(1)
+                    .is_some_and(|chemin| root.join(chemin).is_file())
+        }), "chaque bibliographie pointe sur un fichier vivant : {entry}");
+
+        let _ = rendu;
     }
 }
