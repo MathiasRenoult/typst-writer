@@ -206,8 +206,9 @@ pub struct BibliographyEntry {
 impl BibliographyEntry {
     /// La ligne de liste : « Dupont, Jean — Le titre… ».
     ///
-    /// C'est ce que l'onglet des références montre à la place de la clé : la
-    /// clé est une machine, un nom et un titre se lisent.
+    /// L'affichage la compose lui-même en deux registres ; cette ligne
+    /// unique reste celle des tests, du modèle, et de qui préfère un trait.
+    #[allow(dead_code)]
     pub fn libelle(&self) -> String {
         let auteur = match self.auteurs.first() {
             Some((nom, prenom)) if !prenom.is_empty() => format!("{nom}, {prenom}"),

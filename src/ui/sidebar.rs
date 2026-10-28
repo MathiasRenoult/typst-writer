@@ -139,7 +139,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         let active = state.editor.path.clone();
 
-        for chapter in &project.chapters {
+        for (rang, chapter) in project.chapters.iter().enumerate() {
+            if rang > 0 {
+                content = content.push(separation(palette));
+            }
+
             content = content.push(chapter_row(
                 chapter,
                 state.renaming.as_ref(),
@@ -189,6 +193,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(section_title("Sommaire", palette));
 
         for (index, entry) in state.render.outline.iter().enumerate() {
+            if index > 0 {
+                content = content.push(separation(palette));
+            }
+
             let mut label = "    ".repeat(entry.level.saturating_sub(1));
             label.push_str(entry.text.trim());
 
@@ -313,7 +321,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     // Les clés citables, quand la bibliographie en contient : un clic insère
     // `@clé` au curseur. Tant que le fichier est vide, il n'y a rien à citer.
-    for entry in &state.bibliography {
+    for (rang, entry) in state.bibliography.iter().enumerate() {
+        if rang > 0 {
+            content = content.push(separation(palette));
+        }
+
         content = content.push(citation_row(entry, palette));
     }
 
@@ -322,7 +334,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
     content = content.push(section_title("Projets", palette));
 
     // Le projet courant en tête : la liste sert à en changer, pas à se repérer.
-    for other in &state.projects {
+    for (rang, other) in state.projects.iter().enumerate() {
+        if rang > 0 {
+            content = content.push(separation(palette));
+        }
+
         let is_current = other.dir == project.dir;
 
         content = content.push(
@@ -578,17 +594,47 @@ fn info_row<'a>(
 /// Une référence citable : un clic insère `@clé`, l'icône l'ouvre pour la
 /// modifier — dans une bibliothèque locale seulement.
 fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'a, Message> {
-    // La ligne se lit : « Dupont, Jean — Le titre… ». La clé reste dans
-    // l'infobulle, avec son type — une machine, pas un nom.
-    let libelle = tronquer(&entry.libelle(), 42);
+    // Deux registres plutôt qu'une ligne coupée : l'auteur au premier,
+    // l'ouvrage au second en retrait — l'œil suit, au lieu de deviner ce
+    // que les trois points ont emporté. La clé reste dans l'infobulle,
+    // avec son type — une machine, pas un nom.
     let info = format!("@{} · {}", entry.key, entry.kind);
 
+    let auteurs = entry
+        .auteurs
+        .iter()
+        .map(|(nom, prenom)| {
+            if prenom.trim().is_empty() {
+                nom.clone()
+            } else {
+                format!("{nom}, {prenom}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ; ");
+
+    let tete = if auteurs.trim().is_empty() {
+        entry.key.clone()
+    } else {
+        auteurs
+    };
+
+    let mut registres = column![palette.label(tete).size(theme::jetons::CORPS)].spacing(1);
+
+    if !entry.titre.trim().is_empty() {
+        registres = registres.push(
+            palette
+                .label(tronquer(&entry.titre, 48))
+                .size(theme::jetons::DETAIL)
+                .color(palette.text_muted),
+        );
+    }
+
     let ligne = row![
-        button(palette.label(libelle).size(theme::jetons::CORPS))
+        button(registres)
             .on_press(Message::InsertCitation(entry.key.clone()))
             .width(Fill)
-            .height(Length::Fixed(ENTRY_HEIGHT))
-            .padding([4, 8])
+            .padding([7, 8])
             .style(move |t, status| entry_style(t, status, palette, false)),
         button(theme::icon(
             lucide_icons::iced::icon_pencil::<Theme>(),
@@ -683,6 +729,21 @@ fn primary_style(_t: &Theme, status: button::Status, palette: Palette) -> button
 
 /// Entrée de liste : rien au repos, une brume au survol, et la sélection
 /// **par la bordure** — le bloc de couleur ne se teinte pas.
+/// Un filet entre deux entrées : les listes se lisent ligne à ligne.
+///
+/// Sans lui, une bibliothèque de notices est un mur de texte ; avec lui,
+/// chaque entrée a sa place, et l'œil ne se perd pas entre deux clés.
+fn separation(palette: Palette) -> Element<'static, Message> {
+    iced::widget::container(iced::widget::Space::new())
+        .width(Fill)
+        .height(Length::Fixed(1.0))
+        .style(move |_| iced::widget::container::Style {
+            background: Some(palette.border.into()),
+            ..Default::default()
+        })
+        .into()
+}
+
 fn entry_style(
     _t: &Theme,
     status: button::Status,

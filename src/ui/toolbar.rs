@@ -54,6 +54,54 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .color(palette.text_muted),
     );
 
+    bar = bar.push(separation(palette));
+
+    // Fichier.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_file::<Theme>(),
+        "Ouvrir le document d'écriture du projet",
+        Message::NewFile,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_folder_open::<Theme>(),
+        // Le libellé dit ce que fait l'action : le fichier est ajouté au projet,
+        // il n'est pas seulement affiché.
+        "Charger un document dans le projet",
+        Message::OpenFile,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_save::<Theme>(),
+        "Enregistrer",
+        Message::SaveFile,
+        palette,
+        state.editor.is_modified(),
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_save_all::<Theme>(),
+        "Enregistrer sous…",
+        Message::SaveAs,
+        palette,
+        false,
+    ));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_download::<Theme>(),
+        "Exporter en PDF",
+        Message::ExportPdf,
+        palette,
+        false,
+    ));
+
+
+    bar = bar.push(separation(palette));
+
     if state.editor.is_intermediate() {
         bar = bar.push(format_button(
             "B",
@@ -133,6 +181,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
     }
 
+
+    // Le remplissage pousse les clusters de droite au bord : la
+    // lecture va du document à son rendu, et rien ne flotte entre deux.
     bar = bar.push(spacer());
 
     // Panneaux : ces trois-là gouvernent la disposition, ils vont ensemble.
@@ -263,52 +314,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
         state.layout.focus_mode,
     ));
 
-    bar = bar.push(spacer());
 
-    // Fichier.
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_file::<Theme>(),
-        "Ouvrir le document d'écriture du projet",
-        Message::NewFile,
-        palette,
-        false,
-    ));
-
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_folder_open::<Theme>(),
-        // Le libellé dit ce que fait l'action : le fichier est ajouté au projet,
-        // il n'est pas seulement affiché.
-        "Charger un document dans le projet",
-        Message::OpenFile,
-        palette,
-        false,
-    ));
-
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_save::<Theme>(),
-        "Enregistrer",
-        Message::SaveFile,
-        palette,
-        state.editor.is_modified(),
-    ));
-
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_save_all::<Theme>(),
-        "Enregistrer sous…",
-        Message::SaveAs,
-        palette,
-        false,
-    ));
-
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_download::<Theme>(),
-        "Exporter en PDF",
-        Message::ExportPdf,
-        palette,
-        false,
-    ));
-
-    bar = bar.push(spacer());
+    bar = bar.push(separation(palette));
 
     // Thèmes : la liste, puis le mode d'apparence, puis le chargement et la
     // suppression. Les quatre vont ensemble, ils sont donc côte à côte.
@@ -378,6 +385,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         false,
     ));
+
 
     // La barre déborde parfois la fenêtre : plutôt que rogner des boutons
     // inatteignables, elle défile — sans barre de défilement visible, le
@@ -555,6 +563,21 @@ fn button_style(status: button::Status, palette: Palette) -> button::Style {
 }
 
 /// Espacement élastique : pousse ce qui suit vers la droite.
+/// Un filet entre deux clusters : les sépare sans les couper.
+///
+/// Un trait de la couleur des bordures, haut comme les boutons : la barre
+/// se lit en groupes, et chaque groupe a sa raison d'être ensemble.
+fn separation(palette: Palette) -> Element<'static, Message> {
+    iced::widget::container(iced::widget::Space::new())
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(18.0))
+        .style(move |_| container::Style {
+            background: Some(palette.border.into()),
+            ..Default::default()
+        })
+        .into()
+}
+
 fn spacer() -> Space {
     Space::new().width(Length::Fill).height(Length::Shrink)
 }
