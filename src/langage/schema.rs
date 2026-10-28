@@ -38,6 +38,15 @@ pub enum Bloc {
     ListeNumero(Vec<Vec<Inline>>),
     /// Un bloc brut Typst, inséré tel quel dans le document généré.
     Brut(String),
+    /// Un tableau : `| A | B |`, sa ligne de séparation, ses lignes.
+    Tableau {
+        /// L'en-tête, cellule par cellule — jamais vide.
+        entete: Vec<Vec<Inline>>,
+        /// Les lignes du corps, cellule par cellule.
+        lignes: Vec<Vec<Vec<Inline>>>,
+        /// L'alignement de chaque colonne, dans l'ordre.
+        alignements: Vec<Alignement>,
+    },
     /// Une image : `![légende](chemin)`.
     Image {
         /// La légende, en éléments inline — peut être vide.
@@ -56,6 +65,26 @@ pub enum Bloc {
         /// Le bloc habillé. Jamais un autre `Décor` : un seul manteau.
         bloc: Box<Bloc>,
     },
+}
+
+/// L'alignement d'une colonne de tableau, écrit dans sa ligne de
+/// séparation : `---` à gauche, `:-:` au centre, `---:` à droite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alignement {
+    Gauche,
+    Centre,
+    Droite,
+}
+
+impl Alignement {
+    /// La forme canonique du trait.
+    pub fn trait_(&self) -> &'static str {
+        match self {
+            Alignement::Gauche => "---",
+            Alignement::Centre => ":-:",
+            Alignement::Droite => "---:",
+        }
+    }
 }
 
 /// Les propriétés d'un bloc : des paires ordonnées, `clé=valeur`.
@@ -138,7 +167,7 @@ impl Proprietes {
                 && !valeur.is_empty()
                 && valeur == valeur.trim()
                 && !valeur.contains('\n')
-                && !valeur.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+                && !valeur.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'])
         })
     }
 }
@@ -299,6 +328,22 @@ impl Bloc {
             // Un bloc brut est pris tel quel : son délimiteur s'adapte à son
             // contenu, tout lui est permis.
             Bloc::Brut(_) => true,
+            Bloc::Tableau {
+                entete,
+                lignes,
+                alignements,
+            } => {
+                // Une en-tête, jamais vide ; autant d'alignements que de
+                // colonnes ; chaque ligne a le même compte de cellules —
+                // c'est ce qui rend l'écriture univoque.
+                !entete.is_empty()
+                    && alignements.len() == entete.len()
+                    && entete.iter().all(|cellule| inline_canonique(cellule))
+                    && lignes.iter().all(|ligne| {
+                        ligne.len() == entete.len()
+                            && ligne.iter().all(|cellule| inline_canonique(cellule))
+                    })
+            }
             Bloc::Image { légende, cible } => {
                 // La cible suit la règle du lien : non vide, sans saut de
                 // ligne. Ses parenthèses s'échappent, comme au lien.
@@ -326,7 +371,7 @@ impl Inline {
                 // porte aucun, c'est ce qui rend l'écriture univoque.
                 !texte.is_empty()
                     && !texte.contains('\n')
-                    && !texte.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+                    && !texte.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'])
             }
             Inline::Litteral(texte) => !texte.is_empty() && !texte.contains('\n'),
             Inline::Gras(contenu) | Inline::Italique(contenu) | Inline::GrasItalique(contenu) => {
@@ -340,7 +385,7 @@ impl Inline {
                 // `rgb(1, 2, 0)`. Ni marqueur, qui ferait signe aux balayages
                 // du voisinage, ni deux-points, qui serait le séparateur.
                 !couleur.is_empty()
-                    && !couleur.contains([':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+                    && !couleur.contains([':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'])
                     && !couleur.contains('\n')
                     && inline_canonique(contenu)
             }
@@ -396,6 +441,7 @@ pub fn ouvre_un_bloc(texte: &str) -> bool {
     // ce qui n'en est pas un reste du texte.
     if crate::langage::parse::lire_image(debut).is_some()
         || crate::langage::parse::lire_proprietes_ligne(debut).is_some()
+        || debut.starts_with('|')
     {
         return true;
     }
@@ -549,6 +595,13 @@ impl Bloc {
         match self {
             // Un décor n'ajoute pas de texte : il habille celui qui parle.
             Bloc::Décor { bloc, .. } => bloc.texte_nu(),
+            // Les cellules se lisent, comme tout texte.
+            Bloc::Tableau { entete, lignes, .. } => entete
+                .iter()
+                .chain(lignes.iter().flatten())
+                .map(|cellule| inline_texte_nu(cellule))
+                .collect::<Vec<_>>()
+                .join(" "),
             // La légende est du texte visible — elle se lit.
             Bloc::Image { légende, .. } => inline_texte_nu(légende),
             Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {

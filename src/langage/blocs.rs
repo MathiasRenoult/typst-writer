@@ -41,6 +41,9 @@ pub enum Genre {
     /// `![légende](chemin)` — une ligne, et sa forme est sa donnée : elle
     /// se déplace et s'habille, mais ne change pas de nature.
     Image,
+
+    /// `| A | B |` et sa suite : le tableau se déplace d'un bloc.
+    Tableau,
 }
 
 /// Un bloc du texte source : sa nature, et ses lignes.
@@ -132,6 +135,22 @@ pub fn blocs(source: &str) -> Vec<Bloc> {
             }
 
             index += 1;
+            continue;
+        }
+
+        // Un tableau : ses lignes d'un seul tenant.
+        if !echappee && ligne.trim_start().starts_with('|') {
+            let mut fin = index + 1;
+
+            while fin < lignes.len() && lignes[fin].trim_start().starts_with('|') {
+                fin += 1;
+            }
+
+            blocs.push(Bloc {
+                genre: Genre::Tableau,
+                lignes: manteau.take().unwrap_or(index)..fin,
+            });
+            index = fin;
             continue;
         }
 
@@ -237,7 +256,8 @@ pub fn remplacement(source: &str, bloc: &Bloc, genre: Genre) -> Option<(Range<us
 
     let mut remplacement: Vec<String> = match genre {
         // Une image ne change pas de nature : sa forme est sa donnée.
-        Genre::Image => contenu,
+        // Un tableau non plus : sa grille est son contenu.
+        Genre::Image | Genre::Tableau => contenu,
         Genre::Paragraphe => contenu,
 
         Genre::Titre(niveau) => {
@@ -419,7 +439,7 @@ pub fn sans_marque(ligne: &str, genre: Genre) -> String {
             }
         }
         // L'image garde sa forme entière : c'est sa donnée.
-        Genre::Brut | Genre::Paragraphe | Genre::Image => None,
+        Genre::Brut | Genre::Paragraphe | Genre::Image | Genre::Tableau => None,
     };
 
     retire.unwrap_or(ligne).to_string()
@@ -470,7 +490,7 @@ fn fin_du_paragraphe(lignes: &[&str], index: usize) -> usize {
     while suivant < lignes.len() {
         let ligne = lignes[suivant];
 
-        if ligne.trim().is_empty() || ouvre_un_bloc(ligne) {
+        if ligne.trim().is_empty() || (suivant > index && ouvre_un_bloc(ligne)) {
             break;
         }
 

@@ -58,7 +58,11 @@ la beta doit pouvoir garantir par serment.
 **Preuve de l'étape** : une épreuve de perte de texte qui échoue avant et
 passe après — y compris fichier corrompu, disque plein, double instance.
 
-## α.2 — Les tableaux
+## α.2 — Les tableaux ✅
+
+**Fait** — la forme markdown, ses alignements, les cellules en texte
+inline, la barre échappée, le décor hérité, l'édition par blocs, et le
+round-trip éprouvé au hasard. Une ligne sans séparation reste du texte.
 
 La première pièce de la route du langage (`docs/design/extension-langage.md`),
 et la plus attendue d'un écrivain.

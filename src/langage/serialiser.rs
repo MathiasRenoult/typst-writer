@@ -17,7 +17,7 @@ use super::schema::{Bloc, Document, Inline, Reference, ouvre_un_bloc};
 /// L'ordre n'importe pas : chacun est échappé individuellement. Les fermetures
 /// `]` et `}` y sont autant que les ouvertures — un crochet nu dans une note
 /// la refermerait avant l'heure —, et `_` ouvre l'italique bas.
-const MARQUEURS: [char; 10] = ['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'];
+const MARQUEURS: [char; 11] = ['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'];
 
 /// Sérialise un document dans notre syntaxe.
 ///
@@ -70,6 +70,40 @@ pub fn serialiser(document: &Document) -> String {
                 out.push('\n');
                 out.push_str(&fence);
                 out.push('\n');
+            }
+            Bloc::Tableau {
+                entete,
+                lignes,
+                alignements,
+            } => {
+                out.push_str("| ");
+                for (rang, cellule) in entete.iter().enumerate() {
+                    if rang > 0 {
+                        out.push_str(" | ");
+                    }
+                    ecrire_inline(cellule, &mut out);
+                }
+                out.push_str(" |\n");
+
+                // La ligne de séparation dit l'alignement, colonne par colonne.
+                out.push('|');
+                for alignement in alignements {
+                    out.push(' ');
+                    out.push_str(alignement.trait_());
+                    out.push_str(" |");
+                }
+                out.push('\n');
+
+                for ligne in lignes {
+                    out.push_str("| ");
+                    for (rang, cellule) in ligne.iter().enumerate() {
+                        if rang > 0 {
+                            out.push_str(" | ");
+                        }
+                        ecrire_inline(cellule, &mut out);
+                    }
+                    out.push_str(" |\n");
+                }
             }
             Bloc::Image { légende, cible } => {
                 out.push_str("![");
@@ -397,6 +431,61 @@ mod tests {
         ));
 
         assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Un tableau se lit, s'écrit et se relit — avec ses alignements.
+    #[test]
+    fn un_tableau_se_lit_et_se_relit() {
+        let source = "| A | B |\n| --- | :-: |\n| 1 | 2 |";
+        let document = super::super::parse(source);
+
+        assert!(
+            matches!(&document.blocs[..], [Bloc::Tableau { alignements, .. }] if alignements.len() == 2),
+            "vu : {:?}",
+            document.blocs
+        );
+        assert!(document.est_canonique());
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Une barre dans une cellule s'échappe, et reste du contenu.
+    #[test]
+    fn une_barre_dans_une_cellule_ne_coupe_rien() {
+        let source = "| a \\| b | c |\n| --- | --- |";
+        let document = super::super::parse(source);
+
+        let Bloc::Tableau { entete, .. } = &document.blocs[0] else {
+            panic!("un tableau attendu");
+        };
+
+        assert_eq!(entete.len(), 2, "deux cellules : {entete:?}");
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Sans ligne de séparation, ce n'est rien : la ligne est du texte.
+    #[test]
+    fn sans_separation_ce_n_est_rien() {
+        let document = super::super::parse("| a | b |\n| c | d |");
+
+        assert!(
+            matches!(document.blocs[..], [Bloc::Paragraphe(_)] | [Bloc::Paragraphe(_), Bloc::Paragraphe(_)]),
+            "vu : {:?}",
+            document.blocs
+        );
+    }
+
+    /// Le tableau compose au Typst : ses colonnes, ses alignements, son
+    /// en-tête.
+    #[test]
+    fn le_tableau_compose() {
+        let document = super::super::parse("| A | B |\n| --- | :-: |\n| 1 | 2 |");
+        let typst = crate::langage::generer::generer(&document);
+
+        assert!(
+            typst.contains("#table(columns: 2, align: (left, center), table.header([A], [B])"),
+            "vu : {typst}"
+        );
+        assert!(typst.contains(", [1], [2])"), "vu : {typst}");
     }
 
     /// Un nom prend ses mesures dans les normes du document — jamais
@@ -933,8 +1022,41 @@ mod tests {
         proprietes
     }
 
+    /// Un tableau au hasard : ses colonnes d'accord, ses cellules riches.
+    fn tableau_au_hasard(hasard: &mut Hasard) -> Bloc {
+        let colonnes = 1 + hasard.entier(3);
+        let rangs = 1 + hasard.entier(3);
+
+        let alignements = (0..colonnes)
+            .map(|_| {
+                use crate::langage::schema::Alignement;
+
+                match hasard.entier(3) {
+                    0 => Alignement::Centre,
+                    1 => Alignement::Droite,
+                    _ => Alignement::Gauche,
+                }
+            })
+            .collect();
+
+        let rang = |hasard: &mut Hasard| -> Vec<Vec<Inline>> {
+            (0..colonnes)
+                .map(|_| inlines_au_hasard(hasard, false))
+                .collect()
+        };
+
+        let entete = rang(hasard);
+        let lignes = (0..rangs).map(|_| rang(hasard)).collect();
+
+        Bloc::Tableau {
+            entete,
+            lignes,
+            alignements,
+        }
+    }
+
     fn bloc_simple_au_hasard(hasard: &mut Hasard) -> Bloc {
-        match hasard.entier(8) {
+        match hasard.entier(9) {
             0 => Bloc::Titre {
                 niveau: (1 + hasard.entier(6)) as u8,
                 contenu: inlines_au_hasard(hasard, false),
@@ -962,6 +1084,7 @@ mod tests {
                 .to_string(),
             ),
             6 => image_au_hasard(hasard),
+            7 => tableau_au_hasard(hasard),
             _ => Bloc::Paragraphe(paragraphe_au_hasard(hasard)),
         }
     }

@@ -117,6 +117,17 @@ pub fn parse(texte: &str) -> Document {
             continue;
         }
 
+        // Un tableau : son en-tête, sa ligne de séparation, ses lignes.
+        // Sans séparation, ce n'en est pas un — la ligne reste du texte.
+        if !echappee
+            && ligne.trim_start().starts_with('|')
+            && let Some((tableau, suivant)) = lire_tableau(&lignes, index)
+        {
+            blocs.push(habiller(tableau, &mut en_attente));
+            index = suivant;
+            continue;
+        }
+
         // Une image : `![légende](chemin)`.
         if !echappee
             && ligne.trim_start().starts_with("![")
@@ -212,6 +223,9 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             || debut.starts_with("```")
             // L'image est un bloc de ligne : `![…](…)`, formé ou pas.
             || lire_image(ligne).is_some()
+            // Une ligne de tableau — mais sans séparation, ce n'en est
+            // pas une : le parseur sait le reste.
+            || (debut.starts_with('|') && cellules(ligne).is_some())
             // Une ligne d'attributs trouvée — mais elle flotte jusqu'à son
             // bloc, et le parseur sait le reste.
             || crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
@@ -353,6 +367,119 @@ pub fn lire_proprietes_ligne(ligne: &str) -> Option<crate::langage::schema::Prop
     (!proprietes.est_vide()).then_some(proprietes)
 }
 
+/// Lit un tableau : en-tête, ligne de séparation, lignes.
+///
+/// La forme est celle du markdown — `| A | B |`, `| --- | :-: |` — et
+/// sans la ligne de séparation, ce n'est rien : la ligne est du texte,
+/// comme tout ce qui ne se lit pas.
+fn lire_tableau(lignes: &[&str], index: usize) -> Option<(crate::langage::schema::Bloc, usize)> {
+    let entete = cellules(lignes[index])?;
+
+    if entete.is_empty() {
+        return None;
+    }
+
+    // La ligne de séparation est la suivante, sans ligne vide entre deux.
+    let alignements = alignements(lignes.get(index + 1)?)?;
+
+    if alignements.len() != entete.len() {
+        return None;
+    }
+
+    let mut corps = Vec::new();
+    let mut suivant = index + 2;
+
+    while let Some(ligne) = lignes.get(suivant) {
+        if !ligne.trim_start().starts_with('|') {
+            break;
+        }
+
+        let Some(cellules) = cellules(ligne) else {
+            break;
+        };
+
+        corps.push(cellules);
+        suivant += 1;
+    }
+
+    let entete = entete.into_iter().map(parse_inline).collect();
+    let lignes = corps
+        .into_iter()
+        .map(|ligne| ligne.into_iter().map(parse_inline).collect())
+        .collect();
+
+    Some((
+        crate::langage::schema::Bloc::Tableau {
+            entete,
+            lignes,
+            alignements,
+        },
+        suivant,
+    ))
+}
+
+/// Les cellules d'une ligne de tableau : entre les barres, les barres
+/// échappées restent du contenu.
+fn cellules(ligne: &str) -> Option<Vec<&str>> {
+    let corps = ligne.trim();
+
+    // La ligne commence et finit par sa barre : c'est elle qui borne.
+    let corps = corps.strip_prefix('|')?.strip_suffix('|')?;
+
+    let mut cellules = Vec::new();
+    let mut courant = 0usize;
+    let mut caracteres = corps.char_indices();
+
+    while let Some((position, caractere)) = caracteres.next() {
+        match caractere {
+            '\\' => {
+                // Le caractère échappé ne fait jamais signe.
+                caracteres.next();
+            }
+            '|' => {
+                cellules.push(corps[courant..position].trim());
+                courant = position + 1;
+            }
+            _ => {}
+        }
+    }
+
+    cellules.push(corps[courant..].trim());
+    Some(cellules)
+}
+
+/// Les alignements de la ligne de séparation : `---`, `:-:`, `---:`.
+fn alignements(ligne: &str) -> Option<Vec<crate::langage::schema::Alignement>> {
+    use crate::langage::schema::Alignement;
+
+    let cellules = cellules(ligne)?;
+    let mut alignements = Vec::new();
+
+    for cellule in &cellules {
+        let trait_ = cellule.trim();
+
+        if trait_.is_empty() {
+            return None;
+        }
+
+        let gauche = trait_.starts_with(':');
+        let droite = trait_.ends_with(':');
+        let tirets = trait_.trim_matches(':');
+
+        if tirets.is_empty() || !tirets.chars().all(|c| c == '-') {
+            return None;
+        }
+
+        alignements.push(match (gauche, droite) {
+            (true, true) => Alignement::Centre,
+            (false, true) => Alignement::Droite,
+            _ => Alignement::Gauche,
+        });
+    }
+
+    Some(alignements)
+}
+
 /// Lit une image : `![légende](chemin)`. `None` si la forme n'y est pas.
 ///
 /// La forme est celle du lien, à l'`!` près : elle hérite donc de tout ce
@@ -449,8 +576,10 @@ fn lire_paragraphe(lignes: &[&str], index: usize) -> (String, usize) {
             break;
         }
 
-        // Un nouveau bloc termine aussi le paragraphe.
-        if ouvre_un_bloc(ligne) {
+        // Un nouveau bloc termine aussi le paragraphe — mais la première
+        // ligne est toujours à lui : c'est elle qui l'a fait commencer, et
+        // un bloc qui n'a pas été reconnu comme tel reste du texte.
+        if suivant > index && ouvre_un_bloc(ligne) {
             break;
         }
 

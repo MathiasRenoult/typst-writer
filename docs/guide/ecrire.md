@@ -49,6 +49,23 @@ Voir [La bibliographie](bibliographie.md).
 Une image avec légende compose une **figure numérotée** ; sans légende —
 `![](planche.png)` — c'est l'image seule. Le chemin est relatif au projet.
 
+## Les tableaux
+
+La forme markdown, avec sa ligne de séparation qui dit l'alignement :
+
+    | En-tête | Valeur |
+    | --- | :-: |
+    | a | 1 |
+    | b | 2 |
+
+`---` aligne à gauche, `:-:` au centre, `---:` à droite. Les cellules
+portent du texte ordinaire — emphase, code, citations ; une barre dedans
+s'échappe : `\|`. Sans la ligne de séparation, ce n'est pas un tableau :
+la ligne reste du texte.
+
+Le décor l'habille comme tout bloc — `{encadré}` prend sa tenue dans les
+normes.
+
 ## Le décor : l'intention, jamais la mesure
 
 **La source dit l'intention, les normes disent la mesure.** Par défaut,

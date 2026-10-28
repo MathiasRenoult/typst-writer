@@ -146,6 +146,53 @@ fn generer_bloc(
             out.push_str(texte);
             out.push_str("\n\n");
         }
+        Bloc::Tableau {
+            entete,
+            lignes,
+            alignements,
+        } => {
+            // Le tableau Typst : ses colonnes, ses alignements, son
+            // en-tête, puis les lignes — cellule à cellule.
+            out.push_str("#table(columns: ");
+            out.push_str(&entete.len().to_string());
+            out.push_str(", align: (");
+
+            for (rang, alignement) in alignements.iter().enumerate() {
+                if rang > 0 {
+                    out.push_str(", ");
+                }
+
+                out.push_str(match alignement {
+                    crate::langage::schema::Alignement::Gauche => "left",
+                    crate::langage::schema::Alignement::Centre => "center",
+                    crate::langage::schema::Alignement::Droite => "right",
+                });
+            }
+
+            out.push_str("), table.header(");
+
+            for (rang, cellule) in entete.iter().enumerate() {
+                if rang > 0 {
+                    out.push_str(", ");
+                }
+
+                out.push('[');
+                generer_inline(cellule, out, false, regles, &mut contexte);
+                out.push(']');
+            }
+
+            out.push(')');
+
+            for ligne in lignes {
+                for cellule in ligne {
+                    out.push_str(", [");
+                    generer_inline(cellule, out, false, regles, &mut contexte);
+                    out.push(']');
+                }
+            }
+
+            out.push_str(")\n\n");
+        }
         Bloc::Image { légende, cible } => {
             // Une légende fait une figure numérotée ; sans elle, l'image
             // seule — pas de vide à composer.
