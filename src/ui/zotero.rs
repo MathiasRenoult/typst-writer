@@ -11,7 +11,7 @@ use crate::app::Message;
 use crate::app::state::LiaisonZotero;
 use crate::ui::theme::{self, Palette};
 use crate::zotero::client::Collection;
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{text_input, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 /// La largeur du panneau.
@@ -26,11 +26,11 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
 
-    crate::ui::voile(fenetre(liaison, state.resolved.palette))
+    crate::ui::voile(fenetre(liaison, state.resolved.palette, &state.zotero_recherche))
 }
 
 /// Le panneau, dans l'état où il est.
-fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette) -> Element<'a, Message> {
+fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette, recherche: &'a str) -> Element<'a, Message> {
     let entete = row![
         palette.label("Lier à Zotero").size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
@@ -98,7 +98,7 @@ fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette) -> Element<'a, Mess
             .into()
         }
 
-        LiaisonZotero::Choix(collections) => liste(collections, palette),
+        LiaisonZotero::Choix(collections) => liste(collections, palette, recherche),
     };
 
     let pied = row![
@@ -128,8 +128,16 @@ fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette) -> Element<'a, Mess
         .into()
 }
 
-/// La liste des collections, avec leur place dans l'arbre.
-fn liste<'a>(collections: &'a [Collection], palette: Palette) -> Element<'a, Message> {
+/// La liste des collections : **l'arbre**, respecté — les enfants se
+/// posent sous leurs parents, indentés — et cherchable (bug 1 du
+/// rapport 2). Une bibliothèque de collectionneur a des dizaines de
+/// collections : une liste à plat qui les masque en ombre est une liste
+/// qui ment.
+fn liste<'a>(
+    collections: &'a [Collection],
+    palette: Palette,
+    recherche: &str,
+) -> Element<'a, Message> {
     let noms: Noms = collections
         .iter()
         .map(|collection| {
@@ -143,43 +151,88 @@ fn liste<'a>(collections: &'a [Collection], palette: Palette) -> Element<'a, Mes
         })
         .collect();
 
-    let mut colonne = column![].spacing(2);
+    // Le filtre cherche le nom, ou le chemin entier.
+    let filtre = recherche.trim().to_lowercase();
+
+    // L'arbre : les racines d'abord, puis les enfants sous leurs parents.
+    let mut par_parent: std::collections::BTreeMap<Option<&str>, Vec<&Collection>> =
+        std::collections::BTreeMap::new();
 
     for collection in collections {
-        let chemin = chemin_de(collection, &noms);
-        let nom = collection.nom.clone();
-        let cle = collection.cle.clone();
-
-        let ligne = row![
-            palette.label(nom.clone()).size(theme::jetons::CORPS),
-            Space::new().width(Length::Fill),
-            palette
-                .label(format!("{} notice(s)", collection.notices))
-                .size(theme::jetons::DETAIL)
-                .color(palette.text_muted),
-        ]
-        .spacing(theme::jetons::PAS)
-        .align_y(Alignment::Center);
-
-        let rang = column![
-            ligne,
-            palette
-                .label(chemin)
-                .size(theme::jetons::DETAIL)
-                .color(palette.text_muted),
-        ]
-        .spacing(1);
-
-        colonne = colonne.push(
-            button(rang)
-                .on_press(Message::ZoteroChoisir(cle, nom))
-                .width(Length::Fill)
-                .padding([6, 8])
-                .style(move |_, _| style_ligne(palette)),
-        );
+        par_parent
+            .entry(collection.parent.as_deref())
+            .or_default()
+            .push(collection);
     }
 
-    scrollable(colonne.height(Length::Fixed(HAUTEUR))).into()
+    fn pousser<'a>(
+        rangs: &mut Vec<Element<'a, Message>>,
+        par_parent: &std::collections::BTreeMap<Option<&'a str>, Vec<&'a Collection>>,
+        parent: Option<&'a str>,
+        profondeur: usize,
+        palette: Palette,
+        noms: &Noms<'a>,
+        filtre: &str,
+    ) {
+        let Some(enfants) = par_parent.get(&parent) else {
+            return;
+        };
+
+        for collection in enfants {
+            let passe = filtre.is_empty()
+                || collection.nom.to_lowercase().contains(filtre)
+                || chemin_de(collection, noms).to_lowercase().contains(filtre);
+
+            // Le filtre garde aussi les parents des collections trouvées :
+            // un enfant trouvé se voit avec sa place.
+            if passe {
+                let nom = collection.nom.clone();
+                let cle = collection.cle.clone();
+
+                let ligne = row![
+                    Space::new().width(Length::Fixed(14.0 * profondeur as f32)),
+                    palette.label(nom.clone()).size(theme::jetons::CORPS),
+                    Space::new().width(Length::Fill),
+                    palette
+                        .label(format!("{} notice(s)", collection.notices))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .spacing(theme::jetons::PAS)
+                .align_y(Alignment::Center);
+
+                rangs.push(
+                    button(ligne)
+                        .on_press(Message::ZoteroChoisir(cle, nom))
+                        .width(Length::Fill)
+                        .padding([6, 8])
+                        .style(move |_, _| style_ligne(palette))
+                        .into(),
+                );
+            }
+
+            pousser(rangs, par_parent, Some(collection.cle.as_str()), profondeur + 1, palette, noms, filtre);
+        }
+    }
+
+    let mut rangs = Vec::new();
+    pousser(&mut rangs, &par_parent, None, 0, palette, &noms, &filtre);
+
+    let mut colonne: iced::widget::Column<'_, Message> = column![].spacing(2);
+
+    for rang in rangs {
+        colonne = colonne.push(rang);
+    }
+
+    let corps = column![
+        text_input("chercher une collection", recherche)
+            .on_input(Message::ZoteroRecherche)
+            .padding(5),
+        scrollable(colonne.height(Length::Fixed(HAUTEUR - 34.0))),
+    ]
+    .spacing(6);
+
+    corps.into()
 }
 
 /// Une ligne de collection : un bouton qui ne se voit pas, jusqu'au geste.

@@ -210,6 +210,7 @@ pub enum Message {
 
     ProjetNom(String),
     SurvolReference(Option<String>),
+    ZoteroRecherche(String),
 
     ProjetsVue,
 

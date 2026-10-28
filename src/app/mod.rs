@@ -117,6 +117,7 @@ impl State {
             projets_vue: false,
             editeur_theme: None,
             survol_reference: None,
+            zotero_recherche: String::new(),
             onglets: Vec::new(),
             etagere_brouillon: String::new(),
             geste_confirme: false,
@@ -652,6 +653,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             }
 
+            Task::none()
+        }
+
+        Message::ZoteroRecherche(filtre) => {
+            state.zotero_recherche = filtre;
             Task::none()
         }
 

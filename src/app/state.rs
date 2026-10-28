@@ -110,6 +110,9 @@ pub struct State {
     /// bibliographie, ses normes, sa session.
     pub onglets: Vec<std::path::PathBuf>,
 
+    /// La recherche dans les collections Zotero.
+    pub zotero_recherche: String,
+
     /// La référence survolée dans la bibliothèque — ses gestes ne
     /// paraissent qu'à ce moment (bug 13 du rapport 2).
     pub survol_reference: Option<String>,
