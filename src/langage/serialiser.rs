@@ -17,7 +17,7 @@ use super::schema::{Bloc, Document, Inline, Reference, ouvre_un_bloc};
 /// L'ordre n'importe pas : chacun est échappé individuellement. Les fermetures
 /// `]` et `}` y sont autant que les ouvertures — un crochet nu dans une note
 /// la refermerait avant l'heure —, et `_` ouvre l'italique bas.
-const MARQUEURS: [char; 11] = ['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'];
+const MARQUEURS: [char; 12] = ['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'];
 
 /// Sérialise un document dans notre syntaxe.
 ///
@@ -104,6 +104,11 @@ pub fn serialiser(document: &Document) -> String {
                     }
                     out.push_str(" |\n");
                 }
+            }
+            Bloc::Formule(texte) => {
+                out.push_str("$$\n");
+                out.push_str(texte);
+                out.push_str("\n$$\n");
             }
             Bloc::Image { légende, cible } => {
                 out.push_str("![");
@@ -254,6 +259,11 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 out.push_str("***");
                 ecrire_inline(contenu, out);
                 out.push_str("***");
+            }
+            Inline::Formule(texte) => {
+                out.push('$');
+                out.push_str(texte);
+                out.push('$');
             }
             Inline::Code(texte) => {
                 out.push('`');
@@ -431,6 +441,52 @@ mod tests {
         ));
 
         assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Une formule en ligne se lit et se relit — opaque, comme le code.
+    #[test]
+    fn une_formule_en_ligne_se_lit() {
+        let document = super::super::parse("Soit $x^2$ dans le texte.");
+
+        assert!(
+            matches!(
+                &document.blocs[..],
+                [Bloc::Paragraphe(contenu)] if contenu.iter().any(|i| matches!(i, Inline::Formule(_)))
+            ),
+            "vu : {:?}",
+            document.blocs
+        );
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Une formule à part tient sur ses lignes, et compose en math.
+    #[test]
+    fn une_formule_a_part_compose() {
+        let source = "$$\nx^2 + y^2 = z^2\n$$";
+        let document = super::super::parse(source);
+
+        assert!(
+            matches!(&document.blocs[..], [Bloc::Formule(texte)] if texte.contains("z^2")),
+            "vu : {:?}",
+            document.blocs
+        );
+
+        let typst = crate::langage::generer::generer(&document);
+        assert!(typst.contains("$\nx^2 + y^2 = z^2\n$"), "vu : {typst}");
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Une formule jamais fermée n'est pas un bloc perdu : elle va
+    /// jusqu'à la fin, comme un bloc brut.
+    #[test]
+    fn une_formule_ouverte_ne_perd_rien() {
+        let document = super::super::parse("$$\nx^2");
+
+        assert!(
+            matches!(&document.blocs[..], [Bloc::Formule(_)]),
+            "vu : {:?}",
+            document.blocs
+        );
     }
 
     /// Un tableau se lit, s'écrit et se relit — avec ses alignements.
@@ -902,9 +958,16 @@ mod tests {
         match hasard.entier(portee) {
             0..=1 => texte_au_hasard(hasard),
             2 => litteral_au_hasard(hasard),
-            3 => Inline::Code(
-                (*hasard.un_parmi(&["x", "#f()", "arr[0]", "*ptr", "a]b", "}", ")"])).to_string(),
-            ),
+            3 => {
+                if hasard.entier(2) == 0 {
+                    Inline::Code(
+                        (*hasard.un_parmi(&["x", "#f()", "arr[0]", "*ptr", "a]b", "}", ")"]))
+                            .to_string(),
+                    )
+                } else {
+                    Inline::Formule(formule_au_hasard(hasard))
+                }
+            }
             4 => Inline::Couleur {
                 couleur: (*hasard.un_parmi(&["red", "#ff0000", "rgb(1, 2, 0)", "blue"]))
                     .to_string(),
@@ -1055,8 +1118,19 @@ mod tests {
         }
     }
 
+    /// Une formule au hasard — jamais de dollar dedans : c'est sa barre.
+    fn formule_au_hasard(hasard: &mut Hasard) -> String {
+        (*hasard.un_parmi(&[
+            "x^2 + y^2 = z^2",
+            "sum_(i=1)^n i = (n(n+1))/2",
+            "alpha beta gamma",
+            "vec(v) = mat(a; b)",
+        ]))
+        .to_string()
+    }
+
     fn bloc_simple_au_hasard(hasard: &mut Hasard) -> Bloc {
-        match hasard.entier(9) {
+        match hasard.entier(10) {
             0 => Bloc::Titre {
                 niveau: (1 + hasard.entier(6)) as u8,
                 contenu: inlines_au_hasard(hasard, false),
@@ -1085,6 +1159,7 @@ mod tests {
             ),
             6 => image_au_hasard(hasard),
             7 => tableau_au_hasard(hasard),
+            8 => Bloc::Formule(formule_au_hasard(hasard)),
             _ => Bloc::Paragraphe(paragraphe_au_hasard(hasard)),
         }
     }

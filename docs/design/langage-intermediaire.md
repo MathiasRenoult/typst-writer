@@ -78,8 +78,10 @@ citations de bloc ; Entrée sur un marqueur vide quitte la structure.
 | Italique | `*texte*` ou `_texte_` | `_texte_` |
 | Gras + italique | `***texte***` | `*_texte_*` |
 | Code | `` `texte` `` | ` `texte` `` |
+| Littéral | `\x` | le caractère nu, sans interprétation |
+| Formule en ligne | `$x^2$` | `$x^2$` — math Typst |
 | Couleur | `{couleur:texte}` | `#text(fill: couleur)[texte]` |
-| Citation bibliographique | `@clé` | `@clé` |
+| Citation bibliographique | `@clé`, `@clé[p. 45]`, `@clé; @autre` | une note, jamais deux |
 | Lien | `[texte](cible)` | `#link("cible")[texte]` |
 | Note de bas de page | `^[texte]` | `#footnote[texte]` |
 

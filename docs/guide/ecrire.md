@@ -49,6 +49,20 @@ Voir [La bibliographie](bibliographie.md).
 Une image avec légende compose une **figure numérotée** ; sans légende —
 `![](planche.png)` — c'est l'image seule. Le chemin est relatif au projet.
 
+## Les formules
+
+En ligne, entre dollars : `Soit $x^2$ dans le texte.` — une bande
+opaque comme le code : rien ne s'y ouvre ni ne s'y ferme.
+
+À part, sur ses lignes :
+
+    $$
+    x^2 + y^2 = z^2
+    $$
+
+Le contenu est du **math Typst**, mot pour mot. Une barre de dollars
+dans le texte s'échappe : `\$`.
+
 ## Les tableaux
 
 La forme markdown, avec sa ligne de séparation qui dit l'alignement :

@@ -44,6 +44,9 @@ pub enum Genre {
 
     /// `| A | B |` et sa suite : le tableau se déplace d'un bloc.
     Tableau,
+
+    /// `$$ … $$` : la formule à part, sa forme est sa donnée.
+    Formule,
 }
 
 /// Un bloc du texte source : sa nature, et ses lignes.
@@ -135,6 +138,26 @@ pub fn blocs(source: &str) -> Vec<Bloc> {
             }
 
             index += 1;
+            continue;
+        }
+
+        // Une formule à part : ses lignes, jusqu'à sa fermeture.
+        if !echappee && ligne.trim_start().starts_with("$$") {
+            let mut fin = index + 1;
+
+            while fin < lignes.len() && lignes[fin].trim() != "$$" {
+                fin += 1;
+            }
+
+            if fin < lignes.len() {
+                fin += 1;
+            }
+
+            blocs.push(Bloc {
+                genre: Genre::Formule,
+                lignes: manteau.take().unwrap_or(index)..fin,
+            });
+            index = fin;
             continue;
         }
 
@@ -256,8 +279,9 @@ pub fn remplacement(source: &str, bloc: &Bloc, genre: Genre) -> Option<(Range<us
 
     let mut remplacement: Vec<String> = match genre {
         // Une image ne change pas de nature : sa forme est sa donnée.
-        // Un tableau non plus : sa grille est son contenu.
-        Genre::Image | Genre::Tableau => contenu,
+        // Un tableau non plus : sa grille est son contenu. Une formule
+        // davantage encore : sa math est tout ce qu'elle est.
+        Genre::Image | Genre::Tableau | Genre::Formule => contenu,
         Genre::Paragraphe => contenu,
 
         Genre::Titre(niveau) => {
@@ -439,7 +463,11 @@ pub fn sans_marque(ligne: &str, genre: Genre) -> String {
             }
         }
         // L'image garde sa forme entière : c'est sa donnée.
-        Genre::Brut | Genre::Paragraphe | Genre::Image | Genre::Tableau => None,
+        Genre::Brut
+        | Genre::Paragraphe
+        | Genre::Image
+        | Genre::Tableau
+        | Genre::Formule => None,
     };
 
     retire.unwrap_or(ligne).to_string()

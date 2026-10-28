@@ -77,9 +77,10 @@ fn premier_texte(inline: &[Inline]) -> Option<char> {
 fn premier_caractere(inline: &[Inline]) -> Option<char> {
     for element in inline {
         let trouve = match element {
-            Inline::Texte(texte) | Inline::Litteral(texte) | Inline::Code(texte) => {
-                texte.chars().next()
-            }
+            Inline::Texte(texte)
+            | Inline::Litteral(texte)
+            | Inline::Code(texte)
+            | Inline::Formule(texte) => texte.chars().next(),
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)
@@ -192,6 +193,13 @@ fn generer_bloc(
             }
 
             out.push_str(")\n\n");
+        }
+        Bloc::Formule(texte) => {
+            // La formule est une équation à part : ses dollars la bornent,
+            // et le contenu est du math Typst, mot pour mot.
+            out.push_str("$\n");
+            out.push_str(texte.trim());
+            out.push_str("\n$\n\n");
         }
         Bloc::Image { légende, cible } => {
             // Une légende fait une figure numérotée ; sans elle, l'image
@@ -317,6 +325,11 @@ fn generer_inline(
                 generer_inline(contenu, out, false, regles, contexte);
                 out.push(']');
                 en_tete = false;
+            }
+            Inline::Formule(texte) => {
+                out.push('$');
+                out.push_str(texte);
+                out.push('$');
             }
             Inline::Lien { texte, cible } => {
                 out.push_str("#link(\"");

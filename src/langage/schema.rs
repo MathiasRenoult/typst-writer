@@ -38,6 +38,8 @@ pub enum Bloc {
     ListeNumero(Vec<Vec<Inline>>),
     /// Un bloc brut Typst, inséré tel quel dans le document généré.
     Brut(String),
+    /// Une formule mathématique : `$$ … $$`, du Typst math brut.
+    Formule(String),
     /// Un tableau : `| A | B |`, sa ligne de séparation, ses lignes.
     Tableau {
         /// L'en-tête, cellule par cellule — jamais vide.
@@ -167,7 +169,7 @@ impl Proprietes {
                 && !valeur.is_empty()
                 && valeur == valeur.trim()
                 && !valeur.contains('\n')
-                && !valeur.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'])
+                && !valeur.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
         })
     }
 }
@@ -208,6 +210,9 @@ pub enum Inline {
     /// dit, et c'est elle qui dicte la forme du générateur (voir
     /// [`crate::langage::generer::generer`]).
     Citation(Vec<Reference>),
+    /// Une formule mathématique en ligne : `$x^2$` — une bande opaque,
+    /// comme le code : ce qui s'y trouve ne ferme rien du voisinage.
+    Formule(String),
     /// Une note de bas de page : `^[contenu]`.
     Note(Vec<Inline>),
     /// Un lien : `[texte](https://…)`.
@@ -328,6 +333,8 @@ impl Bloc {
             // Un bloc brut est pris tel quel : son délimiteur s'adapte à son
             // contenu, tout lui est permis.
             Bloc::Brut(_) => true,
+            // La formule est opaque : sa barre de dollars n'y paraît pas.
+            Bloc::Formule(texte) => !texte.contains('$') && !texte.trim().is_empty(),
             Bloc::Tableau {
                 entete,
                 lignes,
@@ -371,7 +378,7 @@ impl Inline {
                 // porte aucun, c'est ce qui rend l'écriture univoque.
                 !texte.is_empty()
                     && !texte.contains('\n')
-                    && !texte.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'])
+                    && !texte.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
             }
             Inline::Litteral(texte) => !texte.is_empty() && !texte.contains('\n'),
             Inline::Gras(contenu) | Inline::Italique(contenu) | Inline::GrasItalique(contenu) => {
@@ -379,13 +386,15 @@ impl Inline {
             }
             // Le code est littéral : son délimiteur n'y paraît pas.
             Inline::Code(texte) => !texte.contains('`') && !texte.contains('\n'),
+            // La formule aussi : ni sa barre, ni saut de ligne.
+            Inline::Formule(texte) => !texte.contains('$') && !texte.contains('\n'),
             Inline::Couleur { couleur, contenu } => {
                 // Le nom va jusqu'au premier deux-points : un nom **simple**,
                 // lettres, chiffres et quelques signes — `red`, `#ff0000`,
                 // `rgb(1, 2, 0)`. Ni marqueur, qui ferait signe aux balayages
                 // du voisinage, ni deux-points, qui serait le séparateur.
                 !couleur.is_empty()
-                    && !couleur.contains([':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|'])
+                    && !couleur.contains([':', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
                     && !couleur.contains('\n')
                     && inline_canonique(contenu)
             }
@@ -442,6 +451,7 @@ pub fn ouvre_un_bloc(texte: &str) -> bool {
     if crate::langage::parse::lire_image(debut).is_some()
         || crate::langage::parse::lire_proprietes_ligne(debut).is_some()
         || debut.starts_with('|')
+        || debut.starts_with("$$")
     {
         return true;
     }
@@ -613,6 +623,7 @@ impl Bloc {
                 .collect::<Vec<_>>()
                 .join(" "),
             Bloc::Brut(_) => String::new(),
+            Bloc::Formule(texte) => texte.clone(),
         }
     }
 }
@@ -629,7 +640,7 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
             | Inline::GrasItalique(contenu)
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => out.push_str(&inline_texte_nu(contenu)),
-            Inline::Code(texte) => out.push_str(texte),
+            Inline::Code(texte) | Inline::Formule(texte) => out.push_str(texte),
             Inline::Citation(references) => {
                 for (index, reference) in references.iter().enumerate() {
                     if index > 0 {

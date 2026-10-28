@@ -117,6 +117,14 @@ pub fn parse(texte: &str) -> Document {
             continue;
         }
 
+        // Une formule à part : `$$` sur sa ligne, ou en une seule.
+        if !echappee && ligne.trim_start().starts_with("$$") {
+            let (formule, suivant) = lire_formule(&lignes, index);
+            blocs.push(habiller(Bloc::Formule(formule), &mut en_attente));
+            index = suivant;
+            continue;
+        }
+
         // Un tableau : son en-tête, sa ligne de séparation, ses lignes.
         // Sans séparation, ce n'en est pas un — la ligne reste du texte.
         if !echappee
@@ -226,6 +234,8 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             // Une ligne de tableau — mais sans séparation, ce n'en est
             // pas une : le parseur sait le reste.
             || (debut.starts_with('|') && cellules(ligne).is_some())
+            // Une formule à part.
+            || debut.starts_with("$$")
             // Une ligne d'attributs trouvée — mais elle flotte jusqu'à son
             // bloc, et le parseur sait le reste.
             || crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
@@ -365,6 +375,38 @@ pub fn lire_proprietes_ligne(ligne: &str) -> Option<crate::langage::schema::Prop
     }
 
     (!proprietes.est_vide()).then_some(proprietes)
+}
+
+/// Lit une formule à part : `$$ … $$`, en une ou plusieurs lignes.
+///
+/// Comme un bloc brut : jamais fermée, elle va jusqu'à la fin du
+/// document. Rien n'est jamais une erreur — ce qui ne se lit pas comme
+/// une construction se lit comme du texte.
+fn lire_formule(lignes: &[&str], index: usize) -> (String, usize) {
+    let ligne = lignes[index].trim();
+
+    // En une seule ligne : `$$x^2$$`.
+    if ligne.len() > 4 && ligne.ends_with("$$") {
+        return (ligne[2..ligne.len() - 2].to_string(), index + 1);
+    }
+
+    // Sur ses lignes : le contenu va jusqu'au `$$` fermant.
+    let mut contenu = Vec::new();
+    let mut suivant = index + 1;
+
+    while suivant < lignes.len() {
+        let ligne = lignes[suivant].trim();
+
+        if ligne == "$$" {
+            suivant += 1;
+            break;
+        }
+
+        contenu.push(lignes[suivant]);
+        suivant += 1;
+    }
+
+    (contenu.join("\n"), suivant)
 }
 
 /// Lit un tableau : en-tête, ligne de séparation, lignes.
@@ -686,6 +728,14 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
         if let Some((contenu, apres)) = delimit(reste, "`") {
             vider!();
             elements.push(Inline::Code(contenu.to_string()));
+            reste = apres;
+            continue;
+        }
+
+        // Formule en ligne : `$x^2$` — une bande opaque comme le code.
+        if let Some((contenu, apres)) = delimit(reste, "$") {
+            vider!();
+            elements.push(Inline::Formule(contenu.to_string()));
             reste = apres;
             continue;
         }
