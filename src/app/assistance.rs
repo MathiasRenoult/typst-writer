@@ -234,6 +234,12 @@ pub(super) fn request_rename(state: &mut State, new_name: &str) -> Task<Message>
     let offset = state.editor.cursor_offset();
 
     let Some(session) = state.lsp.session.as_mut() else {
+        // Sans assistance, le renommage ne peut rien promettre : le dire
+        // vaut mieux qu'une fenêtre qui ne répond pas.
+        state.note = Some(crate::app::state::Note::erreur(
+            "L'assistance est absente — le renommage de symbole en a besoin.",
+        ));
+
         return Task::none();
     };
 

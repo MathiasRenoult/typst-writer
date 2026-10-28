@@ -364,7 +364,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.renaming = Some(super::ChapterRename { path, buffer });
 
-            Task::none()
+            // Le focus va à la saisie : sans lui, la frappe part dans
+            // l'éditeur et s'insère dans le document.
+            iced::widget::operation::focus(crate::ui::rename::id_du_renommage())
         }
 
         Message::RenameChanged(text) => {

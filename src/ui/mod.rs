@@ -7,7 +7,7 @@ pub mod preview;
 pub mod recherche;
 pub mod reference;
 mod reglages;
-mod rename;
+pub mod rename;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;

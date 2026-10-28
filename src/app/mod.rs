@@ -172,10 +172,14 @@ impl State {
         // retenu avant d'être un chapitre — ou dont le fichier a été déplacé
         // dans un autre projet — s'ouvrirait sinon dans l'éditeur sans jamais
         // être rendu, exactement le défaut que l'import répare.
-        let wanted = session
-            .last_document
-            .filter(|path| path.is_file())
-            .filter(|path| state.project.document.as_deref() == Some(path.as_path()));
+        // Le document, ou un chapitre : tout ce qui appartient au projet.
+        // N'accepter que `document.tw` laissait un chapitre ouvert se perdre
+        // au redémarrage — exactement ce que la session promet de garder.
+        let wanted = session.last_document.filter(|path| {
+            path.is_file()
+                && (state.project.document.as_deref() == Some(path.as_path())
+                    || state.project.chapters.iter().any(|c| c.path == *path))
+        });
 
         let document = wanted.or_else(|| state.project.document.clone());
         let chapter = document.or_else(|| {

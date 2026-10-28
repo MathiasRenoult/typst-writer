@@ -1,4 +1,10 @@
 use iced::widget::{Space, button, column, container, row, text, text_input};
+
+/// L'identifiant de la saisie de renommage : le focus y va dès l'ouverture,
+/// sinon la frappe part dans l'éditeur et s'insère dans le document.
+pub fn id_du_renommage() -> iced::widget::Id {
+    iced::widget::Id::new("renommage-nom")
+}
 use iced::{Element, Length};
 
 use crate::app::message::Message;
@@ -30,6 +36,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .spacing(8);
 
     let saisie = text_input("nouveau nom", &renommage.nom)
+        .id(id_du_renommage())
         .on_input(Message::SymbolRenameChanged)
         .on_submit(Message::SymbolRenameAsk)
         .padding(8)
