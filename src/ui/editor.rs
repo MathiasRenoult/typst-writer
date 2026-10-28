@@ -249,19 +249,43 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
         &'b mut self,
         tree: &'b mut Tree,
         layout: Layout<'b>,
-        _renderer: &iced::Renderer,
-        _viewport: &Rectangle,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
-        let bulle = self.bulle.as_mut()?;
+        // Les recouvrements de l'éditeur d'abord : les perdre, c'est perdre
+        // ses propres panneaux. Puis la bulle, à sa place absolue — les
+        // deux vivent dans un même groupe, comme le fait le `tooltip`
+        // d'iced.
+        let mut enfants = Vec::new();
 
-        Some(overlay::Element::new(Box::new(BulleRecouvrement {
-            contenu: &mut bulle.contenu,
-            arbre: &mut tree.children[1],
-            position: layout.position()
-                + translation
-                + Vector::new(bulle.position.x, bulle.position.y),
-        })))
+        let (premier, reste) = tree.children.split_at_mut(1);
+
+        let editeur = self.editor.as_widget_mut().overlay(
+            &mut premier[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        );
+
+        enfants.extend(editeur);
+
+        if let Some(bulle) = self.bulle.as_mut() {
+            enfants.push(overlay::Element::new(Box::new(BulleRecouvrement {
+                contenu: &mut bulle.contenu,
+                arbre: &mut reste[0],
+                position: layout.position()
+                    + translation
+                    + Vector::new(bulle.position.x, bulle.position.y),
+            })));
+        }
+
+        if enfants.is_empty() {
+            None
+        } else {
+            Some(overlay::Group::with_children(enfants).overlay())
+        }
     }
 }
 
