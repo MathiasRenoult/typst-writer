@@ -116,6 +116,7 @@ impl State {
             tableau: None,
             projets_vue: false,
             editeur_theme: None,
+            onglets: Vec::new(),
             etagere_brouillon: String::new(),
             geste_confirme: false,
             confirmation: None,
@@ -618,6 +619,39 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                     Task::none()
                 }
             }
+        }
+
+        // Les onglets : choisir un projet, c'est garder le monde de
+        // chacun — la session se persiste avant de partir, et le suivant
+        // se charge tout entier.
+        Message::OngletChoisir(dir) => {
+            if state.project.dir == dir {
+                return Task::none();
+            }
+
+            state.persist();
+
+            update(state, Message::OpenProject(dir))
+        }
+
+        Message::OngletFermer(dir) => {
+            state.onglets.retain(|onglet| *onglet != dir);
+
+            if state.project.dir == dir {
+                match state.onglets.first().cloned() {
+                    Some(suivant) => {
+                        state.persist();
+                        return update(state, Message::OpenProject(suivant));
+                    }
+                    None => {
+                        state.note = Some(crate::app::state::Note::info(
+                            "Dernier onglet fermé.".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            Task::none()
         }
 
         Message::ProjetsVue => {

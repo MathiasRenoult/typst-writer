@@ -211,6 +211,9 @@ pub enum Message {
     ProjetNom(String),
     ProjetsVue,
 
+    OngletChoisir(std::path::PathBuf),
+    OngletFermer(std::path::PathBuf),
+
     ThemeEditeurOuvrir,
     ThemeEditeurChoisir(String),
     ThemeEditeurChamp(&'static str, String),

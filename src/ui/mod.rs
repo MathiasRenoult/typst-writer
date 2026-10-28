@@ -5,6 +5,7 @@ pub mod editor;
 pub mod layout;
 pub mod preview;
 pub mod projet;
+pub mod onglets;
 pub mod projets;
 pub mod theme_editeur;
 pub mod recherche;
@@ -62,6 +63,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     stack![
         column![
             toolbar::view(state),
+            onglets::view(state),
             rename::view(state),
             layout::view(state),
             status_bar::view(state),

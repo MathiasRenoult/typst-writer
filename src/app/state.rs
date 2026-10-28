@@ -105,6 +105,11 @@ pub struct State {
     /// Le filtre de la liste des références — elle se cherche.
     pub references_filtre: String,
 
+    /// Les projets ouverts, en onglets. Le premier est le courant tant
+    /// qu'un autre n'est pas choisi — chaque projet garde son monde : sa
+    /// bibliographie, ses normes, sa session.
+    pub onglets: Vec<std::path::PathBuf>,
+
     /// L'éditeur de thème : sa copie de travail, quand il est ouvert.
     pub editeur_theme: Option<crate::theming::ThemeFile>,
 

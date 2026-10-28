@@ -219,6 +219,12 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::OpenProject(dir) => {
+            // Un projet ouvert a son onglet : il reste vivant, avec son
+            // monde, même quand un autre prend l'écran.
+            if !state.onglets.contains(&dir) {
+                state.onglets.push(dir.clone());
+            }
+
             state.project = crate::project::load(&dir);
             state.render.reset();
 
