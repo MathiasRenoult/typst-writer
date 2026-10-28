@@ -6,6 +6,7 @@ pub mod layout;
 pub mod preview;
 pub mod projet;
 pub mod projets;
+pub mod theme_editeur;
 pub mod recherche;
 pub mod reference;
 mod reglages;
@@ -77,6 +78,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         projet::view(state),
         tableau::view(state),
         projets::view(state),
+        theme_editeur::view(state),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

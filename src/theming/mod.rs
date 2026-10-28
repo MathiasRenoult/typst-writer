@@ -98,7 +98,7 @@ pub fn intern_family(name: &str) -> &'static str {
 }
 
 /// Clarté d'un thème : à quel mode système il répond.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Appearance {
     /// Thème clair.
@@ -116,6 +116,18 @@ pub enum Appearance {
 /// « bleu » » vaut mieux qu'un message de conversion générique.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HexColor(pub Color);
+
+impl Serialize for HexColor {
+    fn serialize<S: serde::Serializer>(&self, serialiseur: S) -> Result<S::Ok, S::Error> {
+        let couleur = self.0;
+        serialiseur.serialize_str(&format!(
+            "#{:02x}{:02x}{:02x}",
+            (couleur.r * 255.0).round() as u8,
+            (couleur.g * 255.0).round() as u8,
+            (couleur.b * 255.0).round() as u8
+        ))
+    }
+}
 
 impl HexColor {
     /// Lit une couleur hexadécimale.
@@ -154,7 +166,7 @@ impl<'de> Deserialize<'de> for HexColor {
 ///
 /// C'est la base du thème : les couleurs de l'éditeur et de la coloration en
 /// sont déduites si elles ne sont pas écrites.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Colors {
     /// Fond de l'application.
@@ -257,7 +269,7 @@ impl Colors {
 /// Seules des **familles** et des **tailles** : aucune mesure de disposition.
 /// Une famille absente du système retombe sur la police par défaut du moteur,
 /// ce qui dégrade l'aspect sans jamais empêcher d'écrire.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Fonts {
     /// Famille de l'interface. Vide : la police par défaut.
@@ -315,7 +327,7 @@ impl Fonts {
 ///
 /// Toutes déduites des couleurs de l'interface si elles sont omises : on peut
 /// écrire un thème complet sans jamais toucher à cette section.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct EditorColors {
     /// Fond de la page.
@@ -367,7 +379,7 @@ pub struct EditorColors {
 /// l'application qui sait à quelles portées chaque rôle correspond, et dans
 /// quel ordre les appliquer. Un thème n'a donc pas à connaître les détails du
 /// moteur de coloration, et l'ordre d'application reste celui du code.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Syntax {
     /// Texte ordinaire.
@@ -442,7 +454,7 @@ fn family(declared: &Option<String>) -> Option<&str> {
 }
 
 /// Un thème tel qu'il est écrit dans un fichier.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ThemeFile {
     /// Métadonnées : nom affiché et clarté.
@@ -469,7 +481,7 @@ pub struct ThemeFile {
 }
 
 /// Le nom et la clarté d'un thème.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Meta {
     /// Nom affiché dans la liste des thèmes.
@@ -1489,5 +1501,53 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Enregistrer un thème : le fichier se réécrit, à sa place.
+///
+/// C'est le geste de l'éditeur de thème : la copie de travail devient le
+/// thème. Le fichier est cherché par le nom du thème — celui qui l'a
+/// chargé sait où il vit.
+pub fn enregistrer(fichier: &ThemeFile) -> Result<(), String> {
+    let dossier = themes_dir();
+
+    let chemin = std::fs::read_dir(&dossier)
+        .map_err(|erreur| format!("Le dossier des thèmes ne se lit pas : {erreur}."))?
+        .filter_map(Result::ok)
+        .map(|entree| entree.path())
+        .filter(|chemin| chemin.extension().is_some_and(|ext| ext == "toml"))
+        .find(|chemin| {
+            std::fs::read_to_string(chemin)
+                .ok()
+                .and_then(|texte| ThemeFile::parse(&texte, Some(chemin)).ok())
+                .is_some_and(|charge| charge.meta.name == fichier.meta.name)
+        })
+        .ok_or_else(|| format!("Le fichier du thème « {} » est introuvable.", fichier.meta.name))?;
+
+    let texte = toml::to_string_pretty(fichier)
+        .map_err(|erreur| format!("Le thème ne s'écrit pas : {erreur}."))?;
+
+    crate::project::ecrire_atomique(&chemin, &texte)
+        .map_err(|erreur| format!("Le fichier du thème ne s'écrit pas : {erreur}."))
+}
+
+#[cfg(test)]
+mod tests_de_l_editeur {
+    use super::*;
+
+    /// Un thème s'écrit et se relit, identique : c'est le contrat de
+    /// l'éditeur de thème, qui réécrit le fichier à l'enregistrement.
+    #[test]
+    fn un_theme_s_ecrit_et_se_relit() {
+        let fichier = ThemeFile::parse(include_str!("everforest.toml"), None)
+            .expect("everforest.toml se charge");
+
+        let texte = toml::to_string_pretty(&fichier).expect("le thème s'écrit");
+        let relu = ThemeFile::parse(&texte, None).expect("il se relit");
+
+        assert_eq!(fichier.meta.name, relu.meta.name);
+        assert_eq!(fichier.colors.background, relu.colors.background);
+        assert_eq!(fichier.colors.text, relu.colors.text);
     }
 }

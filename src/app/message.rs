@@ -210,6 +210,12 @@ pub enum Message {
 
     ProjetNom(String),
     ProjetsVue,
+
+    ThemeEditeurOuvrir,
+    ThemeEditeurChoisir(String),
+    ThemeEditeurChamp(&'static str, String),
+    ThemeEditeurEnregistrer,
+    ThemeEditeurFermer,
     EtagereBrouillon(String),
     EtagereDefinir(String, String),
 

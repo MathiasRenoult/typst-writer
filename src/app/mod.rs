@@ -115,6 +115,7 @@ impl State {
             references_filtre: String::new(),
             tableau: None,
             projets_vue: false,
+            editeur_theme: None,
             etagere_brouillon: String::new(),
             geste_confirme: false,
             confirmation: None,
@@ -531,6 +532,94 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         // Le dialogue s'ouvre sur le vide, ou sur le nom du projet visé.
+        // L'éditeur de thème : une copie de travail, et le fichier ne
+        // bouge qu'à l'enregistrement — la règle de tout dialogue.
+        Message::ThemeEditeurOuvrir => {
+            // Le premier thème à fichier — les natifs n'en ont pas, et se
+            // gardent de tout éditeur.
+            let premier = state
+                .themes
+                .iter()
+                .find(|theme| theme.file.is_some())
+                .and_then(|theme| theme.file.clone());
+
+            match premier {
+                Some(fichier) => {
+                    state.editeur_theme = Some(fichier);
+                }
+                None => {
+                    state.note = Some(crate::app::state::Note::erreur(
+                        "Aucun thème à éditer : les thèmes natifs n'ont pas de fichier."
+                            .to_string(),
+                    ));
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::ThemeEditeurChoisir(nom) => {
+            let fichier = state
+                .themes
+                .iter()
+                .find(|theme| theme.file.as_ref().is_some_and(|f| f.meta.name == nom))
+                .and_then(|theme| theme.file.clone());
+
+            if let Some(fichier) = fichier {
+                state.editeur_theme = Some(fichier);
+            }
+
+            Task::none()
+        }
+
+        Message::ThemeEditeurChamp(champ, valeur) => {
+            if let Some(fichier) = state.editeur_theme.as_mut() {
+                let Ok(valeur) = crate::theming::HexColor::parse(valeur.trim()) else {
+                    return Task::none();
+                };
+
+                match champ {
+                    "background" => fichier.colors.background = valeur,
+                    "surface" => fichier.colors.surface = valeur,
+                    "text" => fichier.colors.text = valeur,
+                    "accent" => fichier.colors.accent = valeur,
+                    "text_muted" => fichier.colors.text_muted = Some(valeur),
+                    "border" => fichier.colors.border = Some(valeur),
+                    "danger" => fichier.colors.danger = Some(valeur),
+                    "warning" => fichier.colors.warning = Some(valeur),
+                    "success" => fichier.colors.success = Some(valeur),
+                    _ => {}
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::ThemeEditeurFermer => {
+            state.editeur_theme = None;
+            Task::none()
+        }
+
+        Message::ThemeEditeurEnregistrer => {
+            let Some(fichier) = state.editeur_theme.clone() else {
+                return Task::none();
+            };
+
+            match crate::theming::enregistrer(&fichier) {
+                Ok(()) => {
+                    state.editeur_theme = None;
+                    state.note = Some(crate::app::state::Note::info(
+                        "Le thème est enregistré.".to_string(),
+                    ));
+                    Task::none()
+                }
+                Err(message) => {
+                    state.note = Some(crate::app::state::Note::erreur(message));
+                    Task::none()
+                }
+            }
+        }
+
         Message::ProjetsVue => {
             state.projets_vue = !state.projets_vue;
             Task::none()
@@ -2234,6 +2323,8 @@ struct Situation {
     tableau: bool,
     /// La vue des projets est ouverte — `Échap` la ferme.
     projets: bool,
+    /// L'éditeur de thème est ouvert — `Échap` le ferme.
+    theme: bool,
     /// Le dialogue de projet est ouvert — `Échap` annule.
     projet: bool,
     /// Une confirmation attend son mot — `Échap` est « Annuler ».
@@ -2259,6 +2350,7 @@ impl Situation {
         Situation {
             tableau: state.tableau.is_some(),
             projets: state.projets_vue,
+            theme: state.editeur_theme.is_some(),
             projet: state.projet_dialogue.is_some(),
             confirmation: state.confirmation.is_some(),
             composeur: state.composeur.is_some(),
@@ -2416,6 +2508,10 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
         return Message::ProjetsVue;
     }
 
+    if etat.theme {
+        return Message::ThemeEditeurFermer;
+    }
+
     if etat.projet {
         return Message::ProjetAnnuler;
     }
@@ -2443,6 +2539,7 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 fn fenetre_ouverte(state: &State) -> bool {
     state.tableau.is_some()
         || state.projets_vue
+        || state.editeur_theme.is_some()
         || state.projet_dialogue.is_some()
         || state.confirmation.is_some()
         || state.aide

@@ -105,6 +105,9 @@ pub struct State {
     /// Le filtre de la liste des références — elle se cherche.
     pub references_filtre: String,
 
+    /// L'éditeur de thème : sa copie de travail, quand il est ouvert.
+    pub editeur_theme: Option<crate::theming::ThemeFile>,
+
     /// Le nom de l'étagère à poser sur un projet — la vue des projets.
     pub etagere_brouillon: String,
 
