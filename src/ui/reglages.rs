@@ -219,12 +219,7 @@ fn corps_mise_en_page(
                 palette,
                 "Police",
                 "La police de composition, par son nom système.",
-                saisie(
-                    palette,
-                    &reglages.texte.police,
-                    Champ::TextePolice,
-                    "Nom de la police"
-                )
+                choix_police(&reglages.texte.police, Champ::TextePolice)
             ),
             ligne(
                 palette,
@@ -869,6 +864,41 @@ fn choix(options: &[&'static str], valeur: &str, champ: Champ) -> Element<'stati
         Message::MiseEnPageChamp(champ, choisi)
     })
     .width(Length::Fixed(170.0))
+    .into()
+}
+
+/// Le choix d'une police : les familles du système, et l'aperçu.
+///
+/// La liste vient du livre de polices que Typst interroge lui-même — ce
+/// sont les noms qu'il composerait, pas une liste de décorum. L'aperçu
+/// montre la police choisie, composée telle quelle.
+fn choix_police(valeur: &str, champ: Champ) -> Element<'static, Message> {
+    let mut familles = vec![String::new()];
+    familles.extend(crate::typst::fonts::shared().familles());
+
+    let choisie = valeur.to_string();
+    let pour_apercu = choisie.clone();
+
+    let liste = pick_list(familles, Some(choisie), move |choisi: String| {
+        Message::MiseEnPageChamp(champ, choisi)
+    })
+    .width(Length::Fixed(170.0));
+
+    let apercu = if pour_apercu.is_empty() {
+        text("Aa Bb Cc — le texte se compose ainsi").size(14)
+    } else {
+        text("Aa Bb Cc — le texte se compose ainsi").font(iced::Font {
+            family: iced::font::Family::Name(Box::leak(pour_apercu.clone().into_boxed_str())),
+            ..Default::default()
+        })
+    };
+
+    row![
+        liste,
+        apercu,
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center)
     .into()
 }
 

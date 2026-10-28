@@ -122,6 +122,20 @@ impl Fonts {
         self.list.len()
     }
 
+    /// Les familles de polices connues — celles que la liste des normes
+    /// propose, et que Typst sait composer.
+    pub fn familles(&self) -> Vec<String> {
+        let mut familles: Vec<String> = self
+            .list
+            .iter()
+            .map(|police| police.info().family.clone())
+            .collect();
+
+        familles.sort();
+        familles.dedup();
+        familles
+    }
+
     /// Les familles reconnues du système — pour les épreuves et le diagnostic.
     /// En dehors des épreuves, c'est `complete` qui travaille, et personne n'a
     /// besoin de relire la liste.
