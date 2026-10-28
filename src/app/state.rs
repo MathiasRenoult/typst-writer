@@ -105,6 +105,12 @@ pub struct State {
     /// Le filtre de la liste des références — elle se cherche.
     pub references_filtre: String,
 
+    /// Le nom de l'étagère à poser sur un projet — la vue des projets.
+    pub etagere_brouillon: String,
+
+    /// La vue des projets est-elle ouverte ?
+    pub projets_vue: bool,
+
     /// L'outil de tableau : ses rangs et ses colonnes, en attente.
     pub tableau: Option<TableauDialogue>,
 

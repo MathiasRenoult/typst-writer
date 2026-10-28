@@ -209,6 +209,10 @@ pub enum Message {
     ReferenceSupprimer(String),
 
     ProjetNom(String),
+    ProjetsVue,
+    EtagereBrouillon(String),
+    EtagereDefinir(String, String),
+
     ProjetNorme(String),
     ProjetCreer,
     ProjetRenommer(std::path::PathBuf),

@@ -114,6 +114,8 @@ impl State {
             references_repliees: false,
             references_filtre: String::new(),
             tableau: None,
+            projets_vue: false,
+            etagere_brouillon: String::new(),
             geste_confirme: false,
             confirmation: None,
             verrou,
@@ -529,6 +531,31 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         // Le dialogue s'ouvre sur le vide, ou sur le nom du projet visé.
+        Message::ProjetsVue => {
+            state.projets_vue = !state.projets_vue;
+            Task::none()
+        }
+
+        Message::EtagereBrouillon(valeur) => {
+            state.etagere_brouillon = valeur;
+            Task::none()
+        }
+
+        Message::EtagereDefinir(projet, etagere) => {
+            match crate::project::definir_etagere(&projet, &etagere) {
+                Ok(()) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "« {projet} » rejoint « {etagere} »."
+                    )));
+                }
+                Err(message) => {
+                    state.note = Some(crate::app::state::Note::erreur(message));
+                }
+            }
+
+            Task::none()
+        }
+
         Message::ProjetNorme(nom) => {
             if let Some(dialogue) = state.projet_dialogue.as_mut() {
                 dialogue.norme = nom;
@@ -2205,6 +2232,8 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
 struct Situation {
     /// L'outil de tableau est ouvert — `Échap` annule.
     tableau: bool,
+    /// La vue des projets est ouverte — `Échap` la ferme.
+    projets: bool,
     /// Le dialogue de projet est ouvert — `Échap` annule.
     projet: bool,
     /// Une confirmation attend son mot — `Échap` est « Annuler ».
@@ -2229,6 +2258,7 @@ impl Situation {
     fn de(state: &State) -> Self {
         Situation {
             tableau: state.tableau.is_some(),
+            projets: state.projets_vue,
             projet: state.projet_dialogue.is_some(),
             confirmation: state.confirmation.is_some(),
             composeur: state.composeur.is_some(),
@@ -2382,6 +2412,10 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
         return Message::TableauAnnuler;
     }
 
+    if etat.projets {
+        return Message::ProjetsVue;
+    }
+
     if etat.projet {
         return Message::ProjetAnnuler;
     }
@@ -2408,6 +2442,7 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 /// Quelque fenêtre est-elle ouverte ?
 fn fenetre_ouverte(state: &State) -> bool {
     state.tableau.is_some()
+        || state.projets_vue
         || state.projet_dialogue.is_some()
         || state.confirmation.is_some()
         || state.aide

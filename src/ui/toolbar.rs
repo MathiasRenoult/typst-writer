@@ -187,6 +187,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
 
         bar = bar.push(icon_button(
+            lucide_icons::iced::icon_library::<Theme>(),
+            "Les projets et leurs étagères",
+            Message::ProjetsVue,
+            palette,
+            state.projets_vue,
+        ));
+
+        bar = bar.push(icon_button(
             lucide_icons::iced::icon_table::<Theme>(),
             "Insérer un tableau",
             Message::TableauOuvrir,

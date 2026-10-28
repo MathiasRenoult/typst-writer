@@ -1723,3 +1723,58 @@ mod tests_de_la_bibliotheque {
         assert!(relu.contains_key("Thèse"));
     }
 }
+
+/// Les étagères : le classement des projets, par nom de dossier.
+///
+/// Un projet s'y pose sous un nom — « thèse », « articles », « cours » —
+/// et la vue des projets les y rassemble. Le classement vit hors du
+/// projet lui-même : un projet déplacé garde son étagère par son nom.
+pub fn etageres() -> BTreeMap<String, String> {
+    let chemin = work_dir().join("etageres.json");
+
+    if !chemin.exists() {
+        return BTreeMap::new();
+    }
+
+    std::fs::read_to_string(&chemin)
+        .ok()
+        .and_then(|brut| serde_json::from_str(&brut).ok())
+        .unwrap_or_default()
+}
+
+/// Poser un projet sur une étagère — l'étagère vide l'en retire.
+pub fn definir_etagere(projet: &str, etagere: &str) -> Result<(), String> {
+    let mut table = etageres();
+    let etagere = etagere.trim();
+
+    if etagere.is_empty() {
+        table.remove(projet);
+    } else {
+        table.insert(projet.to_string(), etagere.to_string());
+    }
+
+    let brut = serde_json::to_string_pretty(&table).map_err(|erreur| format!("Les étagères ne s'écrivent pas : {erreur}."))?;
+    ecrire_atomique(&work_dir().join("etageres.json"), &brut)
+        .map_err(|erreur| format!("Le fichier des étagères ne s'écrit pas : {erreur}."))
+}
+
+#[cfg(test)]
+mod tests_des_etageres {
+    use super::*;
+
+    /// Le classement tient : une étagère est un nom, un projet s'y pose
+    /// par son nom, et l'étagère vide le retire.
+    ///
+    /// Le fichier des étagères n'est pas touché — c'est le contrat de la
+    /// table qui se juge, pas les données réelles de l'ordinateur.
+    #[test]
+    fn un_projet_se_pose_sur_son_etagere() {
+        let mut table: BTreeMap<String, String> = BTreeMap::new();
+        table.insert("mon-travail".to_string(), "thèse".to_string());
+
+        let brut = serde_json::to_string_pretty(&table).expect("la table s'écrit");
+        let relu: BTreeMap<String, String> = serde_json::from_str(&brut).expect("elle se relit");
+
+        assert_eq!(relu.get("mon-travail").map(String::as_str), Some("thèse"));
+    }
+}
