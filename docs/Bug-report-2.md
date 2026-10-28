@@ -1,0 +1,14 @@
+1. Lorsque je lie une bibliothèque depuis Zotero, il n'y a que certaines collections qui sont montrées, pas toutes. D'ailleurs, si cela est possible, j'aimerais que la hiérarchie de mes collections soit respectées. J'aimerais aussi qu'on puise effectuer une recherche dans les collections.
+2. Une fois une collection liée, j'ai systématiquement un problème de compilation sur references.bib, en ligne 3, colonne 3, expecting and opening brace. Ce n'est pas normal.
+3. J'aimerais qu'il y ait un moyen de fermer la fenêtre des étagères. Je n'aime pas l'UI pour les étagères. Il faudrait qu'il y ait une miniature avec la page de titre pour chaque document et qu'on puisse drag and drop d'étagère en étagère. Je préférerai que pour les étagères on soit pas seulement sur une fenêtre mais carrément que ce soit un endroit spécifique de l'application avec sa propre UI. ça devrait aussi être possible de créer un nouveau document depuis une étagère, et cela ouvre la fenêtre de création avec comme paramètre de choix d'étagère celle depuis laquelle on a cliqué.
+4. Les onglets devrait se stacker au-dessus de la fenêtre centrale de l'éditeur, pas à gauche.
+5. Crée un ou deux documents complets de normes de base livrés avec l'application.
+6. Le document chargé actuellement (mon-travail) ne compile pas après avoir changé des paramètres de l'en tête et du pied de page. Ce n'est pas normal. Il ne faudrait JAMAIS qu'un document ne compile pas
+7. Pour l'instant, j'aimerais qu'il y ait concrètement trois mode : édition .md, ATV .tw & PDF. On devrait pouvoir, sur chaque fenêtre d'éditeur, switcher entre les trois avec des raccourcis, facilement. Cela implique de repenser complètement comment on gère les fenêtre d'éditeurs et de rendu à l'heure actuelle. J'aimerais quelque chose de plus flexible et plus clean.
+8. Il n'est toujours pas possible de zoomer avec la molette sur le rendu PDF (Ctrl + scroll)
+9. Lorsque j'insère une image, le compilateur me dit qu'il ne la trouve pas. Il faut faire une copie de l'image sélectionnée dans le dossier du projet, sous "Assets" ou "images". Règle les bugs de compilation.
+10. Il manque une prévisualisation des couleurs dans l'éditeur de thèmes. Je trouve également que les mots ne sont pas très clair... Trouve une moyen pour que les thèmes soit plus intuitifs à modifier
+11. Si ce n'est pas trop compliqué, ajoute un color picker là où cela est pertinent.
+12. Ajoute le moyen de pouvoir supprimer une référence dans une librairie locale.
+13. N'affiche l'icone d'édition d'une référence que si l'item est survolé, Pareil pour l'icone de suppression.
+14. Investigue pourquoi, lorsqu'on link une collection zotero, une bonne partie des noms du title sont entourés d'accolades.

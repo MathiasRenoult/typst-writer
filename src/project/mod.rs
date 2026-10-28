@@ -1778,3 +1778,18 @@ mod tests_des_etageres {
         assert_eq!(relu.get("mon-travail").map(String::as_str), Some("thèse"));
     }
 }
+
+#[cfg(test)]
+mod tests_du_champ_soude {
+    use super::*;
+
+    #[test]
+    fn un_champ_s_ajoute_sans_souder_le_fichier() {
+        let entree = "@book{grudem2023,\n\ttitle = {Un titre},\n\tdate = {2023},\n}";
+        let maj = option(entree, "year", "2014");
+        println!("SORTIE:\n{maj}");
+
+        // La fermeture reste sur sa ligne, et le champ est complet.
+        assert!(maj.contains("\n  year = {2014}\n}"), "le champ se pose proprement : {maj}");
+    }
+}

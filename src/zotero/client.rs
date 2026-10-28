@@ -102,23 +102,26 @@ pub fn collections_depuis(base: &str) -> Result<Vec<Collection>, Erreur> {
 }
 
 /// Les notices d'une collection, en BibTeX : ce que le projet éprouvera.
+///
+/// **Nous composons nous-mêmes le BibTeX.** L'export `format=bibtex` de
+/// l'API locale revient vide sur certains systèmes — le fichier écrit
+/// n'est alors que du vide, et c'est BibLaTeX qui refuse le document
+/// entier (bug 2 du rapport 2). Les données JSON, elles, reviennent
+/// toujours : le BibTeX se compose à partir d'elles, et les titres
+/// restent nus — pas d'accolades de protection autour des noms (bug 14).
 pub fn bibtex_depuis(base: &str, cle: &str) -> Result<String, Erreur> {
     let mut sortie = String::new();
     let mut depart = 0usize;
 
     loop {
-        let chemin =
-            format!("/users/0/collections/{cle}/items?format=bibtex&start={depart}&limit=100");
+        let chemin = format!("/users/0/collections/{cle}/items?start={depart}&limit=100");
         let page = requete(base, &chemin)?;
 
-        // Une entrée BibTeX s'ouvre par `@` en tête de ligne : les compter
-        // dit si la page est entière — jamais la longueur du corps, qui
-        // dépend de la longueur des titres.
-        let entrees = page.lines().filter(|ligne| ligne.starts_with('@')).count();
-        let fini = page.trim().is_empty() || entrees < 100;
-        sortie.push_str(&page);
-        if !sortie.ends_with('\n') {
-            sortie.push('\n');
+        let notices = lecture_notices(&page)?;
+        let fini = notices.len() < 100;
+
+        for notice in &notices {
+            sortie.push_str(&notice_vers_bibtex(notice));
         }
 
         if fini {
@@ -129,6 +132,164 @@ pub fn bibtex_depuis(base: &str, cle: &str) -> Result<String, Erreur> {
     }
 
     Ok(sortie)
+}
+
+/// Une notice Zotero, les champs qui composent une entrée.
+struct Notice {
+    /// L'identifiant Zotero de la notice — sa mémoire : la clé de citation
+    /// s'y accroche, et ne bouge plus.
+    identite: String,
+    genre: String,
+    titre: String,
+    auteurs: Vec<String>,
+    annee: String,
+    editeur: String,
+    lieu: String,
+    revue: String,
+    collection: String,
+    volume: String,
+    pages: String,
+    isbn: String,
+    url: String,
+    doi: String,
+    edition: String,
+    langue: String,
+}
+
+/// Les notices d'une réponse — les annotations, pièces jointes et notes
+/// ne sont pas des ouvrages citables, et n'entrent pas dans la
+/// bibliographie.
+fn lecture_notices(corps: &str) -> Result<Vec<Notice>, Erreur> {
+    let items: Vec<serde_json::Value> = serde_json::from_str(corps).map_err(|_| {
+        Erreur::ReponseInvalide("La réponse de Zotero n'est pas de l'JSON lisible.".to_string())
+    })?;
+
+    let mut notices = Vec::new();
+
+    for item in items {
+        let Some(donnees) = item.get("data") else {
+            continue;
+        };
+
+        let genre = donnees["itemType"].as_str().unwrap_or_default();
+
+        if matches!(genre, "annotation" | "attachment" | "note") {
+            continue;
+        }
+
+        let mut auteurs = Vec::new();
+
+        for createur in donnees["creators"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            if createur["creatorType"].as_str() != Some("author")
+                && createur["creatorType"].as_str() != Some("editor")
+            {
+                continue;
+            }
+
+            let nom = createur["lastName"].as_str().unwrap_or_default();
+            let prenom = createur["firstName"].as_str().unwrap_or_default();
+
+            let nom = if prenom.is_empty() {
+                nom.to_string()
+            } else {
+                format!("{nom}, {prenom}")
+            };
+
+            if !nom.trim().is_empty() {
+                auteurs.push(nom);
+            }
+        }
+
+        // L'année est le début de la date : « 2013 » ou « 2013-05-12 ».
+        let date = donnees["date"].as_str().unwrap_or_default();
+        let annee = date.chars().take_while(char::is_ascii_digit).collect::<String>();
+
+        notices.push(Notice {
+            identite: item["key"].as_str().unwrap_or_default().to_string(),
+            genre: genre.to_string(),
+            titre: donnees["title"].as_str().unwrap_or_default().to_string(),
+            auteurs,
+            annee,
+            editeur: donnees["publisher"].as_str().unwrap_or_default().to_string(),
+            lieu: donnees["place"].as_str().unwrap_or_default().to_string(),
+            revue: donnees["publicationTitle"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            collection: donnees["series"].as_str().unwrap_or_default().to_string(),
+            volume: donnees["volume"].as_str().unwrap_or_default().to_string(),
+            pages: donnees["pages"].as_str().unwrap_or_default().to_string(),
+            isbn: donnees["ISBN"].as_str().unwrap_or_default().to_string(),
+            url: donnees["url"].as_str().unwrap_or_default().to_string(),
+            doi: donnees["DOI"].as_str().unwrap_or_default().to_string(),
+            edition: donnees["edition"].as_str().unwrap_or_default().to_string(),
+            langue: donnees["language"].as_str().unwrap_or_default().to_string(),
+        });
+    }
+
+    Ok(notices)
+}
+
+/// Une notice, en entrée BibTeX. La clé est celle de la notice : le
+/// trousseau la stabilisera ensuite, et elle ne bougera plus.
+fn notice_vers_bibtex(notice: &Notice) -> String {
+    let type_bib = match notice.genre.as_str() {
+        "book" => "book",
+        "bookSection" | "chapter" => "incollection",
+        "journalArticle" | "magazineArticle" | "newspaperArticle" => "article",
+        "conferencePaper" => "inproceedings",
+        "thesis" => "thesis",
+        "report" => "techreport",
+        _ => "misc",
+    };
+
+    let mut champs: Vec<(&str, String)> = Vec::new();
+
+    if !notice.auteurs.is_empty() {
+        champs.push(("author", notice.auteurs.join(" and ")));
+    }
+
+    champs.push(("title", notice.titre.clone()));
+
+    if !notice.annee.is_empty() {
+        champs.push(("year", notice.annee.clone()));
+    }
+
+    for (nom, valeur) in [
+        ("publisher", &notice.editeur),
+        ("location", &notice.lieu),
+        ("journal", &notice.revue),
+        ("series", &notice.collection),
+        ("volume", &notice.volume),
+        ("pages", &notice.pages),
+        ("isbn", &notice.isbn),
+        ("url", &notice.url),
+        ("doi", &notice.doi),
+        ("edition", &notice.edition),
+        ("language", &notice.langue),
+    ] {
+        if !valeur.trim().is_empty() {
+            champs.push((nom, valeur.trim().to_string()));
+        }
+    }
+
+    // Le champ `zotero` porte l'identifiant : c'est lui que le trousseau
+    // lit pour retrouver la clé attribuée — une clé attribuée ne bouge
+    // plus, quoi que devienne le titre.
+    champs.push(("zotero", notice.identite.clone()));
+
+    let cle = notice.identite.clone();
+
+    let mut sortie = format!("@{type_bib}{{{cle},\n");
+
+    for (nom, valeur) in champs {
+        // Les accolades ne protègent rien : le titre reste nu (bug 14).
+        let valeur = valeur.replace(['{', '}'], "");
+        sortie.push_str(&format!("  {nom} = {{{valeur}}},\n"));
+    }
+
+    sortie.push_str("}\n\n");
+    sortie
 }
 
 /// Le BibTeX d'une collection, depuis l'adresse par défaut.
@@ -484,15 +645,49 @@ mod tests {
         format!("http://{}", adresse)
     }
 
-    /// L'export BibTeX d'une collection en vient, page après page.
+    /// Le BibTeX d'une collection se compose **nous-mêmes** depuis les
+    /// données JSON — l'export `format=bibtex` revient vide sur certains
+    /// systèmes, et un fichier vide, c'est BibLaTeX qui refuse le document
+    /// entier (bug 2 du rapport 2).
     #[test]
-    fn l_export_bibtex_se_lit() {
+    fn le_bibtex_se_compose_depuis_les_donnees() {
+        let corps = r#"[{"key": "ABCD1234", "data": {"key": "ABCD1234", "itemType": "book", "title": "Un titre {Protégé}", "creators": [{"firstName": "N. T.", "lastName": "Wright", "creatorType": "author"}], "date": "2013-05-12", "publisher": "Fortress Press", "place": "Minneapolis", "series": "Christian Origins"}}]"#;
+
         let base = serveur2(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
-            "@book{a, title = {A}}\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+            corps,
         );
 
         let bibtex = bibtex_depuis(&base, "AAAA1111").expect("bibtex");
-        assert_eq!(bibtex, "@book{a, title = {A}}\n");
+
+        assert!(bibtex.contains("@book{ABCD1234,"), "la notice y est : {bibtex}");
+        assert!(bibtex.contains("author = {Wright, N. T.}"), "l'auteur s'y trouve : {bibtex}");
+        assert!(bibtex.contains("year = {2013}"), "l'année est celle de la date : {bibtex}");
+        assert!(bibtex.contains("zotero = {ABCD1234}"), "l'identifiant y est : {bibtex}");
+
+        // Le titre reste nu : pas d'accolades de protection autour des
+        // noms (bug 14 du rapport 2).
+        assert!(bibtex.contains("title = {Un titre Protégé}"), "le titre est nu : {bibtex}");
+
+        // Et le fichier se compile : c'est le compilateur qui juge.
+        let dossier = std::env::temp_dir().join("typst-writer-epreuve-zotero");
+        let _ = std::fs::create_dir_all(&dossier);
+        std::fs::write(dossier.join("references-zotero.bib"), &bibtex).expect("écrit");
+        std::fs::write(
+            dossier.join("document.typ"),
+            "#set text(lang: \"fr\")\n#bibliography(\"references-zotero.bib\")\nUn test @ABCD1234.\n",
+        )
+        .expect("écrit");
+
+        let rendu = std::process::Command::new("typst")
+            .args(["compile", dossier.join("document.typ").to_str().unwrap()])
+            .output()
+            .expect("typst s'exécute");
+
+        assert!(
+            rendu.status.success(),
+            "le bib se compile toujours : {}",
+            String::from_utf8_lossy(&rendu.stderr)
+        );
     }
 }

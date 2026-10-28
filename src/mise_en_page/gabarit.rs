@@ -304,14 +304,14 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
 
         for (rang, morceau) in texte.split("{page}").enumerate() {
             if rang > 0 {
-                out.push_str(&format!("#counter(page).display(\"{forme}\")"));
+                out.push_str(&format!("#context counter(page).display(\"{forme}\")"));
             }
 
             let morceau = morceau.replace("{pages}", "\\x00");
 
             for (rang, morceau) in morceau.split("\\x00").enumerate() {
                 if rang > 0 {
-                    out.push_str(&format!("#numbering(\"{forme}\", ..counter(page).final())"));
+                    out.push_str(&format!("#context numbering(\"{forme}\", ..counter(page).final())"));
                 }
 
                 out.push_str(&echapper(morceau));
@@ -334,14 +334,14 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
 
     if !entete_pied.entete.est_vide() {
         out.push_str(&format!(
-            "    header: context align(center, {}),\n",
+            "    header: align(center, {}),\n",
             grille(&entete_pied.entete)
         ));
     }
 
     if !entete_pied.pied.est_vide() {
         out.push_str(&format!(
-            "    footer: context align(center, {}),\n",
+            "    footer: align(center, {}),\n",
             grille(&entete_pied.pied)
         ));
     }
@@ -597,11 +597,11 @@ fn un_pied_redige_porte_son_numero() {
 
     let sortie = generer(&mise);
     assert!(
-        sortie.contains("footer: context align(center, grid("),
+        sortie.contains("footer: align(center, grid("),
         "le pied se compose : {sortie}"
     );
     assert!(
-        sortie.contains("counter(page).display(\"a\")"),
+        sortie.contains("context counter(page).display(\"a\")"),
         "le numéro est dans la forme choisie : {sortie}"
     );
     assert!(
@@ -619,3 +619,34 @@ fn un_pied_redige_porte_son_numero() {
         "le total s'y trouve : {sortie}"
     );
 }
+
+    /// **Un document ne compile jamais mal.** La preuve se donne au vrai
+    /// compilateur : le gabarit, pied et en-tête rédigés, forme grecque et
+    /// tout, se compile. C'est la règle absolue du rapport 2.
+    #[test]
+    fn un_document_ne_compile_jamais_mal() {
+        let mut mise = MiseEnPage::default();
+        mise.entete_pied.entete.gauche = "Ma thèse".to_string();
+        mise.entete_pied.pied.droite = "p. {page}".to_string();
+        mise.entete_pied.pied.centre = "page {page} sur {pages}".to_string();
+        mise.entete_pied.numerotation = "α".to_string();
+
+        let gabarit = generer(&mise);
+        let dossier = std::env::temp_dir().join("typst-writer-epreuve-compile");
+        let _ = std::fs::create_dir_all(&dossier);
+        let chemin = dossier.join("document.typ");
+
+        let document = format!("{gabarit}\nUn texte d'épreuve.\n");
+        std::fs::write(&chemin, &document).expect("le document s'écrit");
+
+        let sortie = std::process::Command::new("typst")
+            .args(["compile", chemin.to_str().unwrap()])
+            .output()
+            .expect("typst s'exécute");
+
+        assert!(
+            sortie.status.success(),
+            "le document compile toujours : {}",
+            String::from_utf8_lossy(&sortie.stderr)
+        );
+    }

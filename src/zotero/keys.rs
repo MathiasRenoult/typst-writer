@@ -409,3 +409,61 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 }
+
+#[cfg(test)]
+mod tests_de_stabilisation {
+    use super::*;
+
+    /// La stabilisation ne casse jamais le BibTeX : l'export d'un lien de
+    /// collection, réécrit en clés stables, se relit et se compile. C'est
+    /// le bug 2 du rapport 2 — « expecting an opening brace » — pris à la
+    /// racine.
+    #[test]
+    fn la_stabilisation_ne_casse_jamais_le_bibtex() {
+        let export = "% This file was created with Better BibTeX\n\n@book{dupont2020titre,\n  title = {Le titre {{Protégé}} d'un livre},\n  author = {Dupont, Jean},\n  date = {2020},\n  zotero = {ABCD1234},\n}\n\n@article{martin2021autre,\n  title = {Un second titre},\n  author = {Martin, Marie},\n  date = {2021},\n  zotero = {EFGH5678},\n}\n";
+
+        let mut trousseau = Keyring::default();
+        let pris = std::collections::BTreeSet::new();
+        let sortie = trousseau.stabiliser(export, &pris);
+
+        // Chaque notice garde son corps : le titre protégé s'y trouve,
+        // accolades comprises.
+        assert!(sortie.contains("{{Protégé}}"), "le titre protégé survit : {sortie}");
+
+        // Le fichier se compile : c'est le compilateur qui juge.
+        let dossier = std::env::temp_dir().join("typst-writer-epreuve-bib");
+        let _ = std::fs::create_dir_all(&dossier);
+        let chemin = dossier.join("references-zotero.bib");
+        std::fs::write(&chemin, &sortie).expect("le bib s'écrit");
+
+        // La clé stabilisée est celle du fichier : on cite ce qui s'y
+        // trouve, pas ce qui s'y trouvait.
+        let cle = sortie
+            .lines()
+            .find_map(|ligne| {
+                let ouverture = ligne.find('{')?;
+                let virgule = ligne[ouverture..].find(',').map(|i| ouverture + i)?;
+                ligne.get(ouverture + 1..virgule).map(str::to_string)
+            })
+            .expect("une clé dans la sortie");
+
+        std::fs::write(
+            dossier.join("document.typ"),
+            format!(
+                "#set text(lang: \"fr\")\n#bibliography(\"references-zotero.bib\")\nUn test @{cle}.\n"
+            ),
+        )
+        .expect("le document s'écrit");
+
+        let rendu = std::process::Command::new("typst")
+            .args(["compile", dossier.join("document.typ").to_str().unwrap()])
+            .output()
+            .expect("typst s'exécute");
+
+        assert!(
+            rendu.status.success(),
+            "le bib se compile toujours : {}",
+            String::from_utf8_lossy(&rendu.stderr)
+        );
+    }
+}
