@@ -73,11 +73,13 @@ pub enum Message {
     /// Ferme la fenêtre d'édition sans rien écrire.
     ZoteroLierOuvrir,
 
-    ZoteroCollections(Result<Vec<crate::zotero::client::Collection>, String>),
+    ZoteroCollections(Result<Vec<crate::zotero::client::Collection>, crate::zotero::client::Erreur>),
 
     ZoteroChoisir(String, String),
 
     ZoteroExport(String, String, Result<String, String>),
+
+    ZoteroActiverApi,
 
     ZoteroSynchroniser,
 

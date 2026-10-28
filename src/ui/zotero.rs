@@ -50,32 +50,49 @@ fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette) -> Element<'a, Mess
         .padding(12)
         .into(),
 
-        LiaisonZotero::Erreur(motif) => column![
-            container(
-                column![
-                    palette
-                        .label("La liaison n'a pas pu se faire")
-                        .size(theme::jetons::CORPS),
-                    palette
-                        .label(motif)
-                        .size(theme::jetons::DETAIL)
-                        .color(palette.text_muted),
-                ]
-                .spacing(6)
-            )
-            .padding(12),
-            row![
+        LiaisonZotero::Erreur { motif, reglable } => {
+            let mut actions = row![].spacing(theme::jetons::PAS);
+
+            // Le réglage d'API est le seul désordre qu'on puisse réparer
+            // soi-même : le geste est là, sous la main du nouvel arrivant.
+            if *reglable {
+                actions = actions.push(
+                    button(palette.label("Activer l'API locale").size(theme::jetons::CORPS))
+                        .on_press(Message::ZoteroActiverApi)
+                        .padding([6, 12]),
+                );
+            }
+
+            actions = actions.push(
                 button(palette.label("Réessayer").size(theme::jetons::CORPS))
                     .on_press(Message::ZoteroLierOuvrir)
                     .padding([6, 12]),
+            );
+            actions = actions.push(
                 button(palette.label("Fermer").size(theme::jetons::CORPS))
                     .on_press(Message::ZoteroLiaisonFermer)
                     .padding([6, 12]),
+            );
+
+            column![
+                container(
+                    column![
+                        palette
+                            .label("La liaison n'a pas pu se faire")
+                            .size(theme::jetons::CORPS),
+                        palette
+                            .label(motif)
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted),
+                    ]
+                    .spacing(6)
+                )
+                .padding(12),
+                actions,
             ]
-            .spacing(theme::jetons::PAS),
-        ]
-        .spacing(theme::jetons::PAS)
-        .into(),
+            .spacing(theme::jetons::PAS)
+            .into()
+        }
 
         LiaisonZotero::Choix(collections) => liste(collections, palette),
     };

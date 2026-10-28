@@ -20,10 +20,10 @@ const ADRESSE: &str = "http://127.0.0.1:23119/api";
 const PATIENCE: Duration = Duration::from_secs(5);
 
 /// Ce que la liaison à Zotero peut rencontrer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Erreur {
     /// Zotero ne répond pas : éteint, ou son API désactivée.
-    Injoignable(std::io::Error),
+    Injoignable(String),
 
     /// Zotero répond, mais son API locale est fermée : c'est un réglage,
     /// et il se reprend — même sans redémarrer.
@@ -181,18 +181,18 @@ fn requete(base: &str, chemin: &str) -> Result<String, Erreur> {
 
     let adresse = (hote.as_str(), port)
         .to_socket_addrs()
-        .map_err(Erreur::Injoignable)?
+        .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?
         .next()
         .ok_or_else(|| {
-            Erreur::Injoignable(std::io::Error::other("aucune adresse pour Zotero"))
+            Erreur::Injoignable("aucune adresse pour Zotero".to_string())
         })?;
 
     let mut flux = TcpStream::connect_timeout(&adresse, PATIENCE)
-        .map_err(Erreur::Injoignable)?;
+        .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
     flux.set_read_timeout(Some(PATIENCE))
-        .map_err(Erreur::Injoignable)?;
+        .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
     flux.set_write_timeout(Some(PATIENCE))
-        .map_err(Erreur::Injoignable)?;
+        .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
 
     let demande = format!(
         "GET {chemin} HTTP/1.1\r\n\
@@ -201,11 +201,11 @@ fn requete(base: &str, chemin: &str) -> Result<String, Erreur> {
          Connection: close\r\n\r\n"
     );
     flux.write_all(demande.as_bytes())
-        .map_err(Erreur::Injoignable)?;
+        .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
 
     let mut reponse = String::new();
     flux.read_to_string(&mut reponse)
-        .map_err(Erreur::Injoignable)?;
+        .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
 
     corps_de(&reponse)
 }

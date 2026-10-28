@@ -535,6 +535,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ZoteroCollections(_)
         | Message::ZoteroChoisir(_, _)
         | Message::ZoteroExport(_, _, _)
+        | Message::ZoteroActiverApi
         | Message::ZoteroSynchroniser
         | Message::ZoteroDelier
         | Message::ZoteroLiaisonFermer => liaison_zotero(state, message),
@@ -1560,7 +1561,7 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
 
             Task::perform(
                 async { crate::zotero::client::collections() },
-                |resultat| Message::ZoteroCollections(resultat.map_err(|e| e.to_string())),
+                Message::ZoteroCollections,
             )
         }
 
@@ -1570,10 +1571,47 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             }
             Err(erreur) => {
-                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(erreur));
+                // Le réglage d'API est le seul désordre qu'on puisse
+                // réparer soi-même — et le préparer avant même le premier
+                // lancement de Zotero est le meilleur accueil : le panneau
+                // propose le geste dans les deux cas.
+                let reglable = matches!(
+                    erreur,
+                    crate::zotero::client::Erreur::ApiFermee
+                        | crate::zotero::client::Erreur::Injoignable(_)
+                );
+
+                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                    motif: erreur.to_string(),
+                    reglable,
+                });
+
                 Task::none()
             }
         },
+
+        Message::ZoteroActiverApi => {
+            match crate::zotero::activer_l_api_locale() {
+                Ok(profils) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Réglage posé dans {} profil(s) : redémarrez Zotero — ou cochez la                          case dans Zotero → Réglages → Avancé — puis « Réessayer ».",
+                        profils.len()
+                    )));
+
+                    // La piste est tracée : on retente aussitôt, au cas où
+                    // la case serait déjà prise.
+                    return Task::perform(
+                        async { crate::zotero::client::collections() },
+                        Message::ZoteroCollections,
+                    );
+                }
+                Err(erreur) => {
+                    state.note = Some(crate::app::state::Note::erreur(erreur));
+                }
+            }
+
+            Task::none()
+        }
 
         Message::ZoteroSynchroniser => {
             // La collection bouge avec Zotero : l'export du projet suit.
@@ -1616,9 +1654,10 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                         &bibtex,
                     )
                 {
-                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(format!(
-                        "La bibliothèque n'a pas pu être écrite : {erreur}"
-                    )));
+                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                        motif: format!("La bibliothèque n'a pas pu être écrite : {erreur}"),
+                        reglable: false,
+                    });
 
                     return Task::none();
                 }
@@ -1626,9 +1665,10 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 if let Err(erreur) =
                     crate::zotero::lier(&dir, &crate::zotero::Lien { cle, nom })
                 {
-                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(format!(
-                        "La liaison n'a pas pu être gardée : {erreur}"
-                    )));
+                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                        motif: format!("La liaison n'a pas pu être gardée : {erreur}"),
+                        reglable: false,
+                    });
 
                     return Task::none();
                 }
@@ -1652,7 +1692,10 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             }
             Err(erreur) => {
-                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur(erreur));
+                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                    motif: erreur,
+                    reglable: false,
+                });
                 Task::none()
             }
         },

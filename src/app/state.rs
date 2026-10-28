@@ -271,7 +271,13 @@ pub enum LiaisonZotero {
     Choix(Vec<crate::zotero::client::Collection>),
 
     /// Quelque chose n'est pas allé — et c'est dit, jamais avale.
-    Erreur(String),
+    Erreur {
+        /// Ce qui s'est passé, en une phrase.
+        motif: String,
+
+        /// Est-ce le réglage d'API, que l'application peut poser elle-même ?
+        reglable: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

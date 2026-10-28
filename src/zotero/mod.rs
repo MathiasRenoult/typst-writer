@@ -129,6 +129,84 @@ pub fn delier(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     crate::project::vers_la_corbeille(&dir.join(FICHIER)).ok()
 }
 
+/// Les préférences qui ouvrent l'API locale de Zotero.
+///
+/// Ce sont elles que la case « Permettre aux autres applications sur cet
+/// ordinateur de communiquer avec Zotero » coche — Réglages → Avancé.
+const PREFERENCES: &[&str] = &[
+    "extensions.zotero.httpServer.enabled",
+    "extensions.zotero.httpServer.localAPI.enabled",
+];
+
+/// Ouvre l'API locale de Zotero, dans ses profils.
+///
+/// C'est le geste de la case, écrit une fois pour toutes dans le
+/// `user.js` de chaque profil : le mécanisme standard des profils, qui
+/// survit aux réécritures de `prefs.js`. **C'est réversible** : retirer
+/// les lignes remet l'état d'avant.
+///
+/// Le réglage prend effet au prochain démarrage de Zotero ; la case, elle,
+/// s'applique tout de suite. Rien de tout cela ne ferme Zotero.
+pub fn activer_l_api_locale() -> Result<Vec<std::path::PathBuf>, String> {
+    let home = std::path::PathBuf::from(
+        std::env::var("HOME").map_err(|_| "aucun dossier personnel".to_string())?,
+    );
+
+    activer_l_api_locale_depuis(&home)
+}
+
+/// La même ouverture, depuis un dossier personnel — celle des tests.
+pub fn activer_l_api_locale_depuis(
+    home: &std::path::Path,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let profils = home.join(".zotero").join("zotero");
+    let entrees = std::fs::read_dir(&profils)
+        .map_err(|_| "Aucun profil Zotero trouvé — Zotero est-il installé ?".to_string())?;
+
+    let mut touches = Vec::new();
+
+    for entree in entrees.filter_map(Result::ok) {
+        let dossier = entree.path();
+
+        if !dossier.is_dir() {
+            continue;
+        }
+
+        // Un profil est un dossier qui porte des préférences ; les autres
+        // — caches, sauvegardes — ne se touchent pas.
+        if !dossier.join("prefs.js").is_file() {
+            continue;
+        }
+
+        let user = dossier.join("user.js");
+        let existant = std::fs::read_to_string(&user).unwrap_or_default();
+
+        let mut nouveau = existant.clone();
+
+        for preference in PREFERENCES {
+            let ligne = format!("user_pref(\"{preference}\", true);");
+
+            if !nouveau.contains(&ligne) {
+                nouveau.push_str(&ligne);
+                nouveau.push('\n');
+            }
+        }
+
+        if nouveau != existant {
+            std::fs::write(&user, nouveau)
+                .map_err(|erreur| format!("{} : {erreur}", user.display()))?;
+        }
+
+        touches.push(dossier);
+    }
+
+    if touches.is_empty() {
+        return Err("Aucun profil Zotero trouvé — Zotero est-il installé ?".to_string());
+    }
+
+    Ok(touches)
+}
+
 /// L'état de la collaboration avec Zotero.
 #[derive(Debug, Clone, Default)]
 pub struct Etat {
@@ -141,6 +219,53 @@ pub struct Etat {
 
 #[cfg(test)]
 mod tests {
+
+    /// La procédure s'écrit toute seule : le `user.js` des profils porte
+    /// le réglage, et deux passages ne le disent pas deux fois.
+    #[test]
+    fn la_procedure_s_ecrit_elle_meme() {
+        let home = std::env::temp_dir().join(format!("tw-api-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+
+        let profil = home.join(".zotero/zotero/abcd1234.default");
+        std::fs::create_dir_all(&profil).expect("profil");
+        std::fs::write(profil.join("prefs.js"), "// les préférences\n").expect("prefs");
+
+        // Un dossier qui n'est pas un profil ne se touche pas.
+        std::fs::create_dir_all(home.join(".zotero/zotero/cache")).expect("cache");
+
+        let touches = activer_l_api_locale_depuis(&home).expect("ouverture");
+        assert_eq!(touches, vec![profil.clone()]);
+
+        let user = std::fs::read_to_string(profil.join("user.js")).expect("user.js");
+        assert!(user.contains("httpServer.localAPI.enabled"), "vu : {user}");
+
+        // Deuxième passage : rien ne se dédouble.
+        activer_l_api_locale_depuis(&home).expect("ouverture");
+        let second = std::fs::read_to_string(profil.join("user.js")).expect("user.js");
+
+        assert_eq!(
+            second.matches("localAPI.enabled").count(),
+            1,
+            "une seule ligne, jamais deux : {second}"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Sans profil, la procédure le dit — pas un silence.
+    #[test]
+    fn sans_profil_la_procedure_le_dit() {
+        let home = std::env::temp_dir().join(format!("tw-api-2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("dossier");
+
+        let erreur = activer_l_api_locale_depuis(&home).expect_err("personne");
+        assert!(erreur.contains("Zotero"), "vu : {erreur}");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
 
     /// La liaison se garde à côté du projet, et se relit telle quelle.
     #[test]
