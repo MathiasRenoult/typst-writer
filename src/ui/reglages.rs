@@ -437,6 +437,36 @@ fn corps_mise_en_page(
             ),
             ligne(
                 palette,
+                "Gras",
+                "La couleur du texte en gras — vide : celle du texte.",
+                row![
+                    pastille(&reglages.couleurs.gras),
+                    saisie(
+                        palette,
+                        &reglages.couleurs.gras,
+                        Champ::CouleurGras,
+                        "vide"
+                    )
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Italique",
+                "La couleur du texte en italique — vide : celle du texte.",
+                row![
+                    pastille(&reglages.couleurs.italique),
+                    saisie(
+                        palette,
+                        &reglages.couleurs.italique,
+                        Champ::CouleurItalique,
+                        "vide"
+                    )
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
                 "Titres",
                 "La couleur des titres, en hexadécimal.",
                 row![

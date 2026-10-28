@@ -248,16 +248,34 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
     out
 }
 
-/// Les liens : leur couleur.
+/// Les liens : leur couleur. Le gras et l'italique, quand ils ont la leur.
 fn liens(mise_en_page: &MiseEnPage) -> String {
-    if !super::modele::couleur_valide(&mise_en_page.couleurs.liens) {
-        return String::new();
+    let mut out = String::new();
+
+    // Le gras et l'italique ont leur couleur quand elle est dite ; vides,
+    // ils gardent celle du texte.
+    if super::modele::couleur_valide(&mise_en_page.couleurs.gras) {
+        out.push_str(&format!(
+            "  show strong: set text(fill: rgb(\"{}\"))\n",
+            mise_en_page.couleurs.gras
+        ));
     }
 
-    format!(
-        "  show link: set text(fill: rgb(\"{}\"))\n\n",
-        mise_en_page.couleurs.liens
-    )
+    if super::modele::couleur_valide(&mise_en_page.couleurs.italique) {
+        out.push_str(&format!(
+            "  show emph: set text(fill: rgb(\"{}\"))\n",
+            mise_en_page.couleurs.italique
+        ));
+    }
+
+    if super::modele::couleur_valide(&mise_en_page.couleurs.liens) {
+        out.push_str(&format!(
+            "  show link: set text(fill: rgb(\"{}\"))\n",
+            mise_en_page.couleurs.liens
+        ));
+    }
+
+    out
 }
 
 /// Le papier, dans les mots de Typst.

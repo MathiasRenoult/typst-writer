@@ -364,6 +364,10 @@ pub struct Couleurs {
 
     /// Le papier lui-même.
     pub fond: String,
+
+    /// Le texte en gras, et en italique — vides : la couleur du texte.
+    pub gras: String,
+    pub italique: String,
 }
 
 impl Default for Couleurs {
@@ -372,6 +376,8 @@ impl Default for Couleurs {
             texte: "#000000".to_string(),
             titres: "#000000".to_string(),
             liens: "#0000ff".to_string(),
+            gras: String::new(),
+            italique: String::new(),
             fond: "#ffffff".to_string(),
         }
     }
@@ -455,8 +461,10 @@ impl MiseEnPage {
             ("couleur des titres", &self.couleurs.titres),
             ("couleur des liens", &self.couleurs.liens),
             ("couleur du fond", &self.couleurs.fond),
+            ("couleur du gras", &self.couleurs.gras),
+            ("couleur de l'italique", &self.couleurs.italique),
         ] {
-            if !couleur_valide(valeur) {
+            if !valeur.is_empty() && !couleur_valide(valeur) {
                 out.push((
                     nom.to_string(),
                     format!("« {valeur} » n'est pas une couleur (ex. #1e1e2e)"),
@@ -590,6 +598,8 @@ pub enum Champ {
     CouleurTexte,
     CouleurTitres,
     CouleurLiens,
+    CouleurGras,
+    CouleurItalique,
     CouleurFond,
 }
 
@@ -642,6 +652,8 @@ impl MiseEnPage {
             Champ::CouleurTexte => self.couleurs.texte.clone(),
             Champ::CouleurTitres => self.couleurs.titres.clone(),
             Champ::CouleurLiens => self.couleurs.liens.clone(),
+            Champ::CouleurGras => self.couleurs.gras.clone(),
+            Champ::CouleurItalique => self.couleurs.italique.clone(),
             Champ::CouleurFond => self.couleurs.fond.clone(),
         }
     }
@@ -694,6 +706,8 @@ impl MiseEnPage {
             Champ::CouleurTexte => self.couleurs.texte = valeur,
             Champ::CouleurTitres => self.couleurs.titres = valeur,
             Champ::CouleurLiens => self.couleurs.liens = valeur,
+            Champ::CouleurGras => self.couleurs.gras = valeur,
+            Champ::CouleurItalique => self.couleurs.italique = valeur,
             Champ::CouleurFond => self.couleurs.fond = valeur,
         }
     }
