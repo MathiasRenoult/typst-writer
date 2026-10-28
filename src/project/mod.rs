@@ -1663,7 +1663,7 @@ fn normes_sans_connexion() -> Result<Vec<(String, MiseEnPage)>, String> {
     let chemin = bibliotheque_de_normes();
 
     if !chemin.exists() {
-        return Ok(Vec::new());
+        semer_normes(&chemin)?;
     }
 
     let brut = std::fs::read_to_string(&chemin).map_err(|erreur| {
@@ -1792,4 +1792,69 @@ mod tests_du_champ_soude {
         // La fermeture reste sur sa ligne, et le champ est complet.
         assert!(maj.contains("\n  year = {2014}\n}"), "le champ se pose proprement : {maj}");
     }
+}
+
+/// Les normes livrées avec l'application : deux modèles complets, posés
+/// au premier lancement.
+///
+/// Comme les thèmes livrés, elles se **sèment** : le fichier existe une
+/// fois, et ne se réécrit jamais — un modèle qu'on a façonné est le sien.
+fn semer_normes(chemin: &std::path::Path) -> Result<(), String> {
+    use crate::mise_en_page::modele::{
+        Emplacement, EntetePiedDePage, Marges, MiseEnPage, NumerotationPage, Papier, Texte, Titres,
+    };
+
+    // Le modèle classique : la page, la marge, le texte.
+    let classique = MiseEnPage {
+        papier: Papier {
+            format: "a4".to_string(),
+            orientation: "portrait".to_string(),
+        },
+        marges: Marges {
+            haut: "2.5cm".to_string(),
+            bas: "2.5cm".to_string(),
+            gauche: "3cm".to_string(),
+            droite: "2.5cm".to_string(),
+        },
+        texte: Texte {
+            police: "New Computer Modern".to_string(),
+            taille: "11pt".to_string(),
+            interligne: "0.65em".to_string(),
+            espacement: "1.2em".to_string(),
+            retrait: "0cm".to_string(),
+            justification: true,
+            coupure: true,
+            langue: "fr".to_string(),
+            typographie: None,
+        },
+        titres: Titres::default(),
+        numerotation: NumerotationPage::default(),
+        entete_pied: EntetePiedDePage::default(),
+        ..Default::default()
+    };
+
+    // Le modèle de thèse : la marge de reliure, le retrait des
+    // paragraphes, et le pied qui porte le numéro.
+    let mut these = classique.clone();
+    these.marges.gauche = "4cm".to_string();
+    these.texte.retrait = "1cm".to_string();
+    these.entete_pied = EntetePiedDePage {
+        entete: Emplacement::default(),
+        pied: Emplacement {
+            gauche: String::new(),
+            centre: String::new(),
+            droite: "p. {page}".to_string(),
+        },
+        numerotation: "1".to_string(),
+    };
+
+    let mut table: BTreeMap<String, MiseEnPage> = BTreeMap::new();
+    table.insert("Classique".to_string(), classique);
+    table.insert("Thèse".to_string(), these);
+
+    let brut = serde_json::to_string_pretty(&table)
+        .map_err(|erreur| format!("Les normes livrées ne s'écrivent pas : {erreur}."))?;
+
+    ecrire_atomique(chemin, &brut)
+        .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
 }

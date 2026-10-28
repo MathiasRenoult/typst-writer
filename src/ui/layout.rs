@@ -38,6 +38,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     // L'éditeur prend la place restante : c'est lui la raison d'être de
     // l'application, les panneaux ne font que l'entourer.
+    bar = bar.push(crate::ui::onglets::view(state));
     bar = bar.push(editor::view(state));
 
     if layout.preview_visible {
@@ -67,6 +68,7 @@ fn column_layout(state: &State) -> iced::widget::Column<'_, Message> {
         top = top.push(splitter(Splitter::Sidebar, state));
     }
 
+    top = top.push(crate::ui::onglets::view(state));
     top = top.push(editor::view(state));
 
     iced::widget::column![

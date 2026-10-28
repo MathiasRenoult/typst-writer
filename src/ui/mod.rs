@@ -63,7 +63,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
     stack![
         column![
             toolbar::view(state),
-            onglets::view(state),
             rename::view(state),
             layout::view(state),
             status_bar::view(state),

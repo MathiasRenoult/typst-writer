@@ -306,12 +306,33 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
 
-            // Le chemin est relatif au projet quand il y vit : un document
-            // se déplace avec son projet.
-            let relatif = chemin
-                .strip_prefix(&state.project.dir)
-                .map(|reste| reste.to_path_buf())
-                .unwrap_or_else(|_| chemin.clone());
+            // **L'image entre dans le projet.** Un document qui cite une
+            // image dehors se casse dès que l'ordinateur change : la copie
+            // vit sous `images/`, et le chemin est relatif (bug 9 du
+            // rapport 2). Une image déjà dans le projet ne se copie pas.
+            let relatif = match chemin.strip_prefix(&state.project.dir) {
+                Ok(reste) => reste.to_path_buf(),
+                Err(_) => {
+                    let dossier = state.project.dir.join("images");
+                    let _ = std::fs::create_dir_all(&dossier);
+
+                    let nom = chemin
+                        .file_name()
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("image"));
+
+                    let destination = dossier.join(&nom);
+
+                    if let Err(erreur) = std::fs::copy(&chemin, &destination) {
+                        state.note = Some(crate::app::state::Note::erreur(format!(
+                            "L'image n'a pas pu entrer dans le projet : {erreur}"
+                        )));
+                        return Task::none();
+                    }
+
+                    std::path::PathBuf::from("images").join(nom)
+                }
+            };
 
             let legende = chemin
                 .file_stem()
