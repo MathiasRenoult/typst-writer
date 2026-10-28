@@ -299,7 +299,30 @@ pub fn lire_proprietes_ligne(ligne: &str) -> Option<crate::langage::schema::Prop
     let mut reste = corps.trim();
 
     while !reste.is_empty() {
-        let egal = reste.find('=')?;
+        // Un nom de style, sans égal : une intention, pas une mesure.
+        // C'est la forme courante — `{encadré}` — et c'est elle qui garde
+        // la source au markdown.
+        let egal = match reste.find('=') {
+            Some(egal) if !reste[..egal].contains(' ') => egal,
+            _ => {
+                // Le nom va jusqu'à la prochaine espace.
+                let fin = reste.find(' ').unwrap_or(reste.len());
+                let nom = reste[..fin].trim();
+
+                if nom.is_empty()
+                    || !nom
+                        .chars()
+                        .all(|c| c.is_alphabetic() || c == '-' || c == '_')
+                {
+                    return None;
+                }
+
+                proprietes.noms.push(nom.to_string());
+                reste = reste[fin..].trim_start();
+                continue;
+            }
+        };
+
         let cle = reste[..egal].trim();
 
         if cle.is_empty()

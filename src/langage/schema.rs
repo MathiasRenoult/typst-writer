@@ -70,6 +70,12 @@ pub enum Bloc {
 /// conserve — c'est ce qui rend le round-trip exact.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Proprietes {
+    /// Les noms de style — `{encadré plein}`. Ce sont des **intentions** ;
+    /// les mesures sont aux normes du document.
+    pub noms: Vec<String>,
+
+    /// Les mesures explicites — `{bordure=2pt}`. L'exception, jamais la
+    /// règle : la source doit rester du markdown.
     pub paires: Vec<(String, String)>,
 }
 
@@ -81,7 +87,7 @@ impl Proprietes {
 
     /// Y a-t-il au moins une propriété ?
     pub fn est_vide(&self) -> bool {
-        self.paires.is_empty()
+        self.paires.is_empty() && self.noms.is_empty()
     }
 
     /// La valeur d'une clé, si elle est là.
@@ -107,6 +113,20 @@ impl Proprietes {
     /// Les propriétés sont-elles dans leur forme canonique ?
     #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
     pub fn est_canonique(&self) -> bool {
+        let mut vus = std::collections::HashSet::new();
+
+        let noms_canoniques = self.noms.iter().all(|nom| {
+            !nom.is_empty()
+                && nom == nom.trim()
+                && !nom.contains(['=', '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+                && !nom.contains('\n')
+                && vus.insert(nom.as_str())
+        });
+
+        if !noms_canoniques {
+            return false;
+        }
+
         let mut vues = std::collections::HashSet::new();
 
         self.paires.iter().all(|(cle, valeur)| {

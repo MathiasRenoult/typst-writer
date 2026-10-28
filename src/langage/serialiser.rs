@@ -99,6 +99,14 @@ fn ecrire_seul(bloc: &Bloc, out: &mut String) {
     let mut nu = bloc;
 
     while let Bloc::Décor { proprietes, bloc } = nu {
+        // Les noms aussi se fondent, sans se dédire — un nom dit deux fois
+        // n'en dit pas plus.
+        for nom in &proprietes.noms {
+            if !fondus.noms.contains(nom) {
+                fondus.noms.push(nom.clone());
+            }
+        }
+
         for (cle, valeur) in &proprietes.paires {
             fondus.poser(cle.clone(), valeur.clone());
         }
@@ -121,6 +129,19 @@ fn ecrire_seul(bloc: &Bloc, out: &mut String) {
 
 /// Écrit les propriétés : `clé=valeur`, les valeurs à espace acccolées.
 fn ecrire_proprietes(proprietes: &crate::langage::schema::Proprietes, out: &mut String) {
+    // Les noms d'abord — l'intention lit la première — puis les mesures.
+    for (position, nom) in proprietes.noms.iter().enumerate() {
+        if position > 0 {
+            out.push(' ');
+        }
+
+        out.push_str(nom);
+    }
+
+    if !proprietes.noms.is_empty() && !proprietes.paires.is_empty() {
+        out.push(' ');
+    }
+
     for (position, (cle, valeur)) in proprietes.paires.iter().enumerate() {
         if position > 0 {
             out.push(' ');
@@ -302,6 +323,7 @@ mod tests {
             document.blocs,
             vec![Bloc::Décor {
                 proprietes: crate::langage::schema::Proprietes {
+                    noms: Vec::new(),
                     paires: vec![
                         ("bordure".into(), "1pt".into()),
                         ("rayon".into(), "4pt".into()),
@@ -372,6 +394,47 @@ mod tests {
         ));
 
         assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Un nom prend ses mesures dans les normes du document — jamais
+    /// dans la source. C'est tout l'objet du décor par défaut.
+    #[test]
+    fn un_nom_prend_ses_mesures_dans_les_normes() {
+        let document = super::super::parse("{encadré}\n> la note");
+
+        let decor = crate::mise_en_page::modele::Decor {
+            couleur: "#555".to_string(),
+            epaisseur: "2pt".to_string(),
+            rayon: "6pt".to_string(),
+            marge: "10pt".to_string(),
+            ..crate::mise_en_page::modele::Decor::default()
+        };
+
+        let typst = crate::langage::generer::generer_avec(
+            &document,
+            &crate::langage::typographie::Regles::aucune(),
+            &decor,
+        );
+
+        assert!(
+            typst.contains("#block(stroke: (paint: #555, thickness: 2pt), radius: 6pt, inset: 10pt)["),
+            "les normes disent la mesure : {typst}"
+        );
+    }
+
+    /// La mesure explicite est l'exception — et elle gagne.
+    #[test]
+    fn la_mesure_explicite_est_l_exception_qui_gagne() {
+        let document = super::super::parse("{encadré rayon=0pt}\n> la note");
+        let decor = crate::mise_en_page::modele::Decor::default();
+
+        let typst = crate::langage::generer::generer_avec(
+            &document,
+            &crate::langage::typographie::Regles::aucune(),
+            &decor,
+        );
+
+        assert!(typst.contains("radius: 0pt"), "l'exception gagne : {typst}");
     }
 
     /// Ce qui n'est pas une ligne d'attributs reste du texte — et un
@@ -823,6 +886,15 @@ mod tests {
     /// reste le maître.
     fn proprietes_au_hasard(hasard: &mut Hasard) -> crate::langage::schema::Proprietes {
         let mut proprietes = crate::langage::schema::Proprietes::vide();
+
+        // Les noms d'abord — l'intention — puis les mesures.
+        for _ in 0..hasard.entier(3) {
+            let nom = *hasard.un_parmi(&["encadré", "plein", "discret", "encadre"]);
+
+            if !proprietes.noms.contains(&nom.to_string()) {
+                proprietes.noms.push(nom.to_string());
+            }
+        }
 
         for _ in 0..1 + hasard.entier(3) {
             let cle = *hasard.un_parmi(&[

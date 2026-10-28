@@ -41,7 +41,7 @@ pub fn compilation_unit_document(
     // La typographie se lit dans les normes du projet : c'est là qu'elle se
     // choisit, et le générateur l'applique au texte qu'il compose.
     let normes = crate::mise_en_page::charger(root);
-    let generated = generer_avec(document, &normes.typographie.regles());
+    let generated = generer_avec(document, &normes.typographie.regles(), &normes.decor);
 
     (entry, vec![(root.join(GENERATED_FILE), generated)])
 }
@@ -203,20 +203,20 @@ mod tests {
         // Le cas du programme : en français, « ; » est précédé d'une espace
         // insécable et suivi d'une espace normale.
         let document = super::super::parse("La foi ; l'espérance.\n");
-        let typst = generer_avec(&document, &Regles::francaise());
+        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
         assert!(
             typst.contains("La foi~; l'espérance."),
             "le français est strict : {typst}"
         );
 
         // Et la même chose en anglais colle.
-        let typst = generer_avec(&document, &Regles::anglaise());
+        let typst = generer_avec(&document, &Regles::anglaise(), &crate::mise_en_page::modele::Decor::default());
         assert!(typst.contains("La foi; l'espérance."), "{typst}");
 
         // Le `\` insère un caractère sans interprétation : la même phrase
         // avec un point-virgule échappé garde ses espaces telles quelles.
         let document = super::super::parse("La foi \\; l'espérance.\n");
-        let typst = generer_avec(&document, &Regles::francaise());
+        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
         assert!(
             typst.contains("La foi ; l'espérance."),
             "l'échappement exempte de la règle : {typst}"

@@ -45,6 +45,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         Space::new().width(Length::Fill),
         onglet(palette, "Mise en page", 0, dialogue.panneau),
         onglet(palette, "Typographie", 1, dialogue.panneau),
+        onglet(palette, "Décor", 2, dialogue.panneau),
         Space::new().width(8),
         button(text("Fermer").size(12))
             .on_press(Message::MiseEnPageFermer)
@@ -53,10 +54,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .spacing(8)
     .align_y(iced::Alignment::Center);
 
-    let corps = if dialogue.panneau == 1 {
-        corps_typographie(palette, reglages)
-    } else {
-        corps_mise_en_page(palette, reglages)
+    let corps = match dialogue.panneau {
+        1 => corps_typographie(palette, reglages),
+        2 => corps_decor(palette, reglages),
+        _ => corps_mise_en_page(palette, reglages),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----
     let mut pied = column![].spacing(10);
@@ -454,6 +455,62 @@ fn corps_mise_en_page(
 /// Le défaut charge les règles de la langue choisie ; chaque règle se
 /// reprend ensuite. Les guillemets se composent par niveau d'imbrication :
 /// deux caractères par paire, ouvrant puis fermant.
+/// Le décor du document : les mesures que la source ne porte jamais.
+///
+/// Un bloc habillé dit un nom — `{encadré}` — et trouve ici sa couleur,
+/// son épaisseur, son rayon, sa marge et son remplissage. Changer les
+/// normes change le document entier ; la source reste du markdown.
+fn corps_decor(
+    palette: Palette,
+    reglages: &crate::mise_en_page::modele::MiseEnPage,
+) -> iced::widget::Column<'static, Message> {
+    let decor = &reglages.decor;
+
+    column![section(
+        palette,
+        "Les défauts du décor",
+        column![
+            ligne(
+                palette,
+                "Couleur de bordure",
+                "Une valeur Typst : `gray`, `#555`, `luma(160)`.",
+                saisie(palette, &decor.couleur, Champ::DecorCouleur, "gray")
+            ),
+            ligne(
+                palette,
+                "Épaisseur",
+                "La graisse du trait : `1pt`, `0.5pt`.",
+                saisie(palette, &decor.epaisseur, Champ::DecorEpaisseur, "1pt")
+            ),
+            ligne(
+                palette,
+                "Rayon des coins",
+                "L'arrondi : `4pt`, `0pt` pour un angle droit.",
+                saisie(palette, &decor.rayon, Champ::DecorRayon, "4pt")
+            ),
+            ligne(
+                palette,
+                "Marge intérieure",
+                "L'air entre la bordure et le contenu : `8pt`.",
+                saisie(palette, &decor.marge, Champ::DecorMarge, "8pt")
+            ),
+            ligne(
+                palette,
+                "Remplissage",
+                "La teinte de fond : `aucun`, `luma(248)`, `#fdf6e3`.",
+                saisie(
+                    palette,
+                    &decor.remplissage,
+                    Champ::DecorRemplissage,
+                    "aucun"
+                )
+            ),
+        ]
+        .spacing(theme::jetons::PAS),
+    )]
+    .spacing(theme::jetons::PAS)
+}
+
 fn corps_typographie(
     palette: Palette,
     reglages: &crate::mise_en_page::modele::MiseEnPage,

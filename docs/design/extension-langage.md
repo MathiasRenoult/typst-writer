@@ -24,31 +24,63 @@ Cette distinction commande tout le reste : les propriétés ont été faites
 **une fois pour toutes** (`Proprietes` et `Bloc::Décor`), et chaque bloc
 nouveau en hérite sans rien y toucher.
 
-## La syntaxe des propriétés
+## Écrire dans l'éditeur : l'intention, jamais la mesure
 
-La ligne d'attributs précède le bloc qu'elle habille :
+**Le principe : la source dit l'intention, les normes disent la mesure.**
+Un document `.tw` ressemble à du markdown — pas à du HTML. Les mesures —
+couleur de bordure, épaisseur, rayon, marge, remplissage — vivent dans
+**les normes du document**, section « Décor », et non dans la source.
+Changer les normes change le document entier ; la source ne porte que ce
+que l'écrivain veut dire.
 
-    {bordure=1pt rayon=4pt}
-    > une citation encadrée
+### Le cas courant : n'écrire rien
 
-    {largeur=50% remplissage={gradient.linear(#blue, #red)}}
-    ![La planche](figs/planche.png)
+Une citation, une image, un tableau paraissent comme les normes le
+disent. Rien à écrire : le décor est le **défaut** du projet.
 
-Les paires sont `clé=valeur`, séparées par des espaces ; une valeur qui
-porte une espace s'accôle entre accolades. Les clés sont des noms
-(`lettres, chiffres, tirets, soulignements`) et les valeurs des
-**expressions Typst** — pas du texte. Ni clé ni valeur ne portent de
-marqueur ni de saut de ligne : les balayages du voisinage ne doivent pas
-s'y méprendre, au même titre que le nom d'une couleur.
+### L'intention : un nom
+
+Quand un bloc doit paraître autrement, la source dit un **nom** — pas une
+mesure :
+
+    {encadré}
+    > une note encadrée
+
+    {plein}
+    > une citation sur fond teinté
+
+Le vocabulaire est court et sémantique : `encadré` prend dans les normes
+sa couleur, son épaisseur, son rayon et sa marge ; `plein` y prend son
+remplissage. Les noms se combinent — `{encadré plein}` — et l'ajout d'un
+nom est une ligne de table, pas une refonte.
+
+### L'exception : la mesure
+
+Le détail rare reste possible — mais il est l'exception, et il le reste :
+
+    {encadré rayon=0pt}
+    > encadrée, à angles droits
+
+Les paires sont `clé=valeur` ; une valeur à espace s'accôle. Une mesure
+explicite **gagne** sur celle des normes. Si la source se remplit de
+mesures, c'est que la norme est mal placée : elle va dans les normes.
+
+### Les règles de la ligne
 
 Les manteaux emboîtés se fondent en un seul à l'écriture — un seul
-manteau par bloc, c'est la forme canonique. Une ligne d'attributs qui ne
+manteau par bloc, c'est la forme canonique. Une ligne de style qui ne
 trouve pas de bloc à habiller **reste du texte** : ce qui ne se lit pas
-comme une construction n'en est pas une.
+comme une construction n'en est pas une. Ni nom ni valeur ne portent de
+marqueur ni de saut de ligne — les balayages du voisinage ne s'y
+méprennent pas, au même titre que le nom d'une couleur.
+
+    {bordure=1pt remplissage={gradient.linear(#blue, #red)}}
+    ![La planche](figs/planche.png)
 
 ## Le vocabulaire du décor
 
-Les propriétés deviennent les arguments d'un `#block(…)` Typst. Chaque
+Les noms prennent leurs mesures dans les normes ; les propriétés
+explicites deviennent les arguments d'un `#block(…)` Typst. Chaque
 nom français a son argument :
 
 | Propriété | Argument Typst | Valeur |

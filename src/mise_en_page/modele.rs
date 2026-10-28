@@ -36,6 +36,49 @@ pub struct MiseEnPage {
 
     /// La typographie du texte composé.
     pub typographie: Typographie,
+
+    /// Les défauts du décor : bordures, remplissages, formes.
+    ///
+    /// C'est ici que vivent les mesures — jamais dans la source. Le
+    /// document dit l'intention (`{encadré}`), les normes disent la
+    /// couleur, l'épaisseur et le rayon.
+    pub decor: Decor,
+}
+
+/// Les défauts du décor d'un document.
+///
+/// Un bloc habillé dit un **nom**, jamais une mesure : `{encadré}` prend
+/// ici sa couleur de bordure, son épaisseur, son rayon et sa marge. Les
+/// valeurs sont des expressions Typst, ou `aucun` pour rien du tout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Decor {
+    /// La couleur de bordure — `gray`, `#555`, `luma(160)`…
+    pub couleur: String,
+
+    /// L'épaisseur de la bordure — `1pt`, `0.5pt`…
+    pub epaisseur: String,
+
+    /// Le rayon des coins — `4pt`, `0pt`, `(top-left: 4pt)`…
+    pub rayon: String,
+
+    /// La marge intérieure — `8pt`, `(x: 4pt, y: 8pt)`…
+    pub marge: String,
+
+    /// Le remplissage — `aucun`, `luma(248)`, `#fdf6e3`…
+    pub remplissage: String,
+}
+
+impl Default for Decor {
+    fn default() -> Self {
+        Self {
+            couleur: "gray".to_string(),
+            epaisseur: "1pt".to_string(),
+            rayon: "4pt".to_string(),
+            marge: "8pt".to_string(),
+            remplissage: "aucun".to_string(),
+        }
+    }
 }
 
 /// Le papier.
@@ -517,6 +560,11 @@ pub enum Champ {
     TypoGuillemets1,
     TypoGuillemets2,
     TypoGuillemets3,
+    DecorCouleur,
+    DecorEpaisseur,
+    DecorRayon,
+    DecorMarge,
+    DecorRemplissage,
     TitresPolice,
     TitresTaille1,
     TitresTaille2,
@@ -553,6 +601,11 @@ impl MiseEnPage {
             Champ::TexteJustification => self.texte.justification.to_string(),
             Champ::TexteCoupure => self.texte.coupure.to_string(),
             Champ::TexteLangue => self.texte.langue.clone(),
+            Champ::DecorCouleur => self.decor.couleur.clone(),
+            Champ::DecorEpaisseur => self.decor.epaisseur.clone(),
+            Champ::DecorRayon => self.decor.rayon.clone(),
+            Champ::DecorMarge => self.decor.marge.clone(),
+            Champ::DecorRemplissage => self.decor.remplissage.clone(),
             Champ::TypoBase => self.typographie.base.clone(),
             Champ::TypoAvantSignes => self.typographie.avant_signes.clone(),
             Champ::TypoApresSignes => self.typographie.apres_signes.clone(),
@@ -597,6 +650,11 @@ impl MiseEnPage {
             Champ::TexteJustification => self.texte.justification = valeur == "true",
             Champ::TexteCoupure => self.texte.coupure = valeur == "true",
             Champ::TexteLangue => self.texte.langue = valeur,
+            Champ::DecorCouleur => self.decor.couleur = valeur,
+            Champ::DecorEpaisseur => self.decor.epaisseur = valeur,
+            Champ::DecorRayon => self.decor.rayon = valeur,
+            Champ::DecorMarge => self.decor.marge = valeur,
+            Champ::DecorRemplissage => self.decor.remplissage = valeur,
             Champ::TypoBase => self.typographie.base = valeur,
             Champ::TypoAvantSignes => self.typographie.avant_signes = valeur,
             Champ::TypoApresSignes => self.typographie.apres_signes = valeur,

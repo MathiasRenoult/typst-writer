@@ -19,7 +19,11 @@ use super::typographie::{Regles, appliquer_dans};
 /// Génère le corps Typst d'un document, sans règle de langue.
 #[allow(dead_code)] // Raccourci des tests et de la migration.
 pub fn generer(document: &Document) -> String {
-    generer_avec(document, &Regles::aucune())
+    generer_avec(
+        document,
+        &Regles::aucune(),
+        &crate::mise_en_page::modele::Decor::default(),
+    )
 }
 
 /// Génère le corps Typst d'un document, en appliquant les règles de
@@ -27,11 +31,15 @@ pub fn generer(document: &Document) -> String {
 ///
 /// Les littéraux (`\\x` dans la syntaxe) ne reçoivent **aucune** règle :
 /// c'est la porte de sortie universelle, promise par la grammaire.
-pub fn generer_avec(document: &Document, regles: &Regles) -> String {
+pub fn generer_avec(
+    document: &Document,
+    regles: &Regles,
+    decor: &crate::mise_en_page::modele::Decor,
+) -> String {
     let mut out = String::new();
 
     for bloc in &document.blocs {
-        generer_bloc(bloc, &mut out, regles);
+        generer_bloc(bloc, &mut out, regles, decor);
     }
 
     out
@@ -89,7 +97,12 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
     None
 }
 
-fn generer_bloc(bloc: &Bloc, out: &mut String, regles: &Regles) {
+fn generer_bloc(
+    bloc: &Bloc,
+    out: &mut String,
+    regles: &Regles,
+    decor: &crate::mise_en_page::modele::Decor,
+) {
     // La typographie court sur **tout le bloc** : le niveau des guillemets
     // et les espaces traversent les éléments, jamais isolés.
     let mut contexte = crate::langage::typographie::Contexte::neuf();
@@ -157,11 +170,11 @@ fn generer_bloc(bloc: &Bloc, out: &mut String, regles: &Regles) {
             // Les propriétés deviennent les arguments du bloc Typst — c'est
             // tout le décor, des bordures aux dégradés.
             out.push_str("#block(");
-            ecrire_proprietes_typst(proprietes, out);
+            ecrire_proprietes_typst(proprietes, decor, out);
             out.push_str(")[\n");
 
             let mut interieur = String::new();
-            generer_bloc(bloc, &mut interieur, regles);
+            generer_bloc(bloc, &mut interieur, regles, decor);
             out.push_str(interieur.trim_end());
 
             out.push_str("\n]\n\n");
@@ -346,16 +359,43 @@ fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
 /// chaîne, et le document ne compilerait plus.
 /// Les propriétés deviennent les arguments d'un bloc Typst.
 ///
-/// Chaque nom français a son argument — `bordure` fait `stroke:`, `rayon`
-/// fait `radius:`. Une clé que la table ne connaît pas passe telle quelle :
-/// le Typst reste le maître du rendu, et c'est lui qui dira s'il la
-/// comprend. Les valeurs sont des expressions Typst, jamais du texte.
-fn ecrire_proprietes_typst(proprietes: &crate::langage::schema::Proprietes, out: &mut String) {
-    for (position, (cle, valeur)) in proprietes.paires.iter().enumerate() {
-        if position > 0 {
-            out.push_str(", ");
-        }
+/// **Les noms prennent leurs mesures dans les normes du document** :
+/// `encadré` y trouve sa couleur, son épaisseur, son rayon et sa marge ;
+/// `plein` y trouve son remplissage. Une mesure explicite passe par-dessus
+/// — l'exception est possible, mais elle n'est pas la règle.
+///
+/// Une clé que la table ne connaît pas passe telle quelle : le Typst reste
+/// le maître du rendu, et c'est lui qui dira s'il la comprend.
+fn ecrire_proprietes_typst(
+    proprietes: &crate::langage::schema::Proprietes,
+    decor: &crate::mise_en_page::modele::Decor,
+    out: &mut String,
+) {
+    // Les arguments résolus, dans l'ordre : les noms d'abord.
+    let mut arguments: Vec<(&str, String)> = Vec::new();
 
+    for nom in &proprietes.noms {
+        match nom.as_str() {
+            "encadré" | "encadre" => {
+                arguments.push((
+                    "stroke",
+                    format!(
+                        "(paint: {}, thickness: {})",
+                        decor.couleur, decor.epaisseur
+                    ),
+                ));
+                arguments.push(("radius", decor.rayon.clone()));
+                arguments.push(("inset", decor.marge.clone()));
+            }
+            "plein" => arguments.push(("fill", decor.remplissage.clone())),
+            // Un nom que le vocabulaire ne connaît pas n'ajoute rien :
+            // il reste dans la source, et le jour où il prend sens, il
+            // prendra ses mesures ici.
+            _ => {}
+        }
+    }
+
+    for (cle, valeur) in &proprietes.paires {
         let argument = match cle.as_str() {
             "largeur" => "width",
             "hauteur" => "height",
@@ -368,7 +408,19 @@ fn ecrire_proprietes_typst(proprietes: &crate::langage::schema::Proprietes, out:
             autre => autre,
         };
 
-        out.push_str(argument);
+        // La mesure explicite remplace la résolue : l'exception gagne.
+        match arguments.iter_mut().find(|(nom, _)| *nom == argument) {
+            Some(place) => place.1 = valeur.clone(),
+            None => arguments.push((argument, valeur.clone())),
+        }
+    }
+
+    for (position, (nom, valeur)) in arguments.iter().enumerate() {
+        if position > 0 {
+            out.push_str(", ");
+        }
+
+        out.push_str(nom);
         out.push_str(": ");
         out.push_str(valeur);
     }
@@ -433,7 +485,7 @@ mod tests {
         // Le cas de l'audit : le `;` suit un gras, et son insécable se
         // perdait — la règle ne voyait que l'élément isolé.
         let document = crate::langage::parse("La foi *x* ; suite\n");
-        let typst = generer_avec(&document, &Regles::francaise());
+        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
         assert!(
             typst.contains("~; suite"),
             "l'insécable traverse le gras : {typst}"
@@ -441,7 +493,7 @@ mod tests {
 
         // L'espace après un point en fin d'élément se pose devant la suite.
         let document = crate::langage::parse("Suite. *Et plus*\n");
-        let typst = generer_avec(&document, &Regles::francaise());
+        let typst = generer_avec(&document, &Regles::francaise(), &crate::mise_en_page::modele::Decor::default());
         assert!(
             typst.contains("Suite. "),
             "l'espace après le point se pose : {typst}"
