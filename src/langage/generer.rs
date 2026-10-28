@@ -133,6 +133,39 @@ fn generer_bloc(bloc: &Bloc, out: &mut String, regles: &Regles) {
             out.push_str(texte);
             out.push_str("\n\n");
         }
+        Bloc::Image { légende, cible } => {
+            // Une légende fait une figure numérotée ; sans elle, l'image
+            // seule — pas de vide à composer.
+            if légende.is_empty() {
+                out.push_str("#image(\"");
+            } else {
+                out.push_str("#figure(image(\"");
+            }
+
+            echapper_chaine(cible, out);
+
+            if légende.is_empty() {
+                out.push_str("\")\n\n");
+            } else {
+                out.push_str("\"), caption: [");
+                generer_inline(légende, out, false, regles, &mut contexte);
+                out.push_str("])\n\n");
+            }
+        }
+        Bloc::Décor { proprietes, bloc } => {
+            // Le manteau : `#block(...)` autour de ce que le bloc génère.
+            // Les propriétés deviennent les arguments du bloc Typst — c'est
+            // tout le décor, des bordures aux dégradés.
+            out.push_str("#block(");
+            ecrire_proprietes_typst(proprietes, out);
+            out.push_str(")[\n");
+
+            let mut interieur = String::new();
+            generer_bloc(bloc, &mut interieur, regles);
+            out.push_str(interieur.trim_end());
+
+            out.push_str("\n]\n\n");
+        }
     }
 }
 
@@ -311,6 +344,36 @@ fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
 /// Une chaîne n'a que deux escapements — la barre oblique et le guillemet —,
 /// mais les deux y sont obligés : une cible qui en porterait un romprait la
 /// chaîne, et le document ne compilerait plus.
+/// Les propriétés deviennent les arguments d'un bloc Typst.
+///
+/// Chaque nom français a son argument — `bordure` fait `stroke:`, `rayon`
+/// fait `radius:`. Une clé que la table ne connaît pas passe telle quelle :
+/// le Typst reste le maître du rendu, et c'est lui qui dira s'il la
+/// comprend. Les valeurs sont des expressions Typst, jamais du texte.
+fn ecrire_proprietes_typst(proprietes: &crate::langage::schema::Proprietes, out: &mut String) {
+    for (position, (cle, valeur)) in proprietes.paires.iter().enumerate() {
+        if position > 0 {
+            out.push_str(", ");
+        }
+
+        let argument = match cle.as_str() {
+            "largeur" => "width",
+            "hauteur" => "height",
+            "bordure" => "stroke",
+            "remplissage" => "fill",
+            "rayon" => "radius",
+            "marge" => "inset",
+            "marge_ext" => "outset",
+            "espace" => "spacing",
+            autre => autre,
+        };
+
+        out.push_str(argument);
+        out.push_str(": ");
+        out.push_str(valeur);
+    }
+}
+
 fn echapper_chaine(texte: &str, out: &mut String) {
     for caractere in texte.chars() {
         if matches!(caractere, '\\' | '"') {

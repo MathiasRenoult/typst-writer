@@ -38,6 +38,89 @@ pub enum Bloc {
     ListeNumero(Vec<Vec<Inline>>),
     /// Un bloc brut Typst, inséré tel quel dans le document généré.
     Brut(String),
+    /// Une image : `![légende](chemin)`.
+    Image {
+        /// La légende, en éléments inline — peut être vide.
+        légende: Vec<Inline>,
+        /// Le chemin de l'image, relatif au projet.
+        cible: String,
+    },
+    /// Un bloc **habillé** de propriétés : `{bordure=1pt}` suivi du bloc.
+    ///
+    /// C'est le point d'arrivée de toutes les propriétés de décor —
+    /// bordures, remplissages, dégradés, formes — et il ne dépend d'aucun
+    /// bloc en particulier : il habille celui qui suit.
+    Décor {
+        /// Les propriétés, dans l'ordre écrit.
+        proprietes: Proprietes,
+        /// Le bloc habillé. Jamais un autre `Décor` : un seul manteau.
+        bloc: Box<Bloc>,
+    },
+}
+
+/// Les propriétés d'un bloc : des paires ordonnées, `clé=valeur`.
+///
+/// La syntaxe est `{largeur=50% bordure=1pt}` — une valeur contenant une
+/// espace s'accôle : `remplissage={luma(240)}`. Les clés et les valeurs
+/// n'ont ni marqueur ni saut de ligne : ce sont des **noms et des valeurs
+/// Typst**, pas du texte, et les balayages du voisinage ne doivent pas s'y
+/// méprendre.
+///
+/// L'ordre est celui de l'écriture : la sérialisation ne trie pas, elle
+/// conserve — c'est ce qui rend le round-trip exact.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Proprietes {
+    pub paires: Vec<(String, String)>,
+}
+
+impl Proprietes {
+    /// Sans aucune propriété.
+    pub fn vide() -> Self {
+        Self::default()
+    }
+
+    /// Y a-t-il au moins une propriété ?
+    pub fn est_vide(&self) -> bool {
+        self.paires.is_empty()
+    }
+
+    /// La valeur d'une clé, si elle est là.
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn obtenir(&self, cle: &str) -> Option<&str> {
+        self.paires
+            .iter()
+            .find(|(c, _)| c == cle)
+            .map(|(_, valeur)| valeur.as_str())
+    }
+
+    /// Pose une propriété — remplace la valeur si la clé y est déjà.
+    pub fn poser(&mut self, cle: impl Into<String>, valeur: impl Into<String>) {
+        let cle = cle.into();
+        let valeur = valeur.into();
+
+        match self.paires.iter_mut().find(|(c, _)| *c == cle) {
+            Some(paire) => paire.1 = valeur,
+            None => self.paires.push((cle, valeur)),
+        }
+    }
+
+    /// Les propriétés sont-elles dans leur forme canonique ?
+    #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
+    pub fn est_canonique(&self) -> bool {
+        let mut vues = std::collections::HashSet::new();
+
+        self.paires.iter().all(|(cle, valeur)| {
+            !cle.is_empty()
+                && cle
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                && vues.insert(cle.as_str())
+                && !valeur.is_empty()
+                && valeur == valeur.trim()
+                && !valeur.contains('\n')
+                && !valeur.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
+        })
+    }
 }
 
 /// Un élément inline, dans le texte d'un bloc.
@@ -196,6 +279,19 @@ impl Bloc {
             // Un bloc brut est pris tel quel : son délimiteur s'adapte à son
             // contenu, tout lui est permis.
             Bloc::Brut(_) => true,
+            Bloc::Image { légende, cible } => {
+                // La cible suit la règle du lien : non vide, sans saut de
+                // ligne. Ses parenthèses s'échappent, comme au lien.
+                !cible.is_empty() && !cible.contains('\n') && inline_canonique(légende)
+            }
+            Bloc::Décor { proprietes, bloc } => {
+                // Un seul manteau, jamais deux : un décor dans un décor se
+                // rassemble à l'écriture.
+                !proprietes.est_vide()
+                    && proprietes.est_canonique()
+                    && !matches!(bloc.as_ref(), Bloc::Décor { .. })
+                    && bloc.est_canonique()
+            }
         }
     }
 }
@@ -271,26 +367,31 @@ impl Reference {
 pub fn ouvre_un_bloc(texte: &str) -> bool {
     let debut = texte.trim_start();
 
-    if debut.starts_with('>') || debut.starts_with("- ") || debut.starts_with("```") {
+    if debut.starts_with('\\') {
+        return false;
+    }
+
+    // Une image formée, ou une ligne d'attributs : deux marqueurs de plus
+    // depuis les blocs et propriétés, avec la même règle qu'aux autres —
+    // ce qui n'en est pas un reste du texte.
+    if crate::langage::parse::lire_image(debut).is_some()
+        || crate::langage::parse::lire_proprietes_ligne(debut).is_some()
+    {
         return true;
     }
 
-    let dieses = debut
-        .chars()
-        .take_while(|caractere| *caractere == '#')
-        .count();
+    let dièses = debut.chars().take_while(|c| *c == '#').count();
 
-    if (1..=6).contains(&dieses) && debut[dieses..].starts_with(' ') {
-        return true;
-    }
-
-    let chiffres = debut
-        .chars()
-        .take_while(|caractere| caractere.is_ascii_digit())
-        .count();
-
-    chiffres > 0 && debut[chiffres..].starts_with(". ")
+    (dièses > 0 && dièses <= 6 && debut[dièses..].starts_with(' '))
+        || debut.starts_with('>')
+        || debut.starts_with("- ")
+        || {
+            let chiffres = debut.chars().take_while(|c| c.is_ascii_digit()).count();
+            chiffres > 0 && debut[chiffres..].starts_with(". ")
+        }
+        || debut.starts_with("```")
 }
+
 
 /// Le contenu commence-t-il par un marqueur de bloc ?
 fn commence_par_un_marqueur_de_bloc(contenu: &[Inline]) -> bool {
@@ -427,6 +528,10 @@ impl Bloc {
     /// source.
     pub fn texte_nu(&self) -> String {
         match self {
+            // Un décor n'ajoute pas de texte : il habille celui qui parle.
+            Bloc::Décor { bloc, .. } => bloc.texte_nu(),
+            // La légende est du texte visible — elle se lit.
+            Bloc::Image { légende, .. } => inline_texte_nu(légende),
             Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
                 inline_texte_nu(contenu)
             }

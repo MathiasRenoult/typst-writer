@@ -49,6 +49,7 @@ use super::schema::{Bloc, Document, Inline, Reference};
 pub fn parse(texte: &str) -> Document {
     let lignes: Vec<&str> = texte.lines().collect();
     let mut blocs = Vec::new();
+    let mut en_attente = Vec::new();
     let mut index = 0;
 
     while index < lignes.len() {
@@ -68,7 +69,7 @@ pub fn parse(texte: &str) -> Document {
         // Un bloc brut Typst : tout jusqu'au délimiteur fermant.
         if !echappee && ligne.trim_start().starts_with("```") {
             let (brut, suivant) = lire_brut(&lignes, index);
-            blocs.push(Bloc::Brut(brut));
+            blocs.push(habiller(Bloc::Brut(brut), &mut en_attente));
             index = suivant;
             continue;
         }
@@ -76,7 +77,7 @@ pub fn parse(texte: &str) -> Document {
         // Un titre.
         if !echappee && let Some(niveau) = niveau_titre(ligne) {
             let contenu = parse_inline(ligne.trim_start()[niveau as usize..].trim());
-            blocs.push(Bloc::Titre { niveau, contenu });
+            blocs.push(habiller(Bloc::Titre { niveau, contenu }, &mut en_attente));
             index += 1;
             continue;
         }
@@ -84,7 +85,7 @@ pub fn parse(texte: &str) -> Document {
         // Une citation de bloc.
         if !echappee && ligne.trim_start().starts_with('>') {
             let contenu = parse_inline(ligne.trim_start()[1..].trim());
-            blocs.push(Bloc::Citation(contenu));
+            blocs.push(habiller(Bloc::Citation(contenu), &mut en_attente));
             index += 1;
             continue;
         }
@@ -92,7 +93,7 @@ pub fn parse(texte: &str) -> Document {
         // Une liste à puces.
         if !echappee && ligne.trim_start().starts_with("- ") {
             let (items, suivant) = lire_liste(&lignes, index, "- ");
-            blocs.push(Bloc::ListePuce(items));
+            blocs.push(habiller(Bloc::ListePuce(items), &mut en_attente));
             index = suivant;
             continue;
         }
@@ -100,15 +101,42 @@ pub fn parse(texte: &str) -> Document {
         // Une liste numérotée.
         if !echappee && est_numero(ligne) {
             let (items, suivant) = lire_liste(&lignes, index, "");
-            blocs.push(Bloc::ListeNumero(items));
+            blocs.push(habiller(Bloc::ListeNumero(items), &mut en_attente));
             index = suivant;
+            continue;
+        }
+
+        // Une ligne d'attributs habille le bloc qui suit. Un doute, et ce
+        // n'en est pas une : la ligne redevient du texte.
+        if !echappee
+            && let Some(proprietes) = lire_proprietes_ligne(ligne)
+            && un_bloc_suit(&lignes, index)
+        {
+            en_attente.push(proprietes);
+            index += 1;
+            continue;
+        }
+
+        // Une image : `![légende](chemin)`.
+        if !echappee
+            && ligne.trim_start().starts_with("![")
+            && let Some((légende, cible)) = lire_image(ligne)
+        {
+            blocs.push(habiller(
+                Bloc::Image { légende, cible },
+                &mut en_attente,
+            ));
+            index += 1;
             continue;
         }
 
         // Un paragraphe : tout ce qui n'est pas un autre bloc, jusqu'à une
         // ligne vide ou un nouveau bloc.
         let (paragraphe, suivant) = lire_paragraphe(&lignes, index);
-        blocs.push(Bloc::Paragraphe(parse_inline(&paragraphe)));
+        blocs.push(habiller(
+            Bloc::Paragraphe(parse_inline(&paragraphe)),
+            &mut en_attente,
+        ));
         index = suivant;
     }
 
@@ -184,7 +212,12 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             || debut.starts_with('>')
             || debut.starts_with("- ")
             || est_numero(ligne)
-            || debut.starts_with("```"))
+            || debut.starts_with("```")
+            // L'image est un bloc de ligne : `![…](…)`, formé ou pas.
+            || lire_image(ligne).is_some()
+            // Une ligne d'attributs trouvée — mais elle flotte jusqu'à son
+            // bloc, et le parseur sait le reste.
+            || crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
 }
 
 /// Le niveau d'un titre, si la ligne en est un.
@@ -226,6 +259,96 @@ pub fn ferme_fence(ligne: &str, longueur_ouverture: usize) -> bool {
     let longueur = longueur_fence(ligne);
 
     longueur >= longueur_ouverture && debut[longueur..].trim().is_empty()
+}
+
+/// Habille un bloc des attributs en attente — les manteaux les plus
+/// éloignés d'abord, pour que la lecture donne la lecture.
+fn habiller(bloc: Bloc, en_attente: &mut Vec<crate::langage::schema::Proprietes>) -> Bloc {
+    let mut habille = bloc;
+
+    while let Some(proprietes) = en_attente.pop() {
+        habille = Bloc::Décor {
+            proprietes,
+            bloc: Box::new(habille),
+        };
+    }
+
+    habille
+}
+
+/// Un bloc suit-il, pour qu'un attribut trouve à s'appliquer ?
+///
+/// Les lignes vides ne comptent pas : un attribut flotte jusqu'à son bloc.
+/// Une autre ligne d'attributs n'est pas un bloc — elle se fond avec lui.
+fn un_bloc_suit(lignes: &[&str], index: usize) -> bool {
+    lignes[index + 1..]
+        .iter()
+        .any(|ligne| !ligne.trim().is_empty() && lire_proprietes_ligne(ligne).is_none())
+}
+
+/// Lit une ligne d'attributs : `{clé=valeur clé2={valeur à espace}}`.
+///
+/// `None` si la ligne n'est pas une ligne d'attributs — c'est la grammaire
+/// des propriétés qui tranche, jamais l'apparence : `{rouge:texte}` n'en
+/// est pas une, et reste ce qu'il est.
+pub fn lire_proprietes_ligne(ligne: &str) -> Option<crate::langage::schema::Proprietes> {
+    let corps = ligne.trim();
+    let corps = corps.strip_prefix('{')?.strip_suffix('}')?;
+
+    let mut proprietes = crate::langage::schema::Proprietes::vide();
+    let mut reste = corps.trim();
+
+    while !reste.is_empty() {
+        let egal = reste.find('=')?;
+        let cle = reste[..egal].trim();
+
+        if cle.is_empty()
+            || !cle
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return None;
+        }
+
+        reste = reste[egal + 1..].trim_start();
+
+        let valeur;
+        if reste.starts_with('{') {
+            let fin = reste.find('}')?;
+            valeur = reste[1..fin].to_string();
+            reste = reste[fin + 1..].trim_start();
+        } else {
+            let fin = reste.find(' ').unwrap_or(reste.len());
+            valeur = reste[..fin].to_string();
+            reste = reste[fin..].trim_start();
+        }
+
+        if valeur.is_empty() || valeur != valeur.trim() {
+            return None;
+        }
+
+        proprietes.poser(cle, valeur);
+    }
+
+    (!proprietes.est_vide()).then_some(proprietes)
+}
+
+/// Lit une image : `![légende](chemin)`. `None` si la forme n'y est pas.
+///
+/// La forme est celle du lien, à l'`!` près : elle hérite donc de tout ce
+/// que le lecteur de lien sait déjà — l'imbrication des crochets, les
+/// échappements, l'opacité du code, et les cibles qui portent des
+/// parenthèses échappées. Une légende qui contient un lien se lit juste.
+pub fn lire_image(ligne: &str) -> Option<(Vec<crate::langage::schema::Inline>, String)> {
+    let corps = ligne.trim().strip_prefix('!')?;
+    let (texte, cible, reste) = lien(corps)?;
+
+    // Rien après la forme : une image est une ligne, pas une phrase.
+    if !reste.trim().is_empty() {
+        return None;
+    }
+
+    Some((parse_inline(&texte), cible))
 }
 
 /// Lit un bloc brut Typst, jusqu'au délimiteur fermant de longueur compatible.

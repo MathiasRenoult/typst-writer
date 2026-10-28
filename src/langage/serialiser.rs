@@ -71,10 +71,72 @@ pub fn serialiser(document: &Document) -> String {
                 out.push_str(&fence);
                 out.push('\n');
             }
+            Bloc::Image { légende, cible } => {
+                out.push_str("![");
+                ecrire_inline(légende, &mut out);
+                out.push_str("](");
+                echapper_cible(cible, &mut out);
+                out.push_str(")\n");
+            }
+            Bloc::Décor { .. } => {
+                // La ligne d'attributs d'abord, puis le bloc habillé —
+                // les manteaux emboîtés se fondent en un seul.
+                ecrire_seul(bloc, &mut out);
+            }
         }
     }
 
     out
+}
+
+/// Écrit un bloc comme s'il était seul — le corps d'un décor.
+///
+/// Les manteaux emboîtés se rassemblent : les propriétés se fondent dans
+/// l'ordre, du dehors au dedans, et le bloc nu reste seul au centre.
+/// C'est la réécriture des formes non canoniques, et elle est idempotente.
+fn ecrire_seul(bloc: &Bloc, out: &mut String) {
+    let mut fondus = crate::langage::schema::Proprietes::vide();
+    let mut nu = bloc;
+
+    while let Bloc::Décor { proprietes, bloc } = nu {
+        for (cle, valeur) in &proprietes.paires {
+            fondus.poser(cle.clone(), valeur.clone());
+        }
+
+        nu = bloc;
+    }
+
+    if !fondus.est_vide() {
+        out.push('{');
+        ecrire_proprietes(&fondus, out);
+        out.push_str("}\n");
+    }
+
+    let document = Document {
+        blocs: vec![nu.clone()],
+    };
+
+    out.push_str(&serialiser(&document));
+}
+
+/// Écrit les propriétés : `clé=valeur`, les valeurs à espace acccolées.
+fn ecrire_proprietes(proprietes: &crate::langage::schema::Proprietes, out: &mut String) {
+    for (position, (cle, valeur)) in proprietes.paires.iter().enumerate() {
+        if position > 0 {
+            out.push(' ');
+        }
+
+        out.push_str(cle);
+        out.push('=');
+
+        if valeur.contains(' ') {
+            out.push('{');
+            out.push_str(valeur);
+            out.push('}');
+        } else {
+            out.push_str(valeur);
+        }
+    }
 }
 
 /// Choisit un fence plus long que tout fence au début d'une ligne du contenu.
@@ -228,6 +290,109 @@ pub fn texte_appel(references: &[Reference]) -> String {
 
 #[cfg(test)]
 mod tests {
+    // ---- L'extension : blocs et propriétés ------------------------
+
+    /// Un attribut habille le bloc qui suit — et le round-trip est exact.
+    #[test]
+    fn un_attribut_habille_le_bloc_qui_suit() {
+        let source = "{bordure=1pt rayon=4pt}\n> une citation encadrée";
+        let document = super::super::parse(source);
+
+        assert_eq!(
+            document.blocs,
+            vec![Bloc::Décor {
+                proprietes: crate::langage::schema::Proprietes {
+                    paires: vec![
+                        ("bordure".into(), "1pt".into()),
+                        ("rayon".into(), "4pt".into()),
+                    ],
+                },
+                bloc: Box::new(Bloc::Citation(vec![Inline::Texte(
+                    "une citation encadrée".into()
+                )])),
+            }]
+        );
+
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+        assert!(document.est_canonique());
+    }
+
+    /// Une valeur à espace s'accôle, et se relit juste.
+    #[test]
+    fn une_valeur_a_espace_s_accolle() {
+        let source = "{remplissage={gradient.linear(#blue, #red)}}\n> le dégradé";
+        let document = super::super::parse(source);
+
+        let Bloc::Décor { proprietes, .. } = &document.blocs[0] else {
+            panic!("un décor attendu");
+        };
+
+        assert_eq!(
+            proprietes.obtenir("remplissage"),
+            Some("gradient.linear(#blue, #red)")
+        );
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// L'image se lit, s'écrit, et compose une figure.
+    #[test]
+    fn l_image_se_lit_et_compose() {
+        let source = "![Ma légende](figs/planche.png)";
+        let document = super::super::parse(source);
+
+        assert!(matches!(
+            &document.blocs[..],
+            [Bloc::Image { cible, .. }] if cible == "figs/planche.png"
+        ));
+
+        let typst = crate::langage::generer::generer(&document);
+        assert!(typst.contains("#figure(image(\"figs/planche.png\"), caption: ["), "vu : {typst}");
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Sans légende, pas de figure : l'image seule.
+    #[test]
+    fn sans_legende_l_image_est_seule() {
+        let document = super::super::parse("![](simple.png)");
+        let typst = crate::langage::generer::generer(&document);
+
+        assert!(typst.contains("#image(\"simple.png\")"), "vu : {typst}");
+    }
+
+    /// Une légende qui porte un lien se lit juste : le délimiteur est lu
+    /// depuis la fin, jamais depuis le premier crochet venu.
+    #[test]
+    fn une_legende_qui_porte_un_lien_se_lit_juste() {
+        let source = "![Voir le [plan](https://x.y)](image.png)";
+        let document = super::super::parse(source);
+
+        assert!(matches!(
+            &document.blocs[..],
+            [Bloc::Image { cible, .. }] if cible == "image.png"
+        ));
+
+        assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Ce qui n'est pas une ligne d'attributs reste du texte — et un
+    /// paragraphe qui commence par cette forme se protège.
+    #[test]
+    fn ce_qui_n_est_pas_un_attribut_reste_du_texte() {
+        let document = super::super::parse("{rouge: du texte coloré}");
+        assert_eq!(
+            document.blocs,
+            vec![Bloc::Paragraphe(vec![Inline::Couleur {
+                couleur: "rouge".into(),
+                contenu: vec![Inline::Texte(" du texte coloré".into())],
+            }])]
+        );
+
+        // Un paragraphe qui commence par une forme d'attribut se protège
+        // : sa barre ne se relit pas comme un littéral.
+        let texte = super::serialiser(&super::super::parse("{a=1} le reste"));
+        assert!(texte.starts_with("\\"), "vu : {texte}");
+    }
+
     use super::*;
     use crate::langage::parse::parse;
 
@@ -627,7 +792,72 @@ mod tests {
 
     /// Un bloc au hasard.
     fn bloc_au_hasard(hasard: &mut Hasard) -> Bloc {
-        match hasard.entier(7) {
+        // Le décor habille un bloc simple : jamais un décor dans un décor,
+        // c'est la forme canonique.
+        if hasard.entier(10) == 0 {
+            return Bloc::Décor {
+                proprietes: proprietes_au_hasard(hasard),
+                bloc: Box::new(bloc_simple_au_hasard(hasard)),
+            };
+        }
+
+        bloc_simple_au_hasard(hasard)
+    }
+
+    /// Une image au hasard — légende riche, cible sans parenthèse.
+    fn image_au_hasard(hasard: &mut Hasard) -> Bloc {
+        Bloc::Image {
+            légende: inlines_au_hasard(hasard, false),
+            cible: (*hasard.un_parmi(&[
+                "image.png",
+                "figs/planche-1.jpg",
+                "a-b_c.png",
+                "dossier/image.png",
+            ]))
+            .to_string(),
+        }
+    }
+
+    /// Des propriétés au hasard — y compris des valeurs à espace, qui
+    /// s'accollent, et des clés que la table ne connaît pas : le Typst
+    /// reste le maître.
+    fn proprietes_au_hasard(hasard: &mut Hasard) -> crate::langage::schema::Proprietes {
+        let mut proprietes = crate::langage::schema::Proprietes::vide();
+
+        for _ in 0..1 + hasard.entier(3) {
+            let cle = *hasard.un_parmi(&[
+                "largeur",
+                "hauteur",
+                "bordure",
+                "remplissage",
+                "rayon",
+                "marge",
+                "marge_ext",
+                "espace",
+                "personnalisee",
+            ]);
+            let valeur = *hasard.un_parmi(&[
+                "1pt",
+                "50%",
+                "auto",
+                "luma(240)",
+                "#ff0000",
+                "4pt",
+                "gradient.linear(#blue, #red)",
+                "rgb(1, 2, 0)",
+            ]);
+
+            // Une clé ne se dit qu'une fois : c'est la règle canonique.
+            if proprietes.obtenir(cle).is_none() {
+                proprietes.poser(cle, valeur);
+            }
+        }
+
+        proprietes
+    }
+
+    fn bloc_simple_au_hasard(hasard: &mut Hasard) -> Bloc {
+        match hasard.entier(8) {
             0 => Bloc::Titre {
                 niveau: (1 + hasard.entier(6)) as u8,
                 contenu: inlines_au_hasard(hasard, false),
@@ -654,6 +884,7 @@ mod tests {
                 ]))
                 .to_string(),
             ),
+            6 => image_au_hasard(hasard),
             _ => Bloc::Paragraphe(paragraphe_au_hasard(hasard)),
         }
     }

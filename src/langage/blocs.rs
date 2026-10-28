@@ -37,6 +37,10 @@ pub enum Genre {
 
     /// Du texte libre.
     Paragraphe,
+
+    /// `![légende](chemin)` — une ligne, et sa forme est sa donnée : elle
+    /// se déplace et s'habille, mais ne change pas de nature.
+    Image,
 }
 
 /// Un bloc du texte source : sa nature, et ses lignes.
@@ -53,6 +57,7 @@ pub struct Bloc {
 pub fn blocs(source: &str) -> Vec<Bloc> {
     let lignes: Vec<&str> = source.lines().collect();
     let mut blocs = Vec::new();
+    let mut manteau: Option<usize> = None;
     let mut index = 0usize;
 
     while index < lignes.len() {
@@ -118,13 +123,48 @@ pub fn blocs(source: &str) -> Vec<Bloc> {
             continue;
         }
 
+        // Une ligne d'attributs habille le bloc qui suit : elle en fait
+        // partie, pour qu'un déplacement emporte son manteau. La première
+        // garde le début, les autres se fondent avec elle.
+        if !echappee
+            && crate::langage::parse::lire_proprietes_ligne(ligne).is_some()
+        {
+            if manteau.is_none() {
+                manteau = Some(index);
+            }
+
+            index += 1;
+            continue;
+        }
+
+        // Une image : une ligne, et sa forme est sa donnée.
+        if !echappee
+            && ligne.trim_start().starts_with('!')
+            && crate::langage::parse::lire_image(ligne).is_some()
+        {
+            blocs.push(Bloc {
+                genre: Genre::Image,
+                lignes: manteau.take().unwrap_or(index)..index + 1,
+            });
+            index += 1;
+            continue;
+        }
+
         // Un paragraphe court jusqu'à la ligne vide ou un bloc qui s'ouvre.
         let fin = fin_du_paragraphe(&lignes, index);
         blocs.push(Bloc {
             genre: Genre::Paragraphe,
-            lignes: index..fin,
+            lignes: manteau.take().unwrap_or(index)..fin,
         });
         index = fin;
+    }
+
+    // Un manteau resté sans bloc n'est pas perdu : il reste du texte.
+    if let Some(debut) = manteau {
+        blocs.push(Bloc {
+            genre: Genre::Paragraphe,
+            lignes: debut..lignes.len(),
+        });
     }
 
     blocs
@@ -172,6 +212,17 @@ pub fn remplacement(source: &str, bloc: &Bloc, genre: Genre) -> Option<(Range<us
         .map(|ligne| sans_marque(ligne, bloc.genre))
         .collect();
 
+    // Le manteau se garde : une transformation change le bloc, pas
+    // l'habillage qui l'accompagne.
+    let mut manteau = Vec::new();
+
+    while contenu
+        .first()
+        .is_some_and(|ligne| crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
+    {
+        manteau.push(contenu.remove(0));
+    }
+
     // Un bloc brut se défait de ses fences : elles sont au pourtour, jamais
     // dans le contenu.
     if bloc.genre == Genre::Brut {
@@ -186,7 +237,9 @@ pub fn remplacement(source: &str, bloc: &Bloc, genre: Genre) -> Option<(Range<us
         }
     }
 
-    let remplacement: Vec<String> = match genre {
+    let mut remplacement: Vec<String> = match genre {
+        // Une image ne change pas de nature : sa forme est sa donnée.
+        Genre::Image => contenu,
         Genre::Paragraphe => contenu,
 
         Genre::Titre(niveau) => {
@@ -222,6 +275,10 @@ pub fn remplacement(source: &str, bloc: &Bloc, genre: Genre) -> Option<(Range<us
             sortante
         }
     };
+
+    let mut avec_manteau = manteau;
+    avec_manteau.append(&mut remplacement);
+    let remplacement = avec_manteau;
 
     // Les décalages viennent de la source elle-même : `lines()` mange les
     // `\r`, et un fichier CRLF se serait fait couper au mauvais octet.
@@ -363,7 +420,8 @@ pub fn sans_marque(ligne: &str, genre: Genre) -> String {
                 None
             }
         }
-        Genre::Brut | Genre::Paragraphe => None,
+        // L'image garde sa forme entière : c'est sa donnée.
+        Genre::Brut | Genre::Paragraphe | Genre::Image => None,
     };
 
     retire.unwrap_or(ligne).to_string()

@@ -45,6 +45,10 @@ PDF. Il n'y a pas de second moteur de rendu.
 
 ## Syntaxe gelée de `document.tw`
 
+Elle ne l'est pas pour toujours : chaque ajout suit la procédure de
+`extension-langage.md` — les blocs et les propriétés y ont leur route,
+leur recette et leurs preuves.
+
 ### Blocs
 
 | Bloc | Syntaxe | Typst généré |
