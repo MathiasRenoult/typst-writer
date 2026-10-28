@@ -115,6 +115,7 @@ impl State {
             references_filtre: String::new(),
             tableau: None,
             projets_vue: false,
+            mode: crate::app::state::ModeVue::default(),
             vignettes: Vec::new(),
             drag_projet: None,
             drag_etagere: None,
@@ -671,6 +672,29 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
         // Les vignettes se rendent en arrière-plan : la vue les attend
         // sans jamais bloquer l'écran.
+        // Le mode de la fenêtre : édition, rendu, Typst. `Ctrl+e`
+        // bascule rendu/édition, `Ctrl+Maj+e` ouvre le Typst — et le
+        // Typst ne sert que quand quelque chose refuse de se composer.
+        Message::ModeBasculer => {
+            state.mode = match state.mode {
+                crate::app::state::ModeVue::Edition => crate::app::state::ModeVue::Rendu,
+                crate::app::state::ModeVue::Rendu => crate::app::state::ModeVue::Edition,
+                crate::app::state::ModeVue::Typst => crate::app::state::ModeVue::Edition,
+            };
+
+            Task::none()
+        }
+
+        Message::ModeTypst => {
+            state.mode = if state.mode == crate::app::state::ModeVue::Typst {
+                crate::app::state::ModeVue::Edition
+            } else {
+                crate::app::state::ModeVue::Typst
+            };
+
+            Task::none()
+        }
+
         Message::ProjetsVue => {
             state.projets_vue = !state.projets_vue;
 
@@ -2601,7 +2625,6 @@ fn plan_touche(
         "i" => Action::Message(Message::ShowHover),
         "n" => Action::Message(Message::NewFile),
         "o" => Action::Message(Message::OpenFile),
-        "e" => Action::Message(Message::ExportPdf),
         "f" => Action::Message(Message::RechercheOuvrir),
         "t" => Action::Message(if modifiers.shift() {
             Message::TitrePrecedent
@@ -2614,6 +2637,8 @@ fn plan_touche(
         // d'impression ici — l'export a la sienne.
         "p" => Action::Message(Message::MiseEnPageOuvrir),
         // Le zoom : les touches de tout lecteur de document.
+        "e" if modifiers.shift() => Action::Message(Message::ModeTypst),
+        "e" => Action::Message(Message::ModeBasculer),
         "+" | "=" => Action::Message(Message::PreviewZoomStep(1)),
         "-" => Action::Message(Message::PreviewZoomStep(-1)),
         "0" => Action::Message(Message::PreviewZoom(

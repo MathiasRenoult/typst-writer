@@ -213,6 +213,8 @@ pub enum Message {
     ZoteroRecherche(String),
 
     ProjetsVue,
+    ModeBasculer,
+    ModeTypst,
     VignettesFaites(Vec<(String, Vec<u8>, u32, u32)>),
 
     DragCommencer(String),

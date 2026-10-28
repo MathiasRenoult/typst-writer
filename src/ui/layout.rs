@@ -39,7 +39,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // L'éditeur prend la place restante : c'est lui la raison d'être de
     // l'application, les panneaux ne font que l'entourer.
     bar = bar.push(crate::ui::onglets::view(state));
-    bar = bar.push(editor::view(state));
+
+    // Le mode de la fenêtre : la source, le rendu, ou le Typst (bug 7 du
+    // rapport 2). Le rendu prend toute la zone : la fenêtre de rendu
+    // d'à côté n'existe plus.
+    bar = bar.push(match state.mode {
+        crate::app::state::ModeVue::Edition => editor::view(state),
+        crate::app::state::ModeVue::Rendu => preview::view(state),
+        crate::app::state::ModeVue::Typst => crate::ui::onglets::typst(state),
+    });
 
     if layout.preview_visible {
         bar = bar.push(splitter(Splitter::Preview, state));
@@ -69,7 +77,12 @@ fn column_layout(state: &State) -> iced::widget::Column<'_, Message> {
     }
 
     top = top.push(crate::ui::onglets::view(state));
-    top = top.push(editor::view(state));
+
+    top = top.push(match state.mode {
+        crate::app::state::ModeVue::Edition => editor::view(state),
+        crate::app::state::ModeVue::Rendu => preview::view(state),
+        crate::app::state::ModeVue::Typst => crate::ui::onglets::typst(state),
+    });
 
     iced::widget::column![
         top.height(Length::FillPortion(1)),

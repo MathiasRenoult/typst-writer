@@ -7,8 +7,8 @@
 
 use crate::app::Message;
 use crate::ui::theme;
-use iced::widget::{Space, button, row};
-use iced::Element;
+use iced::widget::{button, container, row, Space};
+use iced::{Element, Length};
 
 /// La barre, quand au moins un projet est ouvert.
 pub fn view(state: &crate::app::State) -> Element<'_, Message> {
@@ -61,4 +61,39 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     }
 
     barre.into()
+}
+
+/// Le mode Typst : ce que l'application écrit vraiment.
+///
+/// Il ne sert qu'à comprendre — une formule qui refuse de se composer,
+/// un chemin d'image. Le texte est en lecture seule : c'est une vitre,
+/// pas un second document.
+pub fn typst<'a>(state: &'a crate::app::State) -> Element<'a, Message> {
+    let palette = state.resolved.palette;
+
+    let genere = match &state.editor.document {
+        Some(document) => crate::langage::generer::generer_avec(
+            document,
+            &crate::langage::typographie::Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        ),
+        None => String::new(),
+    };
+
+    let entete = palette
+        .label("Le Typst généré — lecture seule")
+        .size(theme::jetons::DETAIL)
+        .color(palette.text_muted);
+
+    let corps = iced::widget::Column::new()
+        .push(entete)
+        .push(iced::widget::text(genere).size(12))
+        .spacing(8);
+
+    container(corps)
+    .padding(12)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(theme::panneau(palette))
+    .into()
 }

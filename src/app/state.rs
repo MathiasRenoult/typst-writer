@@ -34,6 +34,24 @@ pub struct TableauDialogue {
     pub colonnes: String,
 }
 
+/// Le mode d'une fenêtre d'éditeur : ce qu'elle montre.
+///
+/// Trois modes, et pas plus : l'**édition** (la source, écrite à la
+/// markdown), le **rendu** (le document composé), et le **Typst** (ce que
+/// l'application écrit vraiment — utile quand une formule refuse de se
+/// composer). `Ctrl+e` bascule rendu/édition, `Ctrl+Maj+e` ouvre le
+/// Typst (bug 7 du rapport 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModeVue {
+    /// La source, écrite.
+    #[default]
+    Edition,
+    /// Le document composé.
+    Rendu,
+    /// Le Typst généré.
+    Typst,
+}
+
 /// Le dialogue de projet : créer, ou renommer celui qu'on nomme.
 #[derive(Clone)]
 pub struct ProjetDialogue {
@@ -128,6 +146,9 @@ pub struct State {
 
     /// Les vignettes des projets : nom → pixels RGBA.
     pub vignettes: Vec<(String, Vec<u8>, u32, u32)>,
+
+    /// Le mode de la fenêtre d'édition.
+    pub mode: ModeVue,
 
     /// Le projet qu'on déplace d'une étagère à l'autre — le geste du
     /// glisser-déposer (bug 3 du rapport 2).
