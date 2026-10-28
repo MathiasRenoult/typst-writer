@@ -1,0 +1,28 @@
+# Utiliser Typst Writer
+
+Cette documentation dit comment utiliser l'éditeur au quotidien : écrire,
+mettre en page, citer, chercher, exporter. Ce qui est ici décrit
+**l'application telle qu'elle est** ; les choix de conception sont ailleurs,
+dans `docs/design/`, et ne regardent pas l'usage.
+
+## Au sommaire
+
+1. [Prise en main](prise-en-main.md) — lancer, écrire, voir, exporter.
+2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au décor.
+3. [La bibliographie](bibliographie.md) — les références, la fiche, Zotero.
+4. [Les normes](normes.md) — mise en page, typographie, décor.
+5. [Rechercher et remplacer](recherche.md) — les expressions régulières.
+6. [Les raccourcis](raccourcis.md) — le clavier, entier.
+7. [Les fichiers](fichiers.md) — où tout vit, et ce qu'on en garde.
+
+## Le principe de l'écriture
+
+Un document se compose dans une couche simple, `document.tw` : du markdown
+qu'on lit et qu'on compare ligne à ligne. Le Typst reste le maître du
+rendu — l'aperçu est celui du document final, compilé par le vrai
+compilateur — et tout ce que la couche ne dit pas encore passe par un
+bloc brut, sans jamais se perdre.
+
+La mise en page ne se porte pas sur les épaules de l'écrivain : les
+mesures vivent dans les normes du document, et la source dit
+l'intention. Voir [Écrire](ecrire.md) et [Les normes](normes.md).
