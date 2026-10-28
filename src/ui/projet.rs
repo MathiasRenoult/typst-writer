@@ -5,7 +5,7 @@
 
 use crate::app::Message;
 use crate::ui::theme;
-use iced::widget::{Space, button, column, container, row, text_input};
+use iced::widget::{Space, button, column, container, pick_list, row, text_input};
 use iced::{Element, Length};
 
 /// L'identifiant du champ du nom : la fenêtre s'ouvre dessus.
@@ -36,6 +36,15 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
             .on_submit(Message::ProjetValider)
             .padding(6)
             .width(Length::Fixed(260.0)),
+        pick_list(
+            crate::project::noms_de_normes(),
+            Some(dialogue.norme.clone()),
+            Message::ProjetNorme
+        )
+        .width(Length::Fixed(260.0)),
+        palette
+            .label("La norme du projet — vide : celle du modèle.")
+            .size(theme::jetons::DETAIL),
         row![
             button(
                 palette

@@ -37,6 +37,8 @@ pub struct TableauDialogue {
 /// Le dialogue de projet : créer, ou renommer celui qu'on nomme.
 #[derive(Clone)]
 pub struct ProjetDialogue {
+    /// La norme choisie pour le nouveau projet — vide : celle du modèle.
+    pub norme: String,
     /// Le nom en cours de frappe.
     pub nom: String,
 

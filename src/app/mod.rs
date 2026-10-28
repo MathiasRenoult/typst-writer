@@ -529,8 +529,17 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         // Le dialogue s'ouvre sur le vide, ou sur le nom du projet visé.
+        Message::ProjetNorme(nom) => {
+            if let Some(dialogue) = state.projet_dialogue.as_mut() {
+                dialogue.norme = nom;
+            }
+
+            Task::none()
+        }
+
         Message::ProjetCreer => {
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
+                norme: String::new(),
                 nom: String::new(),
                 cible: None,
             });
@@ -547,6 +556,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 .unwrap_or_default();
 
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
+                norme: String::new(),
                 nom,
                 cible: Some(dir),
             });
@@ -576,6 +586,17 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             match rendu {
                 Ok(dir) => {
                     state.projet_dialogue = None;
+
+                    // La norme choisie à la création devient celle du
+                    // projet : elle s'y pose par la même voie que le
+                    // panneau, et le modèle du document ne change pas.
+                    if dialogue.cible.is_none()
+                        && !dialogue.norme.is_empty()
+                        && let Some(mise) = crate::project::norme(&dialogue.norme)
+                    {
+                        let _ = crate::mise_en_page::appliquer(&dir, &mise, false);
+                    }
+
                     update(state, Message::OpenProject(dir))
                 }
                 Err(probleme) => {
