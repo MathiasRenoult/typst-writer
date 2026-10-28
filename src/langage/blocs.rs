@@ -158,12 +158,7 @@ pub fn genre_effectif(actuel: Genre, demande: Genre) -> Genre {
 /// La plage est en **octets** — la monnaie de l'éditeur — et le texte est
 /// celui du bloc neuf, sans ses lignes voisines. [`transformer`] n'est que
 /// ceci posé dans la source.
-pub fn remplacement(
-    source: &str,
-    bloc: &Bloc,
-    genre: Genre,
-) -> Option<(Range<usize>, String)> {
-
+pub fn remplacement(source: &str, bloc: &Bloc, genre: Genre) -> Option<(Range<usize>, String)> {
     let lignes: Vec<&str> = source.lines().collect();
 
     if bloc.lignes.start >= bloc.lignes.end || bloc.lignes.end > lignes.len() {
@@ -293,15 +288,31 @@ fn echanger(source: &str, bloc: &Bloc, vers_le_haut: bool) -> Option<(String, us
     let lignes: Vec<&str> = source.lines().collect();
     let mut sortante: Vec<String> = Vec::with_capacity(lignes.len());
 
-    sortante.extend(lignes[..premier.lignes.start].iter().map(|ligne| ligne.to_string()));
-    sortante.extend(lignes[second.lignes.clone()].iter().map(|ligne| ligne.to_string()));
+    sortante.extend(
+        lignes[..premier.lignes.start]
+            .iter()
+            .map(|ligne| ligne.to_string()),
+    );
+    sortante.extend(
+        lignes[second.lignes.clone()]
+            .iter()
+            .map(|ligne| ligne.to_string()),
+    );
     sortante.extend(
         lignes[premier.lignes.end..second.lignes.start]
             .iter()
             .map(|ligne| ligne.to_string()),
     );
-    sortante.extend(lignes[premier.lignes.clone()].iter().map(|ligne| ligne.to_string()));
-    sortante.extend(lignes[second.lignes.end..].iter().map(|ligne| ligne.to_string()));
+    sortante.extend(
+        lignes[premier.lignes.clone()]
+            .iter()
+            .map(|ligne| ligne.to_string()),
+    );
+    sortante.extend(
+        lignes[second.lignes.end..]
+            .iter()
+            .map(|ligne| ligne.to_string()),
+    );
 
     // Le bloc partage la place de son voisin : c'est sa première ligne qu'on
     // rend, pour y ramener le curseur.
@@ -332,9 +343,15 @@ pub fn sans_marque(ligne: &str, genre: Genre) -> String {
     let retire = match genre {
         Genre::Titre(niveau) => {
             let marque = "#".repeat(niveau as usize);
-            ligne.trim_start().strip_prefix(&marque).and_then(|reste| reste.strip_prefix(' '))
+            ligne
+                .trim_start()
+                .strip_prefix(&marque)
+                .and_then(|reste| reste.strip_prefix(' '))
         }
-        Genre::Citation => ligne.trim_start().strip_prefix('>').map(|reste| reste.trim_start()),
+        Genre::Citation => ligne
+            .trim_start()
+            .strip_prefix('>')
+            .map(|reste| reste.trim_start()),
         Genre::Puce => ligne.trim_start().strip_prefix("- "),
         Genre::Numero => {
             let debut = ligne.trim_start();
@@ -431,7 +448,8 @@ mod tests {
         let source = "Un paragraphe.\r\n\r\n- puce";
         let bloc = blocs(source)[1].clone();
 
-        let (plage, texte) = remplacement(source, &bloc, Genre::Paragraphe).expect("transformation");
+        let (plage, texte) =
+            remplacement(source, &bloc, Genre::Paragraphe).expect("transformation");
         assert_eq!(&source[plage], "- puce", "la plage est celle du bloc");
         assert_eq!(texte, "puce");
     }
@@ -456,10 +474,7 @@ mod tests {
             let attendu = crate::langage::parse(source);
             let vus = blocs(source);
 
-            let genres: Vec<String> = vus
-                .iter()
-                .map(|bloc| format!("{:?}", bloc.genre))
-                .collect();
+            let genres: Vec<String> = vus.iter().map(|bloc| format!("{:?}", bloc.genre)).collect();
 
             assert_eq!(
                 vus.len(),

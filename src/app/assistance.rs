@@ -560,7 +560,10 @@ pub(super) fn fermer_composeur(state: &mut State, texte: Option<String>) -> Task
             let fin = state.editor.cursor_offset();
             let texte = separer(state, fin, texte);
 
-            state.editor.replace_span(composeur.ancre, fin, &texte).map(Message::Editor)
+            state
+                .editor
+                .replace_span(composeur.ancre, fin, &texte)
+                .map(Message::Editor)
         }
     };
 

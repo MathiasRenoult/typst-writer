@@ -43,9 +43,7 @@ pub fn corbeille() -> std::path::PathBuf {
 ///
 /// Le nom y devient unique : deux « document.tw » supprimés ne se
 /// marchent pas dessus.
-pub fn vers_la_corbeille(
-    chemin: &std::path::Path,
-) -> std::io::Result<std::path::PathBuf> {
+pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     let nom = chemin
         .file_name()
         .and_then(|nom| nom.to_str())
@@ -82,10 +80,7 @@ pub fn ecrire_atomique(chemin: &std::path::Path, contenu: &str) -> std::io::Resu
 }
 
 /// La même voie, pour des octets qui ne sont pas du texte (un import).
-pub fn ecrire_atomique_octets(
-    chemin: &std::path::Path,
-    octets: &[u8],
-) -> std::io::Result<()> {
+pub fn ecrire_atomique_octets(chemin: &std::path::Path, octets: &[u8]) -> std::io::Result<()> {
     let nom = chemin
         .file_name()
         .and_then(|nom| nom.to_str())
@@ -821,12 +816,18 @@ mod tests {
         std::fs::create_dir_all(&projet).expect("dossier");
 
         // Le modèle intact, celui que `create` écrit.
-        std::fs::write(projet.join("references.bib"), crate::project::model::BIBLIOGRAPHY_TEMPLATE)
-            .expect("modèle");
+        std::fs::write(
+            projet.join("references.bib"),
+            crate::project::model::BIBLIOGRAPHY_TEMPLATE,
+        )
+        .expect("modèle");
 
         // La bibliothèque errante, à la racine du dossier de travail.
-        std::fs::write(work.join("references.bib"), "@book{deja,\n  title = {Déjà},\n}\n")
-            .expect("errante");
+        std::fs::write(
+            work.join("references.bib"),
+            "@book{deja,\n  title = {Déjà},\n}\n",
+        )
+        .expect("errante");
 
         super::adopt_stray_bibliography(&work, &projet);
 
@@ -847,10 +848,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&projet).expect("dossier");
 
-        std::fs::write(projet.join("references.bib"), "@book{mien,\n  title = {Le mien},\n}\n")
-            .expect("travail");
-        std::fs::write(work.join("references.bib"), "@book{autre,\n  title = {Autre},\n}\n")
-            .expect("errante");
+        std::fs::write(
+            projet.join("references.bib"),
+            "@book{mien,\n  title = {Le mien},\n}\n",
+        )
+        .expect("travail");
+        std::fs::write(
+            work.join("references.bib"),
+            "@book{autre,\n  title = {Autre},\n}\n",
+        )
+        .expect("errante");
 
         super::adopt_stray_bibliography(&work, &projet);
 
@@ -859,7 +866,6 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&work);
     }
-
 
     /// Une suppression n'est pas une destruction : le fichier va à la
     /// corbeille, le chemin est rendu, et rien ne se marche dessus.
@@ -889,7 +895,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-
     /// Vider un champ présent retire le champ entier — jamais son
     /// accolade fermante, qui refermerait l'entrée et chasserait le reste.
     #[test]
@@ -898,8 +903,7 @@ mod tests {
 
         let sans_annee = super::retirer_champ(entree, "year");
         assert_eq!(
-            sans_annee,
-            "@book{cle,\n  author = {Nom},\n  title = {Titre},\n}\n",
+            sans_annee, "@book{cle,\n  author = {Nom},\n  title = {Titre},\n}\n",
             "vu : {sans_annee}"
         );
 
@@ -921,7 +925,6 @@ mod tests {
         let entree = "@book{cle,\n  title = {Titre},\n}\n";
         assert_eq!(super::retirer_champ(entree, "year"), entree);
     }
-
 
     /// Une notice neuve s'écrit avec ses champs — type, éditeur, lieu, titre
     /// court — et le fichier reste lisible par Typst.
@@ -1126,7 +1129,10 @@ mod tests {
         .unwrap();
 
         let corrige = std::fs::read_to_string(&chemin).unwrap();
-        assert!(!corrige.contains(",\n,"), "jamais deux virgules : {corrige}");
+        assert!(
+            !corrige.contains(",\n,"),
+            "jamais deux virgules : {corrige}"
+        );
 
         // Le vrai juge : le parseur BibLaTeX de Typst.
         let root = std::path::Path::new("/projet");

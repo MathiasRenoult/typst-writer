@@ -117,10 +117,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tw-styles-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dossier");
 
-        std::fs::write(dir.join("zoulou.csl"), APA.replace("apa", "zoulou").replace(
-            "American Psychological Association 7th edition",
-            "Style Zoulou",
-        ))
+        std::fs::write(
+            dir.join("zoulou.csl"),
+            APA.replace("apa", "zoulou").replace(
+                "American Psychological Association 7th edition",
+                "Style Zoulou",
+            ),
+        )
         .expect("style");
         std::fs::write(dir.join("a-traduire.txt"), "pas un style").expect("fichier");
         std::fs::write(dir.join("abime.csl"), "<style").expect("fichier abîmé");

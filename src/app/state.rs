@@ -57,6 +57,9 @@ pub struct State {
     /// dans un journal que personne ne lit.
     pub note: Option<Note>,
 
+    /// La carte des raccourcis, quand elle est demandée (`F1`).
+    pub aide: bool,
+
     /// La recherche en cours, quand elle est ouverte.
     pub recherche: Option<crate::app::recherche::Recherche>,
 
@@ -926,7 +929,6 @@ impl RenderState {
         self.rendering.insert((revision, index))
     }
 
-
     /// Une image d'une révision passée n'est plus bonne à montrer.
     ///
     /// Elle se jette, et la page repart dans les périmées : c'est la
@@ -1110,17 +1112,12 @@ mod tests {
                 de_suite += 1;
             }
         }
-        assert_eq!(
-            de_suite,
-            0,
-            "le plafond tient à travers l'invalidation"
-        );
+        assert_eq!(de_suite, 0, "le plafond tient à travers l'invalidation");
 
         // Une finie, une place s'ouvre — pour la nouvelle révision.
         render.finish_page_render(0, 0);
         assert!(render.begin_page_render(render.revision, 0));
     }
-
 
     /// Le zoom ne redemande **pas** une compilation.
     ///
@@ -1151,7 +1148,6 @@ mod tests {
         }
     }
 
-
     /// Sur un document long, cinquante pages visibles ne partent pas
     /// toutes ensemble : quatre départs, le reste attend sa place.
     #[test]
@@ -1176,7 +1172,6 @@ mod tests {
         assert!(render.stale.contains(&12), "la page 12 attend toujours");
     }
 
-
     /// Une image d'une révision passée se jette, et sa page repart dans les
     /// périmées : c'est la révision courante qui la redessinera.
     #[test]
@@ -1186,13 +1181,13 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(
-            render.image_perimee(2, 7),
-            "la révision 2 est passée"
-        );
+        assert!(render.image_perimee(2, 7), "la révision 2 est passée");
         assert!(render.stale.contains(&7), "la page repart en périmée");
 
-        assert!(!render.image_perimee(3, 7), "la révision courante est bonne");
+        assert!(
+            !render.image_perimee(3, 7),
+            "la révision courante est bonne"
+        );
     }
 
     /// Les rasterisations ne partent pas toutes d'un coup : il y a un

@@ -67,11 +67,7 @@ pub fn remplacement(
 ///
 /// Du dernier au premier : les décalages des précédents ne bougent pas,
 /// et le texte reste juste.
-pub fn remplacer_tout(
-    motif: &str,
-    par: &str,
-    texte: &str,
-) -> Result<String, String> {
+pub fn remplacer_tout(motif: &str, par: &str, texte: &str) -> Result<String, String> {
     let occurrences = occurrences(motif, texte)?;
 
     let mut sortie = texte.to_string();

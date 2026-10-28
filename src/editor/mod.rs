@@ -56,7 +56,13 @@ fn marques_du_contenu(
 
     let mut marques: Vec<(iced_code_editor::Marque, usize)> = Vec::new();
 
-    for (rang, Note { debut, fin, numero, .. }) in notes.iter().enumerate() {
+    for (
+        rang,
+        Note {
+            debut, fin, numero, ..
+        },
+    ) in notes.iter().enumerate()
+    {
         let mut premiere = true;
         let mut ligne = translate(*debut).0;
 
@@ -69,17 +75,14 @@ fn marques_du_contenu(
             if couvert_debut < couvert_fin {
                 let (_, debut_col) = translate(couvert_debut);
                 let (_, fin_col) = translate(couvert_fin);
-                let label =
-                    if premiere { numero.to_string() } else { String::new() };
+                let label = if premiere {
+                    numero.to_string()
+                } else {
+                    String::new()
+                };
 
                 marques.push((
-                    iced_code_editor::Marque::new(
-                        rang,
-                        ligne,
-                        debut_col,
-                        fin_col,
-                        label,
-                    ),
+                    iced_code_editor::Marque::new(rang, ligne, debut_col, fin_col, label),
                     rang,
                 ));
                 premiere = false;
@@ -266,9 +269,7 @@ impl EditorState {
         let notes = crate::langage::marques::notes(&contenu)
             .into_iter()
             .filter(|note| {
-                !(note.nature == Nature::PiedDePage
-                    && note.debut < offset
-                    && offset < note.fin)
+                !(note.nature == Nature::PiedDePage && note.debut < offset && offset < note.fin)
             })
             .collect::<Vec<_>>();
 
@@ -436,7 +437,10 @@ impl EditorState {
     /// Le crate ne se déplace qu'en (ligne, colonne) : la conversion se fait
     /// ici, une seule fois.
     pub fn set_cursor_offset(&mut self, offset: usize) -> Task<EditorMessage> {
-        self.set_cursor(self.position_de_offset(offset).0, self.position_de_offset(offset).1)
+        self.set_cursor(
+            self.position_de_offset(offset).0,
+            self.position_de_offset(offset).1,
+        )
     }
 
     /// Applique une commande de mise en forme au document `.tw` courant.
@@ -456,9 +460,9 @@ impl EditorState {
             }
             crate::app::message::FormatAction::Citation => self.insert_at_cursor("@"),
             crate::app::message::FormatAction::Note => self.wrap_selection("^[", "]"),
-            crate::app::message::FormatAction::Titre(niveau) => self.formater_le_bloc(
-                crate::langage::blocs::Genre::Titre(niveau.clamp(1, 6)),
-            ),
+            crate::app::message::FormatAction::Titre(niveau) => {
+                self.formater_le_bloc(crate::langage::blocs::Genre::Titre(niveau.clamp(1, 6)))
+            }
             crate::app::message::FormatAction::ListePuce => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Puce)
             }
@@ -541,12 +545,16 @@ impl EditorState {
 
         let ligne_ancienne = anciennes.get(ligne).copied().unwrap_or_default();
         let ancienne_marque = ligne_ancienne.chars().count()
-            - blocs::sans_marque(ligne_ancienne, bloc.genre).chars().count();
+            - blocs::sans_marque(ligne_ancienne, bloc.genre)
+                .chars()
+                .count();
 
         let rang = rang.min(neuves.len().saturating_sub(1));
         let ligne_neuve = neuves.get(rang).copied().unwrap_or_default();
         let nouvelle_marque = ligne_neuve.chars().count()
-            - blocs::sans_marque(ligne_neuve, blocs::genre_effectif(bloc.genre, genre)).chars().count();
+            - blocs::sans_marque(ligne_neuve, blocs::genre_effectif(bloc.genre, genre))
+                .chars()
+                .count();
 
         let tache = self.replace_span(plage.start, plage.end, &texte);
 
@@ -673,10 +681,7 @@ impl EditorState {
     ///
     /// C'est la **seule** porte d'édition d'une note : l'hôte retrouve sa
     /// note dans la liste des siennes, et décide seul de l'ouvrir.
-    pub fn note_au_clic(
-        &self,
-        notes: &[crate::langage::marques::Note],
-    ) -> Option<usize> {
+    pub fn note_au_clic(&self, notes: &[crate::langage::marques::Note]) -> Option<usize> {
         let (ligne, debut, _fin) = self.editor.dernier_clic_sur_marque()?;
         let contenu = self.content();
 
@@ -823,7 +828,11 @@ mod tests {
         let ancre = texte.find(" et après").expect("la suite est là");
         let _ = editor.replace_span(ancre, ancre, "@dupont2023[p. 45]");
 
-        assert_eq!(editor.nombre_de_glyphes(), 1, "le glyphe est posé, sans délai");
+        assert_eq!(
+            editor.nombre_de_glyphes(),
+            1,
+            "le glyphe est posé, sans délai"
+        );
 
         // Et le Suppr emporte le glyphe entier, jamais la dernière lettre de
         // la clé : c'était la porte de corruption du `.tw`.
@@ -843,8 +852,7 @@ mod tests {
     #[test]
     fn une_annulation_reprend_tout_le_changement_du_panneau() {
         let mut editor = EditorState::default();
-        let texte =
-            "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
+        let texte = "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
         let _ = editor.update(EditorMessage::Paste(texte.to_string()));
 
         let debut = texte.find("@dupont2023").expect("la citation est là");
@@ -864,8 +872,7 @@ mod tests {
     #[test]
     fn une_note_sur_deux_lignes_part_entiere() {
         let mut editor = EditorState::default();
-        let texte =
-            "Avant @dupont2023[p. 45];\n@martin2020 et tout ce qui suit.";
+        let texte = "Avant @dupont2023[p. 45];\n@martin2020 et tout ce qui suit.";
         let _ = editor.update(EditorMessage::Paste(texte.to_string()));
 
         let notes = crate::langage::marques::notes(&editor.content());
@@ -887,8 +894,7 @@ mod tests {
     #[test]
     fn annuler_la_suppression_dune_note_rend_le_document_entier() {
         let mut editor = EditorState::default();
-        let texte =
-            "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
+        let texte = "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
         let _ = editor.update(EditorMessage::Paste(texte.to_string()));
 
         let notes = crate::langage::marques::notes(&editor.content());
@@ -1338,7 +1344,10 @@ mod tests {
 
         let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
 
-        assert_eq!(editor.content(), "- une phrase\n- deux phrases.\n\nLa suite.");
+        assert_eq!(
+            editor.content(),
+            "- une phrase\n- deux phrases.\n\nLa suite."
+        );
 
         // Le curseur est sur sa ligne, colonne ajustée de la puce.
         assert_eq!(editor.editor.cursor_position(), (1, 5));
@@ -1376,5 +1385,4 @@ mod tests {
         let _ = editor.apply_format(crate::app::message::FormatAction::Titre(4));
         assert_eq!(editor.content(), "#### Deuxième");
     }
-
 }

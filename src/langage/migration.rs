@@ -303,10 +303,7 @@ mod tests {
             document
                 .blocs
                 .iter()
-                .all(|bloc| !matches!(
-                    bloc,
-                    crate::langage::schema::Bloc::ListeNumero(_)
-                )),
+                .all(|bloc| !matches!(bloc, crate::langage::schema::Bloc::ListeNumero(_))),
             "« 1. Introduction » est du texte : {document:?}"
         );
 
@@ -331,13 +328,19 @@ mod tests {
         assert_eq!(rapport.blocs_bruts, 0, "{rapport:?}");
         assert_eq!(rapport.elements_convertis, 2, "{rapport:?}");
         assert!(rapport.avertissements.is_empty(), "{rapport:?}");
-        assert!(document.est_canonique(), "la migration produit du canonique");
+        assert!(
+            document.est_canonique(),
+            "la migration produit du canonique"
+        );
 
         let (document, rapport) = importer_typst_avec_rapport("#figure(image(\"a.png\"))\n");
         assert_eq!(rapport.blocs_bruts, 1, "{rapport:?}");
         assert_eq!(rapport.elements_convertis, 0, "{rapport:?}");
         assert!(
-            rapport.avertissements.iter().any(|motif| motif.contains("Typst")),
+            rapport
+                .avertissements
+                .iter()
+                .any(|motif| motif.contains("Typst")),
             "le motif est dit : {rapport:?}"
         );
         assert_eq!(document.blocs.len(), 1);

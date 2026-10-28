@@ -363,7 +363,6 @@ mod tests {
         assert!(outcome.errors.is_empty(), "vu : {:?}", outcome.errors);
     }
 
-
     /// La typographie traverse les éléments : l'espace avant un signe, et
     /// le niveau des guillemets, ne se perdent pas aux frontières.
     #[test]
@@ -385,7 +384,6 @@ mod tests {
             "l'espace après le point se pose : {typst}"
         );
     }
-
 
     /// La couleur hex s'écrit `#ff0000` et doit compiler : c'est du texte
     /// pour Typst, dont `rgb()` est la seule voie.
@@ -449,7 +447,7 @@ mod tests {
         );
     }
 
-/// L'échappement Typst, éprouvé **par contexte**.
+    /// L'échappement Typst, éprouvé **par contexte**.
     ///
     /// Chaque contexte a ses pièges : le code est pris au mot, la cible d'un
     /// lien est une chaîne, une couleur est une expression, une note est un
@@ -460,7 +458,9 @@ mod tests {
         // Le code est littéral : ses signes Typst ne sont pas du balisage,
         // et un crochet y est un crochet.
         let document = Document {
-            blocs: vec![Bloc::Paragraphe(vec![Inline::Code("#f(x) * y]".to_string())])],
+            blocs: vec![Bloc::Paragraphe(vec![Inline::Code(
+                "#f(x) * y]".to_string(),
+            )])],
         };
         let typst = generer(&document);
         assert!(typst.contains("`#f(x) * y]`"), "{typst}");
@@ -475,7 +475,10 @@ mod tests {
             }])],
         };
         let typst = generer(&document);
-        assert!(typst.contains("#link(\"https://x.y/a\\\"b\\\\c\")"), "{typst}");
+        assert!(
+            typst.contains("#link(\"https://x.y/a\\\"b\\\\c\")"),
+            "{typst}"
+        );
         assert!(compiler(&typst).errors.is_empty(), "la chaîne doit tenir");
 
         // Une couleur est une expression Typst ; son contenu est du texte
@@ -487,7 +490,10 @@ mod tests {
             }])],
         };
         let typst = generer(&document);
-        assert!(compiler(&typst).errors.is_empty(), "la couleur doit compiler");
+        assert!(
+            compiler(&typst).errors.is_empty(),
+            "la couleur doit compiler"
+        );
 
         // Une note est un bloc de contenu : son texte s'échappe, et un code
         // qui y porte un crochet ne le referme pas.
@@ -599,10 +605,8 @@ mod tests {
     /// verra — les deux références, et la page, dans une seule note.
     #[test]
     fn un_appel_groupe_devient_une_seule_note() {
-        let root = std::env::temp_dir().join(format!(
-            "typst-writer-groupe-note-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-groupe-note-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("racine du projet");
         std::fs::write(root.join("references.bib"), BIB).expect("bibliographie d'essai");
@@ -631,7 +635,10 @@ mod tests {
 
         let page = composed_text(document);
 
-        assert!(page.contains("p. 45"), "la page se lit dans la note : {page}");
+        assert!(
+            page.contains("p. 45"),
+            "la page se lit dans la note : {page}"
+        );
         assert!(
             page.contains("Dupont") && page.contains("Martin"),
             "les deux références s'y retrouvent : {page}"
@@ -644,10 +651,8 @@ mod tests {
     /// la forme courte `@clé[p. 45]`, sans les appels groupés.
     #[test]
     fn une_reference_avec_sa_page_rend_sa_note() {
-        let root = std::env::temp_dir().join(format!(
-            "typst-writer-note-page-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-note-page-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("racine du projet");
         std::fs::write(root.join("references.bib"), BIB).expect("bibliographie d'essai");
@@ -668,7 +673,10 @@ mod tests {
 
         let page = composed_text(document);
 
-        assert!(page.contains("p. 45"), "la page se lit dans la note : {page}");
+        assert!(
+            page.contains("p. 45"),
+            "la page se lit dans la note : {page}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

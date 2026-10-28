@@ -65,8 +65,7 @@ impl State {
 
         // La migration ne se fait pas en silence : ce qu'elle n'a pas
         // traduit se dit, à l'écran, dès le démarrage.
-        let note_de_migration = match crate::project::migrate_to_document_avec_rapport(&project)
-        {
+        let note_de_migration = match crate::project::migrate_to_document_avec_rapport(&project) {
             Ok((_, rapport)) => {
                 if rapport.avertissements.is_empty() {
                     None
@@ -97,6 +96,7 @@ impl State {
         };
 
         let mut state = Self {
+            aide: false,
             editor: crate::editor::EditorState::default(),
             export_status: None,
             bibliography: Vec::new(),
@@ -126,10 +126,10 @@ impl State {
             chosen: session.themes.clone(),
             theme: session.theme_mode,
             resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
-                    liaison: None,
+            liaison: None,
             recherche: None,
             note: note_de_migration,
-};
+        };
 
         // Le chapitre de la session, s'il appartient encore au projet ; sinon
         // le premier chapitre, sinon rien — le panneau proposera d'en créer un.
@@ -429,6 +429,12 @@ const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // La carte des raccourcis : une bascule, rien de plus.
+        Message::AideBasculer => {
+            state.aide = !state.aide;
+            Task::none()
+        }
+
         // Le domaine des réglages du document a son module.
         Message::MiseEnPageOuvrir
         | Message::MiseEnPageFermer
@@ -691,14 +697,12 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
                     return match note.nature {
                         crate::langage::marques::Nature::Appel => {
-                            let ouverture = crate::langage::parse::appel_autour(
-                                &contenu,
-                                note.debut + 1,
-                            )
-                            .map(|(references, debut, fin)| {
-                                ouvrir_edition(state, references, debut, fin)
-                            })
-                            .unwrap_or_else(Task::none);
+                            let ouverture =
+                                crate::langage::parse::appel_autour(&contenu, note.debut + 1)
+                                    .map(|(references, debut, fin)| {
+                                        ouvrir_edition(state, references, debut, fin)
+                                    })
+                                    .unwrap_or_else(Task::none);
 
                             Task::batch([task, ouverture])
                         }
@@ -736,8 +740,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             // Le bouton « citation » est un `@` tapé par la main de l'outil.
-            let declencheur_tape =
-                matches!(action, crate::app::message::FormatAction::Citation);
+            let declencheur_tape = matches!(action, crate::app::message::FormatAction::Citation);
 
             state.render.words_pending = true;
             let edit = state.editor.apply_format(action).map(Message::Editor);
@@ -960,7 +963,6 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.render.page_cache.retain(|index, _| *index < total);
                 state.render.stale.retain(|index| *index < total);
             }
-
 
             state.render.chapter_page = chapter_page;
             state.render.outline = source_outline(state, outcome.outline);
@@ -1282,14 +1284,8 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::RechercheRemplacer
         | Message::RechercheRemplacerTout => recherche(state, message),
 
-        Message::BlocMonter => state
-            .editor
-            .deplacer_le_bloc(true)
-            .map(Message::Editor),
-        Message::BlocDescendre => state
-            .editor
-            .deplacer_le_bloc(false)
-            .map(Message::Editor),
+        Message::BlocMonter => state.editor.deplacer_le_bloc(true).map(Message::Editor),
+        Message::BlocDescendre => state.editor.deplacer_le_bloc(false).map(Message::Editor),
 
         Message::TitreSuivant => sauter_titre(state, 1),
         Message::TitrePrecedent => sauter_titre(state, -1),
@@ -1509,7 +1505,10 @@ fn remplacer_courant(state: &mut State) -> Task<Message> {
 
     match neuf {
         Ok(neuf) => {
-            let tache = state.editor.replace_span(debut, fin, &neuf).map(Message::Editor);
+            let tache = state
+                .editor
+                .replace_span(debut, fin, &neuf)
+                .map(Message::Editor);
             Task::batch([tache, rafraichir_la_recherche(state)])
         }
         Err(erreur) => {
@@ -1533,7 +1532,10 @@ fn remplacer_tout(state: &mut State) -> Task<Message> {
     match neuf {
         Ok(neuf) => {
             let compte = etat.occurrences.len();
-            let tache = state.editor.replace_span(0, texte.len(), &neuf).map(Message::Editor);
+            let tache = state
+                .editor
+                .replace_span(0, texte.len(), &neuf)
+                .map(Message::Editor);
 
             state.note = Some(crate::app::state::Note::info(format!(
                 "{compte} occurrence(s) remplacée(s)."
@@ -1622,9 +1624,7 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
             let (demande, rendu) = (lien.cle.clone(), (lien.cle, lien.nom));
 
             Task::perform(
-                async move {
-                    crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string())
-                },
+                async move { crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string()) },
                 move |resultat| Message::ZoteroExport(rendu.0, rendu.1, resultat),
             )
         }
@@ -1637,9 +1637,7 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
             let (demande, rendu) = (cle.clone(), (cle, nom));
 
             Task::perform(
-                async move {
-                    crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string())
-                },
+                async move { crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string()) },
                 move |resultat| Message::ZoteroExport(rendu.0, rendu.1, resultat),
             )
         }
@@ -1649,10 +1647,7 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 let dir = state.project.dir.clone();
 
                 if let Err(erreur) =
-                    crate::project::ecrire_atomique(
-                        &dir.join("references-zotero.bib"),
-                        &bibtex,
-                    )
+                    crate::project::ecrire_atomique(&dir.join("references-zotero.bib"), &bibtex)
                 {
                     state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
                         motif: format!("La bibliothèque n'a pas pu être écrite : {erreur}"),
@@ -1662,9 +1657,7 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                     return Task::none();
                 }
 
-                if let Err(erreur) =
-                    crate::zotero::lier(&dir, &crate::zotero::Lien { cle, nom })
-                {
+                if let Err(erreur) = crate::zotero::lier(&dir, &crate::zotero::Lien { cle, nom }) {
                     state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
                         motif: format!("La liaison n'a pas pu être gardée : {erreur}"),
                         reglable: false,
@@ -1733,51 +1726,222 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
     }
 }
 
+/// Ce que la table du clavier a besoin de savoir de l'écran.
+///
+/// Rien de plus : un état complet suppose un projet ouvert, ce que la
+/// table n'a pas à savoir — et c'est ce qui la rend vérifiable.
+#[derive(Debug, Default, Clone, Copy)]
+struct Situation {
+    /// Le composeur est ouvert : sa frappe est à lui.
+    composeur: bool,
+    /// Une fenêtre est ouverte — c'est le contrat qui s'applique.
+    fenetre: bool,
+    /// La fiche de référence : `Entrée` y enregistre.
+    fiche: bool,
+    /// Ce qui est au-dessus de la pile des fenêtres.
+    aide: bool,
+    recherche: bool,
+    liaison: bool,
+    /// La liste de complétion, le survol — et le mode focus.
+    completion: bool,
+    survol: bool,
+    focus: bool,
+}
+
+impl Situation {
+    fn de(state: &State) -> Self {
+        Situation {
+            composeur: state.composeur.is_some(),
+            fenetre: fenetre_ouverte(state),
+            fiche: state.edition_reference.is_some(),
+            aide: state.aide,
+            recherche: state.recherche.is_some(),
+            liaison: state.liaison.is_some(),
+            completion: state.lsp.completion.is_some(),
+            survol: state.lsp.hover.is_some(),
+            focus: state.layout.focus_mode,
+        }
+    }
+}
+
+/// Ce qu'une touche décide — la table du clavier, sans son exécution.
+///
+/// Séparer le geste de l'action : c'est ce qui rend la table vérifiable,
+/// et c'est ce qui empêche qu'une fenêtre ouverte fasse oublier le reste.
+#[derive(Debug)]
+enum Action {
+    /// Un message à faire passer, ni plus ni moins.
+    Message(Message),
+
+    /// Le focus va au champ suivant, ou revient au précédent.
+    FocusSuivant,
+    FocusPrecedent,
+
+    /// Enregistrer : le seul geste qui n'est pas un message.
+    Enregistrer,
+
+    /// La touche ne fait rien : elle était à quelqu'un d'autre.
+    Rien,
+}
+
+/// La table du clavier, dans l'ordre où les choses la prennent.
+fn plan_touche(etat: Situation, key: &iced::keyboard::Key, modifiers: iced::keyboard::Modifiers) -> Action {
+    use iced::keyboard::{Key, key::Named};
+
+    // Le composeur, quand il est ouvert, prend ses touches : sa frappe est
+    // à lui, et rien ne doit l'entamer.
+    if etat.composeur && est_touche_composeur(key) {
+        return Action::Rien; // le relais lui donne, ici on ne touche pas.
+    }
+
+    // **Le contrat des fenêtres.** Toute fenêtre se conduit de même :
+    // `Tabulation` circule, `Maj+Tabulation` revient, `Échap` ferme celle
+    // du dessus. Un seul contrat pour toutes — c'est ce qui fait qu'on
+    // n'a jamais à chercher comment sortir.
+    if etat.fenetre {
+        match key {
+            Key::Named(Named::Tab) if modifiers.shift() => return Action::FocusPrecedent,
+            Key::Named(Named::Tab) => return Action::FocusSuivant,
+            Key::Named(Named::Escape) => return Action::Message(fermeture_du_dessus(etat)),
+
+            // La fiche de référence est un formulaire : `Entrée` y
+            // enregistre. Ailleurs, la touche est aux champs, qui ont la
+            // leur par `on_submit`.
+            Key::Named(Named::Enter) if etat.fiche => {
+                return Action::Message(Message::EditionReferenceEnregistrer);
+            }
+
+            _ => {}
+        }
+    }
+
+    // Les touches nommées, d'une seule main quand elles le peuvent.
+    match key {
+        Key::Named(Named::F1) => return Action::Message(Message::AideBasculer),
+        Key::Named(Named::F2) => return Action::Message(Message::SymbolRenameStart),
+        Key::Named(Named::F3) => {
+            return Action::Message(if !etat.recherche {
+                Message::RechercheOuvrir
+            } else if modifiers.shift() {
+                Message::RecherchePrecedent
+            } else {
+                Message::RechercheSuivant
+            });
+        }
+        Key::Named(Named::F11) => return Action::Message(Message::ToggleFocusMode),
+        Key::Named(Named::F12) => return Action::Message(Message::GoToDefinition),
+        Key::Named(Named::Escape) => {
+            // Ce qui s'est ouvert en dernier se ferme en premier : la
+            // liste, puis le survol, puis le mode focus — il y a toujours
+            // une sortie.
+            if etat.completion || etat.survol {
+                return Action::Message(Message::CompletionDismiss);
+            }
+            if etat.focus {
+                return Action::Message(Message::ToggleFocusMode);
+            }
+            return Action::Rien;
+        }
+        _ => {}
+    }
+
+    // Le bloc entier se déplace : `Ctrl+Maj+Haut/Bas`.
+    if modifiers.control()
+        && modifiers.shift()
+        && matches!(key, Key::Named(Named::ArrowUp | Named::ArrowDown))
+    {
+        return Action::Message(if matches!(key, Key::Named(Named::ArrowUp)) {
+            Message::BlocMonter
+        } else {
+            Message::BlocDescendre
+        });
+    }
+
+    if !modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return Action::Rien;
+    }
+
+    let Key::Character(character) = key else {
+        return Action::Rien;
+    };
+
+    match character.to_lowercase().as_str() {
+        "s" => Action::Enregistrer,
+        "i" => Action::Message(Message::ShowHover),
+        "n" => Action::Message(Message::NewFile),
+        "o" => Action::Message(Message::OpenFile),
+        "e" => Action::Message(Message::ExportPdf),
+        "f" => Action::Message(Message::RechercheOuvrir),
+        "t" => Action::Message(if modifiers.shift() {
+            Message::TitrePrecedent
+        } else {
+            Message::TitreSuivant
+        }),
+        // L'aperçu suit — ou ne suit plus — le curseur.
+        "l" if modifiers.shift() => Action::Message(Message::TogglePreviewSync),
+        // Les normes du document : `Ctrl+P`, la page. Il n'y a pas
+        // d'impression ici — l'export a la sienne.
+        "p" => Action::Message(Message::MiseEnPageOuvrir),
+        // Le zoom : les touches de tout lecteur de document.
+        "+" | "=" => Action::Message(Message::PreviewZoomStep(1)),
+        "-" => Action::Message(Message::PreviewZoomStep(-1)),
+        "0" => Action::Message(Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth)),
+        _ => Action::Rien,
+    }
+}
+
+/// Le message de fermeture de la fenêtre du dessus de la pile.
+fn fermeture_du_dessus(etat: Situation) -> Message {
+    if etat.aide {
+        return Message::AideBasculer;
+    }
+    if etat.recherche {
+        return Message::RechercheFermer;
+    }
+    if etat.liaison {
+        return Message::ZoteroLiaisonFermer;
+    }
+    if etat.fiche {
+        return Message::EditionReferenceFermer;
+    }
+    Message::MiseEnPageFermer
+}
+
+/// Quelque fenêtre est-elle ouverte ?
+fn fenetre_ouverte(state: &State) -> bool {
+    state.aide
+        || state.recherche.is_some()
+        || state.liaison.is_some()
+        || state.edition_reference.is_some()
+        || state.mise_en_page.is_some()
+}
+
 fn handle_shortcut(
     state: &mut State,
     key: iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Task<Message> {
-    // La fiche de référence, quand elle est ouverte : un formulaire se
-    // conduit au clavier — `Tabulation` circule dans les champs, `Entrée`
-    // enregistre, `Échap` ferme. Ses touches lui appartiennent.
-    if state.recherche.is_some()
-        && matches!(
-            key,
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
-        )
-    {
-        return update(state, Message::RechercheFermer);
+    // Le composeur garde la sienne, relaïée même capturée.
+    if let Some(task) = composeur_touche(state, &key, modifiers) {
+        return task;
     }
 
-    if state.liaison.is_some() {
-        use iced::keyboard::{Key, key::Named};
-
-        if let Key::Named(Named::Escape) = key {
-            return update(state, Message::ZoteroLiaisonFermer);
-        }
-    }
-
-    if state.edition_reference.is_some() {
-        use iced::keyboard::{Key, key::Named};
-
-        match key {
-            Key::Named(Named::Tab) if modifiers.shift() => return iced::widget::operation::focus_previous(),
-            Key::Named(Named::Tab) => return iced::widget::operation::focus_next(),
-            Key::Named(Named::Enter) => return update(state, Message::EditionReferenceEnregistrer),
-            Key::Named(Named::Escape) => return update(state, Message::EditionReferenceFermer),
-            _ => {}
-        }
-    }
-
-    // La liste de complétion, quand elle est ouverte, prend les touches dont
-    // elle a besoin. L'éditeur les a **déclinées** (patch 4 du crate) : elles
-    // arrivent donc jusqu'ici, et c'est ici qu'on décide de ce qu'elles font.
+    // La liste de complétion prend les siennes, quand elle est ouverte.
     if let Some(task) = completion_shortcut(state, &key, modifiers) {
         return task;
     }
 
-    handle_shortcut_inner(state, key, modifiers)
+    match plan_touche(Situation::de(state), &key, modifiers) {
+        Action::Enregistrer => {
+            state.persist();
+            state.refresh_context();
+            Task::none()
+        }
+        Action::Message(message) => update(state, message),
+        Action::FocusSuivant => iced::widget::operation::focus_next(),
+        Action::FocusPrecedent => iced::widget::operation::focus_previous(),
+        Action::Rien => Task::none(),
+    }
 }
 
 /// Les touches de la liste de complétion, quand elle est ouverte.
@@ -1815,101 +1979,6 @@ fn completion_shortcut(
         }
         Key::Named(Named::Escape) => Some(update(state, Message::CompletionDismiss)),
         _ => None,
-    }
-}
-
-fn handle_shortcut_inner(
-    state: &mut State,
-    key: iced::keyboard::Key,
-    modifiers: iced::keyboard::Modifiers,
-) -> Task<Message> {
-    // F11 bascule le mode focus sans modificateur : c'est la touche consacrée
-    // au plein écran, et le geste doit rester d'une seule main.
-    if let iced::keyboard::Key::Named(iced::keyboard::key::Named::F11) = key {
-        return update(state, Message::ToggleFocusMode);
-    }
-
-    // Échap en sort : en mode focus il n'y a plus de barre d'outils, donc plus
-    // de bouton à cliquer — sans cette sortie, l'utilisateur serait enfermé.
-    // F12 va à la définition : c'est la touche consacrée, et elle ne demande
-    // aucune combinaison — le geste reste d'une seule main.
-    if let iced::keyboard::Key::Named(iced::keyboard::key::Named::F12) = key {
-        return update(state, Message::GoToDefinition);
-    }
-
-    // Le bloc entier se déplace d'un bloc : `Ctrl+Maj+Haut/Bas`. Les
-    // flèches sont prises par le curseur et les lignes — celles-ci
-    // ajoutent la majuscule que rien d'autre ne réclame.
-    if modifiers.control()
-        && modifiers.shift()
-        && matches!(
-            key,
-            iced::keyboard::Key::Named(
-                iced::keyboard::key::Named::ArrowUp | iced::keyboard::key::Named::ArrowDown
-            )
-        )
-    {
-        let vers_le_haut = matches!(
-            key,
-            iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp)
-        );
-
-        return update(state, if vers_le_haut { Message::BlocMonter } else { Message::BlocDescendre });
-    }
-
-    if let iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) = key {
-        // Ce qui s'est ouvert en dernier se ferme en premier : la liste, puis le
-        // survol, et le mode focus en dernier — l'utilisateur ne doit jamais
-        // avoir à chercher par où sortir.
-        if state.lsp.completion.take().is_some() {
-            state.editor.editor.set_reserved_keys(Vec::new());
-
-            return Task::none();
-        }
-
-        if state.lsp.hover.take().is_some() {
-            return Task::none();
-        }
-
-        if state.layout.focus_mode {
-            return update(state, Message::ToggleFocusMode);
-        }
-
-        return Task::none();
-    }
-
-    if !modifiers.control() || modifiers.alt() || modifiers.logo() {
-        return Task::none();
-    }
-
-    let iced::keyboard::Key::Character(character) = &key else {
-        return Task::none();
-    };
-
-    match character.to_lowercase().as_str() {
-        "s" => {
-            state.persist();
-            state.refresh_context();
-
-            Task::none()
-        }
-        "i" => update(state, Message::ShowHover),
-        "n" => update(state, Message::NewFile),
-        "o" => update(state, Message::OpenFile),
-        "e" => update(state, Message::ExportPdf),
-        // La recherche : le motif est une expression régulière, et le
-        // remplacement y rappelle ses groupes.
-        "f" => update(state, Message::RechercheOuvrir),
-        // Le titre suivant, ou le précédent avec Maj : la table des matières
-        // se parcourt sans quitter le clavier.
-        "t" => {
-            if modifiers.shift() {
-                update(state, Message::TitrePrecedent)
-            } else {
-                update(state, Message::TitreSuivant)
-            }
-        }
-        _ => Task::none(),
     }
 }
 
@@ -2390,6 +2459,155 @@ pub fn startup() -> Task<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- La table du clavier -------------------------------------
+
+    fn touche(c: &str) -> iced::keyboard::Key {
+        iced::keyboard::Key::Character(c.into())
+    }
+
+    fn nomme(n: iced::keyboard::key::Named) -> iced::keyboard::Key {
+        iced::keyboard::Key::Named(n)
+    }
+
+    /// F1 ouvre la carte des raccourcis — et rien ne l'en empêche.
+    #[test]
+    fn f1_ouvre_la_carte_partout() {
+        let vide = Situation::default();
+
+        assert!(matches!(
+            plan_touche(vide, &nomme(iced::keyboard::key::Named::F1), iced::keyboard::Modifiers::empty()),
+            Action::Message(Message::AideBasculer)
+        ));
+
+        // Même une fenêtre ouverte ne prend pas F1.
+        let fenetre = Situation {
+            fenetre: true,
+            recherche: true,
+            ..Situation::default()
+        };
+
+        assert!(matches!(
+            plan_touche(fenetre, &nomme(iced::keyboard::key::Named::F1), iced::keyboard::Modifiers::empty()),
+            Action::Message(Message::AideBasculer)
+        ));
+    }
+
+    /// `Échap` ferme la fenêtre du dessus, pas une autre.
+    #[test]
+    fn echap_ferme_celle_du_dessus() {
+        let deux = Situation {
+            fenetre: true,
+            recherche: true,
+            aide: true,
+            ..Situation::default()
+        };
+
+        // La carte est au-dessus : elle part la première.
+        assert!(matches!(
+            plan_touche(deux, &nomme(iced::keyboard::key::Named::Escape), iced::keyboard::Modifiers::empty()),
+            Action::Message(Message::AideBasculer)
+        ));
+
+        let une = Situation {
+            fenetre: true,
+            recherche: true,
+            ..Situation::default()
+        };
+
+        assert!(matches!(
+            plan_touche(une, &nomme(iced::keyboard::key::Named::Escape), iced::keyboard::Modifiers::empty()),
+            Action::Message(Message::RechercheFermer)
+        ));
+    }
+
+    /// `Tabulation` circule dans les fenêtres — toutes, pas une seule.
+    #[test]
+    fn tabulation_circule_dans_les_fenetres() {
+        let fenetre = Situation {
+            fenetre: true,
+            ..Situation::default()
+        };
+
+        assert!(matches!(
+            plan_touche(fenetre, &nomme(iced::keyboard::key::Named::Tab), iced::keyboard::Modifiers::empty()),
+            Action::FocusSuivant
+        ));
+        assert!(matches!(
+            plan_touche(
+                fenetre,
+                &nomme(iced::keyboard::key::Named::Tab),
+                iced::keyboard::Modifiers::SHIFT
+            ),
+            Action::FocusPrecedent
+        ));
+    }
+
+    /// F3 cherche ; la recherche fermée, il l'ouvre d'abord.
+    #[test]
+    fn f3_suit_la_recherche() {
+        let vide = Situation::default();
+
+        assert!(matches!(
+            plan_touche(vide, &nomme(iced::keyboard::key::Named::F3), iced::keyboard::Modifiers::empty()),
+            Action::Message(Message::RechercheOuvrir)
+        ));
+
+        let ouverte = Situation {
+            fenetre: true,
+            recherche: true,
+            ..Situation::default()
+        };
+
+        assert!(matches!(
+            plan_touche(ouverte, &nomme(iced::keyboard::key::Named::F3), iced::keyboard::Modifiers::empty()),
+            Action::Message(Message::RechercheSuivant)
+        ));
+        assert!(matches!(
+            plan_touche(
+                ouverte,
+                &nomme(iced::keyboard::key::Named::F3),
+                iced::keyboard::Modifiers::SHIFT
+            ),
+            Action::Message(Message::RecherchePrecedent)
+        ));
+    }
+
+    /// Le zoom répond aux touches de tout lecteur de document.
+    #[test]
+    fn le_zoom_suit_les_lecteurs() {
+        let vide = Situation::default();
+        let ctrl = iced::keyboard::Modifiers::CTRL;
+
+        assert!(matches!(
+            plan_touche(vide, &touche("+"), ctrl),
+            Action::Message(Message::PreviewZoomStep(1))
+        ));
+        assert!(matches!(
+            plan_touche(vide, &touche("-"), ctrl),
+            Action::Message(Message::PreviewZoomStep(-1))
+        ));
+        assert!(matches!(
+            plan_touche(vide, &touche("0"), ctrl),
+            Action::Message(Message::PreviewZoom(_))
+        ));
+    }
+
+    /// Une touche nue n'est jamais un raccourci : taper reste de la frappe.
+    #[test]
+    fn la_frappe_n_est_jamais_un_raccourci() {
+        let vide = Situation::default();
+
+        for c in ["a", "e", "s", "t", "p", "l"] {
+            assert!(
+                matches!(
+                    plan_touche(vide, &touche(c), iced::keyboard::Modifiers::empty()),
+                    Action::Rien
+                ),
+                "{c} sans modificateur ne devrait rien faire"
+            );
+        }
+    }
 
     /// Le sommaire Typst pointe vers la ligne source `.tw`, pas vers le fichier
     /// généré en mémoire ; les titres sans équivalent source sont écartés.

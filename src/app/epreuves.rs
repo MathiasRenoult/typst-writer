@@ -333,10 +333,7 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
             // Le curseur entre dans la citation — la note est finie depuis, et
             // c'est d'elle qu'on reprend la main.
             Some(Task::done(Message::Editor(
-                iced_code_editor::Message::ArrowKey(
-                    iced_code_editor::ArrowDirection::Left,
-                    false,
-                ),
+                iced_code_editor::Message::ArrowKey(iced_code_editor::ArrowDirection::Left, false),
             )))
         }
         76 => {
@@ -421,11 +418,18 @@ pub fn driver_annulation(state: &mut State) -> Option<Task<Message>> {
 
             let note = notes.first().cloned()?;
 
-            Some(state.editor.set_cursor_offset(note.fin).map(Message::Editor))
+            Some(
+                state
+                    .editor
+                    .set_cursor_offset(note.fin)
+                    .map(Message::Editor),
+            )
         }
         15 => {
             println!("[annulation] une frappe sur le bord droit de la note");
-            Some(Task::done(Message::Editor(iced_code_editor::Message::Backspace)))
+            Some(Task::done(Message::Editor(
+                iced_code_editor::Message::Backspace,
+            )))
         }
         25 => {
             let contenu = state.editor.content();
@@ -486,7 +490,12 @@ pub fn driver_glyphe(state: &mut State) -> Option<Task<Message>> {
             let premier = notes.first()?;
 
             println!("[glyphe] le curseur va au premier glyphe");
-            Some(state.editor.set_cursor_offset(premier.debut).map(Message::Editor))
+            Some(
+                state
+                    .editor
+                    .set_cursor_offset(premier.debut)
+                    .map(Message::Editor),
+            )
         }
         25 => {
             let point = state.editor.cursor_view_position();
@@ -538,11 +547,7 @@ pub fn driver_glyphe(state: &mut State) -> Option<Task<Message>> {
             let notes = crate::langage::marques::notes(&contenu);
             let pliees = notes
                 .iter()
-                .filter(|n| {
-                    !(n.nature == Nature::PiedDePage
-                        && n.debut < offset
-                        && offset < n.fin)
-                })
+                .filter(|n| !(n.nature == Nature::PiedDePage && n.debut < offset && offset < n.fin))
                 .count();
 
             println!(

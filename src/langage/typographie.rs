@@ -231,18 +231,13 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
 
                 // Ce que la suite posera elle-même n'en veut pas deux — sauf
                 // un nombre, que l'on ne touche pas.
-                if matches!(contexte.suivant_texte, Some(';' | ':' | '!' | '?' | ',' | '.' | '»'))
-                    && !est_un_nombre(
-                        &caracteres,
-                        position,
-                        contexte.precedent,
-                        contexte.suivant,
-                    )
+                if matches!(
+                    contexte.suivant_texte,
+                    Some(';' | ':' | '!' | '?' | ',' | '.' | '»')
+                ) && !est_un_nombre(&caracteres, position, contexte.precedent, contexte.suivant)
                 {
                     continue;
                 }
-
-
 
                 if !sortie.ends_with(' ') && !sortie.ends_with(INSECABLE) {
                     sortie.push(' ');
@@ -273,12 +268,7 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
             // avec l'espace qu'on leur a choisie. `3.14` et `1,2` sont des
             // nombres — ils ne sont pas touchés.
             ',' | '.'
-                if !est_un_nombre(
-                    &caracteres,
-                    position,
-                    contexte.precedent,
-                    contexte.suivant,
-                ) =>
+                if !est_un_nombre(&caracteres, position, contexte.precedent, contexte.suivant) =>
             {
                 while sortie.ends_with(' ') {
                     sortie.pop();
@@ -297,9 +287,10 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 contexte.venant_du_guillemet = true;
 
                 if let Some(espace) = regles.espace_guillemets.caractere()
-                    && suivant.is_some() {
-                        sortie.push(espace);
-                    }
+                    && suivant.is_some()
+                {
+                    sortie.push(espace);
+                }
             }
             '»' => {
                 while sortie.ends_with(' ') {
@@ -309,9 +300,11 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 let (_, fermant) = paire(regles, contexte.profondeur.max(1));
 
                 if let Some(espace) = regles.espace_guillemets.caractere()
-                    && !sortie.is_empty() && !sortie.ends_with(espace) {
-                        sortie.push(espace);
-                    }
+                    && !sortie.is_empty()
+                    && !sortie.ends_with(espace)
+                {
+                    sortie.push(espace);
+                }
 
                 sortie.push(fermant);
                 contexte.profondeur = contexte.profondeur.saturating_sub(1);
@@ -389,21 +382,20 @@ fn pousser_apres(espace: Espace, suivant: Option<&char>, sortie: &mut String) {
     // Un guillemet fermant posera sa propre espace — jamais deux.
     let suit = suivant.is_some_and(|c| !c.is_whitespace() && *c != '»');
 
-    if suit && !sortie.ends_with(' ') && !sortie.ends_with(INSECABLE)
-        && let Some(caractere) = espace.caractere() {
-            sortie.push(caractere);
-        }
+    if suit
+        && !sortie.ends_with(' ')
+        && !sortie.ends_with(INSECABLE)
+        && let Some(caractere) = espace.caractere()
+    {
+        sortie.push(caractere);
+    }
 }
 
 /// La paire de guillemets du niveau demandé ; le dernier sert au-delà.
 fn paire(regles: &Regles, profondeur: usize) -> (char, char) {
     let dernier = regles.guillemets.len().saturating_sub(1);
     let index = profondeur.saturating_sub(1).min(dernier);
-    regles
-        .guillemets
-        .get(index)
-        .copied()
-        .unwrap_or(('«', '»'))
+    regles.guillemets.get(index).copied().unwrap_or(('«', '»'))
 }
 
 #[cfg(test)]

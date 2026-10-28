@@ -950,7 +950,6 @@ mod tests {
         assert_eq!(visible_pages(&[], 0.0, 300.0), (0, 0));
     }
 
-
     /// Un document long : cinq cents pages, comme une thèse.
     fn document_long() -> Vec<(f32, f32)> {
         (0..500)
@@ -977,7 +976,10 @@ mod tests {
 
         for index in [0, 1, 100, 250, 499] {
             let attendu: f32 = PANEL_PADDING
-                + sizes[..index].iter().map(|(_, hauteur)| hauteur + PAGE_GAP).sum::<f32>();
+                + sizes[..index]
+                    .iter()
+                    .map(|(_, hauteur)| hauteur + PAGE_GAP)
+                    .sum::<f32>();
             let vu = page_offset(&sizes, index);
 
             assert!(

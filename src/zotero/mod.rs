@@ -266,7 +266,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-
     /// La liaison se garde à côté du projet, et se relit telle quelle.
     #[test]
     fn une_liaison_se_garde_et_se_relit() {

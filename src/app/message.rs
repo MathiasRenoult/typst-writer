@@ -73,7 +73,9 @@ pub enum Message {
     /// Ferme la fenêtre d'édition sans rien écrire.
     ZoteroLierOuvrir,
 
-    ZoteroCollections(Result<Vec<crate::zotero::client::Collection>, crate::zotero::client::Erreur>),
+    ZoteroCollections(
+        Result<Vec<crate::zotero::client::Collection>, crate::zotero::client::Erreur>,
+    ),
 
     ZoteroChoisir(String, String),
 
@@ -186,6 +188,8 @@ pub enum Message {
     GotoHeading(usize),
 
     RechercheOuvrir,
+
+    AideBasculer,
 
     RechercheFermer,
 

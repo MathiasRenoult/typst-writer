@@ -38,7 +38,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
     };
 
     let entete = row![
-        palette.label("Choisir une référence").size(theme::jetons::TITRE),
+        palette
+            .label("Choisir une référence")
+            .size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         palette
             .label("Échap pour fermer")
@@ -141,7 +143,10 @@ fn fenetre_composeur<'a>(
     // La note telle qu'elle se compose : c'est exactement ce que le document
     // recevra, et c'est ce qui rend le composeur honnête.
     let apercu = row![
-        palette.label("Note").size(theme::jetons::DETAIL).color(palette.text_muted),
+        palette
+            .label("Note")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
         palette
             .label(composeur.apercu(intermediaire))
             .size(theme::jetons::CORPS)
@@ -155,12 +160,10 @@ fn fenetre_composeur<'a>(
         .size(theme::jetons::DETAIL)
         .color(palette.text_muted);
 
-    let fenetre = container(
-        column![entete, champ, note, corps, apercu, pied].spacing(10),
-    )
-    .width(Length::Fixed(LARGEUR + 32.0))
-    .padding(16)
-    .style(bubble_style(palette));
+    let fenetre = container(column![entete, champ, note, corps, apercu, pied].spacing(10))
+        .width(Length::Fixed(LARGEUR + 32.0))
+        .padding(16)
+        .style(bubble_style(palette));
 
     container(fenetre)
         .width(Length::Fill)
@@ -203,23 +206,33 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
             palette
                 .label(format!("{}", index + 1))
                 .size(theme::jetons::DETAIL)
-                .color(if tenue { palette.accent } else { palette.text_muted }),
+                .color(if tenue {
+                    palette.accent
+                } else {
+                    palette.text_muted
+                }),
         );
 
-        ligne = ligne.push(palette.label(&reference.cle).size(theme::jetons::SAILLANT).color(if tenue {
-            palette.accent
-        } else {
-            palette.text
-        }));
+        ligne = ligne.push(
+            palette
+                .label(&reference.cle)
+                .size(theme::jetons::SAILLANT)
+                .color(if tenue { palette.accent } else { palette.text }),
+        );
 
         ligne = ligne.push(Space::new().width(Length::Fill));
 
         if !page.is_empty() {
-            ligne = ligne.push(palette.label(page).size(theme::jetons::DETAIL).color(if tenue {
-                palette.accent
-            } else {
-                palette.text_muted
-            }));
+            ligne = ligne.push(
+                palette
+                    .label(page)
+                    .size(theme::jetons::DETAIL)
+                    .color(if tenue {
+                        palette.accent
+                    } else {
+                        palette.text_muted
+                    }),
+            );
         }
 
         liste = liste.push(
@@ -230,7 +243,11 @@ fn lignes_note<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'a, Me
                     background: survol(status, palette),
                     text_color: if tenue { palette.accent } else { palette.text },
                     border: iced::Border {
-                        color: if tenue { palette.accent } else { iced::Color::TRANSPARENT },
+                        color: if tenue {
+                            palette.accent
+                        } else {
+                            iced::Color::TRANSPARENT
+                        },
                         width: if tenue { 1.5 } else { 1.0 },
                         radius: theme::jetons::RAYON.into(),
                     },
@@ -290,19 +307,29 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
             .spacing(theme::jetons::PAS)
             .align_y(Alignment::Center);
 
-        ligne = ligne.push(palette.label(cle).size(theme::jetons::SAILLANT).color(if selected {
-            palette.accent
-        } else {
-            palette.text
-        }));
+        ligne = ligne.push(
+            palette
+                .label(cle)
+                .size(theme::jetons::SAILLANT)
+                .color(if selected {
+                    palette.accent
+                } else {
+                    palette.text
+                }),
+        );
 
         ligne = ligne.push(Space::new().width(Length::Fill));
 
-        ligne = ligne.push(palette.label(genre).size(theme::jetons::DETAIL).color(if selected {
-            palette.accent
-        } else {
-            palette.text_muted
-        }));
+        ligne = ligne.push(
+            palette
+                .label(genre)
+                .size(theme::jetons::DETAIL)
+                .color(if selected {
+                    palette.accent
+                } else {
+                    palette.text_muted
+                }),
+        );
 
         liste = liste.push(
             button(ligne)
@@ -310,9 +337,17 @@ fn liste_references<'a>(composeur: &'a Composeur, palette: Palette) -> Element<'
                 .padding([6, 10])
                 .style(move |_, status| button::Style {
                     background: survol(status, palette),
-                    text_color: if selected { palette.accent } else { palette.text },
+                    text_color: if selected {
+                        palette.accent
+                    } else {
+                        palette.text
+                    },
                     border: iced::Border {
-                        color: if selected { palette.accent } else { iced::Color::TRANSPARENT },
+                        color: if selected {
+                            palette.accent
+                        } else {
+                            iced::Color::TRANSPARENT
+                        },
                         width: if selected { 1.5 } else { 1.0 },
                         radius: theme::jetons::RAYON.into(),
                     },

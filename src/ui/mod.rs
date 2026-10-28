@@ -1,16 +1,17 @@
+pub mod aide;
 pub mod completion;
-pub mod recherche;
 pub mod editor;
 pub mod layout;
 pub mod preview;
+pub mod recherche;
 pub mod reference;
 mod reglages;
 mod rename;
 pub mod sidebar;
 pub mod status_bar;
 pub mod theme;
-pub mod zotero;
 pub mod toolbar;
+pub mod zotero;
 
 use crate::app::{Message, State};
 use iced::widget::{column, stack};
@@ -56,6 +57,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         zotero::view(state),
         recherche::view(state),
         reglages::view(state),
+        aide::view(state),
     ]
     .width(Length::Fill)
     .height(Length::Fill)

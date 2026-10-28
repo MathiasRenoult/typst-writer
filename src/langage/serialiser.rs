@@ -311,8 +311,7 @@ mod tests {
         let texte = serialiser(&document);
 
         assert_eq!(
-            texte,
-            "Une \\*étoile\\*, un \\@grep et \\{accolades\\}.\n",
+            texte, "Une \\*étoile\\*, un \\@grep et \\{accolades\\}.\n",
             "chaque marqueur reprend sa barre"
         );
         assert_eq!(parse(&texte), document, "et le parseur le relit tel quel");
@@ -392,10 +391,44 @@ mod tests {
     /// Des mots de vraie vie — et ceux du langage lui-même, qui doivent
     /// rester des mots.
     const MOTS: &[&str] = &[
-        "Église", "théologie", "grâce", "un", "des", "fin.", "2 * 3", "a_b", "a*b", "un ]",
-        "{x}", "^y", "@z", "2. x", "- y", "# z", "> w", "1. v", "x\\y", "(parenthèse)", "10:30",
-        "…", "'apostrophe'", "3.14", "-2", "_italique_", "**gras**", "`` ` ``", "]}", ")(", ";",
-        "tab\\ulation", "^[]", "@a[p. 45]", "~~", "~~x~~", "¿", "une étoile * ici",
+        "Église",
+        "théologie",
+        "grâce",
+        "un",
+        "des",
+        "fin.",
+        "2 * 3",
+        "a_b",
+        "a*b",
+        "un ]",
+        "{x}",
+        "^y",
+        "@z",
+        "2. x",
+        "- y",
+        "# z",
+        "> w",
+        "1. v",
+        "x\\y",
+        "(parenthèse)",
+        "10:30",
+        "…",
+        "'apostrophe'",
+        "3.14",
+        "-2",
+        "_italique_",
+        "**gras**",
+        "`` ` ``",
+        "]}",
+        ")(",
+        ";",
+        "tab\\ulation",
+        "^[]",
+        "@a[p. 45]",
+        "~~",
+        "~~x~~",
+        "¿",
+        "une étoile * ici",
     ];
 
     /// Un texte nu au hasard — jamais de marqueur : ils vivent dans les
@@ -404,9 +437,7 @@ mod tests {
         let mots: Vec<&str> = MOTS
             .iter()
             .copied()
-            .filter(|mot| {
-                !mot.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_'])
-            })
+            .filter(|mot| !mot.contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_']))
             .collect();
 
         let mut texte = (*hasard.un_parmi(&mots)).to_string();
@@ -429,10 +460,12 @@ mod tests {
 
     /// Un littéral au hasard : ce que l'échappement insère mot à mot.
     fn litteral_au_hasard(hasard: &mut Hasard) -> Inline {
-        Inline::Litteral((*hasard.un_parmi(&[
-            "*", "@", "^", "[", "]", "{", "}", "`", "_", "\\", "**", "a*b", "]]", "{}",
-        ]))
-        .to_string())
+        Inline::Litteral(
+            (*hasard.un_parmi(&[
+                "*", "@", "^", "[", "]", "{", "}", "`", "_", "\\", "**", "a*b", "]]", "{}",
+            ]))
+            .to_string(),
+        )
     }
 
     /// Des références groupées, comme un appel de citation.
@@ -450,7 +483,11 @@ mod tests {
                 match hasard.entier(3) {
                     0 => Reference::new(cle),
                     1 => Reference::new(cle).avec_page(format!("p. {}", 1 + hasard.entier(200))),
-                    _ => Reference::new(cle).avec_page(format!("pp. {}-{}", 3, 1 + hasard.entier(50))),
+                    _ => Reference::new(cle).avec_page(format!(
+                        "pp. {}-{}",
+                        3,
+                        1 + hasard.entier(50)
+                    )),
                 }
             })
             .collect()
@@ -528,10 +565,9 @@ mod tests {
                 && matches!(rangee[i - 1], Inline::Citation(_))
                 && matches!(rangee[i + 1], Inline::Citation(_));
 
-            if suspect
-                && let Inline::Texte(texte) = &mut rangee[i] {
-                    texte.push_str(" .");
-                }
+            if suspect && let Inline::Texte(texte) = &mut rangee[i] {
+                texte.push_str(" .");
+            }
         }
 
         *suite = rangee;
@@ -548,7 +584,8 @@ mod tests {
                 (*hasard.un_parmi(&["x", "#f()", "arr[0]", "*ptr", "a]b", "}", ")"])).to_string(),
             ),
             4 => Inline::Couleur {
-                couleur: (*hasard.un_parmi(&["red", "#ff0000", "rgb(1, 2, 0)", "blue"])).to_string(),
+                couleur: (*hasard.un_parmi(&["red", "#ff0000", "rgb(1, 2, 0)", "blue"]))
+                    .to_string(),
                 contenu: inlines_au_hasard(hasard, dans_emphase),
             },
             5 => Inline::Note(inlines_au_hasard(hasard, dans_emphase)),
@@ -568,21 +605,22 @@ mod tests {
         }
     }
 
-/// Un paragraphe au hasard, dans la forme canonique : s'il commencerait
+    /// Un paragraphe au hasard, dans la forme canonique : s'il commencerait
     /// par un marqueur de bloc, le caractère se prend en littéral.
     fn paragraphe_au_hasard(hasard: &mut Hasard) -> Vec<Inline> {
         let mut contenu = inlines_au_hasard(hasard, false);
 
         if let Some(Inline::Texte(texte)) = contenu.first_mut()
-            && crate::langage::schema::ouvre_un_bloc(texte) {
-                let premier = texte.remove(0);
-                let suite = texte.clone();
-                contenu[0] = Inline::Litteral(premier.to_string());
+            && crate::langage::schema::ouvre_un_bloc(texte)
+        {
+            let premier = texte.remove(0);
+            let suite = texte.clone();
+            contenu[0] = Inline::Litteral(premier.to_string());
 
-                if !suite.is_empty() {
-                    contenu.insert(1, Inline::Texte(suite));
-                }
+            if !suite.is_empty() {
+                contenu.insert(1, Inline::Texte(suite));
             }
+        }
 
         contenu
     }
@@ -694,15 +732,9 @@ mod tests {
             let troisieme = serialiser(&parse(&second));
 
             assert_eq!(
-                troisieme,
-                second,
+                troisieme, second,
                 "rouvrir puis réécrire reformate sans fin :\n{second}\n→\n{troisieme}"
             );
         }
     }
-
-
-
-
-
 }

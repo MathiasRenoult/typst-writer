@@ -9,8 +9,8 @@
 //! Le formulaire se conduit au clavier : `Tabulation` circule dans les
 //! champs, `Entrée` enregistre, `Échap` ferme.
 
-use crate::app::state::EditionReference;
 use crate::app::Message;
+use crate::app::state::EditionReference;
 use crate::ui::theme::{self, Palette};
 use iced::widget::{Space, button, column, container, pick_list, row, text_input};
 use iced::{Alignment, Element, Length};
@@ -47,10 +47,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 }
 
 /// La fenêtre d'édition, quand elle est ouverte.
-fn fenetre<'a>(
-    edition: &'a EditionReference,
-    palette: Palette,
-) -> Element<'a, Message> {
+fn fenetre<'a>(edition: &'a EditionReference, palette: Palette) -> Element<'a, Message> {
     let titre = if edition.creation {
         "Nouvelle référence"
     } else {
@@ -85,9 +82,7 @@ fn fenetre<'a>(
             saisie.into()
         } else {
             saisie
-                .on_input(move |texte| {
-                    Message::EditionReferenceChamp(nom.to_string(), texte)
-                })
+                .on_input(move |texte| Message::EditionReferenceChamp(nom.to_string(), texte))
                 .into()
         }
     };
@@ -96,54 +91,69 @@ fn fenetre<'a>(
 
     // La clé : choisie une fois, puis citée — elle ne bouge plus.
     if edition.creation {
-        formulaire = formulaire.push(row![
-            {
-                // L'identifiant du premier champ : la fiche s'ouvre sur
-                // lui, et lui seul — un identifiant partagé viserait deux
-                // cibles à la fois.
-                let saisie = text_input("Clé", &edition.cle)
-                    .padding(6)
-                    .width(Length::Fill)
-                    .id(id_premier_champ());
+        formulaire = formulaire.push(
+            row![
+                {
+                    // L'identifiant du premier champ : la fiche s'ouvre sur
+                    // lui, et lui seul — un identifiant partagé viserait deux
+                    // cibles à la fois.
+                    let saisie = text_input("Clé", &edition.cle)
+                        .padding(6)
+                        .width(Length::Fill)
+                        .id(id_premier_champ());
 
-                let champ: Element<'static, Message> = if lecture_seule {
-                    saisie.into()
-                } else {
-                    saisie
-                        .on_input(|texte| {
-                            Message::EditionReferenceChamp("cle".to_string(), texte)
-                        })
-                        .into()
-                };
+                    let champ: Element<'static, Message> = if lecture_seule {
+                        saisie.into()
+                    } else {
+                        saisie
+                            .on_input(|texte| {
+                                Message::EditionReferenceChamp("cle".to_string(), texte)
+                            })
+                            .into()
+                    };
 
-                champ
-            },
-            pick_list(
-                TYPES.iter().map(|type_| type_.to_string()).collect::<Vec<_>>(),
-                Some(edition.kind.clone()),
-                |choisi: String| Message::EditionReferenceChamp("kind".to_string(), choisi),
-            )
-            .width(Length::Fixed(130.0)),
-        ].spacing(theme::jetons::PAS));
+                    champ
+                },
+                pick_list(
+                    TYPES
+                        .iter()
+                        .map(|type_| type_.to_string())
+                        .collect::<Vec<_>>(),
+                    Some(edition.kind.clone()),
+                    |choisi: String| Message::EditionReferenceChamp("kind".to_string(), choisi),
+                )
+                .width(Length::Fixed(130.0)),
+            ]
+            .spacing(theme::jetons::PAS),
+        );
     } else {
         formulaire = formulaire.push(pick_list(
-            TYPES.iter().map(|type_| type_.to_string()).collect::<Vec<_>>(),
+            TYPES
+                .iter()
+                .map(|type_| type_.to_string())
+                .collect::<Vec<_>>(),
             Some(edition.kind.clone()),
             |choisi: String| Message::EditionReferenceChamp("kind".to_string(), choisi),
         ));
     }
 
-    formulaire = formulaire.push(row![
-        champ("Nom", &edition.nom, "nom"),
-        champ("Prénom", &edition.prenom, "prenom"),
-    ].spacing(theme::jetons::PAS));
+    formulaire = formulaire.push(
+        row![
+            champ("Nom", &edition.nom, "nom"),
+            champ("Prénom", &edition.prenom, "prenom"),
+        ]
+        .spacing(theme::jetons::PAS),
+    );
 
     formulaire = formulaire.push(champ("Titre", &edition.titre, "titre"));
     formulaire = formulaire.push(champ("Titre court", &edition.titre_court, "titre_court"));
-    formulaire = formulaire.push(row![
-        champ("Année", &edition.annee, "annee"),
-        champ("Éditeur", &edition.editeur, "editeur"),
-    ].spacing(theme::jetons::PAS));
+    formulaire = formulaire.push(
+        row![
+            champ("Année", &edition.annee, "annee"),
+            champ("Éditeur", &edition.editeur, "editeur"),
+        ]
+        .spacing(theme::jetons::PAS),
+    );
     formulaire = formulaire.push(champ("Lieu", &edition.lieu, "lieu"));
 
     let pied = if edition.locale {

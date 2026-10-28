@@ -192,9 +192,6 @@ fn bibliography_call_range(main: &str) -> Option<(usize, usize)> {
 #[cfg(test)]
 mod tests {
 
-
-
-
     /// La typographie des normes s'applique au texte composé — et le `\`
     /// de la syntaxe en exempte ce qu'il écrit.
     #[test]
@@ -239,10 +236,8 @@ mod tests {
     /// Les normes du projet portent la typographie jusqu'au générateur.
     #[test]
     fn les_normes_portent_la_typographie_jusqu_au_generateur() {
-        let root = std::env::temp_dir().join(format!(
-            "typst-writer-typo-normes-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-typo-normes-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("racine du projet");
 
@@ -253,7 +248,8 @@ mod tests {
         .expect("normes d'essai");
 
         let document = super::super::parse("La foi ; l'espérance.\n");
-        let (_, fichiers) = super::compilation_unit_document(&root, "#show: mise-en-page\n", &document);
+        let (_, fichiers) =
+            super::compilation_unit_document(&root, "#show: mise-en-page\n", &document);
         let corps = &fichiers[0].1;
 
         assert!(corps.contains("La foi~; l'espérance."), "{corps}");
@@ -295,7 +291,10 @@ mod tests {
         // Un style explicitement choisi reste le sien.
         let main = "#set document(title: \"Essai\")\n\n#bibliography(\"references.bib\", style: \"ieee\")\n";
         let (entry, _) = super::compilation_unit_document(root, main, &document);
-        assert!(entry.contains("style: \"ieee\""), "le style choisi tient : {entry}");
+        assert!(
+            entry.contains("style: \"ieee\""),
+            "le style choisi tient : {entry}"
+        );
         assert!(entry.contains("#set document(title: \"Essai\")"), "{entry}");
         assert_eq!(entry.matches("#bibliography").count(), 1, "{entry}");
     }

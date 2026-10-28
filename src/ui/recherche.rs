@@ -22,13 +22,18 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 
     let palette = state.resolved.palette;
 
+    // `Entrée` dans le motif cherche le suivant ; dans le remplacement,
+    // elle remplace l'occurrence courante. Les deux gestes sont ceux qu'on
+    // attend en tapant — ils ne se cherchent pas.
     let motif = text_input("motif — expression régulière", &etat.motif)
+        .on_submit(Message::RechercheSuivant)
         .id(id_du_motif())
         .on_input(Message::RechercheMotif)
         .padding(6)
         .width(Length::Fixed(240.0));
 
     let remplacement = text_input("remplacement — $1 rappelle un groupe", &etat.remplacement)
+        .on_submit(Message::RechercheRemplacer)
         .on_input(Message::RechercheRemplacement)
         .padding(6)
         .width(Length::Fixed(240.0));
@@ -86,9 +91,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         );
     }
 
-    let fenetre = container(corps)
-        .padding(12)
-        .style(theme::panneau(palette));
+    let fenetre = container(corps).padding(12).style(theme::panneau(palette));
 
     container(fenetre)
         .width(Length::Fill)

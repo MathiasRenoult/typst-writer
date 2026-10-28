@@ -59,7 +59,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // Fichier.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_file::<Theme>(),
-        "Ouvrir le document d'écriture du projet",
+        "Ouvrir le document d'écriture du projet (Ctrl+N)",
         Message::NewFile,
         palette,
         false,
@@ -69,7 +69,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         lucide_icons::iced::icon_folder_open::<Theme>(),
         // Le libellé dit ce que fait l'action : le fichier est ajouté au projet,
         // il n'est pas seulement affiché.
-        "Charger un document dans le projet",
+        "Charger un document dans le projet (Ctrl+O)",
         Message::OpenFile,
         palette,
         false,
@@ -77,7 +77,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_save::<Theme>(),
-        "Enregistrer",
+        "Enregistrer (Ctrl+S)",
         Message::SaveFile,
         palette,
         state.editor.is_modified(),
@@ -85,7 +85,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_save_all::<Theme>(),
-        "Enregistrer sous…",
+        "Enregistrer sous… (Ctrl+Maj+S)",
         Message::SaveAs,
         palette,
         false,
@@ -93,12 +93,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_download::<Theme>(),
-        "Exporter en PDF",
+        "Exporter en PDF (Ctrl+E)",
         Message::ExportPdf,
         palette,
         false,
     ));
-
 
     bar = bar.push(separation(palette));
 
@@ -181,7 +180,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
     }
 
-
     // Le remplissage pousse les clusters de droite au bord : la
     // lecture va du document à son rendu, et rien ne flotte entre deux.
     bar = bar.push(spacer());
@@ -226,7 +224,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 lucide_icons::iced::icon_unlink::<Theme>()
             },
             if state.layout.follow_preview {
-                "L'aperçu suit le chapitre écrit — cliquer pour couper le suivi"
+                "L'aperçu suit le chapitre écrit (Ctrl+Maj+L pour couper le suivi)"
             } else {
                 "L'aperçu reste où vous le laissez — cliquer pour suivre le chapitre"
             },
@@ -273,7 +271,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // Les normes du document : papier, marges, titres, couleurs.
         bar = bar.push(icon_button(
             lucide_icons::iced::icon_file_cog::<Theme>(),
-            "Les normes du document : papier, marges, titres, couleurs",
+            "Les normes du document : papier, marges, titres, couleurs (Ctrl+P)",
             Message::MiseEnPageOuvrir,
             palette,
             state.mise_en_page.is_some(),
@@ -283,7 +281,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // cela changerait, fichier par fichier, avant que rien ne s'écrive.
         bar = bar.push(icon_button(
             lucide_icons::iced::icon_pen_line::<Theme>(),
-            "Renommer le symbole sous le curseur",
+            "Renommer le symbole sous le curseur (F2)",
             Message::SymbolRenameStart,
             palette,
             state.renommage.is_some(),
@@ -313,7 +311,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         state.layout.focus_mode,
     ));
-
 
     bar = bar.push(separation(palette));
 
@@ -385,7 +382,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         false,
     ));
-
 
     // La barre déborde parfois la fenêtre : plutôt que rogner des boutons
     // inatteignables, elle défile — sans barre de défilement visible, le

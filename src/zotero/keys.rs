@@ -178,8 +178,7 @@ mod tests {
             trousseau.key_for("ABCD", Some("Dupont"), Some("2023"), "Premier titre", &pris);
 
         // La notice change : nouveau titre, nouvelle année, autre auteur.
-        let seconde =
-            trousseau.key_for("ABCD", Some("Martin"), Some("2024"), "Autre titre", &pris);
+        let seconde = trousseau.key_for("ABCD", Some("Martin"), Some("2024"), "Autre titre", &pris);
 
         assert_eq!(première, seconde, "la clé attribuée tient bon");
         assert_eq!(première, "dupont2023premier");

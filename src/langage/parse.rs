@@ -74,9 +74,7 @@ pub fn parse(texte: &str) -> Document {
         }
 
         // Un titre.
-        if !echappee
-            && let Some(niveau) = niveau_titre(ligne)
-        {
+        if !echappee && let Some(niveau) = niveau_titre(ligne) {
             let contenu = parse_inline(ligne.trim_start()[niveau as usize..].trim());
             blocs.push(Bloc::Titre { niveau, contenu });
             index += 1;
@@ -403,8 +401,8 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
             !avant.chars().last().is_some_and(|c| c.is_alphanumeric())
         };
 
-        if let Some((contenu, apres)) = emphasis(reste, "*")
-            .or_else(|| frontiere.then(|| emphasis(reste, "_")).flatten())
+        if let Some((contenu, apres)) =
+            emphasis(reste, "*").or_else(|| frontiere.then(|| emphasis(reste, "_")).flatten())
         {
             vider!();
             elements.push(Inline::Italique(parse_inline(contenu)));
@@ -502,11 +500,12 @@ fn emphasis<'a>(texte: &'a str, delim: &str) -> Option<(&'a str, &'a str)> {
 
         // Un code est opaque : ce qui s'y trouve ne ferme pas l'emphase.
         if caractere == '`'
-            && let Some(fin) = fin_du_code(reste, curseur) {
-                dernier = Some('`');
-                curseur = fin;
-                continue;
-            }
+            && let Some(fin) = fin_du_code(reste, curseur)
+        {
+            dernier = Some('`');
+            curseur = fin;
+            continue;
+        }
 
         if reste[curseur..].starts_with(delim)
             && curseur > 0
@@ -580,10 +579,11 @@ fn jusqu_au_crochet_fermant(texte: &str) -> Option<(&str, &str)> {
 
         // Un code est opaque : ce qui s'y trouve ne compte pas.
         if caractere == '`'
-            && let Some(fin) = fin_du_code(texte, curseur) {
-                curseur = fin;
-                continue;
-            }
+            && let Some(fin) = fin_du_code(texte, curseur)
+        {
+            curseur = fin;
+            continue;
+        }
 
         match caractere {
             '[' => profondeur += 1,
@@ -797,10 +797,11 @@ fn jusqu_a_l_accolade_fermante(texte: &str) -> Option<(&str, &str)> {
 
         // Un code est opaque : ce qui s'y trouve ne compte pas.
         if caractere == '`'
-            && let Some(fin) = fin_du_code(texte, curseur) {
-                curseur = fin;
-                continue;
-            }
+            && let Some(fin) = fin_du_code(texte, curseur)
+        {
+            curseur = fin;
+            continue;
+        }
 
         match caractere {
             '{' => profondeur += 1,
@@ -830,10 +831,7 @@ mod tests {
         let document = parse("snake_case et _italique_ ici.\n");
 
         let nu = document.texte_nu();
-        assert!(
-            nu.contains("snake_case"),
-            "le mot technique survit : {nu}"
-        );
+        assert!(nu.contains("snake_case"), "le mot technique survit : {nu}");
         assert!(
             document.blocs.iter().any(|bloc| matches!(
                 bloc,

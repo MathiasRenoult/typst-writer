@@ -7,8 +7,8 @@
 //!
 //! Le panneau se conduit au clavier : `Échap` ferme.
 
-use crate::app::state::LiaisonZotero;
 use crate::app::Message;
+use crate::app::state::LiaisonZotero;
 use crate::ui::theme::{self, Palette};
 use crate::zotero::client::Collection;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
@@ -57,9 +57,13 @@ fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette) -> Element<'a, Mess
             // soi-même : le geste est là, sous la main du nouvel arrivant.
             if *reglable {
                 actions = actions.push(
-                    button(palette.label("Activer l'API locale").size(theme::jetons::CORPS))
-                        .on_press(Message::ZoteroActiverApi)
-                        .padding([6, 12]),
+                    button(
+                        palette
+                            .label("Activer l'API locale")
+                            .size(theme::jetons::CORPS),
+                    )
+                    .on_press(Message::ZoteroActiverApi)
+                    .padding([6, 12]),
                 );
             }
 
@@ -243,7 +247,13 @@ mod tests {
         };
 
         let mut noms = Noms::new();
-        noms.insert("AAAA", Entree { nom: "Thèse", parent: None });
+        noms.insert(
+            "AAAA",
+            Entree {
+                nom: "Thèse",
+                parent: None,
+            },
+        );
         noms.insert(
             "BBBB",
             Entree {

@@ -85,11 +85,17 @@ fn page(mise_en_page: &MiseEnPage) -> String {
     }
 
     if super::modele::couleur_valide(&mise_en_page.couleurs.fond) {
-        lignes.push(format!("    fill: rgb(\"{}\"),", mise_en_page.couleurs.fond));
+        lignes.push(format!(
+            "    fill: rgb(\"{}\"),",
+            mise_en_page.couleurs.fond
+        ));
     }
 
     if mise_en_page.numerotation.actif {
-        lignes.push(format!("    numbering: \"{}\",", forme_numerotation(&mise_en_page.numerotation.forme)));
+        lignes.push(format!(
+            "    numbering: \"{}\",",
+            forme_numerotation(&mise_en_page.numerotation.forme)
+        ));
         lignes.push(format!(
             "    number-align: {},",
             alignement_numero(
@@ -118,17 +124,26 @@ fn texte(mise_en_page: &MiseEnPage) -> String {
     }
 
     if !mise_en_page.texte.langue.is_empty() {
-        lignes.push(format!("    lang: \"{}\",", echapper(&mise_en_page.texte.langue)));
+        lignes.push(format!(
+            "    lang: \"{}\",",
+            echapper(&mise_en_page.texte.langue)
+        ));
     }
-
 
     lignes.push(format!(
         "    hyphenate: {},",
-        if mise_en_page.texte.coupure { "true" } else { "false" }
+        if mise_en_page.texte.coupure {
+            "true"
+        } else {
+            "false"
+        }
     ));
 
     if super::modele::couleur_valide(&mise_en_page.couleurs.texte) {
-        lignes.push(format!("    fill: rgb(\"{}\"),", mise_en_page.couleurs.texte));
+        lignes.push(format!(
+            "    fill: rgb(\"{}\"),",
+            mise_en_page.couleurs.texte
+        ));
     }
 
     lignes.push("  )\n".to_string());
@@ -141,7 +156,11 @@ fn paragraphes(mise_en_page: &MiseEnPage) -> String {
 
     lignes.push(format!(
         "    justify: {},",
-        if mise_en_page.texte.justification { "true" } else { "false" }
+        if mise_en_page.texte.justification {
+            "true"
+        } else {
+            "false"
+        }
     ));
 
     for (champ, valeur) in [
@@ -360,9 +379,19 @@ mod tests {
     fn the_default_header_applies_to_the_whole_document() {
         let document = documenter(&MiseEnPage::default(), "= Chapitre\n\nDu texte.\n");
 
-        let largeur = document.pages().first().expect("une page").frame.size().x.to_pt();
+        let largeur = document
+            .pages()
+            .first()
+            .expect("une page")
+            .frame
+            .size()
+            .x
+            .to_pt();
 
-        assert!((largeur - 595.28).abs() < 0.01, "A4 par défaut — vu : {largeur}");
+        assert!(
+            (largeur - 595.28).abs() < 0.01,
+            "A4 par défaut — vu : {largeur}"
+        );
     }
 
     /// Le papier et l'orientation suivent les réglages — c'est la preuve que

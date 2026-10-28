@@ -162,11 +162,7 @@ fn outline(world: &PreviewWorld, document: &PagedDocument) -> Vec<OutlineEntry> 
 ///
 /// C'est le pont entre l'éditeur et l'aperçu : la ligne du haut de la zone de
 /// rédaction désigne le titre qui la domine, et ce titre porte sa page.
-pub fn entry_covering(
-    outline: &[OutlineEntry],
-    file: &Path,
-    line: usize,
-) -> Option<usize> {
+pub fn entry_covering(outline: &[OutlineEntry], file: &Path, line: usize) -> Option<usize> {
     outline
         .iter()
         .enumerate()
@@ -176,11 +172,7 @@ pub fn entry_covering(
 }
 
 /// L'entrée du sommaire qui suit la ligne donnée, dans le même fichier.
-pub fn entry_suivant(
-    outline: &[OutlineEntry],
-    file: &Path,
-    line: usize,
-) -> Option<usize> {
+pub fn entry_suivant(outline: &[OutlineEntry], file: &Path, line: usize) -> Option<usize> {
     outline
         .iter()
         .enumerate()
@@ -190,11 +182,7 @@ pub fn entry_suivant(
 }
 
 /// L'entrée du sommaire qui précède la ligne donnée, dans le même fichier.
-pub fn entry_precedent(
-    outline: &[OutlineEntry],
-    file: &Path,
-    line: usize,
-) -> Option<usize> {
+pub fn entry_precedent(outline: &[OutlineEntry], file: &Path, line: usize) -> Option<usize> {
     outline
         .iter()
         .enumerate()
@@ -809,7 +797,11 @@ mod tests {
         let b = Path::new("b.typ");
 
         assert_eq!(entry_covering(&outline, a, 1), Some(0), "le premier titre");
-        assert_eq!(entry_covering(&outline, a, 12), Some(1), "la section domine");
+        assert_eq!(
+            entry_covering(&outline, a, 12),
+            Some(1),
+            "la section domine"
+        );
         assert_eq!(entry_covering(&outline, b, 1), Some(2), "l'autre chapitre");
         assert_eq!(entry_covering(&outline, a, 0), None, "avant tout titre");
     }

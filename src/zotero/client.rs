@@ -107,9 +107,8 @@ pub fn bibtex_depuis(base: &str, cle: &str) -> Result<String, Erreur> {
     let mut depart = 0usize;
 
     loop {
-        let chemin = format!(
-            "/users/0/collections/{cle}/items?format=bibtex&start={depart}&limit=100"
-        );
+        let chemin =
+            format!("/users/0/collections/{cle}/items?format=bibtex&start={depart}&limit=100");
         let page = requete(base, &chemin)?;
 
         // Une entrée BibTeX s'ouvre par `@` en tête de ligne : les compter
@@ -183,9 +182,7 @@ fn requete(base: &str, chemin: &str) -> Result<String, Erreur> {
         .to_socket_addrs()
         .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?
         .next()
-        .ok_or_else(|| {
-            Erreur::Injoignable("aucune adresse pour Zotero".to_string())
-        })?;
+        .ok_or_else(|| Erreur::Injoignable("aucune adresse pour Zotero".to_string()))?;
 
     let mut flux = TcpStream::connect_timeout(&adresse, PATIENCE)
         .map_err(|erreur| Erreur::Injoignable(erreur.to_string()))?;
@@ -221,9 +218,9 @@ fn hote_et_port(base: &str) -> Result<(String, u16), Erreur> {
 
     match autorite.rsplit_once(':') {
         Some((hote, port)) => {
-            let port = port.parse().map_err(|_| {
-                Erreur::ReponseInvalide(format!("port illisible : {port}"))
-            })?;
+            let port = port
+                .parse()
+                .map_err(|_| Erreur::ReponseInvalide(format!("port illisible : {port}")))?;
 
             Ok((hote.to_string(), port))
         }
@@ -256,7 +253,10 @@ fn corps_de(reponse: &str) -> Result<String, Erreur> {
 
     // `Connection: close` fait que le corps arrive entier ; si Zotero
     // morcelle, on remet les morceaux bout à bout.
-    if entetes.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+    if entetes
+        .to_ascii_lowercase()
+        .contains("transfer-encoding: chunked")
+    {
         return Ok(morceaux(corps));
     }
 
@@ -307,7 +307,9 @@ mod tests {
 
         assert!(matches!(erreur, Erreur::ApiFermee), "vu : {erreur:?}");
         assert!(
-            erreur.to_string().contains("Permettre aux autres applications"),
+            erreur
+                .to_string()
+                .contains("Permettre aux autres applications"),
             "le remède se dit : {erreur}"
         );
     }
@@ -333,7 +335,8 @@ mod tests {
         format!("http://{}", adresse)
     }
 
-    const REPONSE: &str = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
+    const REPONSE: &str =
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
 
     /// Les collections se lisent, avec leur nom, leur parent et leurs notices.
     #[test]
@@ -414,7 +417,10 @@ mod tests {
     /// Une réponse qui n'est pas du JSON se dit, sans emporter le reste.
     #[test]
     fn une_reponse_invalide_se_dit() {
-        let base = serveur2("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n", "pas du json");
+        let base = serveur2(
+            "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n",
+            "pas du json",
+        );
         let erreur = collections_depuis(&base).expect_err("illisible");
         assert!(matches!(erreur, Erreur::ReponseInvalide(_)));
 

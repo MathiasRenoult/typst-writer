@@ -74,11 +74,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     palette.text_muted
                 },
             ),
-            palette.label("document.tw").size(theme::jetons::SAILLANT).color(if active {
-                palette.accent
-            } else {
-                palette.text
-            }),
+            palette
+                .label("document.tw")
+                .size(theme::jetons::SAILLANT)
+                .color(if active { palette.accent } else { palette.text }),
             Space::new().width(Length::Fill),
             palette
                 .label(format_count(state.word_count()))
@@ -171,7 +170,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
             button(
                 row![
                     theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
-                    palette.label("Nouveau chapitre").size(theme::jetons::SAILLANT),
+                    palette
+                        .label("Nouveau chapitre")
+                        .size(theme::jetons::SAILLANT),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -525,9 +526,14 @@ fn icon_action<'a>(
             .height(Length::Fixed(ENTRY_HEIGHT))
             .padding([4, 4])
             .style(move |t, status| delete_style(t, status, palette)),
-        container(palette.label(tooltip_text).size(theme::jetons::DETAIL).color(palette.text))
-            .padding([4, 8])
-            .style(move |_| tooltip_style(palette)),
+        container(
+            palette
+                .label(tooltip_text)
+                .size(theme::jetons::DETAIL)
+                .color(palette.text),
+        )
+        .padding([4, 8])
+        .style(move |_| tooltip_style(palette)),
         tooltip::Position::Right,
     )
     .gap(6)
@@ -547,8 +553,13 @@ fn chapter_details<'a>(chapter: &'a Chapter, palette: Palette) -> Element<'a, Me
 
     container(
         column![
-            palette.label(chapter.title.clone()).size(theme::jetons::CORPS),
-            palette.label(status).size(theme::jetons::DETAIL).color(color),
+            palette
+                .label(chapter.title.clone())
+                .size(theme::jetons::CORPS),
+            palette
+                .label(status)
+                .size(theme::jetons::DETAIL)
+                .color(color),
             palette
                 .label(format_path(&chapter.path))
                 .size(theme::jetons::CHAPEAU)
@@ -577,13 +588,19 @@ fn info_row<'a>(
 
     row![
         container(glyph).padding([0, 4]).center_y(ENTRY_HEIGHT),
-        palette.label(name).size(theme::jetons::SAILLANT).color(color),
+        palette
+            .label(name)
+            .size(theme::jetons::SAILLANT)
+            .color(color),
         Space::new().width(Length::Fill),
-        palette.label(detail).size(theme::jetons::DETAIL).color(if missing {
-            palette.warning
-        } else {
-            palette.text_muted
-        }),
+        palette
+            .label(detail)
+            .size(theme::jetons::DETAIL)
+            .color(if missing {
+                palette.warning
+            } else {
+                palette.text_muted
+            }),
     ]
     .spacing(6)
     .align_y(Alignment::Center)
@@ -648,9 +665,13 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette) -> Element<'
     .spacing(2)
     .align_y(Alignment::Center);
 
-    tooltip(ligne, palette.label(info).size(theme::jetons::DETAIL), tooltip::Position::Right)
-        .gap(6)
-        .into()
+    tooltip(
+        ligne,
+        palette.label(info).size(theme::jetons::DETAIL),
+        tooltip::Position::Right,
+    )
+    .gap(6)
+    .into()
 }
 
 /// Raccourcit un libellé trop long : « … » marque la coupure.

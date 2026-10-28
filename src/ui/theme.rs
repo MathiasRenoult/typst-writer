@@ -250,9 +250,7 @@ pub mod jetons {
 }
 
 /// Le fond d'un panneau flottant : surface, lisière, rayon commun.
-pub fn panneau(
-    palette: Palette,
-) -> impl Fn(&iced::Theme) -> iced::widget::container::Style {
+pub fn panneau(palette: Palette) -> impl Fn(&iced::Theme) -> iced::widget::container::Style {
     move |_| iced::widget::container::Style {
         background: Some(palette.surface.into()),
         border: iced::Border {

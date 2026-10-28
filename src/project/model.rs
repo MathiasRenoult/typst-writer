@@ -264,7 +264,9 @@ pub fn migrate_to_document_avec_rapport(
 
         rapport.elements_convertis += rapport_chapitre.elements_convertis;
         rapport.blocs_bruts += rapport_chapitre.blocs_bruts;
-        rapport.avertissements.extend(rapport_chapitre.avertissements);
+        rapport
+            .avertissements
+            .extend(rapport_chapitre.avertissements);
         document.blocs.extend(converti.blocs);
     }
 
@@ -412,10 +414,7 @@ pub fn create_chapter(project: &Project, title: &str) -> std::io::Result<PathBuf
 }
 
 /// Retire un chapitre de l'assemblage, puis du disque.
-pub fn remove_chapter(
-    project: &Project,
-    path: &Path,
-) -> std::io::Result<std::path::PathBuf> {
+pub fn remove_chapter(project: &Project, path: &Path) -> std::io::Result<std::path::PathBuf> {
     remove_include(&project.main, path)?;
 
     // La corbeille, jamais la destruction : un chapitre supprimé par
@@ -1082,7 +1081,10 @@ mod tests {
             Some(dir.join("references-zotero.bib").as_path()),
             "le projet lié lit sa collection"
         );
-        assert_eq!(projet.zotero.as_ref().map(|l| l.nom.as_str()), Some("Ma thèse"));
+        assert_eq!(
+            projet.zotero.as_ref().map(|l| l.nom.as_str()),
+            Some("Ma thèse")
+        );
 
         // Délié, il retrouve sa bibliothèque locale.
         crate::zotero::delier(&dir);
@@ -1161,8 +1163,8 @@ mod tests {
             chapters: vec![],
             bibliography: None,
             bibliography_entries: 0,
-                    zotero: None,
-};
+            zotero: None,
+        };
         assert_eq!(find_label(&project, ""), None);
     }
 

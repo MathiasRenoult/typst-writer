@@ -153,16 +153,23 @@ se ferme d'elle-même.
 
 ## Les raccourcis
 
+    F1              la carte des raccourcis, dans l'application
     Ctrl+F          la recherche — expressions régulières, $1 rappelle un groupe
-    Ctrl+S          enregistrer
+    F3 / Maj+F3     le résultat suivant / précédent
+    Ctrl+S          enregistrer — Ctrl+Z / Ctrl+Y annuler, refaire
     Ctrl+N / Ctrl+O le document d'écriture / charger un .typ dans le projet
     Ctrl+E          exporter en PDF
+    Ctrl+P          les normes du document
     Ctrl+I          l'assistance à la frappe
     Ctrl+T          le titre suivant — Ctrl+Maj+T revient au précédent
     Ctrl+Maj+Haut/Bas le bloc entier monte ou descend
+    Ctrl+Maj+L      l'aperçu suit le chapitre — ou ne le suit plus
+    F2              renommer le symbole sous le curseur
     F11 / F12       le mode focus / aller à la définition
-    Échap           fermer — la fenêtre ouverte, la liste, le mode focus
-    Tab, Entrée     dans les fiches : le champ suivant, enregistrer
+    Ctrl+= / Ctrl+- agrandir ou réduire l'aperçu — Ctrl+0 l'ajuste à la largeur
+    Tab, Maj+Tab    dans les fenêtres : le champ suivant, le précédent
+    Entrée          valider — dans la recherche : le résultat suivant
+    Échap           fermer — la fenêtre du dessus, la liste, le mode focus
 
 ## Notes pour les curieux
 

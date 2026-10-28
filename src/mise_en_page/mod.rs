@@ -63,7 +63,7 @@ pub fn appliquer(
         &projet.join(gabarit::FICHIER),
         &gabarit::generer(mise_en_page),
     )
-        .map_err(|erreur| format!("écrire l'en-tête : {erreur}"))?;
+    .map_err(|erreur| format!("écrire l'en-tête : {erreur}"))?;
 
     let main = projet.join("main.typ");
     let texte = std::fs::read_to_string(&main).unwrap_or_default();
@@ -107,8 +107,8 @@ pub fn regles_ecrites_a_la_main(projet: &Path) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use crate::typst::render::compile;
+    use std::path::PathBuf;
 
     /// La taille de page trahit la règle qui a gagné : A4 par défaut,
     /// A5 si `#set page(paper: "a5")` s'est appliqué.
@@ -124,7 +124,8 @@ mod tests {
         assert!(
             outcome.errors.is_empty(),
             "le document d'épreuve ne compile pas : {:?}",
-            outcome.errors
+            outcome
+                .errors
                 .iter()
                 .map(|erreur| erreur.message.clone())
                 .collect::<Vec<_>>()

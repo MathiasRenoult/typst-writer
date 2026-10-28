@@ -128,9 +128,10 @@ fn appel_jusqu_a(texte: &str, debut: usize) -> Option<usize> {
         // fermée, elle ne fait pas disparaître l'appel — le parseur, lui,
         // en fait une citation sans page, et le glyphe suit.
         if texte[octet..].starts_with('[')
-            && let Some(fin) = crochet_fermant(texte, octet) {
-                octet = fin;
-            }
+            && let Some(fin) = crochet_fermant(texte, octet)
+        {
+            octet = fin;
+        }
 
         // Une autre référence suit-elle, par `; ` ?
         let reste = texte[octet..].trim_start_matches([' ', '\t']);
@@ -283,8 +284,7 @@ mod tests {
     /// toujours qu'une note.
     #[test]
     fn un_appel_de_cite_brut_se_reconnait() {
-        let trouvees =
-            notes("#cite(<a>, supplement: [p. 45]) #cite(<b>) voilà.");
+        let trouvees = notes("#cite(<a>, supplement: [p. 45]) #cite(<b>) voilà.");
 
         assert_eq!(trouvees.len(), 1, "deux appels, une seule note");
         assert_eq!(trouvees[0].nature, Nature::Appel);

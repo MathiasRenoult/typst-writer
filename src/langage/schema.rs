@@ -218,10 +218,7 @@ impl Inline {
             }
             // Le code est littéral : son délimiteur n'y paraît pas.
             Inline::Code(texte) => !texte.contains('`') && !texte.contains('\n'),
-            Inline::Couleur {
-                couleur,
-                contenu,
-            } => {
+            Inline::Couleur { couleur, contenu } => {
                 // Le nom va jusqu'au premier deux-points : un nom **simple**,
                 // lettres, chiffres et quelques signes — `red`, `#ff0000`,
                 // `rgb(1, 2, 0)`. Ni marqueur, qui ferait signe aux balayages
@@ -235,9 +232,7 @@ impl Inline {
                 !references.is_empty() && references.iter().all(Reference::est_canonique)
             }
             Inline::Note(contenu) => inline_canonique(contenu),
-            Inline::Lien { texte, cible } => {
-                inline_canonique(texte) && !cible.contains('\n')
-            }
+            Inline::Lien { texte, cible } => inline_canonique(texte) && !cible.contains('\n'),
         }
     }
 
@@ -261,9 +256,10 @@ impl Reference {
                 .cle
                 .chars()
                 .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-            && self.page.as_ref().is_none_or(|page| {
-                !page.is_empty() && !page.contains('\n') && page == page.trim()
-            })
+            && self
+                .page
+                .as_ref()
+                .is_none_or(|page| !page.is_empty() && !page.contains('\n') && page == page.trim())
     }
 }
 
@@ -336,7 +332,8 @@ fn inline_canonique(inline: &[Inline]) -> bool {
 
         // Deux éléments de même nature se rejoignent à la lecture : jamais
         // adjacents dans la forme canonique.
-        let memes_natures = (matches!(avant, Inline::Texte(_)) && matches!(apres, Inline::Texte(_)))
+        let memes_natures = (matches!(avant, Inline::Texte(_))
+            && matches!(apres, Inline::Texte(_)))
             || (matches!(avant, Inline::Litteral(_)) && matches!(apres, Inline::Litteral(_)));
 
         if memes_natures {
@@ -351,15 +348,17 @@ fn inline_canonique(inline: &[Inline]) -> bool {
 
             // Un texte collé : sa première lettre grossirait la clé.
             if let Inline::Texte(texte) = apres
-                && texte.starts_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_') {
-                    return false;
-                }
+                && texte.starts_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_')
+            {
+                return false;
+            }
         }
     }
 
     // Un « ; » entre deux appels serait le séparateur du groupe.
     for triplet in inline.windows(3) {
-        let est_un_point_virgule = matches!(&triplet[1], Inline::Texte(texte) if texte.trim() == ";");
+        let est_un_point_virgule =
+            matches!(&triplet[1], Inline::Texte(texte) if texte.trim() == ";");
 
         if est_un_point_virgule
             && matches!(triplet[0], Inline::Citation(_))
@@ -417,7 +416,7 @@ fn est_emphase_canonique(contenu: &[Inline]) -> bool {
         _ => false,
     };
 
-        !bord_blanc
+    !bord_blanc
 }
 
 impl Bloc {

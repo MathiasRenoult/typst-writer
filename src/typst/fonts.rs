@@ -176,9 +176,7 @@ fn noms_des_fichiers_typ(root: &Path) -> Vec<String> {
         .unwrap_or(SystemTime::UNIX_EPOCH);
 
     if let Ok(caches) = CACHE.lock()
-        && let Some((_, garde, noms)) = caches
-            .iter()
-            .find(|(racine, _, _)| racine == root)
+        && let Some((_, garde, noms)) = caches.iter().find(|(racine, _, _)| racine == root)
         && *garde >= plus_recent
     {
         return noms.clone();

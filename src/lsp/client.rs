@@ -830,8 +830,9 @@ fn workspace_edits(result: &Value) -> Vec<crate::lsp::messages::FileEdit> {
                 continue;
             };
 
-            let edits = serde_json::from_value::<Vec<crate::lsp::messages::TextEdit>>(edits.clone())
-                .unwrap_or_default();
+            let edits =
+                serde_json::from_value::<Vec<crate::lsp::messages::TextEdit>>(edits.clone())
+                    .unwrap_or_default();
 
             out.push(crate::lsp::messages::FileEdit { path, edits });
         }

@@ -676,7 +676,10 @@ pub fn is_reserved_name(name: &str) -> bool {
 /// l'utilisateur peut les ouvrir, les lire, les modifier.
 const EXPEDIES: &[(&str, &str)] = &[
     ("everforest.toml", include_str!("everforest.toml")),
-    ("everforest-sombre.toml", include_str!("everforest-sombre.toml")),
+    (
+        "everforest-sombre.toml",
+        include_str!("everforest-sombre.toml"),
+    ),
     ("moka.toml", include_str!("moka.toml")),
     ("moka-sombre.toml", include_str!("moka-sombre.toml")),
     ("gruvbox-creme.toml", include_str!("gruvbox-creme.toml")),
@@ -818,23 +821,24 @@ pub fn remove(name: &str) -> Result<std::path::PathBuf, String> {
     // Le nom du fichier suit le nom du thème : s'ils ont divergé — le nom
     // édité à la main — c'est le fichier que le thème occupe qui compte.
     if !path.exists()
-        && let Ok(entrees) = std::fs::read_dir(themes_dir()) {
-            for entree in entrees.filter_map(Result::ok) {
-                let chemin = entree.path();
+        && let Ok(entrees) = std::fs::read_dir(themes_dir())
+    {
+        for entree in entrees.filter_map(Result::ok) {
+            let chemin = entree.path();
 
-                if chemin.extension().and_then(|ext| ext.to_str()) != Some("toml") {
-                    continue;
-                }
+            if chemin.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                continue;
+            }
 
-                if ThemeFile::load(&chemin)
-                    .map(|fichier| fichier.meta.name == name)
-                    .unwrap_or(false)
-                {
-                    path = chemin;
-                    break;
-                }
+            if ThemeFile::load(&chemin)
+                .map(|fichier| fichier.meta.name == name)
+                .unwrap_or(false)
+            {
+                path = chemin;
+                break;
             }
         }
+    }
 
     // La corbeille, jamais la destruction : un thème écrit à la main est
     // du travail, même quand on ne le veut plus sous les yeux.
@@ -983,9 +987,8 @@ mod tests {
             // illisible, et ne mérite pas sa place dans la liste.
             let fond = theme.colors.background.0;
             let encre = theme.colors.text.0;
-            let ecart = (fond.r - encre.r).abs()
-                + (fond.g - encre.g).abs()
-                + (fond.b - encre.b).abs();
+            let ecart =
+                (fond.r - encre.r).abs() + (fond.g - encre.g).abs() + (fond.b - encre.b).abs();
 
             assert!(
                 ecart > 1.2,

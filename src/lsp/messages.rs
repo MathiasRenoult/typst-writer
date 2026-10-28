@@ -3,8 +3,8 @@
 //! Décrits à la main plutôt que tirés d'une bibliothèque : nous n'en consommons
 //! qu'une poignée, et les écrire ici, c'est aussi écrire leurs tests.
 
-use std::path::PathBuf;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::path::PathBuf;
 
 /// Une position dans un document, telle que le protocole la définit.
 ///

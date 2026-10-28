@@ -404,7 +404,11 @@ mod tests {
 
         note.deplacer(-1); // remonte sur la dernière ligne de la note
 
-        assert_eq!(note.rang, Some(1), "la deuxième référence est sous les doigts");
+        assert_eq!(
+            note.rang,
+            Some(1),
+            "la deuxième référence est sous les doigts"
+        );
         assert_eq!(note.brouillon.cle, "martin2020");
 
         note.deplacer(-1); // puis la première

@@ -31,7 +31,7 @@ pub struct MiseEnPage {
     /// Les titres de chapitres.
     pub titres: Titres,
 
-/// Les couleurs du document.
+    /// Les couleurs du document.
     pub couleurs: Couleurs,
 
     /// La typographie du texte composé.
@@ -300,7 +300,7 @@ fn paires_depuis(textes: &[String]) -> Vec<(char, char)> {
     paires
 }
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Couleurs {
     /// Le texte courant.
@@ -350,9 +350,10 @@ impl MiseEnPage {
         // dans `texte`. Elle porte dans sa section, sans quoi le réglage se
         // perdrait à la lecture — et un réglage ne se perd pas.
         if let Some(ancienne) = mise_en_page.texte.typographie.take()
-            && mise_en_page.typographie.base == "aucune" {
-                mise_en_page.typographie.charger_le_defaut(&ancienne);
-            }
+            && mise_en_page.typographie.base == "aucune"
+        {
+            mise_en_page.typographie.charger_le_defaut(&ancienne);
+        }
 
         Ok(mise_en_page)
     }
@@ -423,8 +424,14 @@ impl MiseEnPage {
         let espaces = [
             ("espace devant les signes", &self.typographie.avant_signes),
             ("espace après les signes", &self.typographie.apres_signes),
-            ("espace après virgule et point", &self.typographie.apres_virgule_point),
-            ("espace dans les guillemets", &self.typographie.espace_guillemets),
+            (
+                "espace après virgule et point",
+                &self.typographie.apres_virgule_point,
+            ),
+            (
+                "espace dans les guillemets",
+                &self.typographie.espace_guillemets,
+            ),
         ];
 
         for (nom, valeur) in espaces {
@@ -623,8 +630,6 @@ impl MiseEnPage {
 #[cfg(test)]
 mod tests {
 
-
-
     /// La typographie d'avant la section dédiée se porte dans sa section :
     /// un réglage ne se perd pas à la lecture.
     #[test]
@@ -635,7 +640,10 @@ mod tests {
         assert_eq!(mise_en_page.typographie.base, "française");
         assert_eq!(mise_en_page.typographie.avant_signes, "insécable");
         assert!(
-            !mise_en_page.ecrire().expect("sérialisé").contains("typographie ="),
+            !mise_en_page
+                .ecrire()
+                .expect("sérialisé")
+                .contains("typographie ="),
             "le champ hérité ne se réécrit pas : {}",
             mise_en_page.ecrire().expect("sérialisé")
         );
@@ -654,7 +662,10 @@ mod tests {
         typo.guillemets[0] = "“”".to_string();
         let regles = typo.regles();
         assert_eq!(regles.guillemets[0], ('“', '”'));
-        assert_eq!(regles.avant_signes, crate::langage::typographie::Espace::Insécable);
+        assert_eq!(
+            regles.avant_signes,
+            crate::langage::typographie::Espace::Insécable
+        );
 
         // L'anglais recharge ses règles.
         typo.charger_le_defaut("anglaise");
@@ -702,7 +713,10 @@ mod tests {
         let mise_en_page = MiseEnPage::lire("[papier]\nformat = \"a5\"\n").expect("lisible");
 
         assert_eq!(mise_en_page.papier.format, "a5");
-        assert_eq!(mise_en_page.marges.haut, "2cm", "ce qui manque parle tout seul");
+        assert_eq!(
+            mise_en_page.marges.haut, "2cm",
+            "ce qui manque parle tout seul"
+        );
     }
 
     /// Ce qui ne va pas se dit, champ par champ.

@@ -589,7 +589,11 @@ fn onglet(
     .padding([6, 12])
     .style(move |_, _| button::Style {
         background: None,
-        text_color: if actif { palette.accent } else { palette.text_muted },
+        text_color: if actif {
+            palette.accent
+        } else {
+            palette.text_muted
+        },
         border: iced::Border {
             color: if actif {
                 palette.accent
@@ -633,14 +637,10 @@ fn ligne<'a>(
         tooltip::Position::Top,
     );
 
-    row![
-        etiquette,
-        Space::new().width(Length::Fill),
-        controle.into(),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center)
-    .into()
+    row![etiquette, Space::new().width(Length::Fill), controle.into(),]
+        .spacing(10)
+        .align_y(iced::Alignment::Center)
+        .into()
 }
 
 /// Une case à cocher.
