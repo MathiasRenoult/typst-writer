@@ -26,7 +26,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
 
-    fenetre(liaison, state.resolved.palette)
+    crate::ui::voile(fenetre(liaison, state.resolved.palette))
 }
 
 /// Le panneau, dans l'état où il est.

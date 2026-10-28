@@ -211,15 +211,19 @@ pub struct Titres {
     /// La police des titres — vide : celle du texte.
     pub police: String,
 
-    /// Le corps d'un titre de niveau 1, puis 2, puis 3.
+    /// Le corps d'un titre de chaque niveau, du premier au sixième.
     pub taille_1: String,
     pub taille_2: String,
     pub taille_3: String,
+    pub taille_4: String,
+    pub taille_5: String,
+    pub taille_6: String,
 
     /// Les titres sont-ils en gras ?
     pub gras: bool,
 
-    /// La casse : `normale`, `majuscules`, `minuscules`.
+    /// La casse : `normale`, `majuscules`, `minuscules`,
+    /// `petites-majuscules`.
     pub casse: String,
 
     /// La numérotation des chapitres : `1.1`, `A.1`, ou vide pour aucune.
@@ -236,6 +240,9 @@ impl Default for Titres {
             taille_1: "16pt".to_string(),
             taille_2: "14pt".to_string(),
             taille_3: "12pt".to_string(),
+            taille_4: "11pt".to_string(),
+            taille_5: "10pt".to_string(),
+            taille_6: "10pt".to_string(),
             gras: true,
             casse: "normale".to_string(),
             numerotation: "1.1".to_string(),
@@ -428,6 +435,9 @@ impl MiseEnPage {
             ("titre 1", &self.titres.taille_1),
             ("titre 2", &self.titres.taille_2),
             ("titre 3", &self.titres.taille_3),
+            ("titre 4", &self.titres.taille_4),
+            ("titre 5", &self.titres.taille_5),
+            ("titre 6", &self.titres.taille_6),
             ("espacement des titres", &self.titres.espacement),
         ];
 
@@ -455,7 +465,7 @@ impl MiseEnPage {
         }
 
         match self.titres.casse.as_str() {
-            "normale" | "majuscules" | "minuscules" => {}
+            "normale" | "majuscules" | "minuscules" | "petites-majuscules" => {}
             autre => out.push((
                 "casse des titres".to_string(),
                 format!("« {autre} » n'est pas une casse connue"),
@@ -478,7 +488,8 @@ impl MiseEnPage {
         ];
 
         for (nom, valeur) in espaces {
-            if !["aucune", "normale", "insécable"].contains(&valeur.as_str()) {
+            if !["aucune", "normale", "insécable", "fine-insécable"]
+                .contains(&valeur.as_str()) {
                 out.push((
                     nom.to_string(),
                     format!("« {valeur} » n'est pas une espace connue"),
@@ -569,6 +580,9 @@ pub enum Champ {
     TitresTaille1,
     TitresTaille2,
     TitresTaille3,
+    TitresTaille4,
+    TitresTaille5,
+    TitresTaille6,
     TitresGras,
     TitresCasse,
     TitresNumerotation,
@@ -618,6 +632,9 @@ impl MiseEnPage {
             Champ::TitresTaille1 => self.titres.taille_1.clone(),
             Champ::TitresTaille2 => self.titres.taille_2.clone(),
             Champ::TitresTaille3 => self.titres.taille_3.clone(),
+            Champ::TitresTaille4 => self.titres.taille_4.clone(),
+            Champ::TitresTaille5 => self.titres.taille_5.clone(),
+            Champ::TitresTaille6 => self.titres.taille_6.clone(),
             Champ::TitresGras => self.titres.gras.to_string(),
             Champ::TitresCasse => self.titres.casse.clone(),
             Champ::TitresNumerotation => self.titres.numerotation.clone(),
@@ -667,6 +684,9 @@ impl MiseEnPage {
             Champ::TitresTaille1 => self.titres.taille_1 = valeur,
             Champ::TitresTaille2 => self.titres.taille_2 = valeur,
             Champ::TitresTaille3 => self.titres.taille_3 = valeur,
+            Champ::TitresTaille4 => self.titres.taille_4 = valeur,
+            Champ::TitresTaille5 => self.titres.taille_5 = valeur,
+            Champ::TitresTaille6 => self.titres.taille_6 = valeur,
             Champ::TitresGras => self.titres.gras = valeur == "true",
             Champ::TitresCasse => self.titres.casse = valeur,
             Champ::TitresNumerotation => self.titres.numerotation = valeur,

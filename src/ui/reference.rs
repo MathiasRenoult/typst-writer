@@ -198,10 +198,10 @@ fn fenetre<'a>(edition: &'a EditionReference, palette: Palette) -> Element<'a, M
         .padding(16)
         .style(theme::panneau(palette));
 
-    container(fenetre)
+    crate::ui::voile(container(fenetre)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
-        .into()
+        )
 }

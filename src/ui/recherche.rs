@@ -93,9 +93,9 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 
     let fenetre = container(corps).padding(12).style(theme::panneau(palette));
 
-    container(fenetre)
+    crate::ui::voile(container(fenetre)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
-        .into()
+        )
 }

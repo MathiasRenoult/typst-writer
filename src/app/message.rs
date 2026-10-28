@@ -201,6 +201,10 @@ pub enum Message {
     ProjetAnnuler,
     ProjetSupprimer(std::path::PathBuf),
 
+    /// Un clic avalé : le voile d'une fenêtre, qui ne doit rien laisser
+    /// passer à ce qui est derrière.
+    Rien,
+
     ConfirmationConfirmer,
     ConfirmationAnnuler,
 

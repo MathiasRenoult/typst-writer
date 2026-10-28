@@ -208,6 +208,9 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
         (1, &titres.taille_1),
         (2, &titres.taille_2),
         (3, &titres.taille_3),
+        (4, &titres.taille_4),
+        (5, &titres.taille_5),
+        (6, &titres.taille_6),
     ] {
         let mut regles = Vec::new();
 
@@ -237,6 +240,7 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
     match titres.casse.as_str() {
         "majuscules" => out.push_str("  show heading: it => upper(it)\n"),
         "minuscules" => out.push_str("  show heading: it => lower(it)\n"),
+        "petites-majuscules" => out.push_str("  show heading: it => smallcaps(it)\n"),
         _ => {}
     }
 

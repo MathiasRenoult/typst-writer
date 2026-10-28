@@ -30,6 +30,9 @@ pub enum Espace {
     Normale,
     /// Une espace insécable — `~` en Typst.
     Insécable,
+    /// Une espace **fine** insécable — devant `; : ! ?`, la française
+    /// véritable : moins large, et jamais cassée.
+    FineInsécable,
 }
 
 impl Espace {
@@ -38,6 +41,9 @@ impl Espace {
         match nom.trim().to_lowercase().as_str() {
             "normale" => Espace::Normale,
             "insécable" => Espace::Insécable,
+            "fine-insécable" | "fine-insécable" | "fine" | "fine insécable" => {
+                Espace::FineInsécable
+            }
             _ => Espace::Aucune,
         }
     }
@@ -48,6 +54,7 @@ impl Espace {
             Espace::Aucune => "aucune",
             Espace::Normale => "normale",
             Espace::Insécable => "insécable",
+            Espace::FineInsécable => "fine-insécable",
         }
     }
 
@@ -57,9 +64,13 @@ impl Espace {
             Espace::Aucune => None,
             Espace::Normale => Some(' '),
             Espace::Insécable => Some(INSECABLE),
+            Espace::FineInsécable => Some(FINE),
         }
     }
 }
+
+/// L'espace fine insécable — U+202F.
+pub const FINE: char = '\u{202f}';
 
 /// Les règles de typographie appliquées au texte composé.
 #[derive(Debug, Clone, PartialEq, Eq)]

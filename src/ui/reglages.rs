@@ -22,10 +22,15 @@ const ORIENTATIONS: &[&str] = &["portrait", "paysage"];
 const FORMES: &[&str] = &["1", "I", "i", "A", "a"];
 const POSITIONS: &[&str] = &["haut", "bas"];
 const ALIGNEMENTS: &[&str] = &["gauche", "centre", "droite"];
-const CASSES: &[&str] = &["normale", "majuscules", "minuscules"];
+const CASSES: &[&str] = &[
+    "normale",
+    "majuscules",
+    "minuscules",
+    "petites-majuscules",
+];
 const LANGUES: &[&str] = &["fr", "en", "de", "es", "it", "pt", "nl", "la"];
 const DEFAUTS: &[&str] = &["aucune", "française", "anglaise"];
-const ESPACES: &[&str] = &["aucune", "normale", "insécable"];
+const ESPACES: &[&str] = &["aucune", "normale", "insécable", "fine-insécable"];
 const NUMEROTATIONS: &[&str] = &["1.1", "1.1.1", "I.i", "A.a", "1)", "(1)", "A.", "a."];
 
 /// La fenêtre, ou sa place vide.
@@ -126,12 +131,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .width(Length::Fixed(largeur))
             .height(Length::Fixed(hauteur));
 
-    container(fenetre)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+    crate::ui::voile(
+        container(fenetre)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
 }
 
 /// Une section de la fenêtre : son titre et ses réglages.
@@ -309,13 +315,31 @@ fn corps_mise_en_page(
                         Champ::TitresTaille3,
                         "12pt"
                     ),
+                    saisie(
+                        palette,
+                        &reglages.titres.taille_4,
+                        Champ::TitresTaille4,
+                        "11pt"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages.titres.taille_5,
+                        Champ::TitresTaille5,
+                        "10pt"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages.titres.taille_6,
+                        Champ::TitresTaille6,
+                        "10pt"
+                    ),
                 ]
                 .spacing(8)
             ),
             ligne(
                 palette,
                 "Casse",
-                "Normale, MAJUSCULES ou minuscules.",
+                "Normale, MAJUSCULES, minuscules ou petites majuscules.",
                 choix(CASSES, reglages.titres.casse.as_str(), Champ::TitresCasse)
             ),
             ligne(
@@ -521,12 +545,25 @@ fn corps_typographie(
         section(
             palette,
             "Défaut",
-            ligne(
-                palette,
-                "Langue",
-                "Charge les règles de la langue choisie — qu'on reprend ensuite.",
-                choix_defaut(typo.base.as_str())
-            ),
+            column![
+                ligne(
+                    palette,
+                    "Langue",
+                    "Charge les règles de la langue choisie — qu'on reprend ensuite.",
+                    choix_defaut(typo.base.as_str())
+                ),
+                row![
+                    button(
+                        palette
+                            .label("Réinitialiser aux valeurs de la langue")
+                            .size(theme::jetons::DETAIL)
+                    )
+                    .on_press(Message::MiseEnPageTypographieDefaut(typo.base.clone()))
+                    .padding([5, 12]),
+                    Space::new().width(Length::Fill),
+                ],
+            ]
+            .spacing(theme::jetons::PAS),
         ),
         section(
             palette,
@@ -688,9 +725,27 @@ fn ligne<'a>(
 ) -> Element<'a, Message> {
     use iced::widget::tooltip;
 
+    // Le fond de l'infobulle : sans lui, du texte nu se perdait dans ce
+    // qui est derrière. Une boîte, une lisière, et la lecture est tenue.
+    let bulle = container(
+        text(note)
+            .size(theme::jetons::DETAIL)
+            .color(palette.text),
+    )
+    .padding(8)
+    .style(move |_| container::Style {
+        background: Some(palette.surface.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: crate::ui::theme::jetons::RAYON.into(),
+        },
+        ..Default::default()
+    });
+
     let etiquette = tooltip(
         palette.label(libelle).size(12),
-        text(note).size(theme::jetons::DETAIL),
+        bulle,
         tooltip::Position::Top,
     );
 

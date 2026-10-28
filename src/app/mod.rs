@@ -665,6 +665,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Un clic avalé par un voile de fenêtre.
+        Message::Rien => Task::none(),
+
         // La confirmation : le geste attendu part, l'autre s'efface. Le
         // témoin fait passer le geste au travers de la question.
         Message::ConfirmationConfirmer => match state.confirmation.take() {

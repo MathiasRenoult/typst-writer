@@ -25,6 +25,17 @@ use iced::{Element, Length};
 /// appartient à la disposition des panneaux, qui gère seule ce qui est
 /// redimensionnable. La fenêtre de suggestions et celle de mise en page sont
 /// des **couches** posées par-dessus, toujours en place dans l'arbre.
+/// Le voile d'une fenêtre : il avale les clics.
+///
+/// Sans lui, un clic non traité par la fenêtre passait à ce qui est
+/// derrière — le texte, un bouton de la barre — et la fenêtre ouverte
+/// faisait travailler l'application à travers elle.
+pub fn voile<'a>(arriere_plan: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    iced::widget::mouse_area(arriere_plan.into())
+        .on_press(Message::Rien)
+        .into()
+}
+
 pub fn view(state: &State) -> Element<'_, Message> {
     // En mode focus, la barre d'outils disparaît : elle n'a plus d'objet, les
     // panneaux étant masqués et les commandes de fichier n'étant pas ce qu'on
