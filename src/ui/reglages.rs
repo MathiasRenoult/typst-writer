@@ -299,7 +299,7 @@ fn corps_mise_en_page(
         column![
             row![
                 pick_list(
-                    noms_normes.clone(),
+                    noms_normes,
                     Some(norme.to_string()),
                     Message::NormesAppliquer
                 )
@@ -1042,7 +1042,7 @@ fn choix_police(valeur: &str, champ: Champ) -> Element<'static, Message> {
         text("Aa Bb Cc — le texte se compose ainsi").size(14)
     } else {
         text("Aa Bb Cc — le texte se compose ainsi").font(iced::Font {
-            family: iced::font::Family::Name(Box::leak(pour_apercu.clone().into_boxed_str())),
+            family: iced::font::Family::Name(crate::theming::intern_family(&pour_apercu)),
             ..Default::default()
         })
     };

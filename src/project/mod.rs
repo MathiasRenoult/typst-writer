@@ -938,7 +938,7 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
             last_document: None,
             // Le thème retenu ne regarde pas la migration des documents à plat :
             // il survit tel quel, et le reste de la session avec lui.
-            ..session.clone()
+            ..session
         });
     }
 

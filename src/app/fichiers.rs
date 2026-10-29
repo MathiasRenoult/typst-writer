@@ -515,7 +515,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     // Le chapitre renommé peut être celui qui est ouvert : son
                     // chemin a changé, l'éditeur doit suivre.
                     if state.editor.path.as_deref() == Some(renaming.path.as_path()) {
-                        state.editor.path = Some(new_path.clone());
+                        state.editor.path = Some(new_path);
                     }
 
                     state.refresh_context();
@@ -539,7 +539,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 fn save_as_task(state: &State) -> Task<Message> {
-    let content = state.editor.content().to_owned();
+    let content = state.editor.content();
 
     Task::perform(
         async move {

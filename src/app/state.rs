@@ -524,7 +524,7 @@ pub enum PreviewPosition {
 }
 
 impl PreviewPosition {
-    pub fn next(self) -> Self {
+    pub const fn next(self) -> Self {
         match self {
             PreviewPosition::Right => PreviewPosition::Left,
             PreviewPosition::Left => PreviewPosition::Bottom,
@@ -588,12 +588,12 @@ impl LayoutState {
     pub const SPLITTER_WIDTH: f32 = 6.0;
 
     /// Applique une largeur, bornée aux limites d'un panneau.
-    pub fn clamp_width(width: f32) -> f32 {
+    pub const fn clamp_width(width: f32) -> f32 {
         width.clamp(Self::MIN_PANEL_WIDTH, Self::MAX_PANEL_WIDTH)
     }
 
     /// Applique une part de hauteur, bornée.
-    pub fn clamp_share(share: f32) -> f32 {
+    pub const fn clamp_share(share: f32) -> f32 {
         share.clamp(Self::MIN_PREVIEW_SHARE, Self::MAX_PREVIEW_SHARE)
     }
 

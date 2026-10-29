@@ -80,7 +80,7 @@ impl Composeur {
     /// mention de page. La forme de l'arbre de widgets ne change donc jamais
     /// quand l'étape change, et le focus y reste : c'est la règle de la
     /// fenêtre flottante, appliquée à son champ.
-    pub fn champ_id() -> iced::widget::Id {
+    pub const fn champ_id() -> iced::widget::Id {
         iced::widget::Id::new("composeur-champ")
     }
 
@@ -193,7 +193,7 @@ impl Composeur {
 
     /// La sélection des flèches est-elle sur les clés, plutôt que sur une
     /// ligne de la note ?
-    pub fn sur_palette(&self) -> bool {
+    pub const fn sur_palette(&self) -> bool {
         self.position >= self.references.len()
     }
 
