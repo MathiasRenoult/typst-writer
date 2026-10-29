@@ -217,7 +217,14 @@ fn generer_bloc(
             } else {
                 out.push_str("\"), caption: [");
                 generer_inline(légende, out, false, regles, &mut contexte);
-                out.push_str("])\n\n");
+                out.push(']');
+                // La forme de la numérotation, si les normes la choisissent.
+                if !regles.numerotation_figures.is_empty() {
+                    out.push_str(", numbering: \"");
+                    out.push_str(&regles.numerotation_figures);
+                    out.push('"');
+                }
+                out.push_str(")\n\n");
             }
         }
         Bloc::Décor { proprietes, bloc } => {

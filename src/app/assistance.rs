@@ -466,9 +466,7 @@ pub(super) fn composeur_touche(
     // Le composeur fermé ne prend rien : sans cette garde, il volait
     // Tab, Entrée et Échap à toutes les fenêtres — la fiche de
     // référence ne pouvait ni naviguer, ni valider, ni fermer.
-    if state.composeur.is_none() {
-        return None;
-    }
+    state.composeur.as_ref()?;
 
     let message = match key {
         Key::Named(Named::Tab) => Message::ComposeurAvancer,

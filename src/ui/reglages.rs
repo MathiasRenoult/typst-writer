@@ -420,6 +420,17 @@ fn corps_mise_en_page(
             ),
             ligne(
                 palette,
+                "Numérotation des figures",
+                "1, A, a, I, i, 1.1 — ou vide pour les défauts.",
+                saisie(
+                    palette,
+                    &reglages.numerotation_figures,
+                    Champ::NumerotationFigures,
+                    "1"
+                )
+            ),
+            ligne(
+                palette,
                 "Corps des titres 1, 2, 3",
                 "Le corps de chaque niveau de titre.",
                 row![

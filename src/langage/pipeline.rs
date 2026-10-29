@@ -49,7 +49,9 @@ pub fn compilation_unit_document(
     // La typographie se lit dans les normes du projet : c'est là qu'elle se
     // choisit, et le générateur l'applique au texte qu'il compose.
     let normes = crate::mise_en_page::charger(root);
-    let generated = generer_avec(document, &normes.typographie.regles(), &normes.decor);
+    let mut regles = normes.typographie.regles();
+    regles.numerotation_figures = normes.numerotation_figures.clone();
+    let generated = generer_avec(document, &regles, &normes.decor);
 
     // La guérison des `.bib` court enfin : la bibliographie
     // conventionnelle existe déjà, et ses chemins sont vivants.

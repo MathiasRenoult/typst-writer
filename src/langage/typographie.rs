@@ -90,6 +90,10 @@ pub struct Regles {
     /// pour les citations les plus hautes, les suivantes pour ce qu'elles
     /// contiennent. Le dernier niveau sert au-delà.
     pub guillemets: Vec<(char, char)>,
+
+    /// La forme de la numérotation des figures : "1", "A", "I", "1.1".
+    /// Vide = les défauts de Typst.
+    pub numerotation_figures: String,
 }
 
 impl Regles {
@@ -101,6 +105,7 @@ impl Regles {
             apres_virgule_point: Espace::Aucune,
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
+            numerotation_figures: String::new(),
         }
     }
 
@@ -113,6 +118,7 @@ impl Regles {
             apres_virgule_point: Espace::Normale,
             espace_guillemets: Espace::Insécable,
             guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
+            numerotation_figures: String::new(),
         }
     }
 
@@ -124,6 +130,7 @@ impl Regles {
             apres_virgule_point: Espace::Normale,
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('"', '"'), ('\'', '\''), ('"', '"')],
+            numerotation_figures: String::new(),
         }
     }
 

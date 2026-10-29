@@ -537,6 +537,14 @@ pub fn lire_image(ligne: &str) -> Option<(Vec<crate::langage::schema::Inline>, S
         return None;
     }
 
+    // La légende peut se trouver dans le lien : `![alt](chemin | légende)`.
+    // Le `|` sépare le chemin de la légende — la légende l'emporte sur
+    // le texte alternatif, qui reste pour l'accessibilité.
+    if let Some((chemin, legende)) = cible.split_once('|') {
+        let legende = legende.trim();
+        return Some((parse_inline(legende), chemin.trim().to_string()));
+    }
+
     Some((parse_inline(&texte), cible))
 }
 

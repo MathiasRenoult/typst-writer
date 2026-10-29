@@ -48,6 +48,10 @@ pub struct MiseEnPage {
     /// document dit l'intention (`{encadré}`), les normes disent la
     /// couleur, l'épaisseur et le rayon.
     pub decor: Decor,
+
+    /// La forme de la numérotation des figures : "1", "A", "a", "I", "i", "1.1".
+    /// Vide = les défauts de Typst.
+    pub numerotation_figures: String,
 }
 
 /// Les défauts du décor d'un document.
@@ -364,6 +368,7 @@ impl Typographie {
             ),
             espace_guillemets: crate::langage::typographie::Espace::depuis(&self.espace_guillemets),
             guillemets: paires_depuis(&self.guillemets),
+            numerotation_figures: String::new(),
         }
     }
 
@@ -624,6 +629,7 @@ pub enum Champ {
     PiedCentre,
     PiedDroite,
     EntetePiedNumerotation,
+    NumerotationFigures,
     TextePolice,
     TexteTaille,
     TexteInterligne,
@@ -685,6 +691,7 @@ impl MiseEnPage {
             Champ::PiedCentre => self.entete_pied.pied.centre.clone(),
             Champ::PiedDroite => self.entete_pied.pied.droite.clone(),
             Champ::EntetePiedNumerotation => self.entete_pied.numerotation.clone(),
+            Champ::NumerotationFigures => self.numerotation_figures.clone(),
             Champ::TextePolice => self.texte.police.clone(),
             Champ::TexteTaille => self.texte.taille.clone(),
             Champ::TexteInterligne => self.texte.interligne.clone(),
@@ -746,6 +753,7 @@ impl MiseEnPage {
             Champ::PiedCentre => self.entete_pied.pied.centre = valeur,
             Champ::PiedDroite => self.entete_pied.pied.droite = valeur,
             Champ::EntetePiedNumerotation => self.entete_pied.numerotation = valeur,
+            Champ::NumerotationFigures => self.numerotation_figures = valeur,
             Champ::TextePolice => self.texte.police = valeur,
             Champ::TexteTaille => self.texte.taille = valeur,
             Champ::TexteInterligne => self.texte.interligne = valeur,
