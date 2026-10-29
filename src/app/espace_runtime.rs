@@ -208,7 +208,7 @@ impl State {
         let projet = crate::project::load(&dir);
         let chemin = projet.document.clone().unwrap_or_else(|| projet.main.clone());
         match std::fs::read_to_string(&chemin) {
-            Ok(contenu) => { self.ouvrir_vue(projet, chemin, contenu, Ouverture::Reutiliser); if self.project.dir == dir { self.projets_vue = false; } },
+            Ok(contenu) => { self.ouvrir_vue(projet, chemin, contenu, Ouverture::Remplacer); if self.project.dir == dir { self.projets_vue = false; } },
             Err(e) => self.note = Some(Note::erreur(format!("Ouverture : {e}"))),
         }
     }
