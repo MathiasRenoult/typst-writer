@@ -1212,6 +1212,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Message::MiseEnPageOuvrir
         | Message::MiseEnPageFermer
         | Message::MiseEnPageChamp(_, _)
+        | Message::MiseEnPageMolette(_, _)
         | Message::MiseEnPageBascule(_)
         | Message::MiseEnPagePanneau(_)
         | Message::MiseEnPageTypographieDefaut(_)

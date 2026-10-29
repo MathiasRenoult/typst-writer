@@ -43,6 +43,16 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             Task::none()
         }
 
+        Message::MiseEnPageMolette(champ, pas) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                let actuel = dialogue.reglages.valeur(champ);
+                let nouveau = incrémenter(&actuel, pas);
+                dialogue.reglages.modifier(champ, nouveau);
+            }
+
+            Task::none()
+        }
+
         Message::MiseEnPageBascule(champ) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.reglages.basculer(champ);
@@ -197,4 +207,26 @@ fn appliquer(state: &mut State) -> Task<Message> {
     }
 
     Task::none()
+}
+
+/// Incrémente la valeur numérique d'un champ — la molette et les flèches.
+///
+/// `11pt` → `12pt`, `2cm` → `3cm`, `1.5` → `2.5`. L'unité est préservée.
+fn incrémenter(valeur: &str, pas: i8) -> String {
+    // Séparer le nombre et le suffixe (unité).
+    let fin_nombre = valeur
+        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-' && c != ',')
+        .unwrap_or(valeur.len());
+    let (nombre, suffixe) = valeur.split_at(fin_nombre);
+    let nombre_normalise = nombre.replace(',', ".");
+    let Ok(n) = nombre_normalise.parse::<f64>() else {
+        return valeur.to_string();
+    };
+    let nouveau = n + pas as f64;
+    // Pas de décimale inutile : 2.0 → 2, 2.5 → 2.5.
+    if nouveau.fract() == 0.0 {
+        format!("{}{suffixe}", nouveau as i64)
+    } else {
+        format!("{nouveau}{suffixe}")
+    }
 }

@@ -302,6 +302,8 @@ pub enum Message {
 
     /// Un champ de la mise en page change.
     MiseEnPageChamp(crate::mise_en_page::modele::Champ, String),
+    /// Molette ou flèche sur un champ numérique : +1 ou -1.
+    MiseEnPageMolette(crate::mise_en_page::modele::Champ, i8),
 
     /// Une case à cocher bascule.
     MiseEnPageBascule(crate::mise_en_page::modele::Champ),

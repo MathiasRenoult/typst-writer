@@ -954,14 +954,48 @@ fn saisie(
     champ: Champ,
     exemple: &str,
 ) -> Element<'static, Message> {
-    let _ = palette;
-
-    text_input(exemple, valeur)
+    let champ_molette = champ;
+    let champ_haut = champ;
+    let champ_bas = champ;
+    let fleches = iced::widget::column![
+        button(text("▲").size(8))
+            .on_press(Message::MiseEnPageMolette(champ_haut, 1))
+            .padding([1, 3])
+            .style(move |_, _| button::Style {
+                background: None,
+                text_color: palette.text_muted,
+                ..Default::default()
+            }),
+        button(text("▼").size(8))
+            .on_press(Message::MiseEnPageMolette(champ_bas, -1))
+            .padding([1, 3])
+            .style(move |_, _| button::Style {
+                background: None,
+                text_color: palette.text_muted,
+                ..Default::default()
+            }),
+    ]
+    .spacing(0);
+    let champ = text_input(exemple, valeur)
         .on_input(move |texte| Message::MiseEnPageChamp(champ, texte))
-        .width(Length::Fixed(170.0))
+        .width(Length::Fixed(140.0))
         .padding(6)
-        .size(12)
-        .into()
+        .size(12);
+    iced::widget::mouse_area(
+        row![champ, fleches].spacing(2).align_y(iced::Alignment::Center),
+    )
+    .on_scroll(move |delta| {
+        let pas = match delta {
+            iced::mouse::ScrollDelta::Lines { y, .. }
+            | iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+        };
+        if pas > 0.0 {
+            Message::MiseEnPageMolette(champ_molette, 1)
+        } else {
+            Message::MiseEnPageMolette(champ_molette, -1)
+        }
+    })
+    .into()
 }
 
 /// Une liste déroulante.
