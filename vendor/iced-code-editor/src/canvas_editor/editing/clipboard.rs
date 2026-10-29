@@ -121,6 +121,10 @@ impl CodeEditor {
     /// earlier in the document.  After every range deletion all other
     /// cursors (including ones without a selection) are adjusted.
     pub(crate) fn delete_selection(&mut self) {
+        // Une sélection qui coupe une note l'emporte entière : le reste du
+        // texte fondu ne doit jamais rester à nu.
+        self.etendre_selections_aux_marques();
+
         // Collect indices of cursors that have a non-empty selection, sorted
         // descending by the start of their selection range.
         let indices =

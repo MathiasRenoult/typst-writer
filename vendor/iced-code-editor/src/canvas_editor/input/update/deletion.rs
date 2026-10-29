@@ -61,6 +61,61 @@ impl CodeEditor {
         }
     }
 
+    /// Étend les sélections qui coupent une note pour couvrir la note entière.
+    ///
+    /// Une note est un caractère — même quand elle court sur plusieurs lignes.
+    /// Une sélection qui n'en prend qu'une partie laisserait le reste du texte
+    /// fondu à nu : les caractères de la clé apparaîtraient, fantômes. Toute
+    /// sélection qui touche un groupe s'étend aux deux bords de ce groupe.
+    pub(crate) fn etendre_selections_aux_marques(&mut self) {
+        use crate::canvas_editor::marques::bords_du_groupe;
+
+        if self.marques.is_empty() {
+            return;
+        }
+
+        // Les deux bords de chaque note du document.
+        let mut groupes: Vec<((usize, usize), (usize, usize))> = Vec::new();
+        let mut vus: Vec<usize> = Vec::new();
+        for marque in &self.marques {
+            if vus.contains(&marque.groupe) {
+                continue;
+            }
+            vus.push(marque.groupe);
+            if let Some(bords) = bords_du_groupe(&self.marques, marque.groupe) {
+                groupes.push(bords);
+            }
+        }
+
+        for curseur in self.cursors.as_mut_slice() {
+            let Some(anchor) = curseur.anchor else { continue };
+            let pos = curseur.position;
+            let (sel_debut, sel_fin) = if anchor <= pos { (anchor, pos) } else { (pos, anchor) };
+
+            let mut nouveau_debut = sel_debut;
+            let mut nouveau_fin = sel_fin;
+
+            // Une seule passe suffit : les marques ne se chevauchent pas, et
+            // l'extension s'arrête aux bords de groupe, jamais à l'intérieur.
+            for &(g_debut, g_fin) in &groupes {
+                let touche = nouveau_debut < g_fin && g_debut < nouveau_fin;
+                if !touche { continue; }
+                nouveau_debut = nouveau_debut.min(g_debut);
+                nouveau_fin = nouveau_fin.max(g_fin);
+            }
+
+            if (nouveau_debut, nouveau_fin) != (sel_debut, sel_fin) {
+                if anchor <= pos {
+                    curseur.anchor = Some(nouveau_debut);
+                    curseur.position = nouveau_fin;
+                } else {
+                    curseur.anchor = Some(nouveau_fin);
+                    curseur.position = nouveau_debut;
+                }
+            }
+        }
+    }
+
     /// Handles Backspace key press.
     ///
     /// If there's a selection, deletes the selection. Otherwise, deletes the
@@ -312,5 +367,24 @@ mod tests {
         assert_eq!(editor.buffer.line(0), "line3");
         assert_eq!(editor.cursors.primary_position(), (0, 2));
         assert!(editor.cursors.primary().anchor.is_none());
+    }
+
+    /// Une sélection qui coupe une note à moitié l'emporte entière — jamais
+    /// de texte fondu laissé à nu.
+    #[test]
+    fn une_selection_partielle_emporte_la_note_entiere() {
+        let mut editor = CodeEditor::new("avant @dupont[p.45] apres", "py");
+        // `@dupont[p.45]` occupe les colonnes 6 à 19.
+        editor.set_marques(vec![crate::canvas_editor::marques::Marque::new(0, 0, 6, 19, "1")]);
+
+        // Sélection qui coupe la note : de la colonne 4 à la colonne 10.
+        editor.cursors.primary_mut().anchor = Some((0, 4));
+        editor.cursors.primary_mut().position = (0, 10);
+
+        editor.delete_selection();
+
+        // La note entière est partie : plus de clé de citation à nu.
+        assert_eq!(editor.buffer.line(0), "avan apres");
+        assert!(!editor.buffer.line(0).contains("dupont"));
     }
 }

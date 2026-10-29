@@ -287,3 +287,17 @@ unité à égaliser.
 propre au crate — sans expressions régulières ni rappel de groupes —
 laissait `Ctrl+F` sans emploi pour celle de l'application, qui en a. Le
 raccourci est donc libre, et la recherche de l'application le reprend.
+
+### 15. La sélection qui coupe une note l'emporte entière
+
+Une note est un caractère — Backspace et Suppr savaient déjà l'emporter
+d'un seul geste quand le curseur est sur son bord. Mais une **sélection**
+qui ne prenait qu'une partie de la note laissait le reste du texte fondu
+à nu : les caractères de la clé de citation apparaissaient, fantômes, et
+le `.tw` s'abîmait. `etendre_selections_aux_marques` étend toute sélection
+qui touche un groupe aux deux bords de ce groupe, avant chaque
+`delete_selection` — Backspace, Suppr, frappe sur sélection, collage.
+Jamais de texte fondu laissé à nu.
+
+`input/update/deletion.rs` (`etendre_selections_aux_marques`),
+`editing/clipboard.rs` (appel en tête de `delete_selection`).
