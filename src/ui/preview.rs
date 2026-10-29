@@ -122,12 +122,12 @@ pub(crate) const SCROLL_ID: &str = "apercu";
 /// La géométrie est connue avant tout rendu : elle sert à calculer la hauteur
 /// totale du panneau et à déterminer quelles pages sont visibles, ce qui rend
 /// la liste de pages virtualisable.
-fn page_sizes(state: &State) -> Vec<(f32, f32)> {
-    match state.render.document.as_ref() {
+fn page_sizes(render: &crate::app::state::RenderState) -> Vec<(f32, f32)> {
+    match render.document.as_ref() {
         Some(document) => sizes_of_with_zoom(
             document,
-            state.render.viewport.unwrap_or_else(default_viewport),
-            state.render.zoom,
+            render.viewport.unwrap_or_else(default_viewport),
+            render.zoom,
         ),
         None => Vec::new(),
     }
@@ -273,16 +273,15 @@ fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) 
     )
 }
 
-pub fn view(state: &State) -> Element<'_, Message> {
-    let render = &state.render;
-    let sizes = page_sizes(state);
+pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, editor: &'a crate::editor::EditorState, lsp: &'a crate::app::state::LspState, id: Option<u64>) -> Element<'a, Message> {
+    let sizes = page_sizes(render);
     let palette = state.resolved.palette;
 
     // Le fichier ouvert : c'est lui seul dont les diagnostics peuvent être
     // localisés, puisque c'est le seul que l'éditeur affiche. Emprunté à
     // l'état, et non cloné, pour que les éléments retournés vivent aussi
     // longtemps que lui.
-    let open = state.editor.path.as_deref();
+    let open = editor.path.as_deref();
 
     // Espacement nul, volontairement : les écarts entre pages sont posés avec
     // les pages elles-mêmes, pour que la hauteur du contenu ne dépende pas du
@@ -319,8 +318,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // Diagnostics du serveur de langage : ils arrivent **au fil de la frappe**,
     // là où notre compilation attend deux secondes de silence. Le fichier ouvert
     // est le seul qu'on puisse rejoindre depuis l'éditeur.
-    if !state.lsp.reported.is_empty() {
-        content = content.push(server_diagnostics_panel(&state.lsp.reported, palette));
+    if !lsp.reported.is_empty() {
+        content = content.push(server_diagnostics_panel(&lsp.reported, palette));
     }
 
     if sizes.is_empty() {
@@ -336,7 +335,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(palette.label(message).size(BODY_SIZE));
 
         return scrollable(content)
-            .id(SCROLL_ID)
+            .id(id.map_or_else(|| iced::widget::Id::from(SCROLL_ID), |id| iced::widget::Id::from(format!("apercu-{id}"))))
             .direction(iced::widget::scrollable::Direction::Both {
                 vertical: iced::widget::scrollable::Scrollbar::default(),
                 horizontal: iced::widget::scrollable::Scrollbar::default(),
@@ -372,7 +371,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .skip(first)
         .take(last.saturating_sub(first) + 1)
     {
-        content = content.push(page_view(state, index, *size));
+        content = content.push(page_view(render, palette, index, *size));
 
         // L'écart **après** la page : il l'accompagne, au lieu d'être posé par
         // la colonne entre deux widgets. C'est ce qui rend la hauteur du
@@ -391,7 +390,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     }
 
     scrollable(content)
-        .id(SCROLL_ID)
+        .id(id.map_or_else(|| iced::widget::Id::from(SCROLL_ID), |id| iced::widget::Id::from(format!("apercu-{id}"))))
         .direction(iced::widget::scrollable::Direction::Both {
             vertical: iced::widget::scrollable::Scrollbar::default(),
             horizontal: iced::widget::scrollable::Scrollbar::default(),
@@ -418,8 +417,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 /// Une page : l'image si elle est rasterisée, sinon un cadre de la même
 /// taille (la géométrie du document est connue avant tout rendu).
-fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Message> {
-    let render = &state.render;
+fn page_view(render: &crate::app::state::RenderState, palette: Palette, index: usize, size: (f32, f32)) -> Element<'_, Message> {
     let (width, height) = size;
 
     // Double tampon : l'image de la page est affichée dès qu'elle existe,
@@ -453,16 +451,14 @@ fn page_view(state: &State, index: usize, size: (f32, f32)) -> Element<'_, Messa
         // Aucune texture encore : le cadre est du papier, de la taille de la
         // page. Il n'apparaît donc jamais de trou dans le document.
         None => container(
-            state
-                .resolved
-                .palette
+            palette
                 .label(if render.rendering.contains(&(render.revision, index)) {
                     "Rendu…"
                 } else {
                     ""
                 })
                 .size(13)
-                .color(state.resolved.palette.text_muted),
+                .color(palette.text_muted),
         )
         .width(Length::Fixed(width))
         .height(Length::Fixed(height))

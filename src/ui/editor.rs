@@ -388,13 +388,14 @@ impl overlay::Overlay<Message, iced::Theme, iced::Renderer> for BulleRecouvremen
 /// donne à l'éditeur des marges latérales sur une fenêtre large, et ce qui
 /// borne le retour à la ligne à une longueur lisible.
 pub fn view(state: &State) -> Element<'_, Message> {
+    vue(state, &state.editor, true)
+}
+
+pub fn vue<'a>(state: &'a State, source: &'a crate::editor::EditorState, active: bool) -> Element<'a, Message> {
     let palette = state.resolved.palette;
-
-    let editor = state.editor.editor.view().map(Message::Editor);
-
-    let bulle = bulle(state, palette);
-
-    crate::app::epreuves::note_vue(state.editor.editor.viewport_scroll(), bulle.is_some());
+    let editor = source.editor.view().map(Message::Editor);
+    let bulle = if active { bulle(state, palette) } else { None };
+    crate::app::epreuves::note_vue(source.editor.viewport_scroll(), bulle.is_some());
 
     let page = container(EditorOverlay { editor, bulle })
         .width(Fill)

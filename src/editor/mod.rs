@@ -211,6 +211,13 @@ impl EditorState {
             .then(|| crate::langage::parse(&self.editor.content()));
     }
 
+    /// Réconcilie la projection avec le document partagé, sans réinitialiser
+    /// le curseur, le défilement ni l’historique commun.
+    pub fn synchroniser_source(&mut self) {
+        self.refresh_document();
+        self.marques_a_jour();
+    }
+
     /// Le message peut-il modifier le texte ou sa sérialisation ?
     pub fn message_may_change_content(message: &EditorMessage) -> bool {
         matches!(

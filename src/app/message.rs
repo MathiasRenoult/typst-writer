@@ -19,6 +19,18 @@ pub enum FormatAction {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    VersVue(u64, Box<Message>),
+    RetourVue(u64, Box<Message>),
+    RetourDocument((PathBuf, PathBuf), Box<Message>),
+    VueChoisir(u64),
+    VueFermer(u64),
+    VueDupliquer,
+    OngletSuivant,
+    PanneauChoisir(iced::widget::pane_grid::Pane),
+    PanneauRedimensionner(iced::widget::pane_grid::ResizeEvent),
+    OngletPrendre(u64),
+    OngletCible(iced::widget::pane_grid::Pane, Option<iced::widget::pane_grid::Edge>),
+    OngletPoser,
     Editor(EditorMessage),
     Format(FormatAction),
 

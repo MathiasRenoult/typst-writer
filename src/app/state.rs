@@ -41,7 +41,7 @@ pub struct TableauDialogue {
 /// l'application écrit vraiment — utile quand une formule refuse de se
 /// composer). `Ctrl+e` bascule rendu/édition, `Ctrl+Maj+e` ouvre le
 /// Typst (bug 7 du rapport 2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ModeVue {
     /// La source, écrite.
     #[default]
@@ -85,6 +85,8 @@ pub struct Confirmation {
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
 /// la séquence de démarrage sait établir.
 pub struct State {
+    pub espace: crate::app::espace::Espace,
+    pub typst_genere: String,
     pub editor: EditorState,
 
     /// Statut du dernier export PDF (`None` tant qu'aucun export n'a eu lieu).

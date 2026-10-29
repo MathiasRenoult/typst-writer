@@ -23,6 +23,55 @@ use crate::app::message::Message;
 use crate::app::state::State;
 use iced::Task;
 
+/// Rejoue Ctrl, molette, relâchement dans la fenêtre réelle, sans frapper
+/// dans un document. Le routage est celui de l'abonnement natif.
+pub fn driver_zoom(state: &State) -> Option<Task<Message>> {
+    use iced::{Event, event::Status, keyboard, mouse};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    if !actif("zoom") || state.render.document.is_none() {
+        return None;
+    }
+    static ETAPE: AtomicU32 = AtomicU32::new(0);
+    let etape = ETAPE.fetch_add(1, Ordering::Relaxed);
+    let evenement = match etape {
+        2 => return Some(Task::done(Message::ModeBasculer)),
+        4 => Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL)),
+        6 => Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+        }),
+        9 => Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Pixels { x: 0.0, y: -30.0 },
+        }),
+        12 => Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::default(),
+        )),
+        14 => Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+        }),
+        5 | 8 | 11 | 16 => {
+            let document = state.render.document.as_deref().expect("document rendu");
+            let tailles = crate::ui::preview::sizes_of_with_zoom(
+                document,
+                state
+                    .render
+                    .viewport
+                    .unwrap_or_else(crate::ui::preview::default_viewport),
+                state.render.zoom,
+            );
+            println!(
+                "[zoom] étape {etape} | Ctrl {} | {:?} | première page {:?}",
+                state.controle_tenu,
+                state.render.zoom,
+                tailles.first()
+            );
+            return None;
+        }
+        _ => return None,
+    };
+    super::message_evenement(evenement, Status::Captured).map(Task::done)
+}
+
 /// L'instrument demandé est-il actif ?
 ///
 /// La variable n'est lue qu'une fois, au premier appel : son contenu ne peut

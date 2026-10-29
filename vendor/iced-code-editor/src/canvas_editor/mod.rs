@@ -53,6 +53,7 @@ mod input;
 pub mod marques;
 pub mod lsp;
 mod metrics;
+pub mod source_partagee;
 mod render;
 pub use render::highlighting::{SyntaxPalette, SyntaxRule};
 

@@ -235,6 +235,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 mod buffer;
 mod canvas_editor;
+pub use canvas_editor::source_partagee::SourcePartagee;
 
 pub mod i18n;
 pub mod theme;

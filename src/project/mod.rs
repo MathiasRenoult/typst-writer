@@ -227,6 +227,10 @@ pub fn ecrire_atomique_octets(chemin: &std::path::Path, octets: &[u8]) -> std::i
 /// Session de travail : ce qu'il faut rouvrir au démarrage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Session {
+    /// Disposition complète ; absente dans les anciennes sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub espace: Option<crate::app::espace::Disposition>,
+
     /// Dossier du projet ouvert.
     #[serde(default)]
     pub project: Option<PathBuf>,
@@ -1522,6 +1526,7 @@ mod tests {
     #[test]
     fn a_session_keeps_the_chosen_theme() {
         let session = Session {
+            espace: None,
             project: Some(PathBuf::from("/tmp/projet")),
             last_document: None,
             theme_mode: crate::ui::theme::ThemeMode::Light,
@@ -1561,6 +1566,7 @@ mod tests {
         save_session_to(
             &path,
             &Session {
+                espace: None,
                 project: None,
                 last_document: None,
                 theme_mode: crate::ui::theme::ThemeMode::Dark,

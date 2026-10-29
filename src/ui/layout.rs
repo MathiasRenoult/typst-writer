@@ -1,167 +1,99 @@
-use crate::app::state::{LayoutState, PreviewPosition, Splitter};
+//! La bibliothèque encadre une grille de panneaux internes, jamais de fenêtres OS.
+use crate::app::espace::{Panneau, VueId};
+use crate::app::state::{ModeVue, Splitter};
 use crate::app::{Message, State};
-use iced::widget::{container, mouse_area, rule};
-use iced::{Alignment, Element, Length, Theme};
+use iced::widget::{container, mouse_area, pane_grid, responsive, row, rule};
+use iced::{Element, Length};
 
-use super::{editor, preview, sidebar};
-
-/// Mise en page de l'application : bibliothèque, éditeur, aperçu.
-///
-/// Les panneaux s'ouvrent et se ferment, se redimensionnent à la souris, et
-/// l'aperçu se déplace à droite, à gauche ou en dessous. La largeur au début
-/// du glissement est retenue et le mouvement applique un delta : inutile de
-/// connaître la taille de la fenêtre, et le calcul reste juste même si elle
-/// change en cours de route.
 pub fn view(state: &State) -> Element<'_, Message> {
-    // Mode focus : le texte source seul. Les préférences de panneaux ne sont
-    // pas touchées — c'est l'affichage qui les ignore — donc en sortir rend la
-    // disposition exactement telle qu'elle était.
-    if state.layout.focus_mode {
-        return editor::view(state);
+    if state.layout.focus_mode { return super::editor::view(state); }
+    let grille = pane_grid::PaneGrid::new(&state.espace.grille, |pane, panneau, _| {
+        pane_grid::Content::new(panneau_vue(state, pane, panneau))
+    })
+    .spacing(6)
+    .min_size(120)
+    .on_click(Message::PanneauChoisir)
+    .on_resize(8, Message::PanneauRedimensionner);
+    let mut ligne = row![].spacing(0);
+    if state.layout.sidebar_visible {
+        ligne = ligne.push(container(super::sidebar::view(state)).width(state.layout.sidebar_width).height(Length::Fill));
+        ligne = ligne.push(mouse_area(container(rule::vertical(1)).width(crate::app::state::LayoutState::SPLITTER_WIDTH).height(Length::Fill))
+            .on_press(Message::SplitterPressed(Splitter::Sidebar))
+            .interaction(iced::mouse::Interaction::ResizingHorizontally));
     }
-
-    if state.layout.preview_visible && state.layout.preview_position == PreviewPosition::Bottom {
-        return column_layout(state).into();
-    }
-
-    let layout = &state.layout;
-    let mut bar = iced::widget::row![].spacing(0).align_y(Alignment::Center);
-
-    if layout.sidebar_visible {
-        bar = bar.push(
-            container(sidebar::view(state))
-                .width(Length::Fixed(layout.sidebar_width))
-                .height(Length::Fill),
-        );
-        bar = bar.push(splitter(Splitter::Sidebar, state));
-    }
-
-    // L'éditeur prend la place restante : c'est lui la raison d'être de
-    // l'application, les panneaux ne font que l'entourer. La barre
-    // d'onglets est **au-dessus de lui**, dans sa colonne — pas dans la
-    // rangée, où elle se serait glissée à sa gauche.
-    let centre = iced::widget::column![
-        crate::ui::onglets::view(state),
-        match state.mode {
-            crate::app::state::ModeVue::Edition => editor::view(state),
-            crate::app::state::ModeVue::Rendu => preview::view(state),
-            crate::app::state::ModeVue::Typst => crate::ui::onglets::typst(state),
-        },
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    bar = bar.push(centre);
-
-    if layout.preview_visible {
-        bar = bar.push(splitter(Splitter::Preview, state));
-        bar = bar.push(
-            container(preview::view(state))
-                .width(Length::Fixed(layout.preview_width))
-                .height(Length::Fill),
-        );
-    }
-
-    bar.width(Length::Fill).height(Length::Fill).into()
+    ligne.push(grille).width(Length::Fill).height(Length::Fill).into()
 }
 
-/// Disposition en colonnes : l'aperçu sous l'éditeur, de pleine largeur.
-fn column_layout(state: &State) -> iced::widget::Column<'_, Message> {
-    let layout = &state.layout;
-
-    let mut top = iced::widget::row![].align_y(Alignment::Center);
-
-    if layout.sidebar_visible {
-        top = top.push(
-            container(sidebar::view(state))
-                .width(Length::Fixed(layout.sidebar_width))
-                .height(Length::Fill),
-        );
-        top = top.push(splitter(Splitter::Sidebar, state));
-    }
-
-    let centre = iced::widget::column![
-        crate::ui::onglets::view(state),
-        match state.mode {
-            crate::app::state::ModeVue::Edition => editor::view(state),
-            crate::app::state::ModeVue::Rendu => preview::view(state),
-            crate::app::state::ModeVue::Typst => crate::ui::onglets::typst(state),
-        },
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    top = top.push(centre);
-
-    iced::widget::column![
-        top.height(Length::FillPortion(1)),
-        splitter(Splitter::Preview, state),
-        container(preview::view(state))
-            .width(Length::Fill)
-            .height(Length::FillPortion(1)),
-    ]
-    .spacing(0)
-    .width(Length::Fill)
+fn panneau_vue<'a>(state: &'a State, pane: pane_grid::Pane, panneau: &'a Panneau) -> Element<'a, Message> {
+    let id = panneau.onglets.get(panneau.actif).copied();
+    // Les coordonnées locales viennent de la vraie géométrie iced. Le bord
+    // cible a une épaisseur constante, quelle que soit la profondeur d'arbre.
+    responsive(move |taille| {
+        let bordure = state.espace.glisse.is_some();
+        mouse_area(container(contenu_vue_panneau(state, panneau, id))
+            .width(Length::Fill).height(Length::Fill)
+            .style(move |_| {
+                let mut s = container::Style::default();
+                s.border.width = if pane == state.espace.focus || bordure { 1.0 } else { 0.0 };
+                s.border.color = if pane == state.espace.focus { state.resolved.palette.accent } else { state.resolved.palette.border };
+                s
+            }))
+            .on_move(move |position| Message::OngletCible(pane, bord_du_panneau(position, taille)))
+            .on_enter(Message::OngletCible(pane, None))
+            .into()
+    }).into()
 }
 
-/// Séparateur entre deux panneaux.
-///
-/// La zone préhensible est plus large que le filet visible : une cible d'un
-/// pixel serait frustrante à viser.
-fn splitter<'a>(which: Splitter, state: &'a State) -> Element<'a, Message> {
-    let dragging = state
-        .layout
-        .dragging
-        .is_some_and(|drag| drag.which == which);
-
-    // En colonnes, le séparateur de l'aperçu est horizontal : il règle une
-    // hauteur, pas une largeur.
-    let horizontal =
-        which == Splitter::Preview && state.layout.preview_position == PreviewPosition::Bottom;
-
-    // Les deux filets ont le même type : une règle iced, dont seule
-    // l'orientation change.
-    let line: iced::widget::Rule<Theme> = if horizontal {
-        rule::horizontal(1)
-    } else {
-        rule::vertical(1)
+fn contenu_vue_panneau<'a>(state: &'a State, panneau: &'a Panneau, id: Option<VueId>) -> Element<'a, Message> {
+    let corps = match id {
+        Some(id) => contenu_vue(state, id).map(move |m| message_vue(id, m)),
+        None => container(state.resolved.palette.label("Ouvrez un document ou déposez un onglet ici.")).into(),
     };
-
-    let grabber = container(line)
-        .style(move |t: &Theme| splitter_style(t, dragging))
-        .width(if horizontal {
-            Length::Fill
-        } else {
-            Length::Fixed(LayoutState::SPLITTER_WIDTH)
-        })
-        .height(if horizontal {
-            Length::Fixed(LayoutState::SPLITTER_WIDTH)
-        } else {
-            Length::Fill
-        });
-
-    mouse_area(grabber)
-        .on_press(Message::SplitterPressed(which))
-        .on_release(Message::SplitterReleased)
-        // Le curseur change sur la bande : c'est la seule indication que la
-        // zone est préhensible, le filet étant volontairement discret.
-        .interaction(iced::mouse::Interaction::ResizingHorizontally)
-        .into()
+    iced::widget::column![super::onglets::panneau(state, panneau), corps]
+        .width(Length::Fill).height(Length::Fill).into()
 }
 
-/// Fond d'un séparateur : discret au repos, accentué quand on le tient.
-fn splitter_style(theme: &Theme, dragging: bool) -> container::Style {
-    let palette = crate::ui::theme::Palette::from_theme(theme);
+pub(crate) fn bord_du_panneau(position: iced::Point, taille: iced::Size) -> Option<pane_grid::Edge> {
+    let bord = 32.0_f32.min(taille.width / 4.0).min(taille.height / 4.0);
+    if position.x < bord { Some(pane_grid::Edge::Left) }
+    else if position.x > taille.width - bord { Some(pane_grid::Edge::Right) }
+    else if position.y < bord { Some(pane_grid::Edge::Top) }
+    else if position.y > taille.height - bord { Some(pane_grid::Edge::Bottom) }
+    else { None }
+}
 
-    container::Style {
-        background: Some(
-            if dragging {
-                palette.accent
-            } else {
-                palette.border
-            }
-            .into(),
-        ),
-        ..Default::default()
+fn message_vue(id: VueId, message: Message) -> Message {
+    let fond = match &message {
+        Message::ViewportChanged(..) | Message::RetourVue(..) | Message::RetourDocument(..) => true,
+        Message::Editor(message) => !matches!(message,
+            iced_code_editor::Message::MouseClick(..)
+            | iced_code_editor::Message::DoubleClick(..)
+            | iced_code_editor::Message::TripleClick(..)
+            | iced_code_editor::Message::ContextMenuRequested(..)
+            | iced_code_editor::Message::JumpClick(..)),
+        _ => false,
+    };
+    if fond { Message::RetourVue(id, Box::new(message)) }
+    else { Message::VersVue(id, Box::new(message)) }
+}
+
+fn contenu_vue(state: &State, id: VueId) -> Element<'_, Message> {
+    let active = id == state.espace.active;
+    let (editor, render, lsp, mode, genere) = if active {
+        (&state.editor, &state.render, &state.lsp, state.mode, state.typst_genere.as_str())
+    } else if let Some(vue) = state.espace.vues.get(&id) {
+        (&vue.editor, &vue.render, &vue.lsp, vue.mode, vue.typst.as_str())
+    } else { return iced::widget::Space::new().into(); };
+    match mode {
+        ModeVue::Edition => super::editor::vue(state, editor, active),
+        ModeVue::Rendu => {
+            let (first, last) = render.visible.unwrap_or((0, 2));
+            iced::widget::sensor::Sensor::new(super::preview::vue(state, render, editor, lsp, Some(id)))
+                .key(id)
+                .on_show(move |size| Message::ViewportChanged(first, last, size))
+                .on_resize(move |size| Message::ViewportChanged(first, last, size))
+                .into()
+        },
+        ModeVue::Typst => super::onglets::source_typst(state.resolved.palette, genere),
     }
 }

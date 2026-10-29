@@ -1,6 +1,8 @@
 pub mod assistance;
 pub mod composeur;
 pub mod epreuves;
+pub mod espace;
+mod espace_runtime;
 mod fichiers;
 mod journal;
 pub mod message;
@@ -109,6 +111,8 @@ impl State {
         };
 
         let mut state = Self {
+            espace: Default::default(),
+            typst_genere: String::new(),
             projet_dialogue: None,
             controle_tenu: false,
             references_repliees: false,
@@ -216,6 +220,7 @@ impl State {
         // l'état est complet, et la fenêtre doit s'ouvrir avec le thème retenu.
         crate::app::themes::refresh_themes(&mut state);
 
+        state.initialiser_espace(session.espace);
         state.save_session();
 
         state
@@ -258,6 +263,10 @@ impl State {
     /// Les images du chapitre précédent ne doivent pas survivre au changement :
     /// les `Handle` sont relâchés pour que le backend libère les textures.
     fn open_document(&mut self, path: PathBuf, content: String) {
+        if self.espace.initialise {
+            self.ouvrir_vue(self.project.clone(), path, content, false);
+            return;
+        }
         self.editor = crate::editor::EditorState::new_file(path, content);
         // Le chapitre neuf reçoit le thème courant : sans cela il garderait
         // celui du widget de la bibliothèque jusqu'au prochain changement.
@@ -361,6 +370,7 @@ impl State {
     /// Retient le projet et le chapitre ouverts pour le prochain démarrage.
     fn save_session(&self) {
         crate::project::save_session(&crate::project::Session {
+            espace: self.disposition_complete(),
             project: Some(self.project.dir.clone()),
             last_document: self.editor.path.clone(),
             theme_mode: self.theme,
@@ -387,7 +397,9 @@ impl State {
         let entry = if assembly_is_open {
             buffer.clone()
         } else {
-            std::fs::read_to_string(&self.project.main).unwrap_or_default()
+            self.espace.documents.get(&(self.project.dir.clone(), self.project.main.clone()))
+                .map(|d| d.source.contenu())
+                .unwrap_or_else(|| std::fs::read_to_string(&self.project.main).unwrap_or_default())
         };
 
         // `document.tw` est la source d'écriture unique même quand l'utilisateur
@@ -403,7 +415,7 @@ impl State {
             self.project
                 .document
                 .as_deref()
-                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|path| self.espace.documents.get(&(self.project.dir.clone(), path.to_path_buf())).map(|d| d.source.contenu()).or_else(|| std::fs::read_to_string(path).ok()))
                 .map(|source| crate::langage::parse(&source))
         } else {
             None
@@ -466,7 +478,7 @@ impl State {
     fn persist(&mut self) {
         // Sans verrou, rien ne s'écrit : deux instances ne se dévorent
         // jamais leur texte. La raison a été dite au démarrage.
-        if self.verrou.is_none() {
+        if self.verrou.is_none() && !self.espace.verrous.contains_key(&self.project.dir) {
             return;
         }
 
@@ -486,7 +498,12 @@ impl State {
 const FIRST_PROJECT: &str = "mon-travail";
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
+    espace_runtime::update(state, message)
+}
+
+fn update_interne(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        Message::RetourDocument(..) | Message::VersVue(..) | Message::RetourVue(..) | Message::VueChoisir(..) | Message::VueFermer(..) | Message::VueDupliquer | Message::OngletSuivant | Message::PanneauChoisir(..) | Message::PanneauRedimensionner(..) | Message::OngletPrendre(..) | Message::OngletCible(..) | Message::OngletPoser => unreachable!("messages traités par l’espace"),
         // Une notice locale se supprime — vers la corbeille, avec son mot.
         Message::ReferenceSupprimer(cle) => {
             if !state.geste_confirme {
@@ -684,8 +701,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             ) {
                 Ok(()) => {
                     state.project = crate::project::load(&dir);
-                    state.bibliography =
-                        crate::project::parse_bibliography(&chemin);
+                    state.bibliography = crate::project::parse_bibliography(&chemin);
                     state.note = Some(crate::app::state::Note::info(
                         "La bibliographie locale est créée — references.bib.".to_string(),
                     ));
@@ -734,8 +750,11 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.projets_vue = !state.projets_vue;
 
             if state.projets_vue {
-                let dirs: Vec<std::path::PathBuf> =
-                    state.projects.iter().map(|projet| projet.dir.clone()).collect();
+                let dirs: Vec<std::path::PathBuf> = state
+                    .projects
+                    .iter()
+                    .map(|projet| projet.dir.clone())
+                    .collect();
 
                 return Task::perform(
                     async move { crate::project::vignettes(&dirs) },
@@ -1580,6 +1599,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::RenderTick => {
+            if let Some(tache) = crate::app::epreuves::driver_zoom(state) {
+                return tache;
+            }
+
             // Les épreuves peuvent piloter l'éditeur elles-mêmes : un pas par
             // tic, et elles rendent la main aussitôt.
             if let Some(tache) = crate::app::epreuves::driver(state) {
@@ -2651,6 +2674,10 @@ fn plan_touche(
         return Action::Rien;
     }
 
+    if modifiers.control() && matches!(key, Key::Named(Named::Tab)) {
+        return Action::Message(Message::OngletSuivant);
+    }
+
     let Key::Character(character) = key else {
         return Action::Rien;
     };
@@ -3093,12 +3120,13 @@ fn map_outline_to_source(
 
 /// Lance la compilation du document (moteur Typst en bibliothèque).
 fn compile_task(state: &State) -> Task<Message> {
+    let cle = (state.project.dir.clone(), state.editor.path.clone().unwrap_or_else(|| state.project.main.clone()));
     let dir = state.document_dir();
     let (entry, overrides) = state.compilation_unit();
 
     Task::perform(
         async move { crate::typst::render::compile(&dir, &entry, &overrides) },
-        Message::RenderDone,
+        move |resultat| Message::RetourDocument(cle, Box::new(Message::RenderDone(resultat))),
     )
 }
 
@@ -3164,19 +3192,22 @@ fn subscription_window() -> Subscription<Message> {
 }
 
 fn subscription_keys() -> Subscription<Message> {
-    iced::event::listen_with(|event, status, _window| match event {
-        Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-            // Le modificateur se suit lui-même : la molette du zoom ne
-            // porte pas ses touches.
-            if modifiers.control() {
-                return Some(Message::ControleTenu(true));
-            }
+    iced::event::listen_with(|event, status, _window| message_evenement(event, status))
+}
 
-            match status {
-                Status::Ignored => Some(Message::RawKey(key, modifiers)),
-                Status::Captured => None,
-            }
+/// Traduction des événements natifs, y compris ceux capturés par le rendu.
+fn message_evenement(event: Event, status: Status) -> Option<Message> {
+    match event {
+        // Ctrl seul est annoncé par ModifiersChanged, indépendamment de
+        // toute frappe. Le suivre ici évite aussi d'avaler Ctrl+S, Ctrl+E…
+        Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+            Some(Message::ControleTenu(modifiers.control()))
         }
+        Event::Window(iced::window::Event::Unfocused) => Some(Message::ControleTenu(false)),
+        Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => match status {
+            Status::Ignored => Some(Message::RawKey(key, modifiers)),
+            Status::Captured => None,
+        },
 
         Event::Keyboard(keyboard::Event::KeyReleased { modifiers, .. }) if !modifiers.control() => {
             Some(Message::ControleTenu(false))
@@ -3194,7 +3225,64 @@ fn subscription_keys() -> Subscription<Message> {
         }
 
         _ => None,
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests_de_la_molette {
+    use super::*;
+    use iced::keyboard::Key;
+
+    #[test]
+    fn les_raccourcis_ctrl_restent_transmis_et_la_perte_de_focus_relache_ctrl() {
+        let frappe = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("s".into()),
+            modified_key: Key::Character("s".into()),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyS),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        });
+        assert!(matches!(
+            message_evenement(frappe.clone(), Status::Ignored),
+            Some(Message::RawKey(_, _))
+        ));
+        assert!(message_evenement(frappe, Status::Captured).is_none());
+        assert!(matches!(
+            message_evenement(
+                Event::Window(iced::window::Event::Unfocused),
+                Status::Ignored,
+            ),
+            Some(Message::ControleTenu(false))
+        ));
+    }
+
+    #[test]
+    fn ctrl_seul_puis_la_molette_zoome_sans_autre_frappe() {
+        let ctrl = message_evenement(
+            Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::CTRL)),
+            Status::Captured,
+        );
+        assert!(
+            matches!(ctrl, Some(Message::ControleTenu(true))),
+            "Ctrl seul doit armer le zoom, sans attendre une lettre"
+        );
+        assert!(matches!(message_evenement(
+            Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+            }), Status::Captured,
+        ), Some(Message::Molette(pas)) if pas == 1.0));
+        assert!(matches!(
+            message_evenement(
+                Event::Keyboard(keyboard::Event::ModifiersChanged(
+                    keyboard::Modifiers::default()
+                )),
+                Status::Captured,
+            ),
+            Some(Message::ControleTenu(false))
+        ));
+    }
 }
 
 /// Les touches du composeur que son champ de saisie capture.

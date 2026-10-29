@@ -250,6 +250,12 @@ impl CodeEditor {
             return None;
         }
 
+        // Ctrl+Tab appartient à l’espace de travail ; ne jamais l’insérer
+        // comme une tabulation dans le document.
+        if modifiers.control() && matches!(key, keyboard::Key::Named(keyboard::key::Named::Tab)) {
+            return None;
+        }
+
         // Try keyboard shortcuts first
         if let Some(action) =
             self.handle_keyboard_shortcuts(key, modified_key, modifiers)

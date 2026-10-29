@@ -63,6 +63,30 @@ impl LineEnding {
 /// converting CRLF to LF or dropping the final newline.
 #[derive(Debug, Clone)]
 pub struct TextBuffer {
+    donnees: std::sync::Arc<DonneesTexte>,
+}
+
+impl TextBuffer {
+    /// Crée un texte partagé ; cloner une projection ne copie pas ses lignes.
+    pub fn new(content: &str) -> Self {
+        Self { donnees: std::sync::Arc::new(DonneesTexte::new(content)) }
+    }
+}
+
+impl std::ops::Deref for TextBuffer {
+    type Target = DonneesTexte;
+    fn deref(&self) -> &Self::Target { &self.donnees }
+}
+
+impl std::ops::DerefMut for TextBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.donnees)
+    }
+}
+
+/// Données du tampon, partagées en lecture et publiées après chaque édition.
+#[derive(Debug, Clone)]
+pub struct DonneesTexte {
     /// Lines before the gap, in document order.
     lines_before: Vec<String>,
     /// Lines after the gap, in reverse document order.
@@ -73,7 +97,7 @@ pub struct TextBuffer {
     trailing_newline: bool,
 }
 
-impl TextBuffer {
+impl DonneesTexte {
     /// Creates a new text buffer from a string.
     ///
     /// # Arguments
@@ -548,20 +572,20 @@ mod tests {
         buffer.insert_line(50, "middle".to_string());
         buffer.insert_char(50, 6, '!');
         buffer.insert_line(0, "first".to_string());
-        buffer.insert_line(buffer.line_count(), "last".to_string());
+        let dernier = buffer.line_count();
+        buffer.insert_line(dernier, "last".to_string());
 
         assert_eq!(buffer.line(0), "first");
         assert_eq!(buffer.line(51), "middle!");
         assert_eq!(buffer.line(52), "line-50");
-        assert_eq!(buffer.line(buffer.line_count() - 1), "last");
+        let dernier = buffer.line_count() - 1;
+        assert_eq!(buffer.line(dernier), "last");
 
         assert_eq!(buffer.remove_line(51), Some("middle!".to_string()));
         assert_eq!(buffer.remove_line(0), Some("first".to_string()));
         assert_eq!(buffer.line(50), "line-50");
-        assert_eq!(
-            buffer.remove_line(buffer.line_count() - 1),
-            Some("last".to_string())
-        );
+        let dernier = buffer.line_count() - 1;
+        assert_eq!(buffer.remove_line(dernier), Some("last".to_string()));
         assert_eq!(buffer.to_string(), content);
     }
 
