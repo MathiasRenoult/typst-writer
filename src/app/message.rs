@@ -245,6 +245,7 @@ pub enum Message {
     ThemeEditeurChoisir(String),
     ThemeEditeurChamp(&'static str, String),
     ThemeEditeurEnregistrer,
+    ThemeEditeurReset,
     ThemeEditeurFermer,
     EtagereBrouillon(String),
     EtagereDefinir(String, String),

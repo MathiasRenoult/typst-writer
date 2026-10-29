@@ -562,13 +562,24 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         // L'éditeur de thème : une copie de travail, et le fichier ne
         // bouge qu'à l'enregistrement — la règle de tout dialogue.
         Message::ThemeEditeurOuvrir => {
-            // Le premier thème à fichier — les natifs n'en ont pas, et se
-            // gardent de tout éditeur.
-            let premier = state
-                .themes
-                .iter()
-                .find(|theme| theme.file.is_some())
-                .and_then(|theme| theme.file.clone());
+            // Le thème actif d'abord — éditer un autre que celui qu'on
+            // porte serait un contresens.
+            let actif = state.current_theme().map(|t| t.name.clone());
+            let premier = actif
+                .and_then(|nom| {
+                    state
+                        .themes
+                        .iter()
+                        .find(|t| t.name == nom && t.file.is_some())
+                        .and_then(|t| t.file.clone())
+                })
+                .or_else(|| {
+                    state
+                        .themes
+                        .iter()
+                        .find(|theme| theme.file.is_some())
+                        .and_then(|theme| theme.file.clone())
+                });
 
             match premier {
                 Some(fichier) => {
@@ -622,6 +633,22 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::ThemeEditeurReset => {
+            // Recharge le fichier depuis le disque : les changements
+            // non enregistrés sont abandonnés.
+            let nom = state.editeur_theme.as_ref().map(|f| f.meta.name.clone());
+            if let Some(nom) = nom
+                && let Some(theme) = state
+                    .themes
+                    .iter()
+                    .find(|t| t.name == nom && t.file.is_some())
+                    .and_then(|t| t.file.clone())
+            {
+                state.editeur_theme = Some(theme);
+            }
+            Task::none()
+        }
+
         Message::ThemeEditeurFermer => {
             state.editeur_theme = None;
             Task::none()
@@ -635,8 +662,12 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             match crate::theming::enregistrer(&fichier) {
                 Ok(()) => {
                     state.editeur_theme = None;
+                    // Le thème enregistré s'applique aussitôt : recharger
+                    // la liste et re-résoudre le thème courant.
+                    crate::app::themes::refresh_themes(state);
+                    crate::app::themes::retheme(state);
                     state.note = Some(crate::app::state::Note::info(
-                        "Le thème est enregistré.".to_string(),
+                        "Le thème est enregistré et appliqué.".to_string(),
                     ));
                     Task::none()
                 }

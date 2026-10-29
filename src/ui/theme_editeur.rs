@@ -139,6 +139,9 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     corps = corps.push(Space::new().height(6));
     corps = corps.push(
         row![
+            button(palette.label("Réinitialiser").size(theme::jetons::DETAIL))
+                .on_press(Message::ThemeEditeurReset)
+                .padding([5, 12]),
             button(palette.label("Enregistrer").size(theme::jetons::DETAIL))
                 .on_press(Message::ThemeEditeurEnregistrer)
                 .padding([5, 12]),
