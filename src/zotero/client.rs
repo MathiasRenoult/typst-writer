@@ -651,6 +651,10 @@ mod tests {
     /// entier (bug 2 du rapport 2).
     #[test]
     fn le_bibtex_se_compose_depuis_les_donnees() {
+        if std::process::Command::new("typst").arg("--version").output().is_err() {
+            println!("typst n'est pas installé : test sauté");
+            return;
+        }
         let corps = r#"[{"key": "ABCD1234", "data": {"key": "ABCD1234", "itemType": "book", "title": "Un titre {Protégé}", "creators": [{"firstName": "N. T.", "lastName": "Wright", "creatorType": "author"}], "date": "2013-05-12", "publisher": "Fortress Press", "place": "Minneapolis", "series": "Christian Origins"}}]"#;
 
         let base = serveur2(

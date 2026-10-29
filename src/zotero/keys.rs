@@ -420,6 +420,10 @@ mod tests_de_stabilisation {
     /// racine.
     #[test]
     fn la_stabilisation_ne_casse_jamais_le_bibtex() {
+        if std::process::Command::new("typst").arg("--version").output().is_err() {
+            println!("typst n'est pas installé : test sauté");
+            return;
+        }
         let export = "% This file was created with Better BibTeX\n\n@book{dupont2020titre,\n  title = {Le titre {{Protégé}} d'un livre},\n  author = {Dupont, Jean},\n  date = {2020},\n  zotero = {ABCD1234},\n}\n\n@article{martin2021autre,\n  title = {Un second titre},\n  author = {Martin, Marie},\n  date = {2021},\n  zotero = {EFGH5678},\n}\n";
 
         let mut trousseau = Keyring::default();

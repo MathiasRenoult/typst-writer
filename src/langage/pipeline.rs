@@ -807,6 +807,10 @@ fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String>
     /// formes.
     #[test]
     fn un_document_ne_compile_jamais_mal_quoi_qu_il_arrive() {
+        if std::process::Command::new("typst").arg("--version").output().is_err() {
+            println!("typst n'est pas installé : test sauté");
+            return;
+        }
         let root = std::env::temp_dir().join("typst-writer-epreuve-trois-fautes");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("chapitres")).expect("dossier");
@@ -870,10 +874,33 @@ fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String>
 
 #[cfg(test)]
 mod tests_du_pipeline_vrai {
+    /// Le compilateur `typst` est-il sur le PATH ? Sans lui, ces tests
+    /// n'ont rien à juger : ils sautent au lieu de faillir.
+    fn typst_disponible() -> bool {
+        std::process::Command::new("typst")
+            .arg("--version")
+            .output()
+            .is_ok()
+    }
+
+    /// Les vrais projets de l'utilisateur sont-ils là ? En CI, le dossier
+    /// n'existe pas : le test saute.
+    fn projets_disponibles() -> bool {
+        std::path::Path::new("/home/mat/.typst-writer/projets").is_dir()
+    }
+
     /// Le pipeline complet sur les vrais projets anciens : l'entrée, les
     /// substitutions, et le compilateur réel.
     #[test]
     fn les_anciens_projets_compilent() {
+        if !typst_disponible() {
+            println!("typst n'est pas installé : test sauté");
+            return;
+        }
+        if !projets_disponibles() {
+            println!("les projets réels ne sont pas là : test sauté");
+            return;
+        }
         for nom in ["mon-travail", "projet", "projet-2"] {
             let source = std::path::PathBuf::from("/home/mat/.typst-writer/projets").join(nom);
             let root = std::env::temp_dir().join(format!("tw-pipeline-{nom}"));

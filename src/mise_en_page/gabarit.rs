@@ -625,6 +625,10 @@ fn un_pied_redige_porte_son_numero() {
     /// tout, se compile. C'est la règle absolue du rapport 2.
     #[test]
     fn un_document_ne_compile_jamais_mal() {
+        if std::process::Command::new("typst").arg("--version").output().is_err() {
+            println!("typst n'est pas installé : test sauté");
+            return;
+        }
         let mut mise = MiseEnPage::default();
         mise.entete_pied.entete.gauche = "Ma thèse".to_string();
         mise.entete_pied.pied.droite = "p. {page}".to_string();
