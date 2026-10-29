@@ -1506,6 +1506,13 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::batch(vec![task, completion, suivi])
         }
 
+        Message::TitreInserer(niveau) => {
+            // L'insertion simple au curseur : `#` × n + espace. Pas de
+            // reformatage de bloc — on tape, comme à la main.
+            let marque = "#".repeat(niveau.clamp(1, 6) as usize);
+            state.editor.insert_at_cursor(&format!("{marque} ")).map(Message::Editor)
+        }
+
         Message::Format(action) => {
             if !state.editor.is_intermediate() {
                 return Task::none();
@@ -2718,12 +2725,12 @@ fn plan_touche(
             iced::widget::pane_grid::Edge::Right,
         )),
         // Titres : Ctrl+1 à Ctrl+6 insèrent le niveau demandé.
-        "1" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(1))),
-        "2" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(2))),
-        "3" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(3))),
-        "4" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(4))),
-        "5" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(5))),
-        "6" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(6))),
+        "1" => Action::Message(Message::TitreInserer(1)),
+        "2" => Action::Message(Message::TitreInserer(2)),
+        "3" => Action::Message(Message::TitreInserer(3)),
+        "4" => Action::Message(Message::TitreInserer(4)),
+        "5" => Action::Message(Message::TitreInserer(5)),
+        "6" => Action::Message(Message::TitreInserer(6)),
         "+" | "=" => Action::Message(Message::PreviewZoomStep(1)),
         "-" => Action::Message(Message::PreviewZoomStep(-1)),
         "0" => Action::Message(Message::PreviewZoom(

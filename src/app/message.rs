@@ -34,6 +34,8 @@ pub enum Message {
     OngletPoser,
     Editor(EditorMessage),
     Format(FormatAction),
+    /// Insère `#` × n + espace au curseur — Ctrl+1 à Ctrl+6.
+    TitreInserer(u8),
 
     NewFile,
 
