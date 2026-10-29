@@ -144,6 +144,9 @@ pub struct State {
     /// paraissent qu'à ce moment (bug 13 du rapport 2).
     pub survol_reference: Option<String>,
 
+    /// L'onglet survolé, pour n'en montrer le × qu'à ce moment-là.
+    pub survol_onglet: Option<u64>,
+
     /// L'éditeur de thème : sa copie de travail, quand il est ouvert.
     pub editeur_theme: Option<crate::theming::ThemeFile>,
 

@@ -126,6 +126,7 @@ impl State {
             drag_etagere: None,
             editeur_theme: None,
             survol_reference: None,
+            survol_onglet: None,
             zotero_recherche: String::new(),
             onglets: Vec::new(),
             etagere_brouillon: String::new(),
@@ -720,6 +721,11 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
         Message::SurvolReference(cle) => {
             state.survol_reference = cle;
+            Task::none()
+        }
+
+        Message::SurvolOnglet(id) => {
+            state.survol_onglet = id;
             Task::none()
         }
 

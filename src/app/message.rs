@@ -223,6 +223,7 @@ pub enum Message {
 
     ProjetNom(String),
     SurvolReference(Option<String>),
+    SurvolOnglet(Option<u64>),
     BibliographieCreer,
     ZoteroRecherche(String),
 

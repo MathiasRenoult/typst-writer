@@ -138,7 +138,10 @@ impl Palette {
 
         let surface = extended.background.weak.color;
         let text = palette.text;
-        let text_muted = extended.background.weak.text;
+        // Le texte secondaire doit rester **lisible** : la valeur dérivée
+        // d'iced est parfois trop proche du fond. On la rapproche du texte
+        // principal d'un cran, sans jamais l'égaler.
+        let text_muted = melange_fin(extended.background.weak.text, palette.text, 0.25);
 
         Self {
             background: extended.background.base.color,
@@ -431,6 +434,16 @@ fn editor_style(file: &crate::theming::ThemeFile) -> iced_code_editor::Style {
 /// Une couleur rendue translucide.
 fn alpha(color: Color, alpha: f32) -> Color {
     Color { a: alpha, ..color }
+}
+
+/// Mélange finement deux couleurs — `poids` de 0 donne `a`, 1 donne `b`.
+fn melange_fin(a: Color, b: Color, poids: f32) -> Color {
+    Color {
+        r: a.r + (b.r - a.r) * poids,
+        g: a.g + (b.g - a.g) * poids,
+        b: a.b + (b.b - a.b) * poids,
+        a: a.a,
+    }
 }
 
 /// Les règles de coloration, **dans l'ordre d'application**.
