@@ -42,7 +42,8 @@
 </nav>
 <main>
 <h1>Les normes</h1>
-<p>La fenêtre des normes — <code>Ctrl+P</code>, ou le bouton de la barre — tient trois onglets : <strong>Mise en page</strong>, <strong>Typographie</strong>, <strong>Décor</strong>. Ce qu&#x27;elle montre est une copie de travail : seul « Appliquer » touche le projet, et les valeurs fautives sont dites champ par champ avant que quoi que ce soit ne soit écrit.</p>
+<p>La fenêtre des normes — <code>Ctrl+P</code>, ou le bouton de la barre — tient quatre onglets : <strong>Mise en page</strong>, <strong>Typographie</strong>, <strong>Décor</strong>, <strong>En-tête et pied de page</strong>. Ce qu&#x27;elle montre est une copie de travail : seul « Appliquer » touche le projet, et les valeurs fautives sont dites champ par champ avant que quoi que ce soit ne soit écrit.</p>
+<p>Les champs numériques se règlent à la <strong>molette</strong> ou aux <strong>flèches</strong> ▲▼ — la valeur garde son unité : <code>11pt</code> devient <code>12pt</code>, <code>2cm</code> devient <code>3cm</code>.</p>
 <h2>Mise en page</h2>
 <p>Le papier (format, orientation), les marges, les numéros de page, le texte courant (police, taille, interligne, retrait, justification, langue), les titres de chapitres (police, tailles, gras, casse, numérotation) et les couleurs.</p>
 <p>Les choix finis sont des <strong>listes déroulantes</strong> ; chaque paramètre porte son <strong>infobulle</strong> — laisser la souris dit ce qu&#x27;il règle et sous quelle forme l&#x27;écrire. Toute mesure Typst est acceptée : <code>2cm</code>, <code>1in</code>, <code>24pt</code>.</p>
@@ -52,6 +53,20 @@
 <p>Le code inline, les blocs bruts et les caractères échappés ne reçoivent aucune règle.</p>
 <h2>Décor</h2>
 <p>Les mesures que la source ne porte jamais : <strong>couleur de bordure, épaisseur, rayon des coins, marge intérieure, remplissage</strong>. C&#x27;est là qu&#x27;un <code>{encadré}</code> prend sa tenue ; changer une valeur ici change le document entier, sans toucher à une ligne.</p>
+<h2>En-tête et pied de page</h2>
+<p>Le contenu de l&#x27;en-tête et du pied de page se <strong>rédige librement</strong> : chacun a trois emplacements (gauche, centre, droite). La numérotation des pages se choisit par forme :</p>
+<table><thead><tr>
+<th>Forme</th>
+<th>Rendu</th>
+</tr></thead><tbody>
+<tr><td><code>1</code>, <code>2</code>, <code>3</code></td><td>chiffres arabes</td></tr>
+<tr><td><code>a</code>, <code>b</code>, <code>c</code></td><td>minuscules</td></tr>
+<tr><td><code>A</code>, <code>B</code>, <code>C</code></td><td>majuscules</td></tr>
+<tr><td><code>p. 1</code>, <code>p. 2</code></td><td>avec préfixe</td></tr>
+<tr><td><code>page 1 sur 12</code></td><td>avec total</td></tr>
+<tr><td><code>1/12</code></td><td>fraction</td></tr>
+</tbody></table>
+<p>La numérotation s&#x27;active ou non, et se positionne où l&#x27;on veut.</p>
 <p>Voir <a href="ecrire.md">Écrire</a>.</p>
 </main>
 </div>

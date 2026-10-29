@@ -76,6 +76,10 @@
 <pre><code>![La légende de la planche](figs/planche.png)
 </code></pre>
 <p>Une image avec légende compose une <strong>figure numérotée</strong> ; sans légende — <code>![](planche.png)</code> — c&#x27;est l&#x27;image seule. Le chemin est relatif au projet.</p>
+<p>La légende peut se séparer de l&#x27;alt par une barre :</p>
+<pre><code>![description](figs/planche.png | La vraie légende)
+</code></pre>
+<p>C&#x27;est la légende qui paraît dans la figure numérotée.</p>
 <h2>Les formules</h2>
 <p>En ligne, entre dollars : <code>Soit $x^2$ dans le texte.</code> — une bande opaque comme le code : rien ne s&#x27;y ouvre ni ne s&#x27;y ferme.</p>
 <p>À part, sur ses lignes :</p>
@@ -93,6 +97,15 @@ $$
 </code></pre>
 <p><code>---</code> aligne à gauche, <code>:-:</code> au centre, <code>---:</code> à droite. Les cellules portent du texte ordinaire — emphase, code, citations ; une barre dedans s&#x27;échappe : <code>\|</code>. Sans la ligne de séparation, ce n&#x27;est pas un tableau : la ligne reste du texte.</p>
 <p>Le décor l&#x27;habille comme tout bloc — <code>{encadré}</code> prend sa tenue dans les normes.</p>
+<h2>Les graphiques</h2>
+<p>Un graphique se déclare par un bloc <code>{graphique}</code> suivi de ses données :</p>
+<pre><code>{graphique type=barre titre=&quot;Évolution&quot;}
+Jan | 10
+Fév | 20
+Mar | 15
+</code></pre>
+<p>Chaque ligne est <code>libellé | valeur</code>. Le <code>type</code> dit la forme : <code>barre</code> (par défaut), <code>ligne</code> ou <code>secteur</code>. Le <code>titre</code> est facultatif — il devient la légende de la figure.</p>
+<p>Les graphiques sont rendus par le paquet Typst <a href="https://typst.app/universe/package/cetz">cetz</a> — la première compilation le télécharge automatiquement.</p>
 <h2>Le décor : l&#x27;intention, jamais la mesure</h2>
 <p><strong>La source dit l&#x27;intention, les normes disent la mesure.</strong> Par défaut, un bloc paraît comme les normes du document le disent — rien à écrire.</p>
 <p>Quand un bloc doit paraître autrement, un <strong>nom</strong> le précède :</p>
@@ -102,8 +115,8 @@ $$
 <p><code>encadré</code> prend dans les normes sa couleur de bordure, son épaisseur, son rayon et sa marge ; <code>plein</code> y prend son remplissage. Les noms se combinent — <code>{encadré plein}</code>. La mesure reste possible pour l&#x27;exception — <code>{encadré rayon=0pt}</code> — et elle gagne sur les normes. Voir <a href="normes.md">Les normes</a>.</p>
 <h2>L&#x27;échappement</h2>
 <p>Une barre oblique échappe le caractère qui suit : <code>\*</code>, <code>\@</code>, <code>\{</code> restent du texte, sans aucune interprétation — ni syntaxique, ni typographique. C&#x27;est la porte de sortie universelle : écrire <code>\;</code> en français donne un point-virgule nu, sans l&#x27;espace insécable que la langue y mettrait.</p>
-<h2>Ce que la couche ne dit pas encore</h2>
-<p>Tableaux, formules mathématiques, Typst à la main : le <strong>bloc brut</strong> est la réponse, aujourd&#x27;hui comme demain —</p>
+<h2>Ce qui passe encore par le bloc brut</h2>
+<p>Le Typst à la main reste toujours possible — c&#x27;est la porte de sortie pour ce que la couche ne couvre pas encore :</p>
 <pre><code>```typst
 #figure(
   table(columns: 2, [a], [b]),
@@ -111,7 +124,7 @@ $$
 )
 ```
 </code></pre>
-<p>Ce qui s&#x27;y trouve va dans le document compilé, mot pour mot. Les formes propres à la couche — tableaux, formules — viendront avec leur syntaxe markdown ; la voie leur est ouverte.</p>
+<p>Ce qui s&#x27;y trouve va dans le document compilé, mot pour mot.</p>
 </main>
 </div>
 </body>

@@ -35,83 +35,25 @@ jamais la leur), les fichiers corrompus se disent (session, liaison,
 projet), les suppressions demandent leur mot, le verrou d'instance ferme
 l'écriture à qui ne le tient pas.
 
-Ce qui peut perdre ou salir un texte part le premier. C'est l'étape que
-la beta doit pouvoir garantir par serment.
-
-- **[G33] Le test de thèmes n'écrit plus chez l'utilisateur.**
-  `theming::write_example()` cible encore `~/.typst-writer/themes/` :
-  `cargo test` crée et supprime un fichier dans les données réelles.
-- **[E29] Les clés Zotero stables sont câblées ou leur promesse retire.**
-  `zotero/keys.rs` attend son raccordement (`citations.json`) : une
-  citation ne doit pas changer de visage quand la collection bouge.
-- **[A5] Les fichiers corrompus ne se taisent plus.** `zotero.json`,
-  `mise-en-page.toml`, `session.json` corrompus sont dits, et ne sont
-  jamais réécrits vides par-dessus leur valeur précédente.
-- **[A6] Les suppressions demandent leur chemin.** Corbeille partout
-  (fait), mais un geste qui défait un lien ou efface un chapitre se
-  confirme — ou s'annule depuis la corbeille.
-- **[A7] Un verrou d'instance.** Deux instances sur le même projet
-  s'écrasent leurs auto-sauvegardes : un verrou le dit et le refuse.
-- **[G34] Les zones muettes reçoivent leurs épreuves** : `fichiers.rs`
-  (suppression, import, ouverture), les fichiers corrompus, les thèmes.
-
-**Preuve de l'étape** : une épreuve de perte de texte qui échoue avant et
-passe après — y compris fichier corrompu, disque plein, double instance.
-
 ## α.2 — Les tableaux ✅
 
 **Fait** — la forme markdown, ses alignements, les cellules en texte
 inline, la barre échappée, le décor hérité, l'édition par blocs, et le
 round-trip éprouvé au hasard. Une ligne sans séparation reste du texte.
 
-La première pièce de la route du langage (`docs/design/extension-langage.md`),
-et la plus attendue d'un écrivain.
+## α.3 — Les formules ✅
 
-- la syntaxe markdown : `| A | B |`, sa ligne de séparation, et
-  l'alignement dedans (`:--`, `--:`, `:-:`) ;
-- les cellules portent du texte inline — emphase, code, citations ;
-- le décor l'habille : `{encadré}`, les mesures aux normes ;
-- round-trip prouvé au hasard, édition par blocs, genre de bloc ;
-- le manuel : la page d'écriture, et les normes du tableau.
+**Fait** — `$…$` en ligne et `$$…$$` en bloc : des bandes opaques comme
+le code, où rien ne s'ouvre ni ne se ferme. Les deux formes traversent le
+round-trip, et une formule mal fermée reste du texte — jamais d'erreur,
+jamais de blocage.
 
-**Preuve de l'étape** : un tableau de thèse — légende, note, citation
-dans une cellule — se relit, se réécrit et compose à l'identique.
+## α.4 — Le quotidien sans accroc ✅
 
-## α.3 — Les formules
-
-- `$…$` en ligne et `$$…$$` en bloc : des **bandes opaques** comme le
-  code, où rien ne s'ouvre ni ne se ferme ;
-- les deux formes traversent le round-trip, et une formule mal fermée
-  reste du texte — jamais d'erreur, jamais de blocage ;
-- [F32] la conception du langage est remise au présent : « dix règles »
-  pour onze, `Litteral` et les appels groupés omis.
-
-**Preuve de l'étape** : une page de démonstration — texte, note, tableau,
-formule, image décorée — compile au vrai Typst et se relit mot pour mot.
-
-## α.4 — Le quotidien sans accroc
-
-Ce qui piège au fil des jours, et la gestion du projet lui-même.
-
-- **[E31] Les projets se gèrent** : création avec le nom choisi (pas
-  `projet-2`), renommage, suppression vers la corbeille, et un dossier
-  existant n'est jamais réutilisé sans le dire.
-- **[E31] La session rouvre ce qui était ouvert** — pas seulement
-  `document.tw` — et « aller à la définition » voit `document.tw`.
-- **[D24/D25] Les culs-de-sac se ferment** : le renommage de chapitre
-  prend le focus ; « renommer le symbole » sans LSP le dit ; les
-  diagnostics d'un autre fichier y mènent ; les fenêtres ouvertes en mode
-  focus s'y montrent.
-- **[D27] Les redites s'effacent** : le compte de mots trois fois, le nom
-  de fichier deux, le titre de fenêtre statique, « Enregistrer sous » qui
-  bascule l'éditeur sur un `.typ` et éteint la mise en forme.
-- **[B14] Ce qui se tait se dit** : une valeur de typographie inconnue le
-  dit au lieu de tomber en `aucune`.
-- **La navigation au clavier des listes** : les références et le sommaire
-  au clavier, de la première à la dernière ligne.
-
-**Preuve de l'étape** : une session de travail d'une heure — écrire,
-citer, renommer, chercher, fermer — sans jamais toucher la souris.
+**Fait** — les projets se gèrent (création, renommage, suppression vers
+la corbeille), la session rouvre ce qui était ouvert, les culs-de-sac se
+ferment, les redites s'effacent, ce qui se tait se dit, la navigation au
+clavier des listes est complète.
 
 ## α.5 — Le seuil de la beta ✅
 
@@ -119,33 +61,27 @@ citer, renommer, chercher, fermer — sans jamais toucher la souris.
 
 - **La thèse à l'épreuve.** Un document de synthèse de **250 pages**
   (40 chapitres, notes comprises) compile en **0,56 seconde** au vrai
-  Typst — trois passes mesurées, la barre des deux secondes tenue avec
-  marge. La mesure est celle du compilateur sur ce document ; la vôtre
-  se mesurera à l'usage.
+  Typst.
 - **Le site de documentation.** `python3 site/construire.py` — sans
-  aucune dépendance — rend les huit pages du manuel en `site/dist/` :
-  sommaire, code conservé, tableaux, liens. Le générateur vit au dépôt.
+  aucune dépendance — rend le manuel en `site/dist/`.
 - **Le gel des fonctions** est pris : ce qui entre en beta est ce qui
   est ici.
 
-La tenue à l'échelle d'une thèse, et le seuil qu'on montre.
-
-- **[C20] Le poids à l'épreuve** : un document de thèse mesuré — mémoire,
-  compilation, défilement — les trois copies de texte et l'échelle
-  minimale revues s'il le faut.
-- **Le site de documentation**, rendu depuis `docs/guide/` : le sommaire
-  devient la navigation, les captures d'écran y viennent (prises avec
-  vous, jamais fabriquées).
-- **Le paquet du volontaire** : un binaire qui se décompresse et se lance,
-  ses notes d'installation, et les notes de version écrites d'après les
-  mesures.
-- **Le gel des fonctions** : ce qui entre en beta est ce qui est ici.
-
-**Preuve de l'étape** : la compilation d'une vraie thèse — la vôtre — en
-moins de deux secondes, et un premier lecteur extérieur qui installe et
-écrit sans aide.
-
 ---
+
+## Ce qui est entré en plus (0.3.0-alpha)
+
+Au-delà de la feuille de route, la version 0.3.0-alpha porte :
+
+- **l'espace de travail** : panneaux divisibles, onglets, vues partagées,
+  disposition restaurée ;
+- **la bibliothèque plein écran** : galerie de couvertures, étagères ;
+- **les graphiques** dans la langue (`{graphique}` avec cetz) ;
+- **l'overlay de note de bas de page** (clic sur `^[]`) ;
+- **l'éditeur de thème** complet ;
+- **les trois rapports de bugs soldés** (18 + 14 + 17 points) ;
+- **la qualité** : `deny.toml`, zéro `unsafe`, fuite mémoire corrigée,
+  `Eq`, `const fn`, perfs.
 
 ## La beta — v0.3.0-beta.1
 

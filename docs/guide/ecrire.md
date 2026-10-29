@@ -49,6 +49,12 @@ Voir [La bibliographie](bibliographie.md).
 Une image avec légende compose une **figure numérotée** ; sans légende —
 `![](planche.png)` — c'est l'image seule. Le chemin est relatif au projet.
 
+La légende peut se séparer de l'alt par une barre :
+
+    ![description](figs/planche.png | La vraie légende)
+
+C'est la légende qui paraît dans la figure numérotée.
+
 ## Les formules
 
 En ligne, entre dollars : `Soit $x^2$ dans le texte.` — une bande
@@ -80,6 +86,23 @@ la ligne reste du texte.
 Le décor l'habille comme tout bloc — `{encadré}` prend sa tenue dans les
 normes.
 
+## Les graphiques
+
+Un graphique se déclare par un bloc `{graphique}` suivi de ses données :
+
+    {graphique type=barre titre="Évolution"}
+    Jan | 10
+    Fév | 20
+    Mar | 15
+
+Chaque ligne est `libellé | valeur`. Le `type` dit la forme : `barre`
+(par défaut), `ligne` ou `secteur`. Le `titre` est facultatif — il devient
+la légende de la figure.
+
+Les graphiques sont rendus par le paquet Typst
+[cetz](https://typst.app/universe/package/cetz) — la première compilation
+le télécharge automatiquement.
+
 ## Le décor : l'intention, jamais la mesure
 
 **La source dit l'intention, les normes disent la mesure.** Par défaut,
@@ -104,10 +127,10 @@ typographique. C'est la porte de sortie universelle : écrire `\;` en
 français donne un point-virgule nu, sans l'espace insécable que la langue
 y mettrait.
 
-## Ce que la couche ne dit pas encore
+## Ce qui passe encore par le bloc brut
 
-Tableaux, formules mathématiques, Typst à la main : le **bloc brut** est
-la réponse, aujourd'hui comme demain —
+Le Typst à la main reste toujours possible — c'est la porte de sortie
+pour ce que la couche ne couvre pas encore :
 
     ```typst
     #figure(
@@ -116,6 +139,4 @@ la réponse, aujourd'hui comme demain —
     )
     ```
 
-Ce qui s'y trouve va dans le document compilé, mot pour mot. Les formes
-propres à la couche — tableaux, formules — viendront avec leur syntaxe
-markdown ; la voie leur est ouverte.
+Ce qui s'y trouve va dans le document compilé, mot pour mot.

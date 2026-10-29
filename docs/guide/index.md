@@ -8,9 +8,9 @@ dans `docs/design/`, et ne regardent pas l'usage.
 ## Au sommaire
 
 1. [Prise en main](prise-en-main.md) — lancer, écrire, voir, exporter.
-2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au décor.
+2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au graphique.
 3. [La bibliographie](bibliographie.md) — les références, la fiche, Zotero.
-4. [Les normes](normes.md) — mise en page, typographie, décor.
+4. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied.
 5. [Rechercher et remplacer](recherche.md) — les expressions régulières.
 6. [Les raccourcis](raccourcis.md) — le clavier, entier.
 7. [Les fichiers](fichiers.md) — où tout vit, et ce qu'on en garde.
@@ -26,3 +26,11 @@ bloc brut, sans jamais se perdre.
 La mise en page ne se porte pas sur les épaules de l'écrivain : les
 mesures vivent dans les normes du document, et la source dit
 l'intention. Voir [Écrire](ecrire.md) et [Les normes](normes.md).
+
+## L'espace de travail
+
+L'éditeur se scinde en panneaux divisibles, chacun avec ses onglets. Le
+même document peut s'ouvrir dans plusieurs vues — texte partagé, aperçus
+indépendants. La disposition se retrouve au lancement. La bibliothèque
+de projets se parcourt en galerie plein écran. Voir
+[Prise en main](prise-en-main.md).

@@ -1,6 +1,6 @@
 [package]
 name = "typst-writer"
-version = "0.2.0"
+version = "0.3.0-alpha"
 edition = "2024"
 description = "Un éditeur pour écrire en Typst, avec le rendu du document final"
 license = "MIT"

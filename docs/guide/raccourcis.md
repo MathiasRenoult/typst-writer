@@ -14,6 +14,7 @@ barre d'outils portent leurs combinaisons.
 | `Ctrl+E` | exporter en PDF |
 | `Ctrl+P` | les normes du document |
 | `Ctrl+T` / `Ctrl+Maj+T` | le titre suivant / précédent |
+| `Ctrl+1` à `Ctrl+6` | insérer un titre de niveau 1 à 6 au curseur |
 | `Ctrl+Maj+Haut` / `Bas` | le bloc entier monte ou descend |
 | `F2` | renommer le symbole sous le curseur |
 | `F12` | aller à la définition |
@@ -31,10 +32,23 @@ barre d'outils portent leurs combinaisons.
 
 | Touches | Effet |
 | --- | --- |
-| `F11` | le mode focus — le texte seul ; `Échap` en sort |
-| `Ctrl+=` / `Ctrl+-` | agrandir / réduire l'aperçu |
+| `F11` | le mode focus — la vue active prend toute la fenêtre ; `Échap` en sort |
+| `Ctrl+e` | basculer édition / rendu |
+| `Ctrl+Maj+e` | basculer en mode Typst (texte généré) |
+| `Ctrl+=` / `Ctrl+-` | agrandir / réduire l'aperçu (ou Ctrl+molette) |
 | `Ctrl+0` | ajuster l'aperçu à la largeur |
 | `Ctrl+Maj+L` | l'aperçu suit le chapitre — ou ne le suit plus |
+
+## L'espace de travail
+
+| Touches | Effet |
+| --- | --- |
+| `Ctrl+Maj+N` | scinder le panneau actif verticalement |
+| `Ctrl+Maj+O` | scinder le panneau actif horizontalement |
+| glisser un onglet | déplacer, détacher ou diviser un panneau |
+| `Ctrl+Maj+W` | fermer l'onglet actif |
+| `Maj+clic` sur un projet | ouvrir dans un nouvel onglet |
+| clic sur un projet | remplacer l'onglet actif |
 
 ## Les fenêtres
 
@@ -47,6 +61,7 @@ Toutes se conduisent de même.
 | `Échap` | fermer celle du dessus |
 
 Dans le composeur de notes : les flèches parcourent la note puis les
-clés, `Échap` abandonne sans rien écrire. Dans les listes de complétion :
-les flèches parcourent, `Entrée` ou `Tab` accepte, `Ctrl+Espace` accepte
-aussi, `Échap` ferme.
+clés, `Échap` abandonne sans rien écrire. Dans l'overlay de note de bas
+de page : `Entrée` enregistre, `Échap` ferme. Dans les listes de
+complétion : les flèches parcourent, `Entrée` ou `Tab` accepte,
+`Ctrl+Espace` accepte aussi, `Échap` ferme.

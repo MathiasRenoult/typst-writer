@@ -4,24 +4,30 @@ Un éditeur pour écrire des documents en Typst — thèses, mémoires, livres.
 L'aperçu affiché est celui du document final : c'est le vrai compilateur
 Typst qui le compose.
 
-**Version 0.2 — alpha.** Utilisable au quotidien — c'est avec elle
+**Version 0.3.0-alpha.** Utilisable au quotidien — c'est avec elle
 qu'elle s'écrit — mais elle change encore.
 
 ## Ce qu'elle fait
 
 - **Écrire** dans une couche markdown lisible, `document.tw` — titres,
-  emphase, citations, notes, liens, images, décor — qui se compare ligne
-  à ligne, et dont le Typst reste le maître du rendu ;
+  emphase, citations, notes, liens, images, tableaux, formules,
+  graphiques, décor — qui se compare ligne à ligne, et dont le Typst
+  reste le maître du rendu ;
 - **Composer** dès que l'écriture s'arrête : la page se montre telle que
   le lecteur la verra, et l'aperçu suit le chapitre sous le curseur ;
+- **Travailler en espace** : panneaux divisibles, onglets par panneau,
+  même document dans plusieurs vues (édition / rendu / Typst), disposition
+  restaurée au lancement ;
 - **Citer** : une bibliographie par projet, une fiche complète (éditeur,
   lieu, titre court, type de document), et un projet lié à une collection
   **Zotero** — lue, jamais réécrite ;
 - **Mettre en page** par des normes — papier, marges, titres, couleurs,
-  typographie par langue, décor — jamais par des mesures portées dans le
-  texte ;
+  typographie par langue, décor, en-tête et pied de page — jamais par des
+  mesures portées dans le texte ;
 - **Chercher** en expressions régulières, avec remplacement à rappel de
   groupes ;
+- **Personnaliser** l'apparence : onze thèmes livrés, un éditeur de thème
+  intégré, des étagères pour classer les projets ;
 - **Exporter** en PDF, et travailler au clavier d'un bout à l'autre —
   `F1` montre toutes les touches.
 
@@ -33,14 +39,27 @@ Le document se compose en markdown :
 
     Un paragraphe, avec du **gras** et une citation — @dupont[p. 45].
 
-    > une citation de bloc
+    | Mois | Ventes |
+    | --- | :-: |
+    | Jan | 10 |
 
-    {encadré}
-    ![La planche](figs/planche.png)
+    Soit $x^2$ dans le texte.
+
+    {graphique type=barre titre="Évolution"}
+    Jan | 10
+    Fév | 20
 
 Les mesures de mise en page vivent dans les normes du document ; la
 source dit l'intention. La syntaxe entière est dans
 [la documentation](docs/guide/ecrire.md).
+
+## L'espace de travail
+
+L'éditeur se scinde en panneaux (glisser un bord), chacun avec ses
+onglets. Le même document peut s'ouvrir dans plusieurs vues — texte
+partagé, aperçus indépendants. La disposition se retrouve au lancement.
+La bibliothèque de projets se parcourt en galerie plein écran, avec
+couvertures et étagères.
 
 ## Installation
 
@@ -72,6 +91,16 @@ python3 site/construire.py
 
 Le site se lit dans `site/dist/`.
 
+## Qualité
+
+- **395 tests**, clippy à zéro, `cargo deny` sans erreur ;
+- **zéro `unsafe`** dans le code applicatif ;
+- les licences des dépendances sont auditées (`deny.toml`) : MIT,
+  Apache-2.0, BSD, ISC, Zlib — toutes permissives, compatibles avec la
+  licence du projet ;
+- les écritures sont sûres : corbeille pour les suppressions, verrou
+  d'instance, sauvegarde automatique.
+
 ## Limites connues
 
 - les diagnostics du compilateur ne sont pas soulignés dans le texte :
@@ -80,8 +109,8 @@ Le site se lit dans `site/dist/`.
   l'histoire d'annulation du document ouvert repart avec ;
 - l'aller à la définition d'une citation ne mène nulle part : la
   bibliographie n'est pas un fichier éditable ici ;
-- tableaux et formules mathématiques passent encore par le bloc Typst
-  brut ; leur syntaxe propre vient ensuite.
+- les graphiques utilisent le paquet `cetz` de Typst — la première
+  compilation le télécharge.
 
 ## Licence
 

@@ -58,11 +58,13 @@
 <h2>L&#x27;application</h2>
 <pre><code>~/.typst-writer/
 ├── session.json   l&#x27;état de la dernière session
+├── etageres.json  le classement des projets sur les étagères
 ├── themes/        les thèmes : livrés une fois, puis à vous
 ├── corbeille/     les suppressions — rien ne part dans le vide
 └── projets/       vos projets
 </code></pre>
 <p>Les thèmes sont des fichiers TOML, modifiables à la main ou depuis l&#x27;application ; une mise à jour ne réécrit jamais un thème à vous. Les suppressions partent à la <strong>corbeille</strong> — les projets comme les thèmes — et un geste qui défait quelque chose <strong>demande son mot</strong> avant de partir : <code>Échap</code> est toujours « Annuler ».</p>
+<p>Les projets se classent sur des <strong>étagères</strong> — glisser une carte de projet d&#x27;une étagère à l&#x27;autre. Le classement vit dans <code>etageres.json</code>.</p>
 <p>Une seule instance travaille sur un projet à la fois : la seconde s&#x27;ouvre <strong>en lecture seule</strong>, et la raison s&#x27;affiche en barre d&#x27;état. Deux écritures ne se dévorent jamais leur texte.</p>
 <h2>Exporter</h2>
 <p><code>Ctrl+E</code> écrit le PDF à côté du projet. L&#x27;export suit les normes du document — papier, marges, typographie, décor — et la bibliographie s&#x27;y imprime selon le style du projet.</p>

@@ -22,6 +22,7 @@ détruit rien de ce qui existe.
 
     ~/.typst-writer/
     ├── session.json   l'état de la dernière session
+    ├── etageres.json  le classement des projets sur les étagères
     ├── themes/        les thèmes : livrés une fois, puis à vous
     ├── corbeille/     les suppressions — rien ne part dans le vide
     └── projets/       vos projets
@@ -31,6 +32,9 @@ l'application ; une mise à jour ne réécrit jamais un thème à vous. Les
 suppressions partent à la **corbeille** — les projets comme les thèmes —
 et un geste qui défait quelque chose **demande son mot** avant de partir :
 `Échap` est toujours « Annuler ».
+
+Les projets se classent sur des **étagères** — glisser une carte de
+projet d'une étagère à l'autre. Le classement vit dans `etageres.json`.
 
 Une seule instance travaille sur un projet à la fois : la seconde
 s'ouvre **en lecture seule**, et la raison s'affiche en barre d'état.

@@ -1,5 +1,87 @@
 # Journal des versions
 
+## 0.3.0-alpha — l'espace de travail, la bibliothèque, et les trois rapports soldés
+
+La version où l'éditeur est devenu un **espace de travail** — panneaux
+divisibles, onglets par panneau, disposition restaurée —, où la
+bibliothèque de projets prend toute la fenêtre, où les graphiques
+entrent dans la langue, et où les **trois rapports de bugs sont
+soldés** (18 + 14 + 17 points).
+
+### L'espace de travail
+
+- **Panneaux divisibles** : l'éditeur se scinde en autant de panneaux
+  qu'on veut (bord de 8 px), chacun avec ses onglets ; glisser un onglet
+  le déplace, le détache ou le divise ;
+- **onglets par panneau**, nommés par projet (`document.tw` → le nom du
+  projet) ; un point de mode coloré dit l'état (bleu édition, vert
+  rendu, orange Typst) ; le × apparaît au survol ;
+- **même document, plusieurs vues** : texte partagé, vues indépendantes
+  (édition / rendu / Typst) — chacune scrolle et zoome à son gré ;
+- **disposition restaurée** : panneaux, onglets, modes et documents se
+  retrouvent au lancement ; les vues orphelines ne sont pas sérialisées ;
+- **page d'accueil** dans les panneaux vides : Créer, Ouvrir, Bibliothèque ;
+- **shift+clic** = nouvel onglet, **clic simple** = remplace l'onglet actif
+  (sauvegarde avant fermeture) ;
+- **focus mode** maximise la vue active (édition, rendu ou Typst).
+
+### La bibliothèque
+
+- **galerie plein écran** : les projets se voient par couvertures
+  cliquables, rangés sur des étagères ;
+- **étagères** : classement des projets par drag-and-drop,
+  `etageres.json` ; bouton « + Nouveau projet ici » en fin de rangée ;
+- les couvertures sont des poignées d'image stables (empreinte de
+  pixels), jamais recréées.
+
+### La langue
+
+- **graphiques** : `{graphique type=barre titre="Titre"}` suivi de lignes
+  `label | valeur` — trois types (barre, ligne, secteur), rendus par le
+  paquet Typst `cetz` ; l'import n'est ajouté que si le document
+  contient un graphique ;
+- **légende d'image par `|`** : `![alt](chemin | légende)` — la légende
+  emporte sur l'alt, numérotée par les normes ;
+- **notes de bas de page** : clic sur `^[]` → overlay en bas de l'écran,
+  Entrée enregistre, Échap ferme — sans déplier la note ni déranger le
+  fil du document.
+
+### L'interface
+
+- **éditeur de thème complet** : ouverture sur le thème actif, application
+  immédiate, bouton « Réinitialiser » (recharge depuis le disque) ;
+- **Ctrl+1-6** insère un titre au curseur (`#`×n + espace), jamais de
+  reformatage de bloc ;
+- **molette et flèches** sur les champs numériques des normes (la valeur
+  garde son unité : `11pt` → `12pt`, `2cm` → `3cm`) ;
+- **en-tête et pied de page** dans les normes : contenu libre,
+  numérotation multiple (a, A, 1, p. 1, page 1 sur 12, 1/12…) ;
+- **icône titre hover** : menu H1-H6 au survol ;
+- **liseré actif** limité à la barre d'onglets ;
+- **boutons inutiles supprimés** (renommer symbole, position aperçu) ;
+- **clavier de la fiche de référence** : Tab/Entrée/Échap ne sont plus
+  avalés par le composeur fermé ;
+- **contraste renforcé** : `text_muted` calculé par mélange de
+  luminance, tenue dans tous les thèmes ;
+- **mode Typst** : texte généré complet (pipeline `assembler`), plus de
+  `#include` seul.
+
+### La qualité
+
+- **`deny.toml` configuré** : 13 licences SPDX permissives autorisées,
+  11 advisories documentés avec raison, sources strictes (crates.io
+  uniquement) — `cargo deny check` passe (exit 0) ;
+- **zéro `unsafe`** dans `src/`, 243 `unwrap()` dont 95 % en tests ;
+- **fuite mémoire corrigée** : l'aperçu de police fuyait une `String` à
+  chaque frappe (`Box::leak` → `intern_family` avec cache) ;
+- **12 `Eq`** ajoutés sur les types qui dérivaient `PartialEq` sans
+  raison ; 5 `const fn` ; 5 clones redondants supprimés ;
+- **zéro allocation** dans la sélection des polices (`&str` au lieu de
+  `String`).
+
+**Comptes** : 395 tests projet, 654 tests du crate vendoré, clippy 0,
+`cargo deny` ok.
+
 ## 0.2.0 — la citation, le langage, et l'interface
 
 La version où le document est devenu une **couche simple** (`document.tw`) entre

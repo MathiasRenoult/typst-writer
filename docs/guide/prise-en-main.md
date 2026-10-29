@@ -3,8 +3,10 @@
 ## Lancer
 
 L'application s'ouvre sur le dernier projet ouvert, ou sur un projet neuf
-au premier lancement. Tout ce que vous écrivez est enregistré
-automatiquement, une seconde après la frappe : rien ne se perd à fermer.
+au premier lancement. La disposition de l'espace de travail — panneaux,
+onglets, modes — se retrouve telle que vous l'avez laissée. Tout ce que
+vous écrivez est enregistré automatiquement, une seconde après la
+frappe : rien ne se perd à fermer.
 
 ## Les trois gestes du quotidien
 
@@ -14,6 +16,29 @@ automatiquement, une seconde après la frappe : rien ne se perd à fermer.
    et l'aperçu suit le chapitre sous le curseur. `Ctrl+=`, `Ctrl+-` et
    `Ctrl+0` en gouvernent la taille.
 3. **Exporter** en PDF — `Ctrl+E` — quand le document est prêt.
+
+## L'espace de travail
+
+L'éditeur se scinde en **panneaux** : glisser un bord de 8 px divise le
+panneau en deux. Chaque panneau a ses **onglets** — un document peut
+s'ouvrir dans plusieurs panneaux, avec du texte partagé et des vues
+indépendantes (édition, rendu, Typst).
+
+- **shift+clic** sur un projet l'ouvre dans un nouvel onglet ;
+- **clic simple** remplace l'onglet actif (sauvegarde avant fermeture) ;
+- **glisser un onglet** le déplace d'un panneau à l'autre, le détache
+  ou divise le panneau cible ;
+- un **point coloré** sur chaque onglet dit le mode : bleu (édition),
+  vert (rendu), orange (Typst) ;
+- les **panneaux vides** montrent une page d'accueil : Créer, Ouvrir,
+  Bibliothèque.
+
+## La bibliothèque
+
+Le bouton « Bibliothèque » ouvre la galerie plein écran : les projets se
+voient par couvertures, rangés sur des **étagères** que l'on déplace à la
+souris. Un bouton « + Nouveau projet ici » crée un projet dans
+l'étagère.
 
 ## Ce qui se voit tout de suite
 
