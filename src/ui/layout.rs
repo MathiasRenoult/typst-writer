@@ -83,10 +83,43 @@ fn panneau_vue<'a>(state: &'a State, pane: pane_grid::Pane, panneau: &'a Panneau
 fn contenu_vue_panneau<'a>(state: &'a State, panneau: &'a Panneau, id: Option<VueId>) -> Element<'a, Message> {
     let corps = match id {
         Some(id) => contenu_vue(state, id).map(move |m| message_vue(id, m)),
-        None => container(state.resolved.palette.label("Ouvrez un document ou déposez un onglet ici.")).into(),
+        None => accueil(state),
     };
     iced::widget::column![super::onglets::panneau(state, panneau), corps]
         .width(Length::Fill).height(Length::Fill).into()
+}
+
+/// La page d'accueil d'un panneau vide : les gestes de base, à portée de clic.
+fn accueil<'a>(state: &'a State) -> Element<'a, Message> {
+    let palette = state.resolved.palette;
+    let bouton = |libelle: &'static str, icone: iced::widget::Text<'a, iced::Theme>, msg: Message| {
+        iced::widget::button(
+            iced::widget::row![
+                crate::ui::theme::icon(icone, 18.0, palette.accent),
+                palette.label(libelle).size(crate::ui::theme::jetons::CORPS),
+            ].spacing(10).align_y(iced::Alignment::Center)
+        )
+        .on_press(msg)
+        .padding([12, 20])
+        .style(move |_, _| iced::widget::button::Style {
+            background: Some(palette.surface.into()),
+            text_color: palette.text,
+            border: iced::Border { color: palette.border, width: 1.0, radius: crate::ui::theme::jetons::RAYON.into() },
+            ..Default::default()
+        })
+    };
+    container(
+        iced::widget::column![
+            palette.label("Bienvenue").size(crate::ui::theme::jetons::TITRE),
+            palette.label("Que souhaitez-vous faire ?").size(crate::ui::theme::jetons::CORPS).color(palette.text_muted),
+            iced::widget::Space::new().height(16.0),
+            bouton("Créer un projet", lucide_icons::iced::icon_file_plus::<iced::Theme>(), Message::ProjetCreer),
+            bouton("Ouvrir un projet", lucide_icons::iced::icon_folder_open::<iced::Theme>(), Message::ProjetsVue),
+            bouton("Consulter la bibliothèque", lucide_icons::iced::icon_library::<iced::Theme>(), Message::ProjetsVue),
+        ].spacing(10).align_x(iced::Alignment::Center),
+    )
+    .center_x(Length::Fill).center_y(Length::Fill)
+    .into()
 }
 
 pub(crate) fn bord_du_panneau(position: iced::Point, taille: iced::Size) -> Option<pane_grid::Edge> {

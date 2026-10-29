@@ -22,10 +22,16 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau) -> Element<'a, Messag
         } else {
             continue;
         };
-        let nom = chemin
+        let fichier = chemin
             .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| projet.name.clone());
+            .map(|n| n.to_string_lossy().into_owned());
+        // Le nom du projet est le vrai nom de l'onglet : tous les projets
+        // ont un `document.tw`, ce serait illisible. Le nom du fichier ne
+        // s'ajoute que s'il dit quelque chose de plus.
+        let nom = match fichier.as_deref() {
+            Some("document.tw") | Some("main.typ") | None => projet.name.clone(),
+            Some(fichier) => format!("{} · {fichier}", projet.name),
+        };
         let courant = index == panneau.actif;
         let actif = id == state.espace.active;
 
