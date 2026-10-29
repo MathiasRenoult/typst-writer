@@ -166,7 +166,7 @@ impl State {
         }
         self.espace.vues.insert(id, vue);
         match ouverture {
-            Ouverture::Nouvel | Ouverture::Reutiliser => {
+            Ouverture::Nouvel => {
                 let panneau = self.espace.grille.get_mut(self.espace.focus).unwrap();
                 panneau.onglets.push(id);
                 panneau.actif = panneau.onglets.len() - 1;

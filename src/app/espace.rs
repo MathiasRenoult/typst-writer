@@ -17,7 +17,6 @@ pub type VueId = u64;
 pub enum Ouverture {
     /// Réutiliser l'onglet existant si le document est déjà ouvert, sinon
     /// nouvel onglet — l'ouverture d'un projet.
-    Reutiliser,
     /// Réutiliser si déjà ouvert, sinon remplacer le contenu de l'onglet
     /// actif — le clic simple sur un document.
     Remplacer,

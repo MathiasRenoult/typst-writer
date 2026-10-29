@@ -52,7 +52,7 @@ fn panneau_vue<'a>(state: &'a State, pane: pane_grid::Pane, panneau: &'a Panneau
         let cible_bord = state.espace.cible
             .filter(|(p, _)| *p == pane)
             .and_then(|(_, bord)| bord);
-        let corps: iced::Element<'a, Message> = contenu_vue_panneau(state, panneau, id);
+        let corps: iced::Element<'a, Message> = contenu_vue_panneau(state, panneau, id, pane == state.espace.focus);
         let corps: iced::Element<'a, Message> = match cible_bord {
             Some(bord) => {
                 let bande = container(iced::widget::Space::new()).style(move |_| container::Style {
@@ -70,8 +70,10 @@ fn panneau_vue<'a>(state: &'a State, pane: pane_grid::Pane, panneau: &'a Panneau
             .width(Length::Fill).height(Length::Fill)
             .style(move |_| {
                 let mut s = container::Style::default();
-                s.border.width = if pane == state.espace.focus || bordure { 1.0 } else { 0.0 };
-                s.border.color = if pane == state.espace.focus { palette.accent } else { palette.border };
+                // Le liseré de glissement reste utile — il montre la cible.
+                // Le liseré de focus, lui, est porté par la barre d'onglets.
+                s.border.width = if bordure { 1.0 } else { 0.0 };
+                s.border.color = palette.border;
                 s
             }))
             .on_move(move |position| Message::OngletCible(pane, bord_du_panneau(position, taille)))
@@ -80,12 +82,12 @@ fn panneau_vue<'a>(state: &'a State, pane: pane_grid::Pane, panneau: &'a Panneau
     }).into()
 }
 
-fn contenu_vue_panneau<'a>(state: &'a State, panneau: &'a Panneau, id: Option<VueId>) -> Element<'a, Message> {
+fn contenu_vue_panneau<'a>(state: &'a State, panneau: &'a Panneau, id: Option<VueId>, focus: bool) -> Element<'a, Message> {
     let corps = match id {
         Some(id) => contenu_vue(state, id).map(move |m| message_vue(id, m)),
         None => accueil(state),
     };
-    iced::widget::column![super::onglets::panneau(state, panneau), corps]
+    iced::widget::column![super::onglets::panneau(state, panneau, focus), corps]
         .width(Length::Fill).height(Length::Fill).into()
 }
 

@@ -11,7 +11,7 @@ use iced::widget::{button, container, mouse_area, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 /// La barre d'onglets d'un panneau.
-pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau) -> Element<'a, Message> {
+pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau, focus: bool) -> Element<'a, Message> {
     let palette = state.resolved.palette;
     let mut barre = row![].spacing(2).align_y(Alignment::Center);
     for (index, &id) in panneau.onglets.iter().enumerate() {
@@ -77,7 +77,7 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau) -> Element<'a, Messag
             // en dessous qui le rattache au contenu du panneau.
             container(contenu)
                 .padding(iced::Padding::new(7.0).right(12.0).bottom(6.0).left(12.0))
-                .style(move |_| container::Style {
+                .style(move |_: &iced::Theme| container::Style {
                     background: Some(melange(palette.background, palette.accent, 0.12).into()),
                     border: iced::Border {
                         color: palette.accent,
@@ -96,7 +96,7 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau) -> Element<'a, Messag
             // panneau a le focus) : une bordure discrète, pas de fond.
             container(contenu)
                 .padding(iced::Padding::new(7.0).right(12.0).bottom(6.0).left(12.0))
-                .style(move |_| container::Style {
+                .style(move |_: &iced::Theme| container::Style {
                     border: iced::Border {
                         color: palette.border,
                         width: 1.0,
@@ -107,7 +107,7 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau) -> Element<'a, Messag
         } else {
             container(contenu)
                 .padding(iced::Padding::new(7.0).right(12.0).bottom(6.0).left(12.0))
-                .style(move |_| container::Style {
+                .style(move |_: &iced::Theme| container::Style {
                     background: Some(if survole {
                         palette.surface_hover.into()
                     } else {
@@ -130,12 +130,27 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau) -> Element<'a, Messag
 
         barre = barre.push(onglet);
     }
-    scrollable(barre)
+    let bare = scrollable(barre)
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::default(),
         ))
-        .width(Length::Fill)
-        .into()
+        .width(Length::Fill);
+    // Le liseré du panneau actif vit sous sa barre d'onglets — pas autour
+    // de tout le panneau. Un trait fin, au-dessus du contenu.
+    let liseré: Element<'a, Message> = if focus {
+        container(iced::widget::Space::new().height(2.0))
+            .width(Length::Fill)
+            .style(move |_: &iced::Theme| container::Style {
+                background: Some(palette.accent.into()),
+                ..Default::default()
+            })
+            .into()
+    } else {
+        container(iced::widget::Space::new().height(2.0))
+            .width(Length::Fill)
+            .into()
+    };
+    iced::widget::column![bare, liseré].into()
 }
 
 /// Mélange deux couleurs — pour teinter un fond sans l'opacifier.
