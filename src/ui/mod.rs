@@ -44,7 +44,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // En mode focus, la barre d'outils disparaît : elle n'a plus d'objet, les
     // panneaux étant masqués et les commandes de fichier n'étant pas ce qu'on
     // vient chercher en écrivant. On en sort par F11 ou Échap.
-    if state.layout.focus_mode {
+    if state.layout.focus_mode && !state.projets_vue {
         return stack![
             column![layout::view(state), status_bar::view(state)]
                 .width(Length::Fill)
@@ -70,6 +70,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill),
         completion::view(state),
+        projets::view(state),
         reference::view(state),
         zotero::view(state),
         recherche::view(state),
@@ -78,7 +79,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         confirmation::view(state),
         projet::view(state),
         tableau::view(state),
-        projets::view(state),
         theme_editeur::view(state),
     ]
     .width(Length::Fill)
