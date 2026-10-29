@@ -70,6 +70,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill),
         completion::view(state),
+        note_overlay(state),
         projets::view(state),
         reference::view(state),
         zotero::view(state),
@@ -81,6 +82,61 @@ pub fn view(state: &State) -> Element<'_, Message> {
         tableau::view(state),
         theme_editeur::view(state),
     ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// L'overlay de note de bas de page : en bas de l'écran, sans déranger
+/// le fil du document. Entrée enregistre, Échap ferme.
+fn note_overlay(state: &State) -> Element<'_, Message> {
+    let Some(note) = state.note_overlay.as_ref() else {
+        return iced::widget::Space::new().width(Length::Fill).height(Length::Fill).into();
+    };
+    let palette = state.resolved.palette;
+    let champ = iced::widget::text_input("Texte de la note…", &note.contenu)
+        .on_input(Message::NoteOverlayChamp)
+        .on_submit(Message::NoteOverlayEnregistrer)
+        .padding(8)
+        .size(13)
+        .width(Length::Fill);
+    let contenu = iced::widget::container(
+        column![
+            iced::widget::row![
+                palette.label("Note de bas de page").size(theme::jetons::DETAIL).color(palette.text_muted),
+                iced::widget::Space::new().width(Length::Fill),
+                palette.label("Entrée : enregistrer · Échap : fermer").size(theme::jetons::CHAPEAU).color(palette.text_muted),
+            ].spacing(8).align_y(iced::Alignment::Center),
+            iced::widget::row![
+                champ,
+                iced::widget::button(palette.label("✓").size(14))
+                    .on_press(Message::NoteOverlayEnregistrer)
+                    .padding([6, 10]),
+                iced::widget::button(palette.label("✕").size(14))
+                    .on_press(Message::NoteOverlayFermer)
+                    .padding([6, 10]),
+            ].spacing(6).align_y(iced::Alignment::Center),
+        ].spacing(8),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .style(move |_| iced::widget::container::Style {
+        background: Some(palette.surface.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: theme::jetons::RAYON.into(),
+        },
+        ..Default::default()
+    });
+    iced::widget::container(
+        column![
+            iced::widget::Space::new().height(Length::Fill),
+            contenu,
+            iced::widget::Space::new().height(12.0),
+        ]
+    )
+    .padding(16)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()

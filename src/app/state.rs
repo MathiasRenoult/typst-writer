@@ -233,6 +233,9 @@ pub struct State {
     /// qu'à la fin, et Échap ne laisse rien.
     pub composeur: Option<crate::app::composeur::Composeur>,
 
+    /// L'overlay de note de bas de page : son contenu et la plage qu'il remplace.
+    pub note_overlay: Option<NoteOverlay>,
+
     /// La fenêtre d'édition d'une référence, si elle est ouverte.
     ///
     /// Seule une **bibliothèque locale** s'édite : une notice Zotero est à
@@ -330,6 +333,18 @@ pub struct Renommage {
 /// aussi courante.
 /// L'édition d'une référence en cours.
 ///
+/// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
+/// bouge pas : elle est citée dans les documents, la changer les casserait.
+/// L'overlay d'édition d'une note de bas de page.
+#[derive(Debug, Clone)]
+pub struct NoteOverlay {
+    /// Le texte de la note, sans les marqueurs `^[` et `]`.
+    pub contenu: String,
+    /// La plage en octets que la note occupe dans le document.
+    pub debut: usize,
+    pub fin: usize,
+}
+
 /// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
 /// bouge pas : elle est citée dans les documents, la changer les casserait.
 #[derive(Debug, Clone)]

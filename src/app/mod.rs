@@ -147,6 +147,7 @@ impl State {
             mise_en_page: None,
             renommage: None,
             composeur: None,
+            note_overlay: None,
             edition_reference: None,
             zotero,
             renaming: None,
@@ -1510,13 +1511,21 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
                             Task::batch([task, ouverture])
                         }
-                        crate::langage::marques::Nature::PiedDePage => Task::batch([
-                            task,
-                            state
-                                .editor
-                                .set_cursor_offset(note.debut + 1)
-                                .map(Message::Editor),
-                        ]),
+                        crate::langage::marques::Nature::PiedDePage => {
+                            // L'overlay de note : le texte s'édite en bas
+                            // de l'écran, sans déplier la note sous le
+                            // curseur ni déranger le fil du document.
+                            let texte = &contenu[note.debut..note.fin];
+                            let nu = texte
+                                .strip_prefix("^[").and_then(|s| s.strip_suffix(']'))
+                                .unwrap_or(texte);
+                            state.note_overlay = Some(crate::app::state::NoteOverlay {
+                                contenu: nu.to_string(),
+                                debut: note.debut,
+                                fin: note.fin,
+                            });
+                            Task::none()
+                        }
                     };
                 }
             }
@@ -1593,6 +1602,30 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeurDeplacer(_)
         | Message::ComposeurPrendre(_)
         | Message::ComposeurChoisir(_) => composeur_update(state, message),
+
+        Message::NoteOverlayChamp(texte) => {
+            if let Some(note) = state.note_overlay.as_mut() {
+                note.contenu = texte;
+            }
+            Task::none()
+        }
+
+        Message::NoteOverlayEnregistrer => {
+            if let Some(note) = state.note_overlay.take() {
+                let nouveau = format!("^[{}]", note.contenu);
+                let tache = state
+                    .editor
+                    .replace_span(note.debut, note.fin, &nouveau)
+                    .map(Message::Editor);
+                return tache;
+            }
+            Task::none()
+        }
+
+        Message::NoteOverlayFermer => {
+            state.note_overlay = None;
+            Task::none()
+        }
 
         Message::ScaleFactor(scale_factor) => {
             // La densité du rendu en découle, et elle décide de la mémoire d'une

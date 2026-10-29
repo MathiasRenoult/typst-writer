@@ -182,6 +182,9 @@ pub enum Message {
 
     /// Échap : fermer sans rien laisser.
     ComposeurFermer,
+    NoteOverlayChamp(String),
+    NoteOverlayEnregistrer,
+    NoteOverlayFermer,
 
     /// ↑↓ : déplacer la sélection dans la liste des clés.
     ComposeurDeplacer(isize),
