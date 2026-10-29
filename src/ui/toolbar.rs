@@ -31,8 +31,6 @@ const COULEURS: [(&str, &str); 7] = [
     ("Gris", "gray"),
 ];
 
-/// Les niveaux de titre proposés, du plus haut au plus bas.
-const TITRES: [(&str, u8); 3] = [("H1", 1), ("H2", 2), ("H3", 3)];
 
 /// La barre d'outils : des icônes, pas des mots.
 ///
@@ -113,20 +111,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::Italique,
             palette,
         ));
-        bar = bar.push(format_picker(
-            TITRES
-                .iter()
-                .map(|(libelle, _)| (*libelle).to_string())
-                .collect(),
-            "Titre",
-            |choisi| {
-                Message::Format(crate::app::message::FormatAction::Titre(
-                    niveau_titre(&choisi).unwrap_or(1),
-                ))
-            },
-            palette,
-            64.0,
-        ));
+        bar = bar.push(titre_menu(palette));
         bar = bar.push(format_button(
             "•",
             "Basculer la ligne en liste à puces",
@@ -487,17 +472,60 @@ fn couleur_typst(label: &str) -> Option<&'static str> {
         .map(|(_, nom)| *nom)
 }
 
-/// Le niveau du titre désigné par son libellé.
-fn niveau_titre(label: &str) -> Option<u8> {
-    TITRES
-        .iter()
-        .find(|(libelle, _)| *libelle == label)
-        .map(|(_, niveau)| *niveau)
-}
 
 /// Une liste déroulante qui applique une mise en forme au choix.
 ///
 /// Contrairement à un bouton, elle **montre** les possibilités avant le clic :
+/// L'icône de titre : au survol, les six niveaux H1-H6.
+fn titre_menu(palette: Palette) -> Element<'static, Message> {
+    let bouton = |niveau: u8| {
+        let libelle = format!("H{niveau}");
+        button(iced::widget::text(libelle).size(11).color(palette.text))
+            .on_press(Message::Format(crate::app::message::FormatAction::Titre(niveau)))
+            .padding([4, 8])
+            .style(move |_, statut| button::Style {
+                background: Some(if matches!(statut, button::Status::Hovered) {
+                    palette.surface_hover
+                } else {
+                    palette.surface
+                }
+                .into()),
+                text_color: palette.text,
+                ..Default::default()
+            })
+    };
+    let menu = container(
+        iced::widget::column![
+            palette.label("Insérer un titre").size(10).color(palette.text_muted),
+            row![bouton(1), bouton(2), bouton(3)].spacing(2),
+            row![bouton(4), bouton(5), bouton(6)].spacing(2),
+        ]
+        .spacing(4),
+    )
+    .padding(8)
+    .style(move |_| container::Style {
+        background: Some(palette.surface_hover.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    });
+    let icone = button(theme::icon(
+        lucide_icons::iced::icon_heading::<Theme>(),
+        ICON_SIZE,
+        palette.text_muted,
+    ))
+    .padding([6, 7])
+    .width(Length::Fixed(BUTTON))
+    .height(Length::Fixed(BUTTON))
+    .style(move |_, statut| button_style(statut, palette));
+    iced::widget::tooltip(icone, menu, iced::widget::tooltip::Position::Bottom)
+        .gap(4)
+        .into()
+}
+
 /// c'est ce qui rend le choix d'un niveau de titre ou d'une couleur immédiat,
 /// au lieu d'une suite de clics à l'aveugle. Comme c'est une action et non un
 /// état, rien n'y est présélectionné : le libellé vide dit ce qu'elle propose.
@@ -609,13 +637,5 @@ mod tests {
         assert_eq!(couleur_typst("Rouge"), Some("red"));
         assert_eq!(couleur_typst("Violet"), Some("purple"));
         assert_eq!(couleur_typst("Inexistant"), None);
-    }
-
-    /// Chaque libellé de titre donne son niveau.
-    #[test]
-    fn heading_labels_map_to_levels() {
-        assert_eq!(niveau_titre("H1"), Some(1));
-        assert_eq!(niveau_titre("H3"), Some(3));
-        assert_eq!(niveau_titre("H4"), None);
     }
 }
