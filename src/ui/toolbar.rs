@@ -1,4 +1,3 @@
-use crate::app::state::PreviewPosition;
 use crate::app::{Message, State};
 use crate::ui::theme::{self, Palette};
 use iced::widget::{Space, button, container, pick_list, row};
@@ -307,24 +306,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             state.mise_en_page.is_some(),
         ));
-
-        // Renommer le symbole sous le curseur : le serveur montrera ce que
-        // cela changerait, fichier par fichier, avant que rien ne s'écrive.
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_pen_line::<Theme>(),
-            "Renommer le symbole sous le curseur (F2)",
-            Message::SymbolRenameStart,
-            palette,
-            state.renommage.is_some(),
-        ));
-
-        bar = bar.push(icon_button(
-            preview_position_icon(state.layout.preview_position),
-            state.layout.preview_position.label(),
-            Message::SetPreviewPosition(state.layout.preview_position.next()),
-            palette,
-            false,
-        ));
     }
 
     bar = bar.push(icon_button(
@@ -607,15 +588,6 @@ fn separation(palette: Palette) -> Element<'static, Message> {
 
 fn spacer() -> Space {
     Space::new().width(Length::Fill).height(Length::Shrink)
-}
-
-/// Icône de la position de l'aperçu : elle montre où il ira au prochain clic.
-fn preview_position_icon(position: PreviewPosition) -> iced::widget::Text<'static, Theme> {
-    match position {
-        PreviewPosition::Right => lucide_icons::iced::icon_panel_right::<Theme>(),
-        PreviewPosition::Left => lucide_icons::iced::icon_panel_left::<Theme>(),
-        PreviewPosition::Bottom => lucide_icons::iced::icon_panel_bottom::<Theme>(),
-    }
 }
 
 /// Icône du thème : on voit d'un coup d'œil ce qui est actif.

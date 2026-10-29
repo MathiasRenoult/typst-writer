@@ -83,7 +83,17 @@ impl State {
     fn actualiser_typst(&mut self) {
         // Le vrai pipeline du projet : décor, normes et bibliographie ne sont
         // pas réinventés par la vue de lecture seule.
-        self.typst_genere = self.compilation_unit().0;
+        let (entry, overrides) = self.compilation_unit();
+        // Le texte complet, pas le `#include` du point d'entrée : la vue
+        // Typst montre ce que le compilateur reçoit vraiment.
+        let genere = overrides
+            .iter()
+            .find(|(chemin, _)| {
+                chemin.file_name().is_some_and(|n| n == crate::langage::pipeline::GENERATED_FILE)
+            })
+            .map(|(_, contenu)| contenu.clone())
+            .unwrap_or(entry);
+        self.typst_genere = genere;
     }
 
     pub(crate) fn disposition_complete(&self) -> Option<Disposition> {

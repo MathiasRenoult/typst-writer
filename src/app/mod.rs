@@ -2717,6 +2717,13 @@ fn plan_touche(
         "\\" => Action::Message(Message::Scinder(
             iced::widget::pane_grid::Edge::Right,
         )),
+        // Titres : Ctrl+1 à Ctrl+6 insèrent le niveau demandé.
+        "1" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(1))),
+        "2" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(2))),
+        "3" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(3))),
+        "4" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(4))),
+        "5" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(5))),
+        "6" => Action::Message(Message::Format(crate::app::message::FormatAction::Titre(6))),
         "+" | "=" => Action::Message(Message::PreviewZoomStep(1)),
         "-" => Action::Message(Message::PreviewZoomStep(-1)),
         "0" => Action::Message(Message::PreviewZoom(
