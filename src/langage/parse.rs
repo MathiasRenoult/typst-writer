@@ -106,6 +106,16 @@ pub fn parse(texte: &str) -> Document {
             continue;
         }
 
+        // Un graphique : `{graphique type=barre}` puis des lignes `label | valeur`.
+        if !echappee
+            && ligne.trim_start().starts_with("{graphique")
+            && let Some((graphique, suivant)) = lire_graphique(&lignes, index)
+        {
+            blocs.push(habiller(graphique, &mut en_attente));
+            index = suivant;
+            continue;
+        }
+
         // Une ligne d'attributs habille le bloc qui suit. Un doute, et ce
         // n'en est pas une : la ligne redevient du texte.
         if !echappee
@@ -528,6 +538,52 @@ fn alignements(ligne: &str) -> Option<Vec<crate::langage::schema::Alignement>> {
 /// que le lecteur de lien sait déjà — l'imbrication des crochets, les
 /// échappements, l'opacité du code, et les cibles qui portent des
 /// parenthèses échappées. Une légende qui contient un lien se lit juste.
+/// Lit un bloc graphique : `{graphique type=barre titre="Titre"}` puis des
+/// lignes `label | valeur` jusqu'à une ligne vide ou non-conforme.
+pub fn lire_graphique(
+    lignes: &[&str],
+    index: usize,
+) -> Option<(crate::langage::schema::Bloc, usize)> {
+    let ligne = lignes.get(index)?;
+    let corps = ligne.trim().strip_prefix("{graphique")?.trim();
+    let corps = corps.trim_end_matches('}').trim();
+
+    // Les propriétés inline : `type=barre titre="Évolution"`.
+    let mut type_ = String::from("barre");
+    let mut titre = String::new();
+    for mot in corps.split_whitespace() {
+        if let Some(v) = mot.strip_prefix("type=") {
+            type_ = v.trim_matches('"').to_string();
+        } else if let Some(v) = mot.strip_prefix("titre=") {
+            titre = v.trim_matches('"').to_string();
+        }
+    }
+
+    // Les lignes de données : `label | valeur`.
+    let mut donnees = Vec::new();
+    let mut suivant = index + 1;
+    while let Some(ligne) = lignes.get(suivant) {
+        let ligne = ligne.trim();
+        if ligne.is_empty() {
+            break;
+        }
+        let Some((label, valeur)) = ligne.split_once('|') else {
+            break;
+        };
+        let Ok(v) = valeur.trim().replace(',', ".").parse::<f64>() else {
+            break;
+        };
+        donnees.push((label.trim().to_string(), v));
+        suivant += 1;
+    }
+
+    if donnees.is_empty() {
+        return None;
+    }
+
+    Some((crate::langage::schema::Bloc::Graphique { type_, titre, donnees }, suivant))
+}
+
 pub fn lire_image(ligne: &str) -> Option<(Vec<crate::langage::schema::Inline>, String)> {
     let corps = ligne.trim().strip_prefix('!')?;
     let (texte, cible, reste) = lien(corps)?;

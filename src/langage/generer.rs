@@ -38,6 +38,15 @@ pub fn generer_avec(
 ) -> String {
     let mut out = String::new();
 
+    // L'import `cetz` pour les graphiques, seulement si le document en
+    // contient — un import inutile alourdit le préambule.
+    let a_graphique = document.blocs.iter().any(|b| {
+        matches!(b, Bloc::Graphique { .. })
+    });
+    if a_graphique {
+        out.push_str("#import \"@preview/cetz:0.3.2\": chart\n\n");
+    }
+
     for bloc in &document.blocs {
         generer_bloc(bloc, &mut out, regles, decor);
     }
@@ -240,6 +249,31 @@ fn generer_bloc(
             out.push_str(interieur.trim_end());
 
             out.push_str("\n]\n\n");
+        }
+        Bloc::Graphique { type_, titre, donnees } => {
+            // Un graphique `cetz` : le paquet est importé par le préambule
+            // du document généré. Les données deviennent un tableau de
+            // couples (label, valeur) que `cetz` sait dessiner.
+            out.push_str("#figure(\n  ");
+            match type_.as_str() {
+                "ligne" => out.push_str("chart.linechart("),
+                "secteur" => out.push_str("chart.piechart("),
+                _ => out.push_str("chart.barchart("),
+            }
+            out.push('(');
+            for (i, (label, valeur)) in donnees.iter().enumerate() {
+                if i > 0 { out.push_str(", "); }
+                out.push_str("(label: \"");
+                echapper_chaine(label, out);
+                out.push_str(&format!("\", values: ({valeur},))"));
+            }
+            out.push_str("),");
+            if !titre.is_empty() {
+                out.push_str("\n  caption: [");
+                echapper_chaine(titre, out);
+                out.push_str("],");
+            }
+            out.push_str("\n)\n\n");
         }
     }
 }

@@ -14,13 +14,13 @@
 //!    document généré.
 
 /// Un document : une suite ordonnée de blocs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Document {
     pub blocs: Vec<Bloc>,
 }
 
 /// Un bloc de niveau document.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Bloc {
     /// Un titre de niveau 1 à 6.
     Titre {
@@ -66,6 +66,15 @@ pub enum Bloc {
         proprietes: Proprietes,
         /// Le bloc habillé. Jamais un autre `Décor` : un seul manteau.
         bloc: Box<Bloc>,
+    },
+    /// Un graphique : `{graphique type=barre}` suivi de lignes `label | valeur`.
+    Graphique {
+        /// Le type : `barre`, `ligne` ou `secteur`.
+        type_: String,
+        /// Le titre du graphique, en texte nu.
+        titre: String,
+        /// Les données : (libellé, valeur) par ligne.
+        donnees: Vec<(String, f64)>,
     },
 }
 
@@ -175,7 +184,7 @@ impl Proprietes {
 }
 
 /// Un élément inline, dans le texte d'un bloc.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     /// Du texte nu. Ne contient **jamais** de marqueur : ceux-ci vivent
     /// dans des [`Inline::Litteral`].
@@ -220,7 +229,7 @@ pub enum Inline {
 }
 
 /// Une référence bibliographique dans un appel de citation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Reference {
     /// La clé de l'entrée dans `references.bib`.
     pub cle: String,
@@ -355,6 +364,9 @@ impl Bloc {
                 // La cible suit la règle du lien : non vide, sans saut de
                 // ligne. Ses parenthèses s'échappent, comme au lien.
                 !cible.is_empty() && !cible.contains('\n') && inline_canonique(légende)
+            }
+            Bloc::Graphique { type_, donnees, .. } => {
+                !donnees.is_empty() && !type_.is_empty()
             }
             Bloc::Décor { proprietes, bloc } => {
                 // Un seul manteau, jamais deux : un décor dans un décor se
@@ -625,7 +637,7 @@ impl Bloc {
                 .map(|item| inline_texte_nu(item))
                 .collect::<Vec<_>>()
                 .join(" "),
-            Bloc::Brut(_) => String::new(),
+            Bloc::Brut(_) | Bloc::Graphique { .. } => String::new(),
             Bloc::Formule(texte) => texte.clone(),
         }
     }
