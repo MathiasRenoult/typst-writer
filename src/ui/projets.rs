@@ -5,7 +5,7 @@ use crate::app::{Message, State};
 use crate::project::Project;
 use crate::ui::theme::{self, Palette};
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, pick_list, row, scrollable, text_input,
+    Space, button, column, container, image, mouse_area, row, scrollable, text_input,
 };
 use iced::{Alignment, Element, Length};
 use std::collections::{BTreeMap, HashMap};
@@ -69,8 +69,8 @@ fn style_carte(palette: Palette, survol: bool) -> container::Style {
 fn carte<'a>(
     state: &'a State,
     projet: &'a Project,
-    etagere: &str,
-    choix: &[String],
+    _etagere: &str,
+    _choix: &[String],
 ) -> Element<'a, Message> {
     let palette = state.resolved.palette;
     let apercu: Element<'a, Message> = match couverture(state, &projet.name) {
@@ -97,7 +97,7 @@ fn carte<'a>(
         .center_y(Length::Fixed(196.0))
         .into(),
     };
-    let nom = projet.name.clone();
+    let _nom = projet.name.clone();
     let etiquette = if projet.dir == state.project.dir {
         "Ouvert · cliquer pour reprendre"
     } else {
@@ -132,39 +132,8 @@ fn carte<'a>(
         ..Default::default()
     });
 
-    let destination = if etagere.is_empty() {
-        "Sans étagère".to_string()
-    } else {
-        etagere.to_string()
-    };
-    let choix = choix.to_vec();
-    let classement = pick_list(choix, Some(destination), move |destination: String| {
-        Message::EtagereDefinir(
-            nom.clone(),
-            if destination == "Sans étagère" {
-                String::new()
-            } else {
-                destination
-            },
-        )
-    })
-    .placeholder("Déplacer vers…")
-    .width(Length::Fill)
-    .text_size(theme::jetons::DETAIL);
-
     let contenu = column![
         ouvrir,
-        container(
-            column![
-                palette
-                    .label("Étagère")
-                    .size(theme::jetons::DETAIL)
-                    .color(palette.text_muted),
-                classement,
-            ]
-            .spacing(4)
-        )
-        .padding([0, 12]),
         Space::new().height(12),
     ];
     mouse_area(
@@ -219,14 +188,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .label(format!("{compte} projet(s)"))
                 .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
-            Space::new().width(Length::Fill),
-            button(
-                palette
-                    .label("+ Nouveau projet ici")
-                    .size(theme::jetons::DETAIL)
-            )
-            .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
-            .padding([8, 12]),
         ]
         .spacing(12)
         .align_y(Alignment::Center);
@@ -238,12 +199,60 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .color(palette.text_muted),
             );
         }
-        for rangee in projets.chunks(colonnes) {
+        // La carte de création : la taille d'une vignette, à la suite.
+        let creer = || button(
+            container(
+                iced::widget::column![
+                    crate::ui::theme::icon(
+                        lucide_icons::iced::icon_plus::<iced::Theme>(),
+                        28.0,
+                        palette.accent,
+                    ),
+                    palette
+                        .label("Nouveau projet")
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .spacing(8)
+                .align_x(Alignment::Center),
+            )
+            .center_x(Length::Fixed(202.0))
+            .center_y(Length::Fixed(196.0)),
+        )
+        .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
+        .padding(12)
+        .style(move |_, statut| button::Style {
+            background: Some(
+                if matches!(statut, button::Status::Hovered) {
+                    palette.surface_hover
+                } else {
+                    palette.background
+                }
+                .into(),
+            ),
+            text_color: palette.text,
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: theme::jetons::RAYON.into(),
+            },
+            ..Default::default()
+        });
+        let mut dernier_rangee = true;
+        for (i, rangee) in projets.chunks(colonnes).enumerate() {
             let mut cartes = row![].spacing(16);
             for projet in rangee {
                 cartes = cartes.push(carte(state, projet, &etagere, &choix));
             }
+            // La carte de création va à la suite de la dernière rangée.
+            if i == projets.chunks(colonnes).count() - 1 {
+                cartes = cartes.push(creer());
+                dernier_rangee = false;
+            }
             rayon = rayon.push(cartes);
+        }
+        if dernier_rangee {
+            rayon = rayon.push(row![creer()].spacing(16));
         }
         let survolee =
             state.drag_projet.is_some() && state.drag_etagere.as_deref() == Some(etagere.as_str());
