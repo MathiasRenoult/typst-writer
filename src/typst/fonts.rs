@@ -83,7 +83,7 @@ impl Fonts {
     /// police installée qu'on n'a jamais rencontrée. Le coût est celui d'un
     /// parcours de chaînes, et d'un appel à fontconfig par nom **nouveau**
     /// seulement.
-    pub fn complete(&mut self, root: &Path, texts: &[String]) {
+    pub fn complete(&mut self, root: &Path, texts: &[&str]) {
         let known: Vec<&str> = self.extra.iter().map(|(name, _)| name.as_str()).collect();
 
         let mut added = Vec::new();
@@ -151,7 +151,7 @@ impl Fonts {
 /// noms cités dans un document — « Times New Roman », « Ezra SIL SR ». Une
 /// chaîne qui ne correspond à aucune famille installée est écartée plus loin,
 /// par la comparaison avec ce que fontconfig rend.
-fn named_families(texts: &[String], root: &Path) -> Vec<String> {
+fn named_families(texts: &[&str], root: &Path) -> Vec<String> {
     let mut names = Vec::new();
 
     for text in texts {
@@ -340,8 +340,7 @@ mod tests {
     #[ignore]
     fn diagnose_fonts() {
         let texts = vec![
-            "#set text(font: \"Times New Roman\")\n#let gr(body) = text(font: \"Galatia SIL\")[#body]\n#let he(body) = text(font: \"Ezra SIL SR\")[#body]\n"
-                .to_string(),
+            "#set text(font: \"Times New Roman\")\n#let gr(body) = text(font: \"Galatia SIL\")[#body]\n#let he(body) = text(font: \"Ezra SIL SR\")[#body]\n",
         ];
 
         let mut shared = shared();

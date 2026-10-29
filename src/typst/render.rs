@@ -559,8 +559,8 @@ impl PreviewWorld {
         // demande une police hébraïque se compose avec une autre, et l'aperçu
         // comme l'export disent le contraire du document. La règle complète, et
         // ce qu'elle refuse de faire, sont dans `crate::typst::fonts`.
-        let texts: Vec<String> = std::iter::once(content.to_string())
-            .chain(overrides.iter().map(|(_, text)| text.clone()))
+        let texts: Vec<&str> = std::iter::once(content)
+            .chain(overrides.iter().map(|(_, text)| text.as_str()))
             .collect();
 
         let (fonts, book) = {
