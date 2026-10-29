@@ -17,7 +17,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             };
 
             match std::fs::read_to_string(&path) {
-                Ok(content) => state.open_document(path, content),
+                Ok(content) => state.open_document(path, content, false),
                 Err(error) => {
                     state.export_status = Some(format!("Ouverture de document.tw : {error}"));
                 }
@@ -70,7 +70,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     content
                 };
 
-                state.open_document(document, content);
+                state.open_document(document, content, false);
 
                 if imported {
                     state.export_status =
@@ -83,7 +83,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // L'assemblage est le fichier du projet qui n'est pas un chapitre :
             // l'ouvrir doit le laisser où il est, et n'ajouter aucun chapitre.
             if crate::project::same_file(&path, &state.project.main) {
-                state.open_document(path, content);
+                state.open_document(path, content, false);
 
                 return Task::none();
             }
@@ -114,7 +114,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 };
 
                 match std::fs::read_to_string(&document) {
-                    Ok(content) => state.open_document(document, content),
+                    Ok(content) => state.open_document(document, content, false),
                     Err(error) => {
                         state.export_status = Some(format!("Ouverture de document.tw : {error}"));
                         return Task::none();
@@ -140,7 +140,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             };
             match std::fs::read_to_string(&document) {
-                Ok(content) => state.open_document(document, content),
+                Ok(content) => state.open_document(document, content, false),
                 Err(error) => {
                     state.export_status = Some(format!("Ouverture de document.tw : {error}"));
                     return Task::none();
@@ -151,21 +151,24 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::OpenChapter(path) => Task::perform(
-            async move {
-                std::fs::read_to_string(&path)
-                    .ok()
-                    .map(|content| (path, content))
-            },
-            |result| match result {
-                Some((path, content)) => Message::ChapterOpened(path, content),
-                None => Message::RefreshProject,
-            },
-        ),
+        Message::OpenChapter(path) => {
+            let nouvel = state.maj_tenu;
+            Task::perform(
+                async move {
+                    std::fs::read_to_string(&path)
+                        .ok()
+                        .map(|content| (path, content, nouvel))
+                },
+                |result| match result {
+                    Some((path, content, nouvel)) => Message::ChapterOpened(path, content, nouvel),
+                    None => Message::RefreshProject,
+                },
+            )
+        }
 
-        Message::ChapterOpened(path, content) => {
+        Message::ChapterOpened(path, content, nouvel) => {
             state.renaming = None;
-            state.open_document(path, content);
+            state.open_document(path, content, nouvel);
 
             // Le rendez-vous d'un aller à la définition : le chapitre est ouvert,
             // il reste à y poser le curseur.
@@ -183,7 +186,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     state.refresh_context();
 
                     match std::fs::read_to_string(&path) {
-                        Ok(content) => state.open_document(path, content),
+                        Ok(content) => state.open_document(path, content, false),
                         Err(error) => {
                             state.export_status = Some(format!("Ouverture du chapitre : {error}"));
                         }

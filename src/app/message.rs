@@ -25,6 +25,7 @@ pub enum Message {
     VueChoisir(u64),
     VueFermer(u64),
     VueDupliquer,
+    Scinder(iced::widget::pane_grid::Edge),
     OngletSuivant,
     PanneauChoisir(iced::widget::pane_grid::Pane),
     PanneauRedimensionner(iced::widget::pane_grid::ResizeEvent),
@@ -41,7 +42,7 @@ pub enum Message {
 
     /// Ouvre un chapitre du projet (clic dans le panneau de travail).
     OpenChapter(PathBuf),
-    ChapterOpened(PathBuf, String),
+    ChapterOpened(PathBuf, String, bool),
 
     /// Crée un chapitre, puis l'ouvre.
     NewChapter,
@@ -257,8 +258,8 @@ pub enum Message {
     /// passer à ce qui est derrière.
     Rien,
 
-    /// `Ctrl` tenu ou relâché — la molette du zoom le demande.
-    ControleTenu(bool),
+    /// `Ctrl` ou `Maj` tenu ou relâché — le zoom et le shift+clic écoutent.
+    ModificateursTenus { controle: bool, maj: bool },
 
     /// La molette de la souris : le zoom avec `Ctrl`, le reste au défilement.
     Molette(f32),

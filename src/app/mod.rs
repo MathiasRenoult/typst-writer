@@ -115,6 +115,7 @@ impl State {
             typst_genere: String::new(),
             projet_dialogue: None,
             controle_tenu: false,
+            maj_tenu: false,
             references_repliees: false,
             references_filtre: String::new(),
             tableau: None,
@@ -262,9 +263,10 @@ impl State {
     ///
     /// Les images du chapitre précédent ne doivent pas survivre au changement :
     /// les `Handle` sont relâchés pour que le backend libère les textures.
-    fn open_document(&mut self, path: PathBuf, content: String) {
+    fn open_document(&mut self, path: PathBuf, content: String, nouvel_onglet: bool) {
         if self.espace.initialise {
-            self.ouvrir_vue(self.project.clone(), path, content, false);
+            let ouverture = if nouvel_onglet { crate::app::espace::Ouverture::Nouvel } else { crate::app::espace::Ouverture::Remplacer };
+            self.ouvrir_vue(self.project.clone(), path, content, ouverture);
             return;
         }
         self.editor = crate::editor::EditorState::new_file(path, content);
@@ -503,7 +505,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
 fn update_interne(state: &mut State, message: Message) -> Task<Message> {
     match message {
-        Message::RetourDocument(..) | Message::VersVue(..) | Message::RetourVue(..) | Message::VueChoisir(..) | Message::VueFermer(..) | Message::VueDupliquer | Message::OngletSuivant | Message::PanneauChoisir(..) | Message::PanneauRedimensionner(..) | Message::OngletPrendre(..) | Message::OngletCible(..) | Message::OngletPoser => unreachable!("messages traités par l’espace"),
+        Message::RetourDocument(..) | Message::VersVue(..) | Message::RetourVue(..) | Message::VueChoisir(..) | Message::VueFermer(..) | Message::VueDupliquer | Message::Scinder(..) | Message::OngletSuivant | Message::PanneauChoisir(..) | Message::PanneauRedimensionner(..) | Message::OngletPrendre(..) | Message::OngletCible(..) | Message::OngletPoser => unreachable!("messages traités par l’espace"),
         // Une notice locale se supprime — vers la corbeille, avec son mot.
         Message::ReferenceSupprimer(cle) => {
             if !state.geste_confirme {
@@ -1160,8 +1162,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::ControleTenu(tenu) => {
-            state.controle_tenu = tenu;
+        Message::ModificateursTenus { controle, maj } => {
+            state.controle_tenu = controle;
+            state.maj_tenu = maj;
             Task::none()
         }
 
@@ -1220,7 +1223,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::OpenFile
         | Message::FileOpened(_)
         | Message::OpenChapter(_)
-        | Message::ChapterOpened(_, _)
+        | Message::ChapterOpened(_, _, _)
         | Message::NewChapter
         | Message::NewProject
         | Message::OpenProject(_)
@@ -2701,6 +2704,13 @@ fn plan_touche(
         // Le zoom : les touches de tout lecteur de document.
         "e" if modifiers.shift() => Action::Message(Message::ModeTypst),
         "e" => Action::Message(Message::ModeBasculer),
+        // Scinder la vue : `\` divise, Maj inverse la direction.
+        "\\" if modifiers.shift() => Action::Message(Message::Scinder(
+            iced::widget::pane_grid::Edge::Bottom,
+        )),
+        "\\" => Action::Message(Message::Scinder(
+            iced::widget::pane_grid::Edge::Right,
+        )),
         "+" | "=" => Action::Message(Message::PreviewZoomStep(1)),
         "-" => Action::Message(Message::PreviewZoomStep(-1)),
         "0" => Action::Message(Message::PreviewZoom(
@@ -3201,16 +3211,18 @@ fn message_evenement(event: Event, status: Status) -> Option<Message> {
         // Ctrl seul est annoncé par ModifiersChanged, indépendamment de
         // toute frappe. Le suivre ici évite aussi d'avaler Ctrl+S, Ctrl+E…
         Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
-            Some(Message::ControleTenu(modifiers.control()))
+            Some(Message::ModificateursTenus { controle: modifiers.control(), maj: modifiers.shift() })
         }
-        Event::Window(iced::window::Event::Unfocused) => Some(Message::ControleTenu(false)),
+        Event::Window(iced::window::Event::Unfocused) => {
+            Some(Message::ModificateursTenus { controle: false, maj: false })
+        }
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => match status {
             Status::Ignored => Some(Message::RawKey(key, modifiers)),
             Status::Captured => None,
         },
 
         Event::Keyboard(keyboard::Event::KeyReleased { modifiers, .. }) if !modifiers.control() => {
-            Some(Message::ControleTenu(false))
+            Some(Message::ModificateursTenus { controle: false, maj: modifiers.shift() })
         }
 
         // La molette tient le zoom — `Ctrl` de la souris, comme dans tout
@@ -3254,7 +3266,7 @@ mod tests_de_la_molette {
                 Event::Window(iced::window::Event::Unfocused),
                 Status::Ignored,
             ),
-            Some(Message::ControleTenu(false))
+            Some(Message::ModificateursTenus { controle: false, maj: false })
         ));
     }
 
@@ -3265,7 +3277,7 @@ mod tests_de_la_molette {
             Status::Captured,
         );
         assert!(
-            matches!(ctrl, Some(Message::ControleTenu(true))),
+            matches!(ctrl, Some(Message::ModificateursTenus { controle: true, .. })),
             "Ctrl seul doit armer le zoom, sans attendre une lettre"
         );
         assert!(matches!(message_evenement(
@@ -3280,7 +3292,7 @@ mod tests_de_la_molette {
                 )),
                 Status::Captured,
             ),
-            Some(Message::ControleTenu(false))
+            Some(Message::ModificateursTenus { controle: false, .. })
         ));
     }
 }

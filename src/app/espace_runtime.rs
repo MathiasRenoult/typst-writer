@@ -1,6 +1,6 @@
 //! Routage transactionnel : une réponse garde l'identité de sa vue, même
 //! quand le clavier travaille déjà dans un autre projet.
-use super::espace::{Disposition, Document, Vue, VueId, VueSauvee};
+use super::espace::{Disposition, Document, Ouverture, Vue, VueId, VueSauvee};
 use super::state::{ModeVue, Note};
 use super::{Message, State};
 use iced::Task;
@@ -93,6 +93,8 @@ impl State {
             disposition.vues.push(VueSauvee { id: self.espace.active, projet: self.project.dir.clone(), document: document.clone(), mode: self.mode });
         }
         for (&id, vue) in &self.espace.vues {
+            // Les vues orphelines (onglet remplacé) ne sont pas sauvées.
+            if !self.espace.grille.iter().any(|(_, p)| p.onglets.contains(&id)) { continue; }
             if let Some(document) = &vue.editor.path {
                 disposition.vues.push(VueSauvee { id, projet: vue.project.dir.clone(), document: document.clone(), mode: vue.mode });
             }
@@ -127,12 +129,17 @@ impl State {
         self.save_session();
     }
 
-    pub(crate) fn ouvrir_vue(&mut self, projet: crate::project::Project, chemin: PathBuf, contenu: String, dupliquer: bool) {
+    /// Ouvre un document dans l'espace de travail.
+    ///
+    /// `nouvel_onglet = false` (clic simple) : le document remplace le contenu
+    /// de l'onglet actif, ou rejoint son onglet existant s'il est déjà ouvert.
+    /// `nouvel_onglet = true` (shift+clic) : un nouvel onglet, toujours.
+    pub(crate) fn ouvrir_vue(&mut self, projet: crate::project::Project, chemin: PathBuf, contenu: String, ouverture: Ouverture) {
         if !projet.owns(&chemin) {
             self.note = Some(Note::erreur("Ce fichier n'appartient pas au projet."));
             return;
         }
-        if !dupliquer {
+        if ouverture != Ouverture::Nouvel {
             if self.project.dir == projet.dir && self.editor.path.as_ref() == Some(&chemin) { return; }
             if let Some(id) = self.espace.vues.iter().find_map(|(&id, v)| (v.project.dir == projet.dir && v.editor.path.as_ref() == Some(&chemin)).then_some(id)) {
                 self.choisir_vue(id);
@@ -148,9 +155,26 @@ impl State {
             vue.editor.synchroniser_source();
         }
         self.espace.vues.insert(id, vue);
-        let panneau = self.espace.grille.get_mut(self.espace.focus).unwrap();
-        panneau.onglets.push(id);
-        panneau.actif = panneau.onglets.len() - 1;
+        match ouverture {
+            Ouverture::Nouvel | Ouverture::Reutiliser => {
+                let panneau = self.espace.grille.get_mut(self.espace.focus).unwrap();
+                panneau.onglets.push(id);
+                panneau.actif = panneau.onglets.len() - 1;
+            }
+            Ouverture::Remplacer => {
+                let ancien = self.espace.active;
+                let panneau = self.espace.focus;
+                let position = self.espace.grille.get(panneau).and_then(|p| p.onglets.iter().position(|v| *v == ancien));
+                if let (Some(position), Some(p)) = (position, self.espace.grille.get_mut(panneau)) {
+                    p.onglets[position] = id;
+                    p.actif = position;
+                } else {
+                    let p = self.espace.grille.get_mut(self.espace.focus).unwrap();
+                    p.onglets.push(id);
+                    p.actif = p.onglets.len() - 1;
+                }
+            }
+        }
         self.choisir_vue(id);
         self.enregistrer_source();
         self.actualiser_typst();
@@ -174,7 +198,7 @@ impl State {
         let projet = crate::project::load(&dir);
         let chemin = projet.document.clone().unwrap_or_else(|| projet.main.clone());
         match std::fs::read_to_string(&chemin) {
-            Ok(contenu) => { self.ouvrir_vue(projet, chemin, contenu, false); if self.project.dir == dir { self.projets_vue = false; } },
+            Ok(contenu) => { self.ouvrir_vue(projet, chemin, contenu, Ouverture::Reutiliser); if self.project.dir == dir { self.projets_vue = false; } },
             Err(e) => self.note = Some(Note::erreur(format!("Ouverture : {e}"))),
         }
     }
@@ -276,8 +300,21 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::VueDupliquer => {
             if let Some(path) = state.editor.path.clone() {
                 let mode = state.mode;
-                state.ouvrir_vue(state.project.clone(), path, state.editor.content(), true);
+                state.ouvrir_vue(state.project.clone(), path, state.editor.content(), Ouverture::Nouvel);
                 state.mode = mode;
+                state.save_session();
+            }
+            Task::none()
+        }
+        Message::Scinder(bord) => {
+            if let Some(path) = state.editor.path.clone() {
+                let mode = state.mode;
+                let focus = state.espace.focus;
+                state.ouvrir_vue(state.project.clone(), path, state.editor.content(), Ouverture::Nouvel);
+                state.mode = mode;
+                let id = state.espace.active;
+                state.espace.deplacer(id, focus, Some(bord));
+                state.choisir_vue(id);
                 state.save_session();
             }
             Task::none()

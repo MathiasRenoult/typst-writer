@@ -26,16 +26,34 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 fn panneau_vue<'a>(state: &'a State, pane: pane_grid::Pane, panneau: &'a Panneau) -> Element<'a, Message> {
     let id = panneau.onglets.get(panneau.actif).copied();
+    let palette = state.resolved.palette;
     // Les coordonnées locales viennent de la vraie géométrie iced. Le bord
     // cible a une épaisseur constante, quelle que soit la profondeur d'arbre.
     responsive(move |taille| {
         let bordure = state.espace.glisse.is_some();
-        mouse_area(container(contenu_vue_panneau(state, panneau, id))
+        let cible_bord = state.espace.cible
+            .filter(|(p, _)| *p == pane)
+            .and_then(|(_, bord)| bord);
+        let corps: iced::Element<'a, Message> = contenu_vue_panneau(state, panneau, id);
+        let corps: iced::Element<'a, Message> = match cible_bord {
+            Some(bord) => {
+                let bande = container(iced::widget::Space::new()).style(move |_| container::Style {
+                    background: Some(palette.accent.into()), ..Default::default() });
+                match bord {
+                    pane_grid::Edge::Left => iced::widget::row![bande.width(Length::Fixed(4.0)).height(Length::Fill), corps].into(),
+                    pane_grid::Edge::Right => iced::widget::row![corps, bande.width(Length::Fixed(4.0)).height(Length::Fill)].into(),
+                    pane_grid::Edge::Top => iced::widget::column![bande.width(Length::Fill).height(Length::Fixed(4.0)), corps].into(),
+                    pane_grid::Edge::Bottom => iced::widget::column![corps, bande.width(Length::Fill).height(Length::Fixed(4.0))].into(),
+                }
+            },
+            None => corps,
+        };
+        mouse_area(container(corps)
             .width(Length::Fill).height(Length::Fill)
             .style(move |_| {
                 let mut s = container::Style::default();
                 s.border.width = if pane == state.espace.focus || bordure { 1.0 } else { 0.0 };
-                s.border.color = if pane == state.espace.focus { state.resolved.palette.accent } else { state.resolved.palette.border };
+                s.border.color = if pane == state.espace.focus { palette.accent } else { palette.border };
                 s
             }))
             .on_move(move |position| Message::OngletCible(pane, bord_du_panneau(position, taille)))

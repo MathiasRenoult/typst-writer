@@ -12,6 +12,19 @@ use super::state::{ModeVue, RenderState, LspState};
 
 pub type VueId = u64;
 
+/// Comment un document rejoint l'espace de travail.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Ouverture {
+    /// Réutiliser l'onglet existant si le document est déjà ouvert, sinon
+    /// nouvel onglet — l'ouverture d'un projet.
+    Reutiliser,
+    /// Réutiliser si déjà ouvert, sinon remplacer le contenu de l'onglet
+    /// actif — le clic simple sur un document.
+    Remplacer,
+    /// Toujours un nouvel onglet — shift+clic ou duplication.
+    Nouvel,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Panneau {
     pub onglets: Vec<VueId>,

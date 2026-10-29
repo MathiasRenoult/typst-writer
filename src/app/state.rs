@@ -122,6 +122,10 @@ pub struct State {
     /// `Ctrl` est-il tenu ? La molette du zoom n'en dit rien elle-même.
     pub controle_tenu: bool,
 
+    /// `Maj` est-il tenu ? Le shift+clic ouvre un nouvel onglet au lieu de
+    /// remplacer le contenu de l'onglet actif.
+    pub maj_tenu: bool,
+
     /// La liste des références est-elle repliée ?
     pub references_repliees: bool,
 
