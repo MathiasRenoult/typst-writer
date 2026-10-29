@@ -125,7 +125,10 @@ fn accueil<'a>(state: &'a State) -> Element<'a, Message> {
 }
 
 pub(crate) fn bord_du_panneau(position: iced::Point, taille: iced::Size) -> Option<pane_grid::Edge> {
-    let bord = 32.0_f32.min(taille.width / 4.0).min(taille.height / 4.0);
+    // La zone de bord est mince (8px) : la barre d'onglets (32px) et le
+    // corps du panneau servent de zone d'empilement — déposer sur un
+    // onglet y ajoute un onglet, au lieu de scinder.
+    let bord = 8.0_f32.min(taille.width / 4.0).min(taille.height / 4.0);
     if position.x < bord { Some(pane_grid::Edge::Left) }
     else if position.x > taille.width - bord { Some(pane_grid::Edge::Right) }
     else if position.y < bord { Some(pane_grid::Edge::Top) }
