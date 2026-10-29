@@ -463,6 +463,13 @@ pub(super) fn composeur_touche(
 ) -> Option<Task<Message>> {
     use iced::keyboard::{Key, key::Named};
 
+    // Le composeur fermé ne prend rien : sans cette garde, il volait
+    // Tab, Entrée et Échap à toutes les fenêtres — la fiche de
+    // référence ne pouvait ni naviguer, ni valider, ni fermer.
+    if state.composeur.is_none() {
+        return None;
+    }
+
     let message = match key {
         Key::Named(Named::Tab) => Message::ComposeurAvancer,
         Key::Named(Named::Enter) => Message::ComposeurTerminer,
