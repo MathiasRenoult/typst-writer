@@ -727,9 +727,14 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette, survolee: bo
     let mut registres = column![palette.label(tete).size(theme::jetons::CORPS)].spacing(1);
 
     if !entry.titre.trim().is_empty() {
+        let titre = if let Some(annee) = entry.annee.as_deref().filter(|a| !a.trim().is_empty()) {
+            format!("{} ({})", tronquer(&entry.titre, 48), annee.trim())
+        } else {
+            tronquer(&entry.titre, 48)
+        };
         registres = registres.push(
             palette
-                .label(tronquer(&entry.titre, 48))
+                .label(titre)
                 .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
         );
