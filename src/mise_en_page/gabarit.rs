@@ -308,13 +308,27 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
             }
 
             let morceau = morceau.replace("{pages}", "\\x00");
+            // Les Quick Parts — NORMS-11 : des marqueurs que l'échappement
+            // ne touche pas, remplacés après coup par du code Typst.
+            let morceau = morceau.replace("{document}", "\\x01");
+            let morceau = morceau.replace("{date}", "\\x02");
+            let morceau = morceau.replace("{auteur}", "\\x03");
+            let morceau = morceau.replace("{projet}", "\\x04");
 
             for (rang, morceau) in morceau.split("\\x00").enumerate() {
                 if rang > 0 {
                     out.push_str(&format!("#context numbering(\"{forme}\", ..counter(page).final())"));
                 }
 
-                out.push_str(&echapper(morceau));
+                // On échappe le texte, puis on replace les marqueurs par
+                // leur code Typst — non échappé, c'est du code.
+                let texte_echappe = echapper(&morceau);
+                let texte_echappe = texte_echappe.replace("\\x01", "#sys.inputs.at(\"document\", default: \"\")");
+                let texte_echappe = texte_echappe.replace("\\x02", "#datetime.today().display()");
+                let texte_echappe = texte_echappe.replace("\\x03", "#sys.inputs.at(\"auteur\", default: \"\")");
+                let texte_echappe = texte_echappe.replace("\\x04", "#sys.inputs.at(\"projet\", default: \"\")");
+
+                out.push_str(&texte_echappe);
             }
         }
 
