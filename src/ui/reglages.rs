@@ -64,11 +64,49 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .spacing(8)
     .align_y(iced::Alignment::Center);
 
+    // NORMS-04-03 : la gestion des modèles est en haut de la fenêtre,
+    // au-dessus des onglets — elle ne se perd pas au milieu des réglages.
+    let noms_normes = crate::project::noms_de_normes();
+    let modele_section = section(
+        palette,
+        "Modèles de normes",
+        column![
+            row![
+                pick_list(
+                    noms_normes,
+                    Some(dialogue.norme.to_string()),
+                    Message::NormesAppliquer
+                )
+                .width(Length::Fixed(170.0)),
+                button(palette.label("Appliquer").size(theme::jetons::DETAIL))
+                    .on_press(Message::NormesAppliquer(dialogue.norme.to_string()))
+                    .padding([5, 12]),
+                button(palette.label("Supprimer").size(theme::jetons::DETAIL))
+                    .on_press(Message::NormesSupprimer(dialogue.norme.to_string()))
+                    .padding([5, 12]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            row![
+                text_input("nom du modèle", &dialogue.norme)
+                    .on_input(Message::NormesNom)
+                    .padding(5)
+                    .width(Length::Fill),
+                button(palette.label("Enregistrer").size(theme::jetons::DETAIL))
+                    .on_press(Message::NormesEnregistrer(dialogue.norme.to_string()))
+                    .padding([5, 12]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(8),
+    );
+
     let corps = match dialogue.panneau {
         1 => corps_typographie(palette, reglages),
         2 => corps_decor(palette, reglages),
         3 => corps_entete_pied(palette, reglages),
-        _ => corps_mise_en_page(palette, reglages, &dialogue.norme),
+        _ => corps_mise_en_page(palette, reglages),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----
     let mut pied = column![].spacing(10);
@@ -125,7 +163,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let hauteur = 640.0_f32.min(state.window_size.height - 32.0).max(320.0);
 
     let fenetre =
-        container(column![entete, scrollable(corps).height(Length::Fill), pied].spacing(16))
+        container(column![entete, modele_section, scrollable(corps).height(Length::Fill), pied].spacing(16))
             .padding(18)
             .style(bubble_style(palette))
             .width(Length::Fixed(largeur))
@@ -237,7 +275,6 @@ fn corps_entete_pied(
 fn corps_mise_en_page(
     palette: Palette,
     reglages: &crate::mise_en_page::modele::MiseEnPage,
-    norme: &str,
 ) -> iced::widget::Column<'static, Message> {
     let mut corps = column![].spacing(20);
 
@@ -290,43 +327,7 @@ fn corps_mise_en_page(
         .spacing(10),
     ));
 
-    // La bibliothèque de normes : un modèle s'applique, ou s'y enregistre.
-    let noms_normes = crate::project::noms_de_normes();
-
-    corps = corps.push(section(
-        palette,
-        "Modèles de normes",
-        column![
-            row![
-                pick_list(
-                    noms_normes,
-                    Some(norme.to_string()),
-                    Message::NormesAppliquer
-                )
-                .width(Length::Fixed(170.0)),
-                button(palette.label("Appliquer").size(theme::jetons::DETAIL))
-                    .on_press(Message::NormesAppliquer(norme.to_string()))
-                    .padding([5, 12]),
-                button(palette.label("Supprimer").size(theme::jetons::DETAIL))
-                    .on_press(Message::NormesSupprimer(norme.to_string()))
-                    .padding([5, 12]),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-            row![
-                text_input("nom du modèle", norme)
-                    .on_input(Message::NormesNom)
-                    .padding(5)
-                    .width(Length::Fill),
-                button(palette.label("Enregistrer").size(theme::jetons::DETAIL))
-                    .on_press(Message::NormesEnregistrer(norme.to_string()))
-                    .padding([5, 12]),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(8),
-    ));
+    // NORMS-04-03 : la gestion des modèles est en haut de la fenêtre.
 
     // ---- Le texte ----
     corps = corps.push(section(
