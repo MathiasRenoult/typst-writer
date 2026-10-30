@@ -466,15 +466,20 @@ fn lire_tableau(lignes: &[&str], index: usize) -> Option<(crate::langage::schema
 
     let mut corps = Vec::new();
     let mut suivant = index + 2;
+    let nb_colonnes = entete.len();
 
     while let Some(ligne) = lignes.get(suivant) {
         if !ligne.trim_start().starts_with('|') {
             break;
         }
 
-        let Some(cellules) = cellules(ligne) else {
+        let Some(mut cellules) = cellules(ligne) else {
             break;
         };
+
+        // EDITOR-05 : autoformatage — les lignes du corps ont le même
+        // nombre de colonnes que l'en-tête. On comble ou on tronque.
+        cellules.resize(nb_colonnes, "");
 
         corps.push(cellules);
         suivant += 1;
