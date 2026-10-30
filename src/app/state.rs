@@ -147,6 +147,10 @@ pub struct State {
     /// L'onglet survolé, pour n'en montrer le × qu'à ce moment-là.
     pub survol_onglet: Option<u64>,
 
+    /// Le projet survolé dans la liste — ses gestes (renommer, supprimer)
+    /// ne paraissent qu'à ce moment (LEFT-11).
+    pub survol_projet: Option<std::path::PathBuf>,
+
     /// L'éditeur de thème : sa copie de travail, quand il est ouvert.
     pub editeur_theme: Option<crate::theming::ThemeFile>,
 

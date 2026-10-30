@@ -379,15 +379,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
 
         let is_current = other.dir == project.dir;
+        let survole = state.survol_projet.as_deref() == Some(other.dir.as_path());
 
-        content = content.push(
-            row![
-                button(palette.label(other.name.clone()).size(theme::jetons::CORPS))
-                    .on_press(Message::OpenProject(other.dir.clone()))
-                    .width(Fill)
-                    .height(Length::Fixed(ENTRY_HEIGHT))
-                    .padding([4, 8])
-                    .style(move |t, status| entry_style(t, status, palette, is_current)),
+        let mut ligne = row![
+            button(palette.label(other.name.clone()).size(theme::jetons::CORPS))
+                .on_press(Message::OpenProject(other.dir.clone()))
+                .width(Fill)
+                .height(Length::Fixed(ENTRY_HEIGHT))
+                .padding([4, 8])
+                .style(move |t, status| entry_style(t, status, palette, is_current)),
+        ]
+        .spacing(2);
+
+        if survole {
+            ligne = ligne.push(
                 button(theme::icon(
                     lucide_icons::iced::icon_pencil::<Theme>(),
                     12.0,
@@ -396,6 +401,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .on_press(Message::ProjetRenommer(other.dir.clone()))
                 .padding([4, 6])
                 .style(move |t, status| entry_style(t, status, palette, false)),
+            );
+            ligne = ligne.push(
                 button(theme::icon(
                     lucide_icons::iced::icon_trash_2::<Theme>(),
                     12.0,
@@ -404,8 +411,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .on_press(Message::ProjetSupprimer(other.dir.clone()))
                 .padding([4, 6])
                 .style(move |t, status| delete_style(t, status, palette)),
-            ]
-            .spacing(2),
+            );
+        }
+
+        let dir_clone = other.dir.clone();
+        content = content.push(
+            iced::widget::mouse_area(ligne)
+                .on_enter(Message::SurvolProjet(Some(dir_clone.clone())))
+                .on_exit(Message::SurvolProjet(None)),
         );
     }
 

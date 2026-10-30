@@ -229,6 +229,7 @@ pub enum Message {
     ProjetNom(String),
     SurvolReference(Option<String>),
     SurvolOnglet(Option<u64>),
+    SurvolProjet(Option<std::path::PathBuf>),
     BibliographieCreer,
     ZoteroRecherche(String),
 

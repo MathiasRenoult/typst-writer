@@ -128,6 +128,7 @@ impl State {
             editeur_theme_textes: std::collections::HashMap::new(),
             survol_reference: None,
             survol_onglet: None,
+            survol_projet: None,
             zotero_recherche: String::new(),
             onglets: Vec::new(),
             etagere_brouillon: String::new(),
@@ -773,6 +774,11 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
         Message::SurvolOnglet(id) => {
             state.survol_onglet = id;
+            Task::none()
+        }
+
+        Message::SurvolProjet(dir) => {
+            state.survol_projet = dir;
             Task::none()
         }
 
