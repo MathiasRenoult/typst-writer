@@ -411,7 +411,7 @@ fn editor_style(file: &crate::theming::ThemeFile) -> iced_code_editor::Style {
         gutter_border: pick(editor.line_number, colors.border()),
         line_number_color: pick(editor.line_number, colors.text_muted()),
         scrollbar_background: pick(editor.scrollbar, background),
-        scroller_color: pick(editor.scroller, colors.surface_hover()),
+        scroller_color: alpha(pick(editor.scroller, colors.surface_hover()), 0.4),
         // La ligne courante et la sélection doivent rester **discrètes** : un
         // aplat opaque au milieu du texte gênerait la lecture, ce qui est
         // exactement ce qu'on cherche à éviter dans un éditeur de rédaction.
