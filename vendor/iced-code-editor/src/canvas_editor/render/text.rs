@@ -79,6 +79,7 @@ fn swatch_belongs_to_segment(
 /// # Remark
 ///
 /// This function handles CJK character widths correctly to keep highlights accurate.
+#[allow(clippy::too_many_arguments)] // Structure amont : refactorer casserait les appels.
 pub(super) fn calculate_segment_geometry(
     line_content: &str,
     marques: &MarquesLigne<'_>,
@@ -219,6 +220,7 @@ impl CodeEditor {
     /// texte fondu ne tient pas et le glyphe tient sa place. C'est le même
     /// chiffre que l'habillage et les clics ont suivi, et c'est ce qui tient
     /// tout ensemble.
+    #[allow(clippy::too_many_arguments)] // Structure amont : refactorer casserait les appels.
     fn dessiner_bouts(
         &self,
         frame: &mut canvas::Frame,

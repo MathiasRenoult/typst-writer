@@ -212,11 +212,8 @@ pub(crate) fn bouts_du_troncon<'a>(
 
     let mut texte_debut = 0usize;
     let mut en_cours = false;
-    let mut col = 0usize;
-
-    for (byte, _) in texte.char_indices() {
+    for (col, (byte, _)) in texte.char_indices().enumerate() {
         let colonne = col_premier + col;
-        col += 1;
 
         match marques.sous(colonne) {
             Some(marque) if marque.debut == colonne => {

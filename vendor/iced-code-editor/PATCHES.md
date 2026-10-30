@@ -318,6 +318,11 @@ est d'abord emportée — la note entière avec, comme partout.
 
 ### 17. `set_search_query` : surlignage depuis l'extérieur
 
+> **Note :** deux tests du mode vim (`vim_slash_search_and_n_capital_n_repeat`
+> et `vim_command_line_backspace_edits_search_text`) échouent depuis avant
+> cette série de correctifs. La recherche vim `/` ne positionne pas le
+> curseur. Problème amont, non régressif.
+
 `set_search_query(query: String)` définit le motif de recherche et
 surligne les correspondances, sans ouvrir la boîte de dialogue de
 recherche. Permet de brancher une barre de recherche externe sur le

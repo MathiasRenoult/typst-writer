@@ -1,5 +1,5 @@
 //! Source et historique uniques, projections graphiques indépendantes.
-use super::*;
+use super::{BracketDepthCache, CodeEditor, CommandHistory, TextBuffer};
 
 /// Modèle détenu par le document, et non par un onglet.
 /// CommandHistory est déjà un Arc<Mutex<_>> : toutes les projections
@@ -68,6 +68,7 @@ impl SourcePartagee {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canvas_editor::Message;
     #[test]
     fn deux_vues_partagent_le_texte_et_un_seul_historique() {
         let mut a = CodeEditor::new("bonjour", "txt");
