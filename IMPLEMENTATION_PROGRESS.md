@@ -47,7 +47,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | LEFT-08 — année de publication | TODO | | | |
 | LEFT-09 — filtres de bibliothèque | TODO | | | |
 | LEFT-10 — onglet Document | DONE | ui/sidebar.rs | « N mots » libellé | |
-| LEFT-11 — actions projet au survol | TODO | | | |
+| LEFT-11 — actions projet au survol | DONE | state.rs, message.rs, sidebar.rs | survol_projet + mouse_area | |
 | TOPBAR-01 — supprimer nom technique | TODO | | | |
 | TOPBAR-02 — réorganiser les boutons | TODO | | | |
 | TOPBAR-04 — alignement icônes | TODO | | | |
@@ -55,7 +55,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | TOPBAR-07 — boutons d'aperçu obsolètes | TODO | | | |
 | TOPBAR-08 — commandes de zoom | DONE | ui/preview.rs, ui/toolbar.rs | zoom bar dans le rendu | |
 | TOPBAR-09 — thèmes à droite | TODO | | | |
-| TOPBAR-10 — supprimer commandes thèmes | TODO | | | |
+| TOPBAR-10 — supprimer commandes thèmes | DONE | ui/toolbar.rs | boutons retirés | |
 | TOPBAR-11 — thèmes favoris | TODO | | | |
 | TOPBAR-12 — bouton bibliothèque | TODO | | | |
 | TOPBAR-13 — éditeur de thèmes avec thèmes | TODO | | | |
@@ -71,18 +71,18 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 
 | Demande | État | Fichiers | Tests | Notes |
 |---|---|---|---|---|
-| EDITOR-03 — `---` séparateur horizontal | TODO | | | |
+| EDITOR-03 — `---` séparateur horizontal | DONE | parse.rs, serialiser.rs, generer.rs | Bloc::Separateur | #line(length: 100%) |
 | EDITOR-04 — trois lignes vides = saut de page | TODO | | | |
 | EDITOR-05 — autocomplétion tableaux | TODO | | | |
-| EDITOR-06 — souligné et barré | TODO | | | |
+| EDITOR-06 — souligné et barré | DONE | schema.rs, parse.rs, serialiser.rs, generer.rs | __…__, ~~…~~ | #underline[], #strike[] |
 | EDITOR-07 — commentaires | TODO | | | |
-| EDITOR-08 — petites capitales siècles | TODO | | | |
-| EDITOR-09 — barre de défilement discrète | TODO | | | |
+| EDITOR-08 — petites capitales siècles | DONE | typographie.rs, generer.rs | petites_capitales_siecles | XXe → #smallcaps[XX]e |
+| EDITOR-09 — barre de défilement discrète | DONE | ui/theme.rs | scroller alpha 0.4 | |
 | EDITOR-10 — aides visuelles | TODO | | | |
 | NORMS-04 — config des niveaux de titre | TODO | | | |
 | NORMS-07 — guillemets par niveau | TODO | | | |
-| NORMS-08 — ordre guillemets français | TODO | | | |
-| NORMS-09 — normes allemandes | TODO | | | |
+| NORMS-08 — ordre guillemets français | DONE | typographie.rs | «», ‹›, "" |
+| NORMS-09 — normes allemandes | DONE | typographie.rs | allemande() | „…", ‚…', »…« |
 | NORMS-10 — séparateurs horizontaux | TODO | | | |
 | NORMS-11 — Quick Parts | TODO | | | |
 
