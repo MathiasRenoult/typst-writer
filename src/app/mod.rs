@@ -944,6 +944,14 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            // Avant un renommage, le verrou du projet sort de la map :
+            // il suit le dossier sur le disque, mais sa clé de map est
+            // l'ancien chemin. Le laisser créerait un faux conflit à la
+            // réouverture, le `.verrou` portant notre propre PID.
+            if let Some(dir) = &dialogue.cible {
+                state.espace.verrous.remove(dir);
+            }
+
             let rendu = match &dialogue.cible {
                 None => crate::project::creer_au_nom(&crate::project::projects_dir(), &nom),
                 Some(dir) => crate::project::renommer(dir, &nom),
@@ -952,6 +960,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             match rendu {
                 Ok(dir) => {
                     state.projet_dialogue = None;
+                    // Le nom a changé : la liste des projets se relit pour
+                    // que l'onglet et le panneau portent le nouveau nom.
+                    state.projects = crate::project::list_projects();
 
                     // La norme choisie à la création devient celle du
                     // projet : elle s'y pose par la même voie que le
