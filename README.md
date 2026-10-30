@@ -10,9 +10,10 @@ qu'elle s'écrit — mais elle change encore.
 ## Ce qu'elle fait
 
 - **Écrire** dans une couche markdown lisible, `document.tw` — titres,
-  emphase, citations, notes, liens, images, tableaux, formules,
-  graphiques, décor — qui se compare ligne à ligne, et dont le Typst
-  reste le maître du rendu ;
+  emphase (gras, italique, souligné, barré), citations, notes, liens,
+  images, tableaux, formules, graphiques, décor, commentaires, sauts de
+  page — qui se compare ligne à ligne, et dont le Typst reste le maître
+  du rendu ;
 - **Composer** dès que l'écriture s'arrête : la page se montre telle que
   le lecteur la verra, et l'aperçu suit le chapitre sous le curseur ;
 - **Travailler en espace** : panneaux divisibles, onglets par panneau,
@@ -21,11 +22,12 @@ qu'elle s'écrit — mais elle change encore.
 - **Citer** : une bibliographie par projet, une fiche complète (éditeur,
   lieu, titre court, type de document), et un projet lié à une collection
   **Zotero** — lue, jamais réécrite ;
-- **Mettre en page** par des normes — papier, marges, titres, couleurs,
-  typographie par langue, décor, en-tête et pied de page — jamais par des
-  mesures portées dans le texte ;
-- **Chercher** en expressions régulières, avec remplacement à rappel de
-  groupes ;
+- **Mettre en page** par des normes — papier, marges, titres (par
+  niveau), couleurs, typographie par langue, décor, en-tête et pied de
+  page avec champs prédéfinis (Quick Parts) — jamais par des mesures
+  portées dans le texte ;
+- **Chercher** en texte littéral ou en expressions régulières, avec
+  surlignage des occurrences et remplacement à rappel de groupes ;
 - **Personnaliser** l'apparence : onze thèmes livrés, un éditeur de thème
   intégré, des étagères pour classer les projets ;
 - **Exporter** en PDF, et travailler au clavier d'un bout à l'autre —
