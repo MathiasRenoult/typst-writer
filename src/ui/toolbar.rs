@@ -80,9 +80,45 @@ pub fn view(state: &State) -> Element<'_, Message> {
         false,
     ));
 
+    // TOPBAR-06-02 : les commandes de panneau et focus vont dans le
+    // groupe général à gauche — elles ne relèvent ni de l'édition ni du thème.
+    if !state.layout.focus_mode {
+        bar = bar.push(icon_button(
+            if state.layout.sidebar_visible {
+                lucide_icons::iced::icon_panel_left_close::<Theme>()
+            } else {
+                lucide_icons::iced::icon_panel_left_open::<Theme>()
+            },
+            if state.layout.sidebar_visible {
+                "Masquer le panneau de travail"
+            } else {
+                "Afficher le panneau de travail"
+            },
+            Message::ToggleSidebar,
+            palette,
+            state.layout.sidebar_visible,
+        ));
+    }
+
+    bar = bar.push(icon_button(
+        if state.layout.focus_mode {
+            lucide_icons::iced::icon_minimize_2::<Theme>()
+        } else {
+            lucide_icons::iced::icon_maximize_2::<Theme>()
+        },
+        if state.layout.focus_mode {
+            "Quitter le mode focus (F11)"
+        } else {
+            "Mode focus — le texte seul (F11)"
+        },
+        Message::ToggleFocusMode,
+        palette,
+        state.layout.focus_mode,
+    ));
+
     bar = bar.push(separation(palette));
 
-    // TOPBAR-04-01 : les commandes de format sont centrées dans la barre.
+    // TOPBAR-06-02 : le format est centré entre deux espacements flexibles.
     bar = bar.push(spacer());
 
     if state.editor.is_intermediate() {
@@ -218,55 +254,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         bar = bar.push(separation(palette));
     }
 
-    // Le remplissage pousse les clusters de droite au bord : la
-    // lecture va du document à son rendu, et rien ne flotte entre deux.
-    bar = bar.push(spacer());
-
-    // Panneaux : ces trois-là gouvernent la disposition, ils vont ensemble.
-    // En mode focus ils disparaissent — les afficher donnerait à voir des
-    // commandes sans effet, et le mode focus n'a de sens que s'il ne reste que
-    // le texte.
-    if !state.layout.focus_mode {
-        // LEFT-04-01 : le panneau latéral se rouvre d'ici — le bouton vit
-        // dans la barre, pas seulement dans le panneau qu'il ferme.
-        bar = bar.push(icon_button(
-            if state.layout.sidebar_visible {
-                lucide_icons::iced::icon_panel_left_close::<Theme>()
-            } else {
-                lucide_icons::iced::icon_panel_left_open::<Theme>()
-            },
-            if state.layout.sidebar_visible {
-                "Masquer le panneau de travail"
-            } else {
-                "Afficher le panneau de travail"
-            },
-            Message::ToggleSidebar,
-            palette,
-            state.layout.sidebar_visible,
-        ));
-
-        // TOPBAR-04-09 : les commandes d'aperçu sont supprimées — la
-        // fenêtre de rendu se gère depuis l'espace de travail.
-        // Les normes sont à gauche (TOPBAR-04-10), pas ici.
-    }
-
-    bar = bar.push(icon_button(
-        if state.layout.focus_mode {
-            lucide_icons::iced::icon_minimize_2::<Theme>()
-        } else {
-            lucide_icons::iced::icon_maximize_2::<Theme>()
-        },
-        if state.layout.focus_mode {
-            "Quitter le mode focus (F11)"
-        } else {
-            "Mode focus — le texte seul (F11)"
-        },
-        Message::ToggleFocusMode,
-        palette,
-        state.layout.focus_mode,
-    ));
-
-    bar = bar.push(separation(palette));
+    // TOPBAR-06-02 : le groupe de thème est à droite, séparé par un
+    // espacement flexible. Le format est déjà centré par le spacer précédent.
+    bar = bar.push(Space::new().width(Length::Fill));
 
     // Thèmes : la liste, puis le mode d'apparence, puis le chargement et la
     // suppression. Les quatre vont ensemble, ils sont donc côte à côte.
@@ -277,9 +267,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .collect();
 
     let current = state.current_theme().map(|theme| theme.name.clone());
-
-    // Les commandes de thème se poussent à droite — TOPBAR-09/13.
-    bar = bar.push(Space::new().width(Length::Fill));
 
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_palette::<Theme>(),
