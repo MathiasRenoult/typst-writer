@@ -2167,6 +2167,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Message::RechercheOuvrir
         | Message::RechercheFermer
         | Message::RechercheMotif(_)
+        | Message::RechercheBasculerMode
         | Message::RechercheRemplacement(_)
         | Message::RechercheSuivant
         | Message::RecherchePrecedent
@@ -2308,6 +2309,14 @@ fn recherche(state: &mut State, message: Message) -> Task<Message> {
             return rafraichir_la_recherche(state);
         }
 
+        Message::RechercheBasculerMode => {
+            if let Some(etat) = state.recherche.as_mut() {
+                etat.mode_regex = !etat.mode_regex;
+            }
+
+            return rafraichir_la_recherche(state);
+        }
+
         Message::RechercheRemplacement(remplacement) => {
             if let Some(etat) = state.recherche.as_mut() {
                 etat.remplacement = remplacement;
@@ -2331,7 +2340,11 @@ fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
         return Task::none();
     };
 
-    let motif = etat.motif.clone();
+    let motif = if etat.mode_regex {
+        etat.motif.clone()
+    } else {
+        regex::escape(&etat.motif)
+    };
     let texte = state.editor.content();
     let trouve = crate::app::recherche::occurrences(&motif, &texte);
 

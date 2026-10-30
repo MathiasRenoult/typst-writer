@@ -25,12 +25,20 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     // `Entrée` dans le motif cherche le suivant ; dans le remplacement,
     // elle remplace l'occurrence courante. Les deux gestes sont ceux qu'on
     // attend en tapant — ils ne se cherchent pas.
-    let motif = text_input("motif — expression régulière", &etat.motif)
+    let motif = text_input(
+        if etat.mode_regex { "motif — expression régulière" } else { "motif — texte littéral" },
+        &etat.motif,
+    )
         .on_submit(Message::RechercheSuivant)
         .id(id_du_motif())
         .on_input(Message::RechercheMotif)
         .padding(6)
         .width(Length::Fill);
+
+    // Le mode de recherche : littéral ou regex — FIND-01.
+    let mode_btn = button(text(if etat.mode_regex { ".*" } else { "Aa" }).size(11))
+        .on_press(Message::RechercheBasculerMode)
+        .padding([4, 8]);
 
     let remplacement = text_input("remplacement — $1 rappelle un groupe", &etat.remplacement)
         .on_submit(Message::RechercheRemplacer)
@@ -48,7 +56,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         format!("{}/{}", etat.courante + 1, etat.occurrences.len())
     };
 
-    let mut haut = row![motif, remplacement]
+    let mut haut = row![mode_btn, motif, remplacement]
         .spacing(theme::jetons::PAS)
         .align_y(Alignment::Center);
 

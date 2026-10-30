@@ -280,6 +280,7 @@ pub enum Message {
     RechercheFermer,
 
     RechercheMotif(String),
+    RechercheBasculerMode,
 
     RechercheRemplacement(String),
 

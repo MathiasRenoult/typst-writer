@@ -12,8 +12,11 @@ use regex::Regex;
 /// Une recherche en cours : son motif, son remplacement, ses trouvailles.
 #[derive(Debug, Default, Clone)]
 pub struct Recherche {
-    /// Le motif, expression régulière.
+    /// Le motif — expression régulière ou texte littéral.
     pub motif: String,
+
+    /// Le mode : `true` = expression régulière, `false` = littéral.
+    pub mode_regex: bool,
 
     /// Ce qui le remplace — `$1` rappelle un groupe.
     pub remplacement: String,
