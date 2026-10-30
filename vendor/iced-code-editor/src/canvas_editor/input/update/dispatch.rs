@@ -64,6 +64,14 @@ impl CodeEditor {
             Message::Backspace | Message::Delete => Task::none(),
             Message::DeleteSelection => self.handle_delete_selection(),
             Message::DeleteWord => self.handle_delete_word(),
+            Message::ToggleLineNumbers => {
+                self.line_numbers_enabled = !self.line_numbers_enabled;
+                Task::none()
+            }
+            Message::ToggleWhitespace => {
+                self.show_whitespace = !self.show_whitespace;
+                Task::none()
+            }
 
             // Navigation operations
             Message::ArrowKey(direction, shift) => {

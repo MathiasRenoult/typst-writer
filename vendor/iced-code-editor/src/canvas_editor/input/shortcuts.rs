@@ -203,6 +203,22 @@ fn editing_shortcut(
         return Some(Action::publish(Message::DeleteWord).and_capture());
     }
 
+    // Ctrl+L : basculer les numéros de ligne.
+    if modifiers.control()
+        && !modifiers.shift()
+        && is_key_char(key, modified_key, "l")
+    {
+        return Some(Action::publish(Message::ToggleLineNumbers).and_capture());
+    }
+
+    // Ctrl+Shift+L : basculer les caractères invisibles.
+    if modifiers.control()
+        && modifiers.shift()
+        && is_key_char(key, modified_key, "l")
+    {
+        return Some(Action::publish(Message::ToggleWhitespace).and_capture());
+    }
+
     if modifiers.shift()
         && matches!(key, keyboard::Key::Named(keyboard::key::Named::Delete))
     {

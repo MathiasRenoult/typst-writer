@@ -546,6 +546,10 @@ pub enum Message {
     DuplicateLineDown,
     /// Ctrl+/: toggle line comments on the current line or primary selection.
     ToggleComment,
+    /// Ctrl+L: toggle line numbers in the gutter.
+    ToggleLineNumbers,
+    /// Ctrl+Shift+L: toggle whitespace characters visibility.
+    ToggleWhitespace,
     /// Scroll back to the given logical line, whose sticky-scroll header was clicked.
     StickyScrollJump(usize),
 }
