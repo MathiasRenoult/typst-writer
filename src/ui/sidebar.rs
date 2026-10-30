@@ -61,7 +61,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .color(if active { palette.accent } else { palette.text }),
             Space::new().width(Length::Fill),
             palette
-                .label(format_count(state.word_count()))
+                .label(format!("{} mots", format_count(state.word_count())))
                 .size(theme::jetons::DETAIL)
                 .color(palette.text_muted),
         ]
