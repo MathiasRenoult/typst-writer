@@ -36,7 +36,9 @@ impl CodeEditor {
         }
 
         for curseur in self.cursors.as_mut_slice() {
-            if curseur.anchor.is_some() {
+            // Une ancre de longueur zéro (clic souris) n'est pas une vraie
+            // sélection : elle ne doit pas empêcher la sélection de la note.
+            if curseur.has_selection() {
                 continue;
             }
 
