@@ -416,6 +416,48 @@ fn paire(regles: &Regles, profondeur: usize) -> (char, char) {
     regles.guillemets.get(index).copied().unwrap_or(('«', '»'))
 }
 
+/// Les nombres romains désignant un siècle ou un millénaire passent en
+/// petites capitales : `XXe` devient `#smallcaps[XX]e`.
+///
+/// La règle ne vise que les **désignations de siècles** — un nombre romain
+/// seul, ou suivi d'autre chose, reste intact. `Ier`, `IIe`, `XXe` et les
+/// variantes de casse sont reconnues.
+pub fn petites_capitales_siecles(texte: &str) -> String {
+    let mut sortie = String::new();
+    let chars: Vec<char> = texte.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Un nombre romain : une suite de IVXLCDM en majuscules.
+        if chars[i].is_ascii_uppercase() && "IVXLCDM".contains(chars[i]) {
+            let debut = i;
+            while i < chars.len() && "IVXLCDM".contains(chars[i]) {
+                i += 1;
+            }
+            let romain: String = chars[debut..i].iter().collect();
+
+            // Le marqueur de siècle suit immédiatement : `e`, `er`, `ème`.
+            let reste: String = chars[i..].iter().take(3).collect();
+            let marqueur = reste.starts_with("er")
+                || reste.starts_with("ème")
+                || (reste.starts_with('e') && !reste.starts_with("es"));
+
+            if marqueur && !romain.is_empty() {
+                sortie.push_str("#smallcaps[");
+                sortie.push_str(&romain);
+                sortie.push(']');
+            } else {
+                sortie.push_str(&romain);
+            }
+        } else {
+            sortie.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    sortie
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

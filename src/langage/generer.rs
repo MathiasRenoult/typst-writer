@@ -310,6 +310,7 @@ fn generer_inline(
                 // ensuite — et l'insécable devient `~`. Un tilde tapé, lui,
                 // a été échappé : il reste un tilde.
                 let compose = appliquer_dans(texte, regles, contexte);
+                let compose = super::typographie::petites_capitales_siecles(&compose);
                 let mut echappe = String::new();
                 echapper_texte(&compose, &mut echappe, en_tete);
                 out.push_str(&echappe.replace('\u{A0}', "~"));
