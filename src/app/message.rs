@@ -249,6 +249,7 @@ pub enum Message {
     ThemeEditeurOuvrir,
     ThemeEditeurChoisir(String),
     ThemeEditeurChamp(&'static str, String),
+    ThemeEditeurColorPicker(&'static str),
     ThemeEditeurEnregistrer,
     ThemeEditeurReset,
     ThemeEditeurFermer,

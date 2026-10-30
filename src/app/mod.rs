@@ -615,6 +615,27 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::ThemeEditeurColorPicker(champ) => {
+            // THEME-EDITOR-02 : le color picker natif via zenity.
+            return Task::perform(
+                async move {
+                    std::process::Command::new("zenity")
+                        .args(["--color-selection", "--title=Choisir une couleur"])
+                        .output()
+                        .ok()
+                        .and_then(|sortie| {
+                            let texte = String::from_utf8_lossy(&sortie.stdout);
+                            let hex = texte.trim().to_string();
+                            (!hex.is_empty()).then_some((champ, hex))
+                        })
+                },
+                |result| match result {
+                    Some((champ, hex)) => Message::ThemeEditeurChamp(champ, hex),
+                    None => Message::ThemeEditeurChamp("", String::new()),
+                },
+            );
+        }
+
         Message::ThemeEditeurChamp(champ, valeur) => {
             // La saisie brute reste dans le champ, même incomplète : c'est
             // elle que l'utilisateur voit. La couleur n'est mise à jour

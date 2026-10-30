@@ -119,6 +119,15 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 
         let mut nuancier = row![].spacing(3);
 
+        // THEME-EDITOR-02 : le color picker natif.
+        let champ_copie = champ;
+        let valeur_copie = valeur.clone();
+        nuancier = nuancier.push(
+            button(palette.label("…").size(11))
+                .on_press(Message::ThemeEditeurColorPicker(champ_copie))
+                .padding([4, 6]),
+        );
+
         for teinte in NUANCIER {
             let teinte = *teinte;
             let voulue = crate::theming::HexColor::parse(teinte).ok().map(|c| c.0);
