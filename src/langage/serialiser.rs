@@ -118,6 +118,9 @@ pub fn serialiser(document: &Document) -> String {
                 out.push_str(texte);
                 out.push('\n');
             }
+            Bloc::SautDePage => {
+                out.push_str("\n\n\n");
+            }
             Bloc::Image { légende, cible } => {
                 out.push_str("![");
                 ecrire_inline(légende, &mut out);

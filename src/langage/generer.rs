@@ -219,6 +219,9 @@ fn generer_bloc(
         Bloc::Commentaire(_) => {
             // Un commentaire ne se rend pas : il vit dans le .tw seulement.
         }
+        Bloc::SautDePage => {
+            out.push_str("#pagebreak()\n\n");
+        }
         Bloc::Image { légende, cible } => {
             // Une légende fait une figure numérotée ; sans elle, l'image
             // seule — pas de vide à composer.

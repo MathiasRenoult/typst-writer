@@ -55,6 +55,17 @@ pub fn parse(texte: &str) -> Document {
     while index < lignes.len() {
         let ligne = lignes[index];
 
+        // Trois lignes vides consécutives font un saut de page (EDITOR-04).
+        if ligne.trim().is_empty()
+            && index + 2 < lignes.len()
+            && lignes[index + 1].trim().is_empty()
+            && lignes[index + 2].trim().is_empty()
+        {
+            blocs.push(habiller(Bloc::SautDePage, &mut en_attente));
+            index += 3;
+            continue;
+        }
+
         // Les lignes vides séparent les blocs, sans être elles-mêmes un bloc.
         // Ne pas avancer ici laisserait `lire_paragraphe` retourner le même
         // index, et la boucle accumulerait des paragraphes vides sans fin.
