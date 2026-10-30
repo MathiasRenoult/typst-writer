@@ -219,6 +219,7 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
         out.push_str(&format!("  show heading: set text(font: {police})\n"));
     }
 
+    // NORMS-04-02 : chaque niveau porte ses réglages, s'ils existent.
     for (niveau, taille) in [
         (1, &titres.taille_1),
         (2, &titres.taille_2),
@@ -233,12 +234,34 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
             regles.push(format!("size: {taille}"));
         }
 
-        if titres.gras {
+        // La graisse par niveau gagne sur le réglage global.
+        let gras_niveau = match niveau {
+            1 => titres.gras_1,
+            2 => titres.gras_2,
+            3 => titres.gras_3,
+            4 => titres.gras_4,
+            5 => titres.gras_5,
+            _ => titres.gras_6,
+        };
+        let gras = gras_niveau.unwrap_or(titres.gras);
+        if gras {
             regles.push("weight: \"bold\"".to_string());
         }
 
-        if super::modele::couleur_valide(&mise_en_page.couleurs.titres) {
-            regles.push(format!("fill: rgb(\"{}\")", mise_en_page.couleurs.titres));
+        // La couleur par niveau gagne sur la couleur globale de titres.
+        let couleur_niveau = match niveau {
+            1 => titres.couleur_1.as_deref(),
+            2 => titres.couleur_2.as_deref(),
+            3 => titres.couleur_3.as_deref(),
+            4 => titres.couleur_4.as_deref(),
+            5 => titres.couleur_5.as_deref(),
+            _ => titres.couleur_6.as_deref(),
+        };
+        let couleur = couleur_niveau
+            .filter(|c| super::modele::couleur_valide(c))
+            .unwrap_or(&mise_en_page.couleurs.titres);
+        if super::modele::couleur_valide(couleur) {
+            regles.push(format!("fill: rgb(\"{}\")", couleur));
         }
 
         if !regles.is_empty() {
@@ -247,16 +270,59 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
                 regles.join(", ")
             ));
         }
+
+        // L'espacement par niveau gagne sur l'espacement global.
+        let espacement_niveau = match niveau {
+            1 => titres.espacement_1.as_deref(),
+            2 => titres.espacement_2.as_deref(),
+            3 => titres.espacement_3.as_deref(),
+            4 => titres.espacement_4.as_deref(),
+            5 => titres.espacement_5.as_deref(),
+            _ => titres.espacement_6.as_deref(),
+        };
+        let espacement = espacement_niveau
+            .filter(|e| super::modele::longueur_valide(e))
+            .unwrap_or(&titres.espacement);
+        if super::modele::longueur_valide(espacement) {
+            out.push_str(&format!(
+                "  show heading.where(level: {niveau}): set block(above: {espacement}, below: {espacement})\n"
+            ));
+        }
+
+        // La casse par niveau gagne sur la casse globale.
+        let casse_niveau = match niveau {
+            1 => titres.casse_1.as_deref(),
+            2 => titres.casse_2.as_deref(),
+            3 => titres.casse_3.as_deref(),
+            4 => titres.casse_4.as_deref(),
+            5 => titres.casse_5.as_deref(),
+            _ => titres.casse_6.as_deref(),
+        };
+        let casse = casse_niveau.unwrap_or(&titres.casse);
+        match casse {
+            "majuscules" => out.push_str(&format!(
+                "  show heading.where(level: {niveau}): it => upper(it)\n"
+            )),
+            "minuscules" => out.push_str(&format!(
+                "  show heading.where(level: {niveau}): it => lower(it)\n"
+            )),
+            "petites-majuscules" => out.push_str(&format!(
+                "  show heading.where(level: {niveau}): it => smallcaps(it)\n"
+            )),
+            _ => {}
+        }
     }
 
-    // La casse n'est pas un réglage de `text` mais une transformation de
-    // contenu : `upper` et `lower` enveloppent le titre, numéro compris —
-    // ce que le compilateur impose, et ce qui se voit bien.
-    match titres.casse.as_str() {
-        "majuscules" => out.push_str("  show heading: it => upper(it)\n"),
-        "minuscules" => out.push_str("  show heading: it => lower(it)\n"),
-        "petites-majuscules" => out.push_str("  show heading: it => smallcaps(it)\n"),
-        _ => {}
+    // La casse globale s'applique aux niveaux sans casse propre.
+    if titres.casse_1.is_none() && titres.casse_2.is_none() && titres.casse_3.is_none()
+        && titres.casse_4.is_none() && titres.casse_5.is_none() && titres.casse_6.is_none()
+    {
+        match titres.casse.as_str() {
+            "majuscules" => out.push_str("  show heading: it => upper(it)\n"),
+            "minuscules" => out.push_str("  show heading: it => lower(it)\n"),
+            "petites-majuscules" => out.push_str("  show heading: it => smallcaps(it)\n"),
+            _ => {}
+        }
     }
 
     out.push('\n');

@@ -474,6 +474,51 @@ fn corps_mise_en_page(
                 ]
                 .spacing(8)
             ),
+            // NORMS-04-02 : la couleur de chaque niveau, indépendante.
+            ligne(
+                palette,
+                "Couleurs par niveau",
+                "La couleur de chaque titre. Vide : la couleur de titres s'applique.",
+                row![
+                    saisie(palette, reglages.titres.couleur_1.as_deref().unwrap_or(""), Champ::TitresCouleur1, "#1a1a2e"),
+                    saisie(palette, reglages.titres.couleur_2.as_deref().unwrap_or(""), Champ::TitresCouleur2, "#1a1a2e"),
+                    saisie(palette, reglages.titres.couleur_3.as_deref().unwrap_or(""), Champ::TitresCouleur3, "#1a1a2e"),
+                    saisie(palette, reglages.titres.couleur_4.as_deref().unwrap_or(""), Champ::TitresCouleur4, "#1a1a2e"),
+                    saisie(palette, reglages.titres.couleur_5.as_deref().unwrap_or(""), Champ::TitresCouleur5, "#1a1a2e"),
+                    saisie(palette, reglages.titres.couleur_6.as_deref().unwrap_or(""), Champ::TitresCouleur6, "#1a1a2e"),
+                ]
+                .spacing(4)
+            ),
+            // NORMS-04-02 : la graisse de chaque niveau.
+            ligne(
+                palette,
+                "Graisse par niveau",
+                "true = gras, false = normal. Vide : le réglage global s'applique.",
+                row![
+                    saisie(palette, &reglages.titres.gras_1.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras1, "true"),
+                    saisie(palette, &reglages.titres.gras_2.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras2, "true"),
+                    saisie(palette, &reglages.titres.gras_3.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras3, "true"),
+                    saisie(palette, &reglages.titres.gras_4.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras4, "true"),
+                    saisie(palette, &reglages.titres.gras_5.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras5, "true"),
+                    saisie(palette, &reglages.titres.gras_6.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras6, "true"),
+                ]
+                .spacing(4)
+            ),
+            // NORMS-04-02 : l'espacement de chaque niveau.
+            ligne(
+                palette,
+                "Espacement par niveau",
+                "L'espace avant/après. Vide : l'espacement global s'applique.",
+                row![
+                    saisie(palette, reglages.titres.espacement_1.as_deref().unwrap_or(""), Champ::TitresEspacement1, "1.2em"),
+                    saisie(palette, reglages.titres.espacement_2.as_deref().unwrap_or(""), Champ::TitresEspacement2, "1.2em"),
+                    saisie(palette, reglages.titres.espacement_3.as_deref().unwrap_or(""), Champ::TitresEspacement3, "1.2em"),
+                    saisie(palette, reglages.titres.espacement_4.as_deref().unwrap_or(""), Champ::TitresEspacement4, "1.2em"),
+                    saisie(palette, reglages.titres.espacement_5.as_deref().unwrap_or(""), Champ::TitresEspacement5, "1.2em"),
+                    saisie(palette, reglages.titres.espacement_6.as_deref().unwrap_or(""), Champ::TitresEspacement6, "1.2em"),
+                ]
+                .spacing(4)
+            ),
             ligne(
                 palette,
                 "Casse",
