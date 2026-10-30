@@ -318,8 +318,15 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::OngletCible(p, bord) => { if state.espace.glisse.is_some() && state.layout.cursor.distance(state.espace.origine_glisse) >= 6.0 { state.espace.cible = Some((p, bord)); } Task::none() }
         Message::SplitterReleased if state.espace.glisse.is_some() => update(state, Message::OngletPoser),
         Message::OngletPoser => {
-            if let (Some(id), Some((p, bord))) = (state.espace.glisse.take(), state.espace.cible.take()) {
+            let glisse = state.espace.glisse.take();
+            let cible = state.espace.cible.take();
+            if let (Some(id), Some((p, bord))) = (glisse, cible) {
                 state.espace.deplacer(id, p, bord);
+                state.choisir_vue(id);
+            } else if let Some(id) = glisse {
+                // WINDOWS-04 : dépôt hors panneau = nouveau panneau à droite.
+                let focus = state.espace.focus;
+                state.espace.deplacer(id, focus, Some(iced::widget::pane_grid::Edge::Right));
                 state.choisir_vue(id);
             }
             state.save_session();
