@@ -130,11 +130,22 @@ fn note_overlay(state: &State) -> Element<'_, Message> {
         },
         ..Default::default()
     });
+    // EDITOR-04-02 : le clic en dehors de l'overlay le ferme. Les zones
+    // vides au-dessus et en dessous du contenu portent le geste ; le
+    // contenu lui-même ne le porte pas.
+    let fond = iced::widget::mouse_area(
+        iced::widget::Space::new().width(Length::Fill).height(Length::Fill),
+    )
+    .on_press(Message::NoteOverlayFermer);
+
     iced::widget::container(
         column![
-            iced::widget::Space::new().height(Length::Fill),
+            fond,
             contenu,
-            iced::widget::Space::new().height(12.0),
+            iced::widget::mouse_area(
+                iced::widget::Space::new().width(Length::Fill).height(12.0),
+            )
+            .on_press(Message::NoteOverlayFermer),
         ]
     )
     .padding(16)
