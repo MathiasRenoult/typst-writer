@@ -51,6 +51,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
         onglet(palette, "Décor", 2, dialogue.panneau),
         onglet(palette, "En-tête et pied", 3, dialogue.panneau),
         Space::new().width(8),
+        button(text("Importer").size(12))
+            .on_press(Message::MiseEnPageImporter)
+            .padding([6, 10]),
+        button(text("Exporter").size(12))
+            .on_press(Message::MiseEnPageExporter)
+            .padding([6, 10]),
         button(text("Fermer").size(12))
             .on_press(Message::MiseEnPageFermer)
             .padding([6, 10]),
@@ -100,12 +106,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     pied = pied.push(
         row![
-            button(text("Importer").size(12))
-                .on_press(Message::MiseEnPageImporter)
-                .padding([8, 12]),
-            button(text("Exporter").size(12))
-                .on_press(Message::MiseEnPageExporter)
-                .padding([8, 12]),
             Space::new().width(Length::Fill),
             button(text("Annuler").size(12))
                 .on_press(Message::MiseEnPageFermer)
