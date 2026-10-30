@@ -803,6 +803,19 @@ fn corps_typographie(
                         "''"
                     )
                 ),
+                // L'aperçu de l'imbrication résultante — NORMS-07.
+                {
+                    let p1 = paire_lue(&typo.guillemets, 0);
+                    let p2 = paire_lue(&typo.guillemets, 1);
+                    let o1 = p1.chars().next().unwrap_or('«');
+                    let f1 = p1.chars().nth(1).unwrap_or('»');
+                    let o2 = p2.chars().next().unwrap_or('"');
+                    let f2 = p2.chars().nth(1).unwrap_or('"');
+                    palette
+                        .label(format!("Aperçu : {o1} un {o2}deux{f2} fin {f1}"))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted)
+                },
             ]
             .spacing(theme::jetons::PAS),
         ),
