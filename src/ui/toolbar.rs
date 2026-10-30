@@ -174,6 +174,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             false,
         ));
+
+        bar = bar.push(separation(palette));
     }
 
     // Le remplissage pousse les clusters de droite au bord : la
