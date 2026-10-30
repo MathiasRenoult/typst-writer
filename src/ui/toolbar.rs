@@ -168,14 +168,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
 
         bar = bar.push(icon_button(
-            lucide_icons::iced::icon_palette::<Theme>(),
-            "L'éditeur de thème",
-            Message::ThemeEditeurOuvrir,
-            palette,
-            state.editeur_theme.is_some(),
-        ));
-
-        bar = bar.push(icon_button(
             lucide_icons::iced::icon_table::<Theme>(),
             "Insérer un tableau",
             Message::TableauOuvrir,
@@ -277,8 +269,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let current = state.current_theme().map(|theme| theme.name.clone());
 
-    // Les commandes de thème se poussent à droite — TOPBAR-09.
+    // Les commandes de thème se poussent à droite — TOPBAR-09/13.
     bar = bar.push(Space::new().width(Length::Fill));
+
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_palette::<Theme>(),
+        "L'éditeur de thème",
+        Message::ThemeEditeurOuvrir,
+        palette,
+        state.editeur_theme.is_some(),
+    ));
 
     bar = bar.push(
         pick_list(names, current, Message::SelectTheme)
