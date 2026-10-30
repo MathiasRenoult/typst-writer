@@ -12,7 +12,7 @@ use iced::{Element, Length};
 /// Les couleurs à portée de clic : le nuancier de l'éditeur (bug 11 du
 /// rapport 2). La valeur libre reste possible à côté.
 const NUANCIER: &[&str] = &[
-    "#1a1a1a", "#f5f5f0", "#8c7853", "#4f5b66", "#7a9e7e", "#c47c6c", "#7c6f9e", "#d4af37",
+    "#8c7853", "#4f5b66", "#7a9e7e", "#c47c6c", "#7c6f9e", "#d4af37",
 ];
 
 /// Les champs de couleur, et le libellé qu'ils portent.
