@@ -367,6 +367,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         filtre.is_empty()
             || entry.key.to_lowercase().contains(&filtre)
             || entry.titre.to_lowercase().contains(&filtre)
+            || entry.annee.as_deref().map(|a| a.to_lowercase().contains(&filtre)).unwrap_or(false)
             || entry
                 .auteurs
                 .iter()
