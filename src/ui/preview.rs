@@ -31,7 +31,9 @@ const MIN_PAGE_BOX: f32 = 80.0;
 /// doit pas réduire la page à rien.
 const MIN_DISPLAY_RATIO: f64 = 0.05;
 
-const MAX_DISPLAY_RATIO: f64 = 2.0;
+/// La limite de zoom : 500 %. Suffisant pour lire et vérifier, sans
+/// provoquer de débordements ni rendre l'interface inutilisable.
+const MAX_DISPLAY_RATIO: f64 = 5.0;
 
 /// Place supposée d'une page dans le panneau, avant que la vue ne l'ait mesurée.
 ///
