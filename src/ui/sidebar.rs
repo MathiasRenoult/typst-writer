@@ -185,11 +185,27 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(section_title("Sommaire", palette));
 
         for (index, entry) in state.render.outline.iter().enumerate() {
-            if index > 0 {
-                content = content.push(separation(palette));
-            }
+            // LEFT-04 : arborescence avec lignes de connexion.
+            let level = entry.level.saturating_sub(1) as usize;
+            let est_dernier = state.render.outline[index + 1..]
+                .iter()
+                .all(|e| e.level <= entry.level);
 
-            let mut label = "    ".repeat(entry.level.saturating_sub(1));
+            let mut label = String::new();
+            for ancetre in 0..level {
+                let parent_dernier = state.render.outline[..index]
+                    .iter()
+                    .rev()
+                    .find(|e| (e.level.saturating_sub(1) as usize) == ancetre)
+                    .map(|e| {
+                        state.render.outline[index..]
+                            .iter()
+                            .all(|s| s.level <= e.level || (s.level.saturating_sub(1) as usize) > ancetre)
+                    })
+                    .unwrap_or(true);
+                label.push_str(if parent_dernier { "    " } else { "│   " });
+            }
+            label.push_str(if est_dernier { "└── " } else { "├── " });
             label.push_str(entry.text.trim());
 
             content = content.push(

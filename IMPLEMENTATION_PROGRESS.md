@@ -61,7 +61,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | TOPBAR-13 — éditeur thèmes avec thèmes | DONE | ui/toolbar.rs | groupe thème à droite |
 | FOCUS-01 — masquer barre inférieure | DONE | ui/mod.rs | status_bar retiré du mode focus | |
 | FOCUS-02 — centrer rendu en focus | DONE | ui/layout.rs | container center_x/y |
-| NORMS-03 — curseur interactif | DONE | iced gère le curseur | Déjà géré par les widgets interactifs |
+| NORMS-03 — curseur interactif | DONE | iced 0.14 natif | Les widgets interactifs changent déjà le curseur |
 | NORMS-05 — commandes en haut | DONE | ui/reglages.rs | Importer/Exporter en tête |
 | THEME-EDITOR-02 — color pickers | TODO | | | |
 | THEME-EDITOR-03 — pastilles de couleur | DONE | ui/theme_editeur.rs | tooltip |
