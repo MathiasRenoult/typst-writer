@@ -111,23 +111,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
         bar = bar.push(titre_menu(palette));
 
-        // TOPBAR-11 : le sélecteur de police.
-        let familles_police = {
-            let mut f = vec![String::new()];
-            f.extend(crate::typst::fonts::shared().familles());
-            f
-        };
-        let police_actuelle = state.mise_en_page.as_ref()
-            .map(|m| m.reglages.texte.police.clone())
-            .unwrap_or_default();
-        bar = bar.push(
-            pick_list(familles_police, Some(police_actuelle), |choisi: String| {
-                Message::MiseEnPageChamp(crate::mise_en_page::modele::Champ::TextePolice, choisi)
-            })
-            .width(Length::Fixed(120.0))
-            .padding([4, 6])
-            .font(palette.interface),
-        );
         bar = bar.push(format_button(
             "•",
             "Basculer la ligne en liste à puces",
@@ -271,39 +254,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.layout.sidebar_visible,
         ));
 
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_eye::<Theme>(),
-            if state.layout.preview_visible {
-                "Masquer l'aperçu"
-            } else {
-                "Afficher l'aperçu"
-            },
-            Message::TogglePreview,
-            palette,
-            state.layout.preview_visible,
-        ));
-
-        // Le suivi du chapitre évite de croire qu'un chapitre n'est pas rendu ;
-        // il arrache aussi l'aperçu sous les yeux dès qu'on écrit ailleurs dans
-        // l'assemblage. Les deux usages sont légitimes : c'est donc un
-        // interrupteur, et l'icône dit lequel des deux états est en vigueur.
-        bar = bar.push(icon_button(
-            if state.layout.follow_preview {
-                lucide_icons::iced::icon_link::<Theme>()
-            } else {
-                lucide_icons::iced::icon_unlink::<Theme>()
-            },
-            if state.layout.follow_preview {
-                "L'aperçu suit le chapitre écrit (Ctrl+Maj+L pour couper le suivi)"
-            } else {
-                "L'aperçu reste où vous le laissez — cliquer pour suivre le chapitre"
-            },
-            Message::TogglePreviewSync,
-            palette,
-            state.layout.follow_preview,
-        ));
-
-        // Les commandes de zoom sont dans la fenêtre de rendu (TOPBAR-08).
+        // TOPBAR-04-09 : les commandes d'aperçu sont supprimées — la
+        // fenêtre de rendu se gère depuis l'espace de travail.
 
         // Les normes du document : papier, marges, titres, couleurs.
         bar = bar.push(icon_button(
