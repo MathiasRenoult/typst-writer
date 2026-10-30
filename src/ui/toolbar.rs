@@ -109,6 +109,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
         ));
         bar = bar.push(titre_menu(palette));
+
+        // TOPBAR-11 : le sélecteur de police.
+        let familles_police = {
+            let mut f = vec![String::new()];
+            f.extend(crate::typst::fonts::shared().familles());
+            f
+        };
+        let police_actuelle = state.mise_en_page.as_ref()
+            .map(|m| m.reglages.texte.police.clone())
+            .unwrap_or_default();
+        bar = bar.push(
+            pick_list(familles_police, Some(police_actuelle), |choisi: String| {
+                Message::MiseEnPageChamp(crate::mise_en_page::modele::Champ::TextePolice, choisi)
+            })
+            .width(Length::Fixed(120.0))
+            .padding([4, 6])
+            .font(palette.interface),
+        );
         bar = bar.push(format_button(
             "•",
             "Basculer la ligne en liste à puces",
