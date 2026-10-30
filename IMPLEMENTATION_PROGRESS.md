@@ -49,8 +49,8 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | LEFT-10 — onglet Document | DONE | ui/sidebar.rs | « N mots » libellé | |
 | LEFT-11 — actions projet au survol | DONE | state.rs, message.rs, sidebar.rs | survol_projet + mouse_area | |
 | TOPBAR-01 — supprimer nom technique | TODO | | | |
-| TOPBAR-02 — réorganiser les boutons | TODO | | | |
-| TOPBAR-04 — alignement icônes | TODO | | | |
+| TOPBAR-02 — réorganiser les boutons | DONE | ui/toolbar.rs | séparateur format/panneaux |
+| TOPBAR-04 — aligner icônes | DONE | ui/toolbar.rs | BUTTON=30 pour tous |
 | TOPBAR-06 — commande de couleur | TODO | | | |
 | TOPBAR-07 — boutons d'aperçu obsolètes | DONE | ui/toolbar.rs | zoom déplacé (TOPBAR-08), reste est utile |
 | TOPBAR-08 — commandes de zoom | DONE | ui/preview.rs, ui/toolbar.rs | zoom bar dans le rendu | |
@@ -60,26 +60,26 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | TOPBAR-12 — bouton bibliothèque | DONE | ui/toolbar.rs | parmi les commandes fichier |
 | TOPBAR-13 — éditeur thèmes avec thèmes | DONE | ui/toolbar.rs | groupe thème à droite |
 | FOCUS-01 — masquer barre inférieure | DONE | ui/mod.rs | status_bar retiré du mode focus | |
-| FOCUS-02 — centrer le rendu | TODO | | | |
+| FOCUS-02 — centrer rendu en focus | DONE | ui/layout.rs | container center_x/y |
 | NORMS-03 — curseur interactif | DONE | iced gère le curseur | Déjà géré par les widgets interactifs |
 | NORMS-05 — commandes en haut | DONE | ui/reglages.rs | Importer/Exporter en tête |
 | THEME-EDITOR-02 — color pickers | TODO | | | |
-| THEME-EDITOR-03 — pastilles de couleur | TODO | | | |
-| THEME-EDITOR-05 — polir l'éditeur de thèmes | TODO | | | |
+| THEME-EDITOR-03 — pastilles de couleur | DONE | ui/theme_editeur.rs | tooltip |
+| THEME-EDITOR-05 — polir l'éditeur de thèmes | DONE | ui/theme_editeur.rs | sections Fond/Texte/États |
 
 ## Lot 5 — Fonctions éditoriales et typographiques (P2+P3)
 
 | Demande | État | Fichiers | Tests | Notes |
 |---|---|---|---|---|
 | EDITOR-03 — `---` séparateur horizontal | DONE | parse.rs, serialiser.rs, generer.rs | Bloc::Separateur | #line(length: 100%) |
-| EDITOR-04 — trois lignes vides = saut de page | TODO | | | |
+| EDITOR-04 — trois lignes vides = saut de page | DONE | langage/{schema,parse,serialiser,generer}.rs | SautDePage, #pagebreak() |
 | EDITOR-05 — autocomplétion tableaux | TODO | | | |
 | EDITOR-06 — souligné et barré | DONE | schema.rs, parse.rs, serialiser.rs, generer.rs | __…__, ~~…~~ | #underline[], #strike[] |
 | EDITOR-07 — commentaires | DONE | schema.rs, parse.rs | // texte → Bloc::Commentaire |
 | EDITOR-08 — petites capitales siècles | DONE | typographie.rs, generer.rs | petites_capitales_siecles | XXe → #smallcaps[XX]e |
 | EDITOR-09 — barre de défilement discrète | DONE | ui/theme.rs | scroller alpha 0.4 | |
 | EDITOR-10 — aides visuelles | DONE | vendor/iced-code-editor | Ctrl+L, Ctrl+Maj+L |
-| NORMS-04 — config des niveaux de titre | TODO | | | |
+| NORMS-04 — config niveaux de titre | DONE | mise_en_page/modele.rs | casse_1 à casse_6 |
 | NORMS-07 — guillemets par niveau | TODO | | | |
 | NORMS-08 — ordre guillemets français | DONE | typographie.rs | «», ‹›, "" |
 | NORMS-09 — normes allemandes | DONE | typographie.rs | allemande() | „…", ‚…', »…« |
@@ -91,7 +91,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | Demande | État | Fichiers | Tests | Notes |
 |---|---|---|---|---|
 | TOPBAR-03 — panneau d'import | TODO | | | |
-| FIND-01 — choix normal/regex | TODO | | | |
+| FIND-01 — choix littéral/regex | DONE | app/recherche.rs, ui/recherche.rs | bouton Aa/.* |
 | FIND-02 — mise en évidence | TODO | | | |
 | WINDOWS-03 — aperçu glisser-déposer | TODO | | | |
 | WINDOWS-04 — détachement d'onglet | TODO | | | |
