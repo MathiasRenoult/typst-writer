@@ -76,6 +76,12 @@ pub struct Decor {
 
     /// Le remplissage — `aucun`, `luma(248)`, `#fdf6e3`…
     pub remplissage: String,
+
+    /// La couleur des séparateurs horizontaux (`---`) — `gray`, `#555`…
+    pub separateur_couleur: String,
+
+    /// L'épaisseur des séparateurs horizontaux — `0.5pt`, `1pt`…
+    pub separateur_epaisseur: String,
 }
 
 impl Default for Decor {
@@ -86,6 +92,8 @@ impl Default for Decor {
             rayon: "4pt".to_string(),
             marge: "8pt".to_string(),
             remplissage: "aucun".to_string(),
+            separateur_couleur: "gray".to_string(),
+            separateur_epaisseur: "0.5pt".to_string(),
         }
     }
 }
@@ -651,6 +659,8 @@ pub enum Champ {
     DecorRayon,
     DecorMarge,
     DecorRemplissage,
+    DecorSeparateurCouleur,
+    DecorSeparateurEpaisseur,
     TitresPolice,
     TitresTaille1,
     TitresTaille2,
@@ -705,6 +715,8 @@ impl MiseEnPage {
             Champ::DecorRayon => self.decor.rayon.clone(),
             Champ::DecorMarge => self.decor.marge.clone(),
             Champ::DecorRemplissage => self.decor.remplissage.clone(),
+            Champ::DecorSeparateurCouleur => self.decor.separateur_couleur.clone(),
+            Champ::DecorSeparateurEpaisseur => self.decor.separateur_epaisseur.clone(),
             Champ::TypoBase => self.typographie.base.clone(),
             Champ::TypoAvantSignes => self.typographie.avant_signes.clone(),
             Champ::TypoApresSignes => self.typographie.apres_signes.clone(),
@@ -767,6 +779,8 @@ impl MiseEnPage {
             Champ::DecorRayon => self.decor.rayon = valeur,
             Champ::DecorMarge => self.decor.marge = valeur,
             Champ::DecorRemplissage => self.decor.remplissage = valeur,
+            Champ::DecorSeparateurCouleur => self.decor.separateur_couleur = valeur,
+            Champ::DecorSeparateurEpaisseur => self.decor.separateur_epaisseur = valeur,
             Champ::TypoBase => self.typographie.base = valeur,
             Champ::TypoAvantSignes => self.typographie.avant_signes = valeur,
             Champ::TypoApresSignes => self.typographie.apres_signes = valeur,
