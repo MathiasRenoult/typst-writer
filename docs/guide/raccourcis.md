@@ -19,12 +19,16 @@ barre d'outils portent leurs combinaisons.
 | `F2` | renommer le symbole sous le curseur |
 | `F12` | aller à la définition |
 | `Ctrl+I` | l'assistance à la frappe |
+| `Ctrl+Suppr` | supprimer le mot après le curseur |
+| `Ctrl+L` | surligner la ligne courante |
+| `Ctrl+Maj+L` | surligner la ligne suivante |
 
 ## Chercher
 
 | Touches | Effet |
 | --- | --- |
 | `Ctrl+F` | la recherche |
+| `Aa` / `.*` | basculer littéral / expression régulière |
 | `F3` / `Maj+F3` | le résultat suivant / précédent |
 | `Entrée` | dans le motif : le suivant — dans le remplacement : remplacer |
 
@@ -46,6 +50,7 @@ barre d'outils portent leurs combinaisons.
 | `Ctrl+Maj+N` | scinder le panneau actif verticalement |
 | `Ctrl+Maj+O` | scinder le panneau actif horizontalement |
 | glisser un onglet | déplacer, détacher ou diviser un panneau |
+| `Ctrl+Tab` / `Ctrl+Maj+Tab` | l'onglet suivant / le panneau suivant |
 | `Ctrl+Maj+W` | fermer l'onglet actif |
 | `Maj+clic` sur un projet | ouvrir dans un nouvel onglet |
 | clic sur un projet | remplacer l'onglet actif |

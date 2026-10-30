@@ -14,6 +14,8 @@ syntaxe.
 | `- élément` | une liste à puces |
 | `1. élément` | une liste numérotée |
 | ```` ```typst ```` … ```` ``` ```` | un bloc Typst brut, inséré tel quel |
+| trois lignes vides consécutives | un saut de page |
+| `// texte` | un commentaire — conservé dans le `.tw`, ignoré au rendu |
 
 Une **ligne vide** sépare les blocs. Ce qui n'est pas reconnu reste du
 texte — un fichier abîmé ne bloque jamais l'ouverture.
@@ -25,6 +27,8 @@ texte — un fichier abîmé ne bloque jamais l'ouverture.
 | `**texte**` | le gras |
 | `*texte*` ou `_texte_` | l'italique |
 | `***texte***` | le gras et l'italique |
+| `__texte__` | le souligné |
+| `~~texte~~` | le barré |
 | `` `code` `` | du code inline — une bande opaque : rien ne s'y ouvre ni ne s'y ferme |
 | `[texte](https://…)` | un lien |
 | `^[texte]` | une note libre, en bas de page |
@@ -82,6 +86,10 @@ La forme markdown, avec sa ligne de séparation qui dit l'alignement :
 portent du texte ordinaire — emphase, code, citations ; une barre dedans
 s'échappe : `\|`. Sans la ligne de séparation, ce n'est pas un tableau :
 la ligne reste du texte.
+
+Les lignes du corps sont normalisées automatiquement au nombre de
+colonnes de l'en-tête : les cellules manquantes sont comblées, les
+excédentes tronquées.
 
 Le décor l'habille comme tout bloc — `{encadré}` prend sa tenue dans les
 normes.

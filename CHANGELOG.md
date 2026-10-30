@@ -1,5 +1,53 @@
 # Journal des versions
 
+## 0.3.0-alpha — suite : le rapport 4 soldé, la qualité au sommet
+
+Le rapport de bugs 4 (63 demandes d'interface et de qualité) est
+intégralement traité. Nettoyage complet du code et du vendor.
+
+### Le langage
+
+- **saut de page** : trois lignes vides consécutives → `#pagebreak()` ;
+- **souligné et barré** : `__texte__` et `~~texte~~` ;
+- **commentaires** : `// texte` — conservé dans le `.tw`, ignoré au rendu ;
+- **autoformatage des tableaux** : les lignes du corps sont normalisées
+  au nombre de colonnes de l'en-tête.
+
+### La recherche
+
+- **mode littéral / regex** : bouton `Aa` / `.*` — le texte est pris au
+  pied de la lettre ou interprété en expression régulière ;
+- **surlignage des occurrences** dans l'éditeur à chaque frappe.
+
+### Les normes
+
+- **Quick Parts** : `{document}`, `{date}`, `{auteur}`, `{projet}` dans
+  l'en-tête et le pied de page — dynamiques, jamais figés ;
+- **casse par niveau de titre** : chaque niveau (1-6) a sa propre casse ;
+- **aperçu de l'imbrication des guillemets** en temps réel.
+
+### L'interface
+
+- **sommaire en arborescence** : lignes de connexion `│ ├── └──` ;
+- **barre supérieure** : sélecteur de police, pastille de couleur
+  courante, séparateurs par famille de commandes, icônes alignées ;
+- **éditeur de thème** : sections (Fond / Texte / États), color picker
+  natif (zenity), infobulle sur la pastille ;
+- **panneau latéral** : bouton de réduction dans le panneau, année de
+  publication dans la bibliothèque, filtre par année ;
+- **espace de travail** : `Ctrl+Maj+Tab` bascule de panneau, dépôt
+  d'onglet hors panneau = nouveau panneau ;
+- **mode focus** : le rendu est centré.
+
+### La qualité
+
+- **clippy 0** dans le projet et le vendor ;
+- **nettoyage du vendor** : imports explicites, `enumerate()` au lieu de
+  compteurs manuels, `#[allow]` documentés ;
+- **comptage bibliographique fiabilisé** : une entrée tronquée n'emporte
+  plus les suivantes ;
+- `PATCHES.md` : 17 points documentés.
+
 ## 0.3.0-alpha — l'espace de travail, la bibliothèque, et les trois rapports soldés
 
 La version où l'éditeur est devenu un **espace de travail** — panneaux

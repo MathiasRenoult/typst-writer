@@ -45,8 +45,9 @@ l'étagère.
 - la **barre d'état**, en bas : le compte de mots, les diagnostics du
   compilateur, et ce que l'application a à dire (une erreur, une
   confirmation) — jamais de silence ;
-- à gauche, le **panneau de travail** : le sommaire du document, les
-  références de la bibliographie, les autres projets ;
+- à gauche, le **panneau de travail** : le sommaire du document en
+  arborescence (lignes de connexion, relations parent-enfant lisibles),
+  les références de la bibliographie, les autres projets ;
 - les **touches** se découvrent d'elles-mêmes : `F1` ouvre la carte des
   raccourcis, et les infobulles de la barre d'outils portent leurs
   combinaisons.
