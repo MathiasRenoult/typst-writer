@@ -13,11 +13,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ModeVue::Edition => super::editor::view(state),
             ModeVue::Rendu => {
                 let (first, last) = state.render.visible.unwrap_or((0, 2));
-                iced::widget::sensor::Sensor::new(super::preview::vue(
-                    state, &state.render, &state.editor, &state.lsp, None,
-                ))
-                .on_show(move |size| Message::ViewportChanged(first, last, size))
-                .on_resize(move |size| Message::ViewportChanged(first, last, size))
+                iced::widget::container(
+                    iced::widget::sensor::Sensor::new(super::preview::vue(
+                        state, &state.render, &state.editor, &state.lsp, None,
+                    ))
+                    .on_show(move |size| Message::ViewportChanged(first, last, size))
+                    .on_resize(move |size| Message::ViewportChanged(first, last, size)),
+                )
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
                 .into()
             }
             ModeVue::Typst => {

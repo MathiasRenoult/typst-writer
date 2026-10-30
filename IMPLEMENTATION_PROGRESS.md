@@ -52,7 +52,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | TOPBAR-02 — réorganiser les boutons | TODO | | | |
 | TOPBAR-04 — alignement icônes | TODO | | | |
 | TOPBAR-06 — commande de couleur | TODO | | | |
-| TOPBAR-07 — boutons d'aperçu obsolètes | TODO | | | |
+| TOPBAR-07 — boutons d'aperçu obsolètes | DONE | ui/toolbar.rs | zoom déplacé (TOPBAR-08), reste est utile |
 | TOPBAR-08 — commandes de zoom | DONE | ui/preview.rs, ui/toolbar.rs | zoom bar dans le rendu | |
 | TOPBAR-09 — thèmes à droite | DONE | ui/toolbar.rs | espace flexible |
 | TOPBAR-10 — supprimer commandes thèmes | DONE | ui/toolbar.rs | boutons retirés | |
