@@ -237,40 +237,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             state.layout.follow_preview,
         ));
 
-        if state.layout.preview_visible {
-            bar = bar.push(toolbar_text_button(
-                "W",
-                "Ajuster l'aperçu à la largeur",
-                Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth),
-                palette,
-            ));
-            bar = bar.push(toolbar_text_button(
-                "H",
-                "Ajuster l'aperçu à la hauteur",
-                Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitHeight),
-                palette,
-            ));
-            bar = bar.push(toolbar_text_button(
-                "−",
-                "Réduire le zoom de 10 %",
-                Message::PreviewZoomStep(-1),
-                palette,
-            ));
-            bar = bar.push(
-                palette
-                    .label(
-                        crate::ui::preview::zoom_percent(state).unwrap_or_else(|| "—".to_string()),
-                    )
-                    .size(11)
-                    .color(palette.text_muted),
-            );
-            bar = bar.push(toolbar_text_button(
-                "+",
-                "Agrandir le zoom de 10 %",
-                Message::PreviewZoomStep(1),
-                palette,
-            ));
-        }
+        // Les commandes de zoom sont dans la fenêtre de rendu (TOPBAR-08).
 
         // Les normes du document : papier, marges, titres, couleurs.
         bar = bar.push(icon_button(

@@ -308,6 +308,30 @@ pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, edi
         );
     }
 
+    // Les commandes de zoom, dans la fenêtre de rendu — pas dans la barre
+    // supérieure, où elles n'ont rien à faire (TOPBAR-08).
+    let zoom_bar = iced::widget::row![
+        iced::widget::button(iced::widget::text("−").size(12))
+            .on_press(Message::PreviewZoomStep(-1))
+            .padding([3, 7]),
+        palette
+            .label(crate::ui::preview::zoom_percent(state).unwrap_or_else(|| "—".to_string()))
+            .size(11)
+            .color(palette.text_muted),
+        iced::widget::button(iced::widget::text("+").size(12))
+            .on_press(Message::PreviewZoomStep(1))
+            .padding([3, 7]),
+        iced::widget::button(iced::widget::text("W").size(11))
+            .on_press(Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth))
+            .padding([3, 7]),
+        iced::widget::button(iced::widget::text("H").size(11))
+            .on_press(Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitHeight))
+            .padding([3, 7]),
+    ]
+    .spacing(4)
+    .align_y(iced::Alignment::Center);
+    content = content.push(zoom_bar);
+
     // Diagnostics du compilateur, en tête du panneau.
     if !render.errors.is_empty() {
         content = content.push(diagnostics_panel(&render.errors, true, open, palette));
