@@ -28,6 +28,22 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
+    // Le bouton de réduction, dans le panneau lui-même — LEFT-01.
+    content = content.push(
+        row![
+            Space::new().width(Length::Fill),
+            button(theme::icon(
+                lucide_icons::iced::icon_panel_left_close::<Theme>(),
+                14.0,
+                palette.text_muted,
+            ))
+            .on_press(Message::ToggleSidebar)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        ]
+        .align_y(Alignment::Center),
+    );
+
     // ---- Le projet ----
     content = content.push(
         palette

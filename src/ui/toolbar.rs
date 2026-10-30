@@ -186,18 +186,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // le texte.
     if !state.layout.focus_mode {
         bar = bar.push(icon_button(
-            lucide_icons::iced::icon_panel_left::<Theme>(),
-            if state.layout.sidebar_visible {
-                "Masquer le panneau de travail"
-            } else {
-                "Afficher le panneau de travail"
-            },
-            Message::ToggleSidebar,
-            palette,
-            state.layout.sidebar_visible,
-        ));
-
-        bar = bar.push(icon_button(
             lucide_icons::iced::icon_eye::<Theme>(),
             if state.layout.preview_visible {
                 "Masquer l'aperçu"
