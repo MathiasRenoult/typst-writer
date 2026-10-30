@@ -19,7 +19,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | LEFT-05 — toutes les collections dans le sélecteur | TODO | | | |
 | TOPBAR-05 — menu des titres utilisable | TODO | | | |
 | THEME-EDITOR-01 — édition des valeurs hex | DONE | state.rs, theme_editeur.rs | editeur_theme_textes | Saisie brute préservée |
-| WINDOWS-01 — focus entre fenêtres | TODO | | | |
+| WINDOWS-01 — focus entre fenêtres | DONE | app/mod.rs, espace_runtime.rs | Ctrl+Maj+Tab bascule de panneau |
 | WINDOWS-02 — règles de clic | DONE | app/espace_runtime.rs | Clic=Remplacer (bascule si ouvert), Maj+clic=Nouvel (toujours) |
 | NORMS-01 — chevauchement barre de défilement | TODO | | | |
 | NORMS-02 — prévisualisation au mauvais endroit | TODO | | | |
@@ -41,7 +41,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | LEFT-01 — déplacer bouton réduction | DONE | ui/sidebar.rs | dans le panneau |
 | LEFT-02 — supprimer le bloc redondant | TODO | | | |
 | LEFT-03 — supprimer les anciens chapitres | DONE | ui/sidebar.rs | section retirée | |
-| LEFT-04 — sommaire en arborescence | TODO | | | |
+| LEFT-04 — sommaire arborescence | DONE | ui/sidebar.rs | Lignes de connexion │ ├── └── |
 | LEFT-06 — intitulé bibliographie | TODO | | | |
 | LEFT-07 — comptage des entrées | TODO | | | |
 | LEFT-08 — année de publication | TODO | | | |
@@ -73,7 +73,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 |---|---|---|---|---|
 | EDITOR-03 — `---` séparateur horizontal | DONE | parse.rs, serialiser.rs, generer.rs | Bloc::Separateur | #line(length: 100%) |
 | EDITOR-04 — trois lignes vides = saut de page | DONE | langage/{schema,parse,serialiser,generer}.rs | SautDePage, #pagebreak() |
-| EDITOR-05 — autocomplétion tableaux | TODO | | | |
+| EDITOR-05 — autocomplétion tableaux | DONE | langage/parse.rs | Autoformatage colonnes |
 | EDITOR-06 — souligné et barré | DONE | schema.rs, parse.rs, serialiser.rs, generer.rs | __…__, ~~…~~ | #underline[], #strike[] |
 | EDITOR-07 — commentaires | DONE | schema.rs, parse.rs | // texte → Bloc::Commentaire |
 | EDITOR-08 — petites capitales siècles | DONE | typographie.rs, generer.rs | petites_capitales_siecles | XXe → #smallcaps[XX]e |
@@ -92,6 +92,6 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 |---|---|---|---|---|
 | TOPBAR-03 — panneau d'import | TODO | | | |
 | FIND-01 — choix littéral/regex | DONE | app/recherche.rs, ui/recherche.rs | bouton Aa/.* |
-| FIND-02 — mise en évidence | TODO | | | |
-| WINDOWS-03 — aperçu glisser-déposer | TODO | | | |
+| FIND-02 — mise en évidence | DONE | app/mod.rs, vendor set_search_query | PATCHES.md point 17 |
+| WINDOWS-03 — aperçu glisser-déposer | DONE | ui/layout.rs | Liseré accentué sur la cible |
 | WINDOWS-04 — détachement d'onglet | TODO | | | |
