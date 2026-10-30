@@ -16,13 +16,18 @@ const NUANCIER: &[&str] = &[
 ];
 
 /// Les champs de couleur, et le libellé qu'ils portent.
+/// Les champs du thème, groupés par section : un marqueur `("", "…")`
+/// est un titre de section, les autres entrées sont des champs.
 const CHAMPS: &[(&str, &str)] = &[
+    ("", "— Fond —"),
     ("background", "Fond de l'application"),
     ("surface", "Fond des panneaux"),
+    ("", "— Texte et accents —"),
     ("text", "Texte"),
     ("accent", "Accent"),
     ("text_muted", "Texte discret"),
     ("border", "Traits"),
+    ("", "— États —"),
     ("danger", "Erreur"),
     ("warning", "Avertissement"),
     ("success", "Succès"),
@@ -59,6 +64,16 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     let couleurs = &fichier.colors;
 
     for &(champ, libelle) in CHAMPS {
+        // Un marqueur de section est un titre, pas un champ.
+        if champ.is_empty() {
+            corps = corps.push(
+                palette
+                    .label(libelle)
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
+            );
+            continue;
+        }
         let hexa = |couleur: crate::theming::HexColor| -> String {
             let c = couleur.0;
             format!(
