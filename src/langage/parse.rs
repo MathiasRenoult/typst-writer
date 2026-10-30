@@ -135,6 +135,13 @@ pub fn parse(texte: &str) -> Document {
             continue;
         }
 
+        // Un séparateur horizontal : `---` seul sur sa ligne.
+        if !echappee && ligne.trim() == "---" {
+            blocs.push(habiller(Bloc::Separateur, &mut en_attente));
+            index += 1;
+            continue;
+        }
+
         // Un tableau : son en-tête, sa ligne de séparation, ses lignes.
         // Sans séparation, ce n'en est pas un — la ligne reste du texte.
         if !echappee

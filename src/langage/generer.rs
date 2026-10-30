@@ -212,6 +212,10 @@ fn generer_bloc(
             out.push_str(texte.trim());
             out.push_str("\n$\n\n");
         }
+        Bloc::Separateur => {
+            // Le séparateur horizontal Typst : `#line(length: 100%)`.
+            out.push_str("#line(length: 100%)\n\n");
+        }
         Bloc::Image { légende, cible } => {
             // Une légende fait une figure numérotée ; sans elle, l'image
             // seule — pas de vide à composer.
