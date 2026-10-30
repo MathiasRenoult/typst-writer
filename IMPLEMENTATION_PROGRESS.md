@@ -63,7 +63,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | FOCUS-02 — centrer rendu en focus | DONE | ui/layout.rs | container center_x/y |
 | NORMS-03 — curseur interactif | DONE | iced 0.14 natif | Les widgets interactifs changent déjà le curseur |
 | NORMS-05 — commandes en haut | DONE | ui/reglages.rs | Importer/Exporter en tête |
-| THEME-EDITOR-02 — color pickers | TODO | | | |
+| THEME-EDITOR-02 — color pickers | DONE | ui/theme_editeur.rs | zenity --color-selection |
 | THEME-EDITOR-03 — pastilles de couleur | DONE | ui/theme_editeur.rs | tooltip |
 | THEME-EDITOR-05 — polir l'éditeur de thèmes | DONE | ui/theme_editeur.rs | sections Fond/Texte/États |
 
