@@ -315,3 +315,12 @@ est d'abord emportée — la note entière avec, comme partout.
 `input/shortcuts.rs` (Ctrl+Suppr), `input/update/dispatch.rs`,
 `input/update/mod.rs` (liste des opérations d'édition),
 `input/update/deletion.rs` (`handle_delete_word`).
+
+### 17. `set_search_query` : surlignage depuis l'extérieur
+
+`set_search_query(query: String)` définit le motif de recherche et
+surligne les correspondances, sans ouvrir la boîte de dialogue de
+recherche. Permet de brancher une barre de recherche externe sur le
+surlignage de l'éditeur.
+
+`canvas_editor/features/search/mod.rs` (`set_search_query`).
