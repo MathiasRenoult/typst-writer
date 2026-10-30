@@ -82,6 +82,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     bar = bar.push(separation(palette));
 
+    // TOPBAR-04-01 : les commandes de format sont centrées dans la barre.
+    bar = bar.push(spacer());
+
     if state.editor.is_intermediate() {
         bar = bar.push(format_button(
             "B",
