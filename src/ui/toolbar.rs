@@ -40,7 +40,7 @@ const COULEURS: [(&str, &str, &str); 7] = [
 pub fn view(state: &State) -> Element<'_, Message> {
     let palette = state.resolved.palette;
 
-    let mut bar = row![].spacing(SPACING).align_y(Alignment::Center);
+    let mut bar = row![].spacing(SPACING).align_y(Alignment::Center).width(Length::Fill);
 
     // TOPBAR-06-01 : le bouton de fermeture de l'onglet actif, à gauche.
     bar = bar.push(icon_button(
@@ -326,17 +326,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
     }
 
-    // La barre déborde parfois la fenêtre : plutôt que rogner des boutons
-    // inatteignables, elle défile — sans barre de défilement visible, le
-    // reste est au diapason de la sobriété de la fenêtre.
-    let bar = iced::widget::scrollable(bar)
-        .direction(iced::widget::scrollable::Direction::Horizontal(
-            iced::widget::scrollable::Scrollbar::new()
-                .width(0)
-                .scroller_width(0),
-        ))
-        .height(Length::Fixed(BAR_HEIGHT));
-
+    // TOPBAR-06-02 : pas de scrollable — il empêche Space::Fill de
+    // s'étendre et les icônes restent collées à gauche. Le container
+    // donne toute la largeur au row, les trois groupes se répartissent.
     container(bar)
         .width(Length::Fill)
         .height(Length::Fixed(BAR_HEIGHT))

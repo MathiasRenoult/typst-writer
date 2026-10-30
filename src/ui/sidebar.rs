@@ -28,25 +28,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
-    // SIDEBAR-06-02 : le sommaire est en haut du panneau. Le bouton de
-    // réduction est le seul élément d'en-tête — les noms de document et
-    // de projet sont supprimés de cette zone.
-    content = content.push(
-        row![
-            Space::new().width(Length::Fill),
-            button(theme::icon(
-                lucide_icons::iced::icon_panel_left_close::<Theme>(),
-                14.0,
-                palette.text_muted,
-            ))
-            .on_press(Message::ToggleSidebar)
-            .padding([4, 6])
-            .style(move |t, status| entry_style(t, status, palette, false)),
-        ]
-        .align_y(Alignment::Center),
-    );
-
-    content = content.push(Space::new().height(6));
+    // TOPBAR-06-01 : le bouton de fermeture est dans la top bar,
+    // pas dans le panneau. Le sommaire commence directement.
+    content = content.push(Space::new().height(2));
 
     // SIDEBAR-06-02 : le sommaire est le premier élément du panneau.
     if !state.render.outline.is_empty() {
@@ -77,8 +61,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
             content = content.push(
                 button(
-                    row![palette.label(label).size(theme::jetons::CORPS)]
-                        .align_y(Alignment::Center),
+                    container(palette.label(label).size(theme::jetons::CORPS))
+                        .align_y(iced::Alignment::Center)
+                        .height(Length::Fill)
+                        .width(Length::Fill),
                 )
                 .on_press(Message::GotoHeading(index))
                 .width(Fill)
@@ -365,8 +351,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         let mut ligne = row![
             button(
-                row![palette.label(other.name.clone()).size(theme::jetons::CORPS)]
-                    .align_y(Alignment::Center),
+                container(palette.label(other.name.clone()).size(theme::jetons::CORPS))
+                    .align_y(iced::Alignment::Center)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
             )
             .on_press(Message::OpenProject(other.dir.clone()))
             .width(Fill)
@@ -411,16 +399,21 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // champs et boutons en permanence dans le panneau.
     content = content.push(
         button(
-            row![
-                theme::icon(
-                    lucide_icons::iced::icon_plus::<Theme>(),
-                    13.0,
-                    palette.text_muted
-                ),
-                palette.label("Nouveau projet").size(theme::jetons::CORPS),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            container(
+                row![
+                    theme::icon(
+                        lucide_icons::iced::icon_plus::<Theme>(),
+                        13.0,
+                        palette.text_muted
+                    ),
+                    palette.label("Nouveau projet").size(theme::jetons::CORPS),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .align_y(iced::Alignment::Center)
+            .height(Length::Fill)
+            .width(Length::Fill),
         )
         .on_press(Message::ProjetCreer)
         .width(Fill)
@@ -490,12 +483,17 @@ fn chapter_row<'a>(
             .color(palette.text),
     );
 
-    let title = button(label)
-        .on_press(Message::OpenChapter(chapter.path.clone()))
-        .width(Fill)
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .padding([4, 8])
-        .style(move |t, status| entry_style(t, status, palette, is_active));
+    let title = button(
+        container(label)
+            .align_y(iced::Alignment::Center)
+            .height(Length::Fill)
+            .width(Length::Fill),
+    )
+    .on_press(Message::OpenChapter(chapter.path.clone()))
+    .width(Fill)
+    .height(Length::Fixed(ENTRY_HEIGHT))
+    .padding([4, 8])
+    .style(move |t, status| entry_style(t, status, palette, is_active));
 
     row![
         tooltip(
@@ -713,11 +711,16 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette, survolee: bo
     // liste de références est un texte à lire, pas une barre d'outils
     // (bug 13 du rapport 2).
     let mut ligne = row![
-        button(registres)
-            .on_press(Message::InsertCitation(entry.key.clone()))
-            .width(Fill)
-            .padding([7, 8])
-            .style(move |t, status| entry_style(t, status, palette, false)),
+        button(
+            container(registres)
+                .align_y(iced::Alignment::Center)
+                .height(Length::Fill)
+                .width(Length::Fill),
+        )
+        .on_press(Message::InsertCitation(entry.key.clone()))
+        .width(Fill)
+        .padding([7, 8])
+        .style(move |t, status| entry_style(t, status, palette, false)),
     ]
     .spacing(2)
     .align_y(Alignment::Center);
