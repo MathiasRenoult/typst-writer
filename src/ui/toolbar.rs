@@ -470,12 +470,17 @@ fn toolbar_text_button<'a>(
     message: Message,
     palette: Palette,
 ) -> Element<'a, Message> {
-    let button = button(palette.label(label).size(12).color(palette.text))
-        .on_press(message)
-        .padding([4, 6])
-        .width(Length::Fixed(BUTTON))
-        .height(Length::Fixed(BUTTON))
-        .style(move |_, status| button_style(status, palette));
+    // TOPBAR-04-03 : le libellé est centré dans le bouton.
+    let button = button(
+        container(palette.label(label).size(12).color(palette.text))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .on_press(message)
+    .padding([4, 6])
+    .width(Length::Fixed(BUTTON))
+    .height(Length::Fixed(BUTTON))
+    .style(move |_, status| button_style(status, palette));
 
     iced::widget::tooltip(
         button,
