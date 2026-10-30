@@ -42,7 +42,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut bar = row![].spacing(SPACING).align_y(Alignment::Center);
 
-    // TOPBAR-04-10 : les normes tout à gauche — la mise en page est le
+    // TOPBAR-06-01 : le bouton de fermeture de l'onglet actif, à gauche.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_x::<Theme>(),
+        "Fermer l'onglet actif",
+        Message::VueFermer(state.espace.active),
+        palette,
+        false,
+    ));
+
+    // TOPBAR-04-10 : les normes à gauche — la mise en page est le
     // cadre du travail, pas une commande parmi d'autres.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_file_cog::<Theme>(),
