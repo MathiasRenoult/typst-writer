@@ -883,10 +883,10 @@ mod tests_du_pipeline_vrai {
             .is_ok()
     }
 
-    /// Les vrais projets de l'utilisateur sont-ils là ? En CI, le dossier
-    /// n'existe pas : le test saute.
+    /// Les vrais projets de l'utilisateur sont-ils là ? En CI, les fichiers
+    /// n'existent pas : le test saute.
     fn projets_disponibles() -> bool {
-        std::path::Path::new("/home/mat/.typst-writer/projets").is_dir()
+        std::path::Path::new("/home/mat/.typst-writer/projets/mon-travail/document.tw").is_file()
     }
 
     /// Le pipeline complet sur les vrais projets anciens : l'entrée, les

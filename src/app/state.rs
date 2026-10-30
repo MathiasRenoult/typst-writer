@@ -150,6 +150,11 @@ pub struct State {
     /// L'éditeur de thème : sa copie de travail, quand il est ouvert.
     pub editeur_theme: Option<crate::theming::ThemeFile>,
 
+    /// La saisie brute de chaque champ de couleur de l'éditeur de thème.
+    /// Une valeur partiellement tapée (`#1a`) doit rester visible au
+    /// clavier sans être éjectée par le parseur de couleur.
+    pub editeur_theme_textes: std::collections::HashMap<String, String>,
+
     /// Le nom de l'étagère à poser sur un projet — la vue des projets.
     pub etagere_brouillon: String,
 

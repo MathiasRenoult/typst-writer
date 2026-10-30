@@ -1897,8 +1897,8 @@ pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)
 mod tests_du_parseur_vrai {
     #[test]
     fn le_parseur_lit_les_vrais_anciens_fichiers() {
-        if !std::path::Path::new("/home/mat/.typst-writer/projets").is_dir() {
-            println!("les projets réels ne sont pas là : test sauté");
+        if !std::path::Path::new("/home/mat/.typst-writer/projets/mon-travail/references.bib").is_file() {
+            println!("les fichiers bibliographiques réels ne sont pas là : test sauté");
             return;
         }
         for chemin in [

@@ -69,17 +69,23 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
             )
         };
 
-        let valeur = match champ {
-            "background" => hexa(couleurs.background),
-            "surface" => hexa(couleurs.surface),
-            "text" => hexa(couleurs.text),
-            "accent" => hexa(couleurs.accent),
-            "text_muted" => couleurs.text_muted.map(hexa).unwrap_or_default(),
-            "border" => couleurs.border.map(hexa).unwrap_or_default(),
-            "danger" => couleurs.danger.map(hexa).unwrap_or_default(),
-            "warning" => couleurs.warning.map(hexa).unwrap_or_default(),
-            _ => couleurs.success.map(hexa).unwrap_or_default(),
-        };
+        // La saisie brute de l'utilisateur passe avant la valeur formatée :
+        // une frappe incomplète (`#1a`) ne doit pas être éjectée.
+        let valeur = state
+            .editeur_theme_textes
+            .get(champ)
+            .cloned()
+            .unwrap_or_else(|| match champ {
+                "background" => hexa(couleurs.background),
+                "surface" => hexa(couleurs.surface),
+                "text" => hexa(couleurs.text),
+                "accent" => hexa(couleurs.accent),
+                "text_muted" => couleurs.text_muted.map(hexa).unwrap_or_default(),
+                "border" => couleurs.border.map(hexa).unwrap_or_default(),
+                "danger" => couleurs.danger.map(hexa).unwrap_or_default(),
+                "warning" => couleurs.warning.map(hexa).unwrap_or_default(),
+                _ => couleurs.success.map(hexa).unwrap_or_default(),
+            });
 
         // La pastille montre la couleur telle qu'elle sera : les mots ne
         // suffisent pas à choisir une teinte (bug 10 du rapport 2).

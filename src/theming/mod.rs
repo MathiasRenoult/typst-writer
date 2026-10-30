@@ -513,7 +513,10 @@ impl ThemeFile {
         theme.meta.name = name;
         theme.source = path.map(Path::to_path_buf);
 
-        theme.check()?;
+        let (erreurs, _avertissements) = theme.check();
+        if let Some(erreur) = erreurs.into_iter().next() {
+            return Err(erreur);
+        }
 
         Ok(theme)
     }
@@ -526,18 +529,22 @@ impl ThemeFile {
         Self::parse(&text, Some(path))
     }
 
-    /// Vérifie ce qu'aucun type ne peut exprimer.
+    /// Vérifie ce qu'aucun type ne peut exprimer, en séparant les **erreurs
+    /// bloquantes** (un thème inutilisable) des **avertissements** (un thème
+    /// laid mais fonctionnel).
     ///
-    /// Une couleur est toujours valide une fois convertie : ce qui reste à
-    /// contrôler, ce sont les **relations** entre elles. Un fond de page égal
-    /// au fond de l'application rend les marges invisibles ; une police de
-    /// corps nulle ou une interligne absurde casserait l'éditeur. Autant le
-    /// dire au chargement, où l'on peut encore nommer le fichier fautif.
-    fn check(&self) -> Result<(), String> {
+    /// Un fond égal au fond des panneaux rend les marges invisibles : c'est
+    /// un avertissement, pas une raison de refuser le thème. Une police de
+    /// 0 pixel ou une interligne négative casseraient l'éditeur : ce sont
+    /// des erreurs.
+    fn check(&self) -> (Vec<String>, Vec<String>) {
+        let mut erreurs = Vec::new();
+        let mut avertissements = Vec::new();
+
         if self.colors.background.0 == self.colors.surface.0 {
-            return Err(
+            avertissements.push(
                 "« colors.background » et « colors.surface » sont identiques : la marge de la \
-                 page ne se verrait plus"
+                 page ne se verra plus"
                     .to_string(),
             );
         }
@@ -545,7 +552,7 @@ impl ThemeFile {
         if let Some(size) = self.fonts.editor_size
             && !(6.0..=72.0).contains(&size)
         {
-            return Err(format!(
+            erreurs.push(format!(
                 "« fonts.editor_size » vaut {size} : attendu entre 6 et 72 pixels"
             ));
         }
@@ -553,12 +560,12 @@ impl ThemeFile {
         if let Some(height) = self.fonts.line_height
             && !(0.8..=4.0).contains(&height)
         {
-            return Err(format!(
+            erreurs.push(format!(
                 "« fonts.line_height » vaut {height} : attendu entre 0,8 et 4"
             ));
         }
 
-        Ok(())
+        (erreurs, avertissements)
     }
 }
 
@@ -1212,10 +1219,12 @@ mod tests {
         assert!(error.contains("accnet"), "message obtenu : {error}");
     }
 
-    /// Un fond de page identique au fond d'application rend la marge invisible.
+    /// Un fond de page identique au fond d'application rend la marge
+    /// invisible : c'est un **avertissement**, pas un refus. Le thème se
+    /// charge et s'utilise, mais le problème est dit.
     #[test]
-    fn identical_background_and_surface_are_refused() {
-        let error = ThemeFile::parse(
+    fn identical_background_and_surface_warn() {
+        let theme = ThemeFile::parse(
             r##"
             [meta]
             name = "Plat"
@@ -1228,9 +1237,14 @@ mod tests {
             "##,
             None,
         )
-        .unwrap_err();
+        .expect("le thème se charge malgré le contraste");
 
-        assert!(error.contains("surface"), "message obtenu : {error}");
+        let (erreurs, avertissements) = theme.check();
+        assert!(erreurs.is_empty(), "pas d'erreur bloquante : {erreurs:?}");
+        assert!(
+            avertissements.iter().any(|a| a.contains("surface")),
+            "avertissement de contraste attendu : {avertissements:?}"
+        );
     }
 
     /// Une taille de texte absurde est refusée au chargement, où l'on peut
@@ -1509,7 +1523,15 @@ mod tests {
 /// C'est le geste de l'éditeur de thème : la copie de travail devient le
 /// thème. Le fichier est cherché par le nom du thème — celui qui l'a
 /// chargé sait où il vit.
-pub fn enregistrer(fichier: &ThemeFile) -> Result<(), String> {
+pub fn enregistrer(fichier: &ThemeFile) -> Result<Vec<String>, String> {
+    // Ne jamais écraser un thème valide par un fichier invalide : les
+    // erreurs bloquantes refusent l'enregistrement, les avertissements
+    // sont rapportés sans empêcher la sauvegarde.
+    let (erreurs, avertissements) = fichier.check();
+    if let Some(erreur) = erreurs.into_iter().next() {
+        return Err(format!("Le thème n'est pas enregistré : {erreur}."));
+    }
+
     let dossier = themes_dir();
 
     let chemin = std::fs::read_dir(&dossier)
@@ -1529,7 +1551,9 @@ pub fn enregistrer(fichier: &ThemeFile) -> Result<(), String> {
         .map_err(|erreur| format!("Le thème ne s'écrit pas : {erreur}."))?;
 
     crate::project::ecrire_atomique(&chemin, &texte)
-        .map_err(|erreur| format!("Le fichier du thème ne s'écrit pas : {erreur}."))
+        .map_err(|erreur| format!("Le fichier du thème ne s'écrit pas : {erreur}."))?;
+
+    Ok(avertissements)
 }
 
 #[cfg(test)]

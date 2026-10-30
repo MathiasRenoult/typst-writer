@@ -125,6 +125,7 @@ impl State {
             drag_projet: None,
             drag_etagere: None,
             editeur_theme: None,
+            editeur_theme_textes: std::collections::HashMap::new(),
             survol_reference: None,
             survol_onglet: None,
             zotero_recherche: String::new(),
@@ -606,12 +607,18 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
             if let Some(fichier) = fichier {
                 state.editeur_theme = Some(fichier);
+                state.editeur_theme_textes.clear();
             }
 
             Task::none()
         }
 
         Message::ThemeEditeurChamp(champ, valeur) => {
+            // La saisie brute reste dans le champ, même incomplète : c'est
+            // elle que l'utilisateur voit. La couleur n'est mise à jour
+            // que si la valeur se parse.
+            state.editeur_theme_textes.insert(champ.to_string(), valeur.clone());
+
             if let Some(fichier) = state.editeur_theme.as_mut() {
                 let Ok(valeur) = crate::theming::HexColor::parse(valeur.trim()) else {
                     return Task::none();
@@ -646,12 +653,14 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                     .and_then(|t| t.file.clone())
             {
                 state.editeur_theme = Some(theme);
+                state.editeur_theme_textes.clear();
             }
             Task::none()
         }
 
         Message::ThemeEditeurFermer => {
             state.editeur_theme = None;
+            state.editeur_theme_textes.clear();
             Task::none()
         }
 
@@ -661,15 +670,21 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             };
 
             match crate::theming::enregistrer(&fichier) {
-                Ok(()) => {
+                Ok(avertissements) => {
                     state.editeur_theme = None;
                     // Le thème enregistré s'applique aussitôt : recharger
                     // la liste et re-résoudre le thème courant.
                     crate::app::themes::refresh_themes(state);
                     crate::app::themes::retheme(state);
-                    state.note = Some(crate::app::state::Note::info(
-                        "Le thème est enregistré et appliqué.".to_string(),
-                    ));
+                    let message = if avertissements.is_empty() {
+                        "Le thème est enregistré et appliqué.".to_string()
+                    } else {
+                        format!(
+                            "Le thème est enregistré et appliqué. Avertissement : {}",
+                            avertissements.join(" ; ")
+                        )
+                    };
+                    state.note = Some(crate::app::state::Note::info(message));
                     Task::none()
                 }
                 Err(message) => {
