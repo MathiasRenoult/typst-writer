@@ -21,14 +21,14 @@ pub(crate) const BAR_HEIGHT: f32 = 42.0;
 /// Ce sont des noms reconnus par Typst : le générateur les passe tels quels
 /// dans `#text(fill: …)`, donc aucun choix ici ne peut produire une couleur
 /// inconnue du compilateur.
-const COULEURS: [(&str, &str); 7] = [
-    ("Rouge", "red"),
-    ("Bleu", "blue"),
-    ("Vert", "green"),
-    ("Orange", "orange"),
-    ("Violet", "purple"),
-    ("Noir", "black"),
-    ("Gris", "gray"),
+const COULEURS: [(&str, &str, &str); 7] = [
+    ("Rouge", "red", "#e74c3c"),
+    ("Bleu", "blue", "#3498db"),
+    ("Vert", "green", "#27ae60"),
+    ("Orange", "orange", "#e67e22"),
+    ("Violet", "purple", "#9b59b6"),
+    ("Noir", "black", "#1a1a2e"),
+    ("Gris", "gray", "#7f8c8d"),
 ];
 
 
@@ -149,7 +149,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // TOPBAR-06 : la pastille applique la dernière couleur choisie,
         // le picker ouvre le choix. La pastille mémorise la couleur courante.
         let derniere = state.derniere_couleur.clone().unwrap_or_else(|| "red".to_string());
-        let couleur_actuelle = crate::theming::HexColor::parse(&derniere).ok().map(|c| c.0);
+        // TOPBAR-04-06 : la pastille montre la vraie couleur, pas un nom.
+        let couleur_actuelle = COULEURS
+            .iter()
+            .find(|(_, nom, _)| *nom == derniere)
+            .and_then(|(_, _, hex)| crate::theming::HexColor::parse(hex).ok().map(|c| c.0))
+            .or_else(|| crate::theming::HexColor::parse(&derniere).ok().map(|c| c.0));
 
         let pastille = iced::widget::button(
             iced::widget::container(
@@ -192,7 +197,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         bar = bar.push(format_picker(
             COULEURS
                 .iter()
-                .map(|(libelle, _)| (*libelle).to_string())
+                .map(|(libelle, _, _)| (*libelle).to_string())
                 .collect(),
             "Choisir une couleur",
             |choisi| {
@@ -478,8 +483,8 @@ fn format_button<'a>(
 fn couleur_typst(label: &str) -> Option<&'static str> {
     COULEURS
         .iter()
-        .find(|(libelle, _)| *libelle == label)
-        .map(|(_, nom)| *nom)
+        .find(|(libelle, _, _)| *libelle == label)
+        .map(|(_, nom, _)| *nom)
 }
 
 

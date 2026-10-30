@@ -1616,6 +1616,11 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            // TOPBAR-04-07 : toute couleur choisie devient la couleur courante.
+            if let crate::app::message::FormatAction::Couleur(ref nom) = action {
+                state.derniere_couleur = Some(nom.clone());
+            }
+
             // Le bouton « citation » est un `@` tapé par la main de l'outil.
             let declencheur_tape = matches!(action, crate::app::message::FormatAction::Citation);
 
