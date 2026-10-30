@@ -28,9 +28,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
-    // Le bouton de réduction, dans le panneau lui-même — LEFT-01.
+    // LEFT-04-03 : le nom du document en en-tête, avec le bouton de
+    // réduction. Pas d'onglet « Document » séparé.
+    let doc_nom = project
+        .document
+        .as_ref()
+        .map(|d| d.file_name().unwrap_or_default().to_string_lossy().to_string())
+        .unwrap_or_else(|| project.name.clone());
+
     content = content.push(
         row![
+            palette
+                .label(doc_nom.clone())
+                .size(theme::jetons::SAILLANT)
+                .color(palette.text),
             Space::new().width(Length::Fill),
             button(theme::icon(
                 lucide_icons::iced::icon_panel_left_close::<Theme>(),
@@ -54,54 +65,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     content = content.push(Space::new().height(14));
 
-    // Le jalon 2 réduit le projet à un document d'écriture unique. Les anciens
-    // chapitres restent conservés sur disque ; ils ne sont plus la navigation
-    // principale après leur migration.
+    // LEFT-04-02 : la section « Document » est supprimée — le nom du
+    // document est en en-tête, le compte de mots dans la barre d'état.
     if let Some(document) = project.document.as_ref() {
-        content = content.push(section_title("Document", palette));
-
-        let active = state.editor.path.as_deref() == Some(document.as_path());
-        let line = row![
-            theme::icon(
-                lucide_icons::iced::icon_file_text::<Theme>(),
-                14.0,
-                if active {
-                    palette.accent
-                } else {
-                    palette.text_muted
-                },
-            ),
-            palette
-                .label("document.tw")
-                .size(theme::jetons::SAILLANT)
-                .color(if active { palette.accent } else { palette.text }),
-            Space::new().width(Length::Fill),
-            palette
-                .label(format!("{} mots", format_count(state.word_count())))
-                .size(theme::jetons::DETAIL)
-                .color(palette.text_muted),
-        ]
-        .spacing(7)
-        .align_y(Alignment::Center);
-
-        // La liaison du bouton à l'éditeur fait de ce fichier l'unique point
-        // d'entrée pour écrire ; les anciens chapitres ne sont plus édités par
-        // erreur depuis la liste.
-        content = content.push(
-            button(line)
-                .on_press(Message::OpenChapter(document.clone()))
-                .width(Fill)
-                .height(Length::Fixed(ENTRY_HEIGHT))
-                .padding([4, 8])
-                .style(move |t, status| entry_style(t, status, palette, active)),
-        );
-
-        if !project.chapters.is_empty() {
-            // Les anciens chapitres sont conservés sur disque mais ne sont
-            // plus la navigation principale — leur rappel ici n'apporte rien
-            // au flux de travail.
-        }
-
+        let _ = document;
         let orphan_count = project.orphan_chapters().count();
         if orphan_count > 0 {
             content = content.push(
