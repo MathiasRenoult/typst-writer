@@ -110,14 +110,14 @@ impl Regles {
     }
 
     /// Le français : insécable devant les signes doubles et à l'intérieur des
-    /// guillemets ; `«`, `"` puis `'` par niveau d'imbrication.
+    /// guillemets ; `«», ‹›, ""` par niveau d'imbrication.
     pub fn francaise() -> Self {
         Self {
             avant_signes: Espace::Insécable,
             apres_signes: Espace::Normale,
             apres_virgule_point: Espace::Normale,
             espace_guillemets: Espace::Insécable,
-            guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
+            guillemets: vec![('«', '»'), ('‹', '›'), ('"', '"')],
             numerotation_figures: String::new(),
         }
     }
@@ -445,15 +445,15 @@ mod tests {
         assert_eq!(appliquer("1,2", &regles), "1,2");
     }
 
-    /// Les guillemets se composent par niveau d'imbrication : `«`, `"` puis
-    /// `'` en français — la notation de la syntaxe reste `«` et `»`.
+    /// Les guillemets se composent par niveau d'imbrication : `«`, `‹` puis
+    /// `"` en français — la notation de la syntaxe reste `«` et `»`.
     #[test]
     fn les_guillemets_suivent_leur_niveau() {
         let regles = Regles::francaise();
 
         assert_eq!(
             appliquer("« un « deux » fin »", &regles),
-            format!("«{INSECABLE}un \"{INSECABLE}deux{INSECABLE}\" fin{INSECABLE}»")
+            format!("«{INSECABLE}un ‹{INSECABLE}deux{INSECABLE}› fin{INSECABLE}»")
         );
 
         // La même notation compose autrement en anglais : le guillemet
@@ -475,7 +475,7 @@ mod tests {
 
         assert_eq!(
             appliquer("\"Double \"Insertion\" et quotes\"", &française),
-            "«Double \"Insertion\" et quotes»"
+            "«Double ‹Insertion› et quotes»"
         );
 
         let anglaise = Regles::anglaise();
