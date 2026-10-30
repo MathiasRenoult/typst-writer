@@ -198,7 +198,7 @@ impl State {
         self.save_session();
     }
 
-    fn ouvrir_projet_espace(&mut self, dir: PathBuf) {
+    fn ouvrir_projet_espace(&mut self, dir: PathBuf, ouverture: Ouverture) {
         let projet = crate::project::load(&dir);
         if !self.espace.verrous.contains_key(&dir) {
             match crate::project::Verrou::prendre(&dir) {
@@ -215,7 +215,7 @@ impl State {
         let projet = crate::project::load(&dir);
         let chemin = projet.document.clone().unwrap_or_else(|| projet.main.clone());
         match std::fs::read_to_string(&chemin) {
-            Ok(contenu) => { self.ouvrir_vue(projet, chemin, contenu, Ouverture::Remplacer); if self.project.dir == dir { self.projets_vue = false; } },
+            Ok(contenu) => { self.ouvrir_vue(projet, chemin, contenu, ouverture); if self.project.dir == dir { self.projets_vue = false; } },
             Err(e) => self.note = Some(Note::erreur(format!("Ouverture : {e}"))),
         }
     }
@@ -384,11 +384,21 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.save_session();
             task
         }
-        Message::OpenProject(dir) | Message::OngletChoisir(dir) => { state.ouvrir_projet_espace(dir); Task::none() }
+        Message::OpenProject(dir) => {
+            // NAV-06-01 : Shift ou Ctrl = nouvel onglet, sans remplacer l'actif.
+            let ouverture = if state.maj_tenu || state.controle_tenu {
+                Ouverture::Nouvel
+            } else {
+                Ouverture::Remplacer
+            };
+            state.ouvrir_projet_espace(dir, ouverture);
+            Task::none()
+        }
+        Message::OngletChoisir(dir) => { state.ouvrir_projet_espace(dir, Ouverture::Remplacer); Task::none() }
         Message::NewProject => {
             let nom = super::next_project_name(&state.projects);
             match crate::project::create(&nom) {
-                Ok(dir) => { state.projects = crate::project::list_projects(); state.ouvrir_projet_espace(dir); }
+                Ok(dir) => { state.projects = crate::project::list_projects(); state.ouvrir_projet_espace(dir, Ouverture::Remplacer); }
                 Err(e) => state.note = Some(Note::erreur(format!("Création du projet : {e}"))),
             }
             Task::none()
