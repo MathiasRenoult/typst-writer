@@ -166,18 +166,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
             iced::widget::tooltip::Position::Bottom,
         ).gap(6));
 
+        // TOPBAR-04-08 : le picker de l'éditeur — palette de base.
+        // Le choix libre passe par l'éditeur de thème (picker RVB).
         bar = bar.push(format_picker(
             COULEURS
                 .iter()
                 .map(|(libelle, _, _)| (*libelle).to_string())
                 .collect(),
-            "Choisir une couleur",
+            "Couleur",
             |choisi| {
                 let nom = couleur_typst(&choisi).unwrap_or("red").to_string();
                 Message::Format(crate::app::message::FormatAction::Couleur(nom))
             },
             palette,
-            96.0,
+            80.0,
         ));
         bar = bar.push(format_button(
             "N",
