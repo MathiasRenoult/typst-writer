@@ -271,6 +271,16 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 ecrire_inline(contenu, out);
                 out.push_str("***");
             }
+            Inline::Souligne(contenu) => {
+                out.push_str("__");
+                ecrire_inline(contenu, out);
+                out.push_str("__");
+            }
+            Inline::Barre(contenu) => {
+                out.push_str("~~");
+                ecrire_inline(contenu, out);
+                out.push_str("~~");
+            }
             Inline::Formule(texte) => {
                 out.push('$');
                 out.push_str(texte);

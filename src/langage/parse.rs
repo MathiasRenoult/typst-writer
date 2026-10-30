@@ -770,6 +770,22 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
             continue;
         }
 
+        // Souligné : `__texte__`.
+        if let Some((contenu, apres)) = emphasis(reste, "__") {
+            vider!();
+            elements.push(Inline::Souligne(parse_inline(contenu)));
+            reste = apres;
+            continue;
+        }
+
+        // Barré : `~~texte~~`.
+        if let Some((contenu, apres)) = emphasis(reste, "~~") {
+            vider!();
+            elements.push(Inline::Barre(parse_inline(contenu)));
+            reste = apres;
+            continue;
+        }
+
         // Italique : `*texte*` ou `_texte_` (la seconde forme sert à
         // l'imbrication : `**gras _et italique_**`). Le `_`, lui, n'ouvre
         // qu'à une **frontière de mot** : `snake_case` est du texte

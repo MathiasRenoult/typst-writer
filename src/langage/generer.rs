@@ -93,6 +93,8 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)
+            | Inline::Souligne(contenu)
+            | Inline::Barre(contenu)
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => premier_caractere(contenu),
             Inline::Lien { texte, .. } => premier_caractere(texte),
@@ -339,6 +341,18 @@ fn generer_inline(
                 out.push_str("*_");
                 generer_inline(contenu, out, false, regles, contexte);
                 out.push_str("_*");
+                en_tete = false;
+            }
+            Inline::Souligne(contenu) => {
+                out.push_str("#underline[");
+                generer_inline(contenu, out, false, regles, contexte);
+                out.push(']');
+                en_tete = false;
+            }
+            Inline::Barre(contenu) => {
+                out.push_str("#strike[");
+                generer_inline(contenu, out, false, regles, contexte);
+                out.push(']');
                 en_tete = false;
             }
             Inline::Code(texte) => {

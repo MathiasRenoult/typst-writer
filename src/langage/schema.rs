@@ -204,6 +204,10 @@ pub enum Inline {
     Italique(Vec<Inline>),
     /// Du texte en gras et en italique.
     GrasItalique(Vec<Inline>),
+    /// Du texte souligné : `__texte__`.
+    Souligne(Vec<Inline>),
+    /// Du texte barré : `~~texte~~`.
+    Barre(Vec<Inline>),
     /// Du code inline.
     Code(String),
     /// Du texte coloré.
@@ -391,10 +395,14 @@ impl Inline {
                 !texte.is_empty()
                     && !texte.contains('\n')
                     && !texte
-                        .contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$'])
+                        .contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$', '~'])
             }
             Inline::Litteral(texte) => !texte.is_empty() && !texte.contains('\n'),
-            Inline::Gras(contenu) | Inline::Italique(contenu) | Inline::GrasItalique(contenu) => {
+            Inline::Gras(contenu)
+            | Inline::Italique(contenu)
+            | Inline::GrasItalique(contenu)
+            | Inline::Souligne(contenu)
+            | Inline::Barre(contenu) => {
                 est_emphase_canonique(contenu)
             }
             // Le code est littéral : son délimiteur n'y paraît pas.
@@ -426,7 +434,7 @@ impl Inline {
     pub fn est_emphase(&self) -> bool {
         matches!(
             self,
-            Inline::Gras(_) | Inline::Italique(_) | Inline::GrasItalique(_)
+            Inline::Gras(_) | Inline::Italique(_) | Inline::GrasItalique(_) | Inline::Souligne(_) | Inline::Barre(_)
         )
     }
 }
@@ -580,6 +588,8 @@ fn contient_emphase(inline: &[Inline]) -> bool {
         Inline::Gras(contenu)
         | Inline::Italique(contenu)
         | Inline::GrasItalique(contenu)
+        | Inline::Souligne(contenu)
+        | Inline::Barre(contenu)
         | Inline::Note(contenu)
         | Inline::Couleur { contenu, .. } => contient_emphase(contenu) || element.est_emphase(),
         Inline::Lien { texte, .. } => contient_emphase(texte),
@@ -653,6 +663,8 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)
+            | Inline::Souligne(contenu)
+            | Inline::Barre(contenu)
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => out.push_str(&inline_texte_nu(contenu)),
             Inline::Code(texte) | Inline::Formule(texte) => out.push_str(texte),

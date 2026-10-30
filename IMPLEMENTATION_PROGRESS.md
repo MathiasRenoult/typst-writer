@@ -23,16 +23,16 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | WINDOWS-02 — règles de clic pour ouvrir | TODO | | | |
 | NORMS-01 — chevauchement barre de défilement | TODO | | | |
 | NORMS-02 — prévisualisation au mauvais endroit | TODO | | | |
-| FIND-03 — dépassement des placeholders | TODO | | | |
+| FIND-03 — dépassement des placeholders | DONE | ui/recherche.rs | Length::Fill au lieu de Fixed | |
 
 ## Lot 3 — Éditeur et rendu (P1+P2)
 
 | Demande | État | Fichiers | Tests | Notes |
 |---|---|---|---|---|
-| EDITOR-01 — couleur de fond unifiée | TODO | | | |
-| EDITOR-02 — Ctrl+Suppr supprime un mot | TODO | | | |
+| EDITOR-01 — couleur de fond unifiée | DONE | ui/theme.rs | editor.background = colors.background | Déjà résolu par le code existant |
+| EDITOR-02 — Ctrl+Suppr supprime un mot | DONE | vendor/iced-code-editor | DeleteWord + handle_delete_word | PATCHES.md point 16 |
 | RENDER-02 — netteté du rendu | TODO | | | |
-| RENDER-01 — limite de zoom | TODO | | | |
+| RENDER-01 — limite de zoom | DONE | ui/preview.rs | MAX_DISPLAY_RATIO = 5.0 | 500% au lieu de 200% |
 
 ## Lot 4 — Organisation de l'interface (P2)
 
@@ -40,26 +40,26 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 |---|---|---|---|---|
 | LEFT-01 — déplacer le bouton de réduction | TODO | | | |
 | LEFT-02 — supprimer le bloc redondant | TODO | | | |
-| LEFT-03 — supprimer les anciens chapitres | TODO | | | |
+| LEFT-03 — supprimer les anciens chapitres | DONE | ui/sidebar.rs | section retirée | |
 | LEFT-04 — sommaire en arborescence | TODO | | | |
 | LEFT-06 — intitulé bibliographie | TODO | | | |
 | LEFT-07 — comptage des entrées | TODO | | | |
 | LEFT-08 — année de publication | TODO | | | |
 | LEFT-09 — filtres de bibliothèque | TODO | | | |
-| LEFT-10 — onglet Document | TODO | | | |
+| LEFT-10 — onglet Document | DONE | ui/sidebar.rs | « N mots » libellé | |
 | LEFT-11 — actions projet au survol | TODO | | | |
 | TOPBAR-01 — supprimer nom technique | TODO | | | |
 | TOPBAR-02 — réorganiser les boutons | TODO | | | |
 | TOPBAR-04 — alignement icônes | TODO | | | |
 | TOPBAR-06 — commande de couleur | TODO | | | |
 | TOPBAR-07 — boutons d'aperçu obsolètes | TODO | | | |
-| TOPBAR-08 — commandes de zoom | TODO | | | |
+| TOPBAR-08 — commandes de zoom | DONE | ui/preview.rs, ui/toolbar.rs | zoom bar dans le rendu | |
 | TOPBAR-09 — thèmes à droite | TODO | | | |
 | TOPBAR-10 — supprimer commandes thèmes | TODO | | | |
 | TOPBAR-11 — thèmes favoris | TODO | | | |
 | TOPBAR-12 — bouton bibliothèque | TODO | | | |
 | TOPBAR-13 — éditeur de thèmes avec thèmes | TODO | | | |
-| FOCUS-01 — masquer barre inférieure | TODO | | | |
+| FOCUS-01 — masquer barre inférieure | DONE | ui/mod.rs | status_bar retiré du mode focus | |
 | FOCUS-02 — centrer le rendu | TODO | | | |
 | NORMS-03 — curseur interactif | TODO | | | |
 | NORMS-05 — commandes en haut | TODO | | | |
