@@ -510,7 +510,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
 fn update_interne(state: &mut State, message: Message) -> Task<Message> {
     match message {
-        Message::RetourDocument(..) | Message::VersVue(..) | Message::RetourVue(..) | Message::VueChoisir(..) | Message::VueFermer(..) | Message::VueDupliquer | Message::Scinder(..) | Message::OngletSuivant | Message::PanneauChoisir(..) | Message::PanneauRedimensionner(..) | Message::OngletPrendre(..) | Message::OngletCible(..) | Message::OngletPoser => unreachable!("messages traités par l’espace"),
+        Message::RetourDocument(..) | Message::VersVue(..) | Message::RetourVue(..) | Message::VueChoisir(..) | Message::VueFermer(..) | Message::VueDupliquer | Message::Scinder(..) | Message::OngletSuivant | Message::PanneauSuivant | Message::PanneauChoisir(..) | Message::PanneauRedimensionner(..) | Message::OngletPrendre(..) | Message::OngletCible(..) | Message::OngletPoser => unreachable!("messages traités par l’espace"),
         // Une notice locale se supprime — vers la corbeille, avec son mot.
         Message::ReferenceSupprimer(cle) => {
             if !state.geste_confirme {
@@ -2817,7 +2817,11 @@ fn plan_touche(
     }
 
     if modifiers.control() && matches!(key, Key::Named(Named::Tab)) {
-        return Action::Message(Message::OngletSuivant);
+        return if modifiers.shift() {
+            Action::Message(Message::PanneauSuivant)
+        } else {
+            Action::Message(Message::OngletSuivant)
+        };
     }
 
     let Key::Character(character) = key else {

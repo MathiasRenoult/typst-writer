@@ -27,6 +27,7 @@ pub enum Message {
     VueDupliquer,
     Scinder(iced::widget::pane_grid::Edge),
     OngletSuivant,
+    PanneauSuivant,
     PanneauChoisir(iced::widget::pane_grid::Pane),
     PanneauRedimensionner(iced::widget::pane_grid::ResizeEvent),
     OngletPrendre(u64),

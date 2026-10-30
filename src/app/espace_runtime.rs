@@ -298,6 +298,17 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             if let Some(id) = state.espace.grille.get(p).and_then(|p| p.onglets.get(p.actif)).copied() { state.choisir_vue(id); }
             Task::none()
         }
+        Message::PanneauSuivant => {
+            // WINDOWS-01 : le focus passe au panneau suivant, cycliquement.
+            let panneaux: Vec<_> = state.espace.grille.iter().map(|(&id, _)| id).collect();
+            if let Some(position) = panneaux.iter().position(|&id| id == state.espace.focus) {
+                let suivant = panneaux[(position + 1) % panneaux.len()];
+                if let Some(id) = state.espace.grille.get(suivant).and_then(|p| p.onglets.get(p.actif)).copied() {
+                    state.choisir_vue(id);
+                }
+            }
+            Task::none()
+        }
         Message::PanneauRedimensionner(e) => {
             state.espace.grille.resize(e.split, e.ratio.clamp(0.1, 0.9));
             state.save_session();
