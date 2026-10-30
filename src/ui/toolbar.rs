@@ -42,22 +42,24 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut bar = row![].spacing(SPACING).align_y(Alignment::Center);
 
-    // Fichier.
+    // TOPBAR-04-10 : les normes tout à gauche — la mise en page est le
+    // cadre du travail, pas une commande parmi d'autres.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_file_cog::<Theme>(),
+        "Les normes du document : papier, marges, titres, couleurs (Ctrl+P)",
+        Message::MiseEnPageOuvrir,
+        palette,
+        state.mise_en_page.is_some(),
+    ));
+
+    bar = bar.push(separation(palette));
+
+    // Fichier : les commandes essentielles. L'ouverture, l'import et la
+    // sauvegarde se font par le clavier ou la bibliothèque — TOPBAR-04-02.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_file::<Theme>(),
         "Ouvrir le document d'écriture du projet (Ctrl+N)",
         Message::NewFile,
-        palette,
-        false,
-    ));
-
-    // TOPBAR-03 : l'import regroupe le chargement de fichiers externes.
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_folder_open::<Theme>(),
-        // Le libellé dit ce que fait l'action : le fichier est ajouté au projet,
-        // il n'est pas seulement affiché.
-        "Importer un document .tw ou .typ dans le projet (Ctrl+O)",
-        Message::OpenFile,
         palette,
         false,
     ));
@@ -68,22 +70,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         Message::ProjetsVue,
         palette,
         state.projets_vue,
-    ));
-
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_save::<Theme>(),
-        "Enregistrer (Ctrl+S)",
-        Message::SaveFile,
-        palette,
-        state.editor.is_modified(),
-    ));
-
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_save_all::<Theme>(),
-        "Enregistrer sous… (Ctrl+Maj+S)",
-        Message::SaveAs,
-        palette,
-        false,
     ));
 
     bar = bar.push(icon_button(
@@ -256,15 +242,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         // TOPBAR-04-09 : les commandes d'aperçu sont supprimées — la
         // fenêtre de rendu se gère depuis l'espace de travail.
-
-        // Les normes du document : papier, marges, titres, couleurs.
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_file_cog::<Theme>(),
-            "Les normes du document : papier, marges, titres, couleurs (Ctrl+P)",
-            Message::MiseEnPageOuvrir,
-            palette,
-            state.mise_en_page.is_some(),
-        ));
+        // Les normes sont à gauche (TOPBAR-04-10), pas ici.
     }
 
     bar = bar.push(icon_button(
