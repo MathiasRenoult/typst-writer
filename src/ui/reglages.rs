@@ -271,8 +271,8 @@ fn corps_mise_en_page(
                 "Marges (haut, bas)",
                 "La marge verticale. Toute mesure Typst : 2cm, 1in, 24pt.",
                 row![
-                    saisie(palette, &reglages.marges.haut, Champ::MargeHaut, "2cm"),
-                    saisie(palette, &reglages.marges.bas, Champ::MargeBas, "2cm"),
+                    saisie_numerique(palette, &reglages.marges.haut, Champ::MargeHaut, "2cm"),
+                    saisie_numerique(palette, &reglages.marges.bas, Champ::MargeBas, "2cm"),
                 ]
                 .spacing(8)
             ),
@@ -281,8 +281,8 @@ fn corps_mise_en_page(
                 "Marges (gauche, droite)",
                 "La marge horizontale. Toute mesure Typst : 2cm, 1in, 24pt.",
                 row![
-                    saisie(palette, &reglages.marges.gauche, Champ::MargeGauche, "2cm"),
-                    saisie(palette, &reglages.marges.droite, Champ::MargeDroite, "2cm"),
+                    saisie_numerique(palette, &reglages.marges.gauche, Champ::MargeGauche, "2cm"),
+                    saisie_numerique(palette, &reglages.marges.droite, Champ::MargeDroite, "2cm"),
                 ]
                 .spacing(8)
             ),
@@ -344,7 +344,7 @@ fn corps_mise_en_page(
                 "Corps, langue",
                 "Le corps du texte (11pt) et la langue de césure (fr).",
                 row![
-                    saisie(palette, &reglages.texte.taille, Champ::TexteTaille, "11pt"),
+                    saisie_numerique(palette, &reglages.texte.taille, Champ::TexteTaille, "11pt"),
                     choix(LANGUES, reglages.texte.langue.as_str(), Champ::TexteLangue),
                 ]
                 .spacing(8)
@@ -354,13 +354,13 @@ fn corps_mise_en_page(
                 "Interligne, espace",
                 "L'interligne (0.65em) et l'espace entre les paragraphes (1.2em).",
                 row![
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.texte.interligne,
                         Champ::TexteInterligne,
                         "0.65em"
                     ),
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.texte.espacement,
                         Champ::TexteEspacement,
@@ -373,7 +373,7 @@ fn corps_mise_en_page(
                 palette,
                 "Retrait de la 1re ligne",
                 "Le retrait du premier paragraphe. 0cm pour aucun retrait.",
-                saisie(palette, &reglages.texte.retrait, Champ::TexteRetrait, "0cm")
+                saisie_numerique(palette, &reglages.texte.retrait, Champ::TexteRetrait, "0cm")
             ),
             row![
                 case(
@@ -434,37 +434,37 @@ fn corps_mise_en_page(
                 "Corps des titres 1, 2, 3",
                 "Le corps de chaque niveau de titre.",
                 row![
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.titres.taille_1,
                         Champ::TitresTaille1,
                         "16pt"
                     ),
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.titres.taille_2,
                         Champ::TitresTaille2,
                         "14pt"
                     ),
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.titres.taille_3,
                         Champ::TitresTaille3,
                         "12pt"
                     ),
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.titres.taille_4,
                         Champ::TitresTaille4,
                         "11pt"
                     ),
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.titres.taille_5,
                         Champ::TitresTaille5,
                         "10pt"
                     ),
-                    saisie(
+                    saisie_numerique(
                         palette,
                         &reglages.titres.taille_6,
                         Champ::TitresTaille6,
@@ -666,19 +666,19 @@ fn corps_decor(
                 palette,
                 "Épaisseur",
                 "La graisse du trait : `1pt`, `0.5pt`.",
-                saisie(palette, &decor.epaisseur, Champ::DecorEpaisseur, "1pt")
+                saisie_numerique(palette, &decor.epaisseur, Champ::DecorEpaisseur, "1pt")
             ),
             ligne(
                 palette,
                 "Rayon des coins",
                 "L'arrondi : `4pt`, `0pt` pour un angle droit.",
-                saisie(palette, &decor.rayon, Champ::DecorRayon, "4pt")
+                saisie_numerique(palette, &decor.rayon, Champ::DecorRayon, "4pt")
             ),
             ligne(
                 palette,
                 "Marge intérieure",
                 "L'air entre la bordure et le contenu : `8pt`.",
-                saisie(palette, &decor.marge, Champ::DecorMarge, "8pt")
+                saisie_numerique(palette, &decor.marge, Champ::DecorMarge, "8pt")
             ),
             ligne(
                 palette,
@@ -972,54 +972,86 @@ fn case<'a>(libelle: &'a str, valeur: bool, champ: Champ) -> Element<'a, Message
 }
 
 /// Une saisie de texte.
+/// Un champ de saisie. `numerique` ajoute les flèches d'incrémentation —
+/// NORMS-04-01 : les flèches ne concernent que les valeurs numériques.
 fn saisie(
     palette: Palette,
     valeur: &str,
     champ: Champ,
     exemple: &str,
 ) -> Element<'static, Message> {
+    saisie_interne(palette, valeur, champ, exemple, false)
+}
+
+/// Un champ numérique : flèches d'incrémentation et molette.
+fn saisie_numerique(
+    palette: Palette,
+    valeur: &str,
+    champ: Champ,
+    exemple: &str,
+) -> Element<'static, Message> {
+    saisie_interne(palette, valeur, champ, exemple, true)
+}
+
+fn saisie_interne(
+    palette: Palette,
+    valeur: &str,
+    champ: Champ,
+    exemple: &str,
+    numerique: bool,
+) -> Element<'static, Message> {
     let champ_molette = champ;
     let champ_haut = champ;
     let champ_bas = champ;
-    let fleches = iced::widget::column![
-        button(text("▲").size(8))
-            .on_press(Message::MiseEnPageMolette(champ_haut, 1))
-            .padding([1, 3])
-            .style(move |_, _| button::Style {
-                background: None,
-                text_color: palette.text_muted,
-                ..Default::default()
-            }),
-        button(text("▼").size(8))
-            .on_press(Message::MiseEnPageMolette(champ_bas, -1))
-            .padding([1, 3])
-            .style(move |_, _| button::Style {
-                background: None,
-                text_color: palette.text_muted,
-                ..Default::default()
-            }),
-    ]
-    .spacing(0);
+    let fleches: Element<'static, Message> = if numerique {
+        iced::widget::column![
+            button(text("▲").size(8))
+                .on_press(Message::MiseEnPageMolette(champ_haut, 1))
+                .padding([1, 3])
+                .style(move |_, _| button::Style {
+                    background: None,
+                    text_color: palette.text_muted,
+                    ..Default::default()
+                }),
+            button(text("▼").size(8))
+                .on_press(Message::MiseEnPageMolette(champ_bas, -1))
+                .padding([1, 3])
+                .style(move |_, _| button::Style {
+                    background: None,
+                    text_color: palette.text_muted,
+                    ..Default::default()
+                }),
+        ]
+        .spacing(0)
+        .into()
+    } else {
+        iced::widget::Space::new().width(0.0).into()
+    };
     let champ = text_input(exemple, valeur)
         .on_input(move |texte| Message::MiseEnPageChamp(champ, texte))
         .width(Length::Fixed(140.0))
         .padding(6)
         .size(12);
-    iced::widget::mouse_area(
-        row![champ, fleches].spacing(2).align_y(iced::Alignment::Center),
-    )
-    .on_scroll(move |delta| {
-        let pas = match delta {
-            iced::mouse::ScrollDelta::Lines { y, .. }
-            | iced::mouse::ScrollDelta::Pixels { y, .. } => y,
-        };
-        if pas > 0.0 {
-            Message::MiseEnPageMolette(champ_molette, 1)
-        } else {
-            Message::MiseEnPageMolette(champ_molette, -1)
-        }
-    })
-    .into()
+    let contenu: Element<'static, Message> = if numerique {
+        iced::widget::mouse_area(
+            row![champ, fleches].spacing(2).align_y(iced::Alignment::Center),
+        )
+        .on_scroll(move |delta| {
+            let pas = match delta {
+                iced::mouse::ScrollDelta::Lines { y, .. }
+                | iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+            };
+            if pas > 0.0 {
+                Message::MiseEnPageMolette(champ_molette, 1)
+            } else {
+                Message::MiseEnPageMolette(champ_molette, -1)
+            }
+        })
+        .into()
+    } else {
+        row![champ].align_y(iced::Alignment::Center).into()
+    };
+    contenu
 }
 
 /// Une liste déroulante.
