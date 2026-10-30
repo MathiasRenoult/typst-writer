@@ -675,8 +675,11 @@ pub fn parse_bibliography_text(content: &str) -> Vec<BibliographyEntry> {
     while let Some(debut) = content[curseur..].find('@') {
         let debut = curseur + debut;
 
+        // Une entrée tronquée (accolade non fermée) est ignorée — elle
+        // ne doit pas emporter les suivantes.
         let Some(fin) = fin_d_entree(octets, debut) else {
-            break;
+            curseur = debut + 1;
+            continue;
         };
 
         if let Some(entree) = entree_de(&content[debut..fin]) {
