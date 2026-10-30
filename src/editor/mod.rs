@@ -112,19 +112,17 @@ fn apply_look(editor: &mut iced_code_editor::CodeEditor, resolved: &crate::ui::t
     match &resolved.editor {
         // Un thème de fichier décrit précisément l'éditeur.
         Some(look) => {
-            editor.set_theme(look.style);
+            let mut style = look.style;
+            // Le fond de l'éditeur suit toujours le fond de l'application,
+            // même quand le thème est en cours d'édition.
+            style.background = resolved.palette.background;
+            editor.set_theme(style);
             editor.set_syntax_palette(Some(look.syntax.clone()));
         }
         // Un thème natif délègue au widget, comme avant les thèmes.
-        //
-        // Le fond est alors repris du panneau : c'est ce qui fait apparaître la
-        // zone de rédaction comme une page, et donc ses marges. Sur un fond
-        // uniforme, une marge existe en géométrie mais ne se voit pas.
         None => {
             let mut style = iced_code_editor::from_iced_theme(&resolved.iced);
-
             style.background = resolved.palette.background;
-
             editor.set_theme(style);
             editor.set_syntax_palette(None);
         }

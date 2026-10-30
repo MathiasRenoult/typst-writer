@@ -320,11 +320,13 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::OngletPoser => {
             let glisse = state.espace.glisse.take();
             let cible = state.espace.cible.take();
+            let distance = state.layout.cursor.distance(state.espace.origine_glisse);
             if let (Some(id), Some((p, bord))) = (glisse, cible) {
                 state.espace.deplacer(id, p, bord);
                 state.choisir_vue(id);
-            } else if let Some(id) = glisse {
+            } else if let Some(id) = glisse && distance >= 6.0 {
                 // WINDOWS-04 : dépôt hors panneau = nouveau panneau à droite.
+                // Un clic sans déplacement ne split pas la fenêtre.
                 let focus = state.espace.focus;
                 state.espace.deplacer(id, focus, Some(iced::widget::pane_grid::Edge::Right));
                 state.choisir_vue(id);

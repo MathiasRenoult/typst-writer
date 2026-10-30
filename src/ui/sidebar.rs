@@ -61,10 +61,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
             content = content.push(
                 button(
-                    container(palette.label(label).size(theme::jetons::CORPS))
-                        .align_y(iced::Alignment::Center)
-                        .height(Length::Fill)
-                        .width(Length::Fill),
+                    row![palette.label(label).size(theme::jetons::CORPS)]
+                        .align_y(Alignment::Center)
+                        .height(Length::Fill),
                 )
                 .on_press(Message::GotoHeading(index))
                 .width(Fill)
@@ -351,10 +350,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         let mut ligne = row![
             button(
-                container(palette.label(other.name.clone()).size(theme::jetons::CORPS))
-                    .align_y(iced::Alignment::Center)
-                    .height(Length::Fill)
-                    .width(Length::Fill),
+                row![palette.label(other.name.clone()).size(theme::jetons::CORPS)]
+                    .align_y(Alignment::Center)
+                    .height(Length::Fill),
             )
             .on_press(Message::OpenProject(other.dir.clone()))
             .width(Fill)
@@ -399,21 +397,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // champs et boutons en permanence dans le panneau.
     content = content.push(
         button(
-            container(
-                row![
-                    theme::icon(
-                        lucide_icons::iced::icon_plus::<Theme>(),
-                        13.0,
-                        palette.text_muted
-                    ),
-                    palette.label("Nouveau projet").size(theme::jetons::CORPS),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .align_y(iced::Alignment::Center)
-            .height(Length::Fill)
-            .width(Length::Fill),
+            row![
+                theme::icon(
+                    lucide_icons::iced::icon_plus::<Theme>(),
+                    13.0,
+                    palette.text_muted
+                ),
+                palette.label("Nouveau projet").size(theme::jetons::CORPS),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .height(Length::Fill),
         )
         .on_press(Message::ProjetCreer)
         .width(Fill)
@@ -483,17 +477,12 @@ fn chapter_row<'a>(
             .color(palette.text),
     );
 
-    let title = button(
-        container(label)
-            .align_y(iced::Alignment::Center)
-            .height(Length::Fill)
-            .width(Length::Fill),
-    )
-    .on_press(Message::OpenChapter(chapter.path.clone()))
-    .width(Fill)
-    .height(Length::Fixed(ENTRY_HEIGHT))
-    .padding([4, 8])
-    .style(move |t, status| entry_style(t, status, palette, is_active));
+    let title = button(label)
+        .on_press(Message::OpenChapter(chapter.path.clone()))
+        .width(Fill)
+        .height(Length::Fixed(ENTRY_HEIGHT))
+        .padding([4, 8])
+        .style(move |t, status| entry_style(t, status, palette, is_active));
 
     row![
         tooltip(
@@ -711,16 +700,11 @@ fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette, survolee: bo
     // liste de références est un texte à lire, pas une barre d'outils
     // (bug 13 du rapport 2).
     let mut ligne = row![
-        button(
-            container(registres)
-                .align_y(iced::Alignment::Center)
-                .height(Length::Fill)
-                .width(Length::Fill),
-        )
-        .on_press(Message::InsertCitation(entry.key.clone()))
-        .width(Fill)
-        .padding([7, 8])
-        .style(move |t, status| entry_style(t, status, palette, false)),
+        button(registres)
+            .on_press(Message::InsertCitation(entry.key.clone()))
+            .width(Fill)
+            .padding([7, 8])
+            .style(move |t, status| entry_style(t, status, palette, false)),
     ]
     .spacing(2)
     .align_y(Alignment::Center);

@@ -711,6 +711,10 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 }
             }
 
+            // Le thème s'applique en direct : l'éditeur suit le fond de
+            // l'application, même pendant l'édition du thème.
+            crate::app::themes::retheme(state);
+
             Task::none()
         }
 
