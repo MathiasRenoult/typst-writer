@@ -126,6 +126,7 @@ impl State {
             drag_etagere: None,
             editeur_theme: None,
             editeur_theme_textes: std::collections::HashMap::new(),
+            color_picker: None,
             survol_reference: None,
             survol_onglet: None,
             survol_projet: None,
@@ -616,24 +617,73 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::ThemeEditeurColorPicker(champ) => {
-            // THEME-EDITOR-02 : le color picker natif via zenity.
-            Task::perform(
-                async move {
-                    std::process::Command::new("zenity")
-                        .args(["--color-selection", "--title=Choisir une couleur"])
-                        .output()
-                        .ok()
-                        .and_then(|sortie| {
-                            let texte = String::from_utf8_lossy(&sortie.stdout);
-                            let hex = texte.trim().to_string();
-                            (!hex.is_empty()).then_some((champ, hex))
-                        })
-                },
-                |result| match result {
-                    Some((champ, hex)) => Message::ThemeEditeurChamp(champ, hex),
-                    None => Message::ThemeEditeurChamp("", String::new()),
-                },
-            )
+            // THEME-EDITOR-04-01 : le picker RVB intégré, pas zenity.
+            let courante = state.editeur_theme_textes.get(champ)
+                .and_then(|v| crate::theming::HexColor::parse(v.trim()).ok())
+                .map(|c| {
+                    let (r, g, b) = (c.0.r * 255.0, c.0.g * 255.0, c.0.b * 255.0);
+                    (r as u8, g as u8, b as u8)
+                })
+                .unwrap_or((128, 128, 128));
+            state.color_picker = Some(crate::app::state::ColorPicker {
+                champ,
+                r: courante.0,
+                g: courante.1,
+                b: courante.2,
+            });
+            Task::none()
+        }
+
+        Message::ColorPickerFermer => {
+            state.color_picker = None;
+            Task::none()
+        }
+
+        Message::ColorPickerValider => {
+            if let Some(picker) = state.color_picker.take() {
+                let hex = format!("#{:02x}{:02x}{:02x}", picker.r, picker.g, picker.b);
+                state.editeur_theme_textes.insert(picker.champ.to_string(), hex.clone());
+                if let Some(fichier) = state.editeur_theme.as_mut()
+                    && let Ok(valeur) = crate::theming::HexColor::parse(&hex)
+                {
+                    {
+                        match picker.champ {
+                            "background" => fichier.colors.background = valeur,
+                            "surface" => fichier.colors.surface = valeur,
+                            "text" => fichier.colors.text = valeur,
+                            "accent" => fichier.colors.accent = valeur,
+                            "text_muted" => fichier.colors.text_muted = Some(valeur),
+                            "border" => fichier.colors.border = Some(valeur),
+                            "danger" => fichier.colors.danger = Some(valeur),
+                            "warning" => fichier.colors.warning = Some(valeur),
+                            "success" => fichier.colors.success = Some(valeur),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+
+        Message::ColorPickerR(v) => {
+            if let Some(picker) = state.color_picker.as_mut() {
+                picker.r = v;
+            }
+            Task::none()
+        }
+
+        Message::ColorPickerG(v) => {
+            if let Some(picker) = state.color_picker.as_mut() {
+                picker.g = v;
+            }
+            Task::none()
+        }
+
+        Message::ColorPickerB(v) => {
+            if let Some(picker) = state.color_picker.as_mut() {
+                picker.b = v;
+            }
+            Task::none()
         }
 
         Message::ThemeEditeurChamp(champ, valeur) => {

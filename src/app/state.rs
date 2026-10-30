@@ -159,6 +159,9 @@ pub struct State {
     /// clavier sans être éjectée par le parseur de couleur.
     pub editeur_theme_textes: std::collections::HashMap<String, String>,
 
+    /// Le picker RVB intégré : le champ édité et les composantes RGB.
+    pub color_picker: Option<ColorPicker>,
+
     /// Le nom de l'étagère à poser sur un projet — la vue des projets.
     pub etagere_brouillon: String,
 
@@ -362,6 +365,17 @@ pub struct NoteOverlay {
     /// La plage en octets que la note occupe dans le document.
     pub debut: usize,
     pub fin: usize,
+}
+
+/// Le picker RVB intégré — THEME-EDITOR-04-01.
+#[derive(Debug, Clone)]
+pub struct ColorPicker {
+    /// Le champ de thème édité.
+    pub champ: &'static str,
+    /// Les composantes RGB.
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
 }
 
 /// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
