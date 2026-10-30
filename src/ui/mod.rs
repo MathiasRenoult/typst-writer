@@ -41,12 +41,13 @@ pub fn voile<'a>(arriere_plan: impl Into<Element<'a, Message>>) -> Element<'a, M
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
-    // En mode focus, la barre d'outils disparaît : elle n'a plus d'objet, les
-    // panneaux étant masqués et les commandes de fichier n'étant pas ce qu'on
-    // vient chercher en écrivant. On en sort par F11 ou Échap.
+    // En mode focus, la barre d'outils et la barre d'état disparaissent :
+    // elles n'ont plus d'objet, les panneaux étant masqués et les commandes
+    // de fichier n'étant pas ce qu'on vient chercher en écrivant. On en sort
+    // par F11 ou Échap.
     if state.layout.focus_mode && !state.projets_vue {
         return stack![
-            column![layout::view(state), status_bar::view(state)]
+            iced::widget::container(layout::view(state))
                 .width(Length::Fill)
                 .height(Length::Fill),
             completion::view(state),
