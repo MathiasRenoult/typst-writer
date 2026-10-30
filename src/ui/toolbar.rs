@@ -486,8 +486,8 @@ fn toolbar_text_button<'a>(
     let button = button(palette.label(label).size(12).color(palette.text))
         .on_press(message)
         .padding([4, 6])
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(28.0))
+        .width(Length::Fixed(BUTTON))
+        .height(Length::Fixed(BUTTON))
         .style(move |_, status| button_style(status, palette));
 
     iced::widget::tooltip(
