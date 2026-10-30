@@ -30,13 +30,13 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         .id(id_du_motif())
         .on_input(Message::RechercheMotif)
         .padding(6)
-        .width(Length::Fixed(240.0));
+        .width(Length::Fill);
 
     let remplacement = text_input("remplacement — $1 rappelle un groupe", &etat.remplacement)
         .on_submit(Message::RechercheRemplacer)
         .on_input(Message::RechercheRemplacement)
         .padding(6)
-        .width(Length::Fixed(240.0));
+        .width(Length::Fill);
 
     let compte = if etat.occurrences.is_empty() {
         if etat.motif.is_empty() {
