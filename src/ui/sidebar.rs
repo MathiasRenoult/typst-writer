@@ -81,15 +81,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         );
 
         if !project.chapters.is_empty() {
-            content = content.push(
-                palette
-                    .label(format!(
-                        "{} ancien(s) chapitre(s) conservé(s) en archive",
-                        project.chapters.len()
-                    ))
-                    .size(theme::jetons::CHAPEAU)
-                    .color(palette.text_muted),
-            );
+            // Les anciens chapitres sont conservés sur disque mais ne sont
+            // plus la navigation principale — leur rappel ici n'apporte rien
+            // au flux de travail.
         }
 
         let orphan_count = project.orphan_chapters().count();
