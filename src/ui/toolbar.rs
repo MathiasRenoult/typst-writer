@@ -42,17 +42,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut bar = row![].spacing(SPACING).align_y(Alignment::Center);
 
-    // Le nom du document, à gauche : repère discret, il ne prend pas la place
-    // d'un bouton.
-    bar = bar.push(
-        palette
-            .label(state.editor.filename())
-            .size(13)
-            .color(palette.text_muted),
-    );
-
-    bar = bar.push(separation(palette));
-
     // Fichier.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_file::<Theme>(),
@@ -522,7 +511,7 @@ fn titre_menu(palette: Palette) -> Element<'static, Message> {
     .height(Length::Fixed(BUTTON))
     .style(move |_, statut| button_style(statut, palette));
     iced::widget::tooltip(icone, menu, iced::widget::tooltip::Position::Bottom)
-        .gap(4)
+        .gap(0)
         .into()
 }
 

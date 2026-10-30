@@ -7,10 +7,10 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 
 | Demande | État | Fichiers | Tests | Notes |
 |---|---|---|---|---|
-| THEME-01 — perte de thème à l'enregistrement | TODO | | | |
-| THEME-EDITOR-04 — corruption de thème | TODO | | | |
-| LEFT-12 — fiabiliser le renommage de projet | TODO | | | |
-| NORMS-06 — norme active et état de modification | TODO | | | |
+| THEME-01 — perte de thème à l'enregistrement | DONE | theming/mod.rs | identical_background_and_surface_warn | Contraste = avertissement, pas refus |
+| THEME-EDITOR-04 — corruption de thème | DONE | theming/mod.rs | validation dans enregistrer() | Erreurs bloquent, avertissements passent |
+| LEFT-12 — fiabiliser le renommage de projet | DONE | app/mod.rs, project/mod.rs | verrou libéré avant rename | Plus de faux conflit, nom propagé |
+| NORMS-06 — norme active et état de modification | DONE | state.rs, reglages.rs | norme_originale + modifie | Suivi d'état posé |
 
 ## Lot 2 — Bugs d'interaction (P1)
 
@@ -18,7 +18,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 |---|---|---|---|---|
 | LEFT-05 — toutes les collections dans le sélecteur | TODO | | | |
 | TOPBAR-05 — menu des titres utilisable | TODO | | | |
-| THEME-EDITOR-01 — édition des valeurs hex | TODO | | | |
+| THEME-EDITOR-01 — édition des valeurs hex | DONE | state.rs, theme_editeur.rs | editeur_theme_textes | Saisie brute préservée |
 | WINDOWS-01 — focus entre fenêtres | TODO | | | |
 | WINDOWS-02 — règles de clic pour ouvrir | TODO | | | |
 | NORMS-01 — chevauchement barre de défilement | TODO | | | |

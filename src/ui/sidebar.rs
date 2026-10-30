@@ -28,29 +28,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
-    // ---- Le projet et son volume ----
+    // ---- Le projet ----
     content = content.push(
         palette
             .label(project.name.to_uppercase())
             .size(theme::jetons::CHAPEAU)
             .color(palette.text_muted),
-    );
-
-    // Le compte de mots vit à la barre d'état, où il est vivant — le
-    // répéter en tête ne fait pas une information de plus.
-    content = content.push(
-        row![
-            Space::new().width(Length::Fill),
-            palette
-                .label(if project.document.is_some() {
-                    "1 document".to_string()
-                } else {
-                    format!("{} chapitre(s)", project.chapters.len())
-                })
-                .size(theme::jetons::DETAIL)
-                .color(palette.text_muted),
-        ]
-        .align_y(Alignment::Center),
     );
 
     content = content.push(Space::new().height(14));
@@ -270,7 +253,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             14.0,
             palette.text_muted,
         ),
-        "references.bib".to_string(),
+        "Entrées bibliographiques".to_string(),
         if missing {
             "absent".to_string()
         } else {

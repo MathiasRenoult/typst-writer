@@ -228,7 +228,8 @@ fn liste<'a>(
         text_input("chercher une collection", recherche)
             .on_input(Message::ZoteroRecherche)
             .padding(5),
-        scrollable(colonne.height(Length::Fixed(HAUTEUR - 34.0))),
+        scrollable(colonne)
+            .height(Length::Fixed(HAUTEUR - 34.0)),
     ]
     .spacing(6);
 
