@@ -134,11 +134,25 @@ impl Regles {
         }
     }
 
+    /// L'allemand : la ponctuation colle ; `„…"`, `‚…'` puis `»…«`
+    /// par niveau d'imbrication — l'ordre typographique allemand.
+    pub fn allemande() -> Self {
+        Self {
+            avant_signes: Espace::Aucune,
+            apres_signes: Espace::Normale,
+            apres_virgule_point: Espace::Normale,
+            espace_guillemets: Espace::Aucune,
+            guillemets: vec![('„', '“'), ('‚', '‘'), ('»', '«')],
+            numerotation_figures: String::new(),
+        }
+    }
+
     /// Le défaut nommé dans les normes.
     pub fn depuis(nom: &str) -> Self {
         match nom.trim().to_lowercase().as_str() {
             "française" | "francaise" | "fr" => Self::francaise(),
             "anglaise" | "en" => Self::anglaise(),
+            "allemande" | "de" => Self::allemande(),
             _ => Self::aucune(),
         }
     }
