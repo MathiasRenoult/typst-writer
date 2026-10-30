@@ -277,6 +277,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let current = state.current_theme().map(|theme| theme.name.clone());
 
+    // Les commandes de thème se poussent à droite — TOPBAR-09.
+    bar = bar.push(Space::new().width(Length::Fill));
+
     bar = bar.push(
         pick_list(names, current, Message::SelectTheme)
             .text_size(12)
