@@ -130,7 +130,11 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
                     .label(libelle)
                     .size(theme::jetons::DETAIL)
                     .width(Length::Fixed(170.0)),
-                pastille,
+                iced::widget::tooltip(
+                    pastille,
+                    palette.label("La couleur actuelle de ce champ").size(11),
+                    iced::widget::tooltip::Position::Top,
+                ),
                 text_input("#1a1a1a", &valeur)
                     .on_input(move |v| Message::ThemeEditeurChamp(champ, v))
                     .padding(5)
