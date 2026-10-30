@@ -2363,6 +2363,18 @@ fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
         }
     }
 
+    // FIND-02 : surligner les occurrences dans l'éditeur.
+    if etat.motif.is_empty() {
+        let _ = state.editor.editor.close_search_dialog();
+    } else {
+        let motif = if etat.mode_regex {
+            etat.motif.clone()
+        } else {
+            regex::escape(&etat.motif)
+        };
+        state.editor.editor.set_search_query(motif);
+    }
+
     sauter_dans_la_recherche(state, 0)
 }
 

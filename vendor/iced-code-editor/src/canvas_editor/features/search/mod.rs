@@ -731,6 +731,16 @@ impl CodeEditor {
         self.search_state.is_open
     }
 
+    /// Définit le motif de recherche et surligne les correspondances.
+    ///
+    /// Utile pour brancher une barre de recherche externe sur le
+    /// surlignage de l'éditeur — FIND-02.
+    pub fn set_search_query(&mut self, query: String) {
+        let buffer = &self.buffer;
+        self.search_state.set_query(query, buffer);
+        self.search_state.is_open = true;
+    }
+
     /// Opens the search dialog programmatically.
     ///
     /// This is useful when wiring your own UI button instead of relying on
