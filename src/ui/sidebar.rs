@@ -28,20 +28,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
-    // LEFT-04-03 : le nom du document en en-tête, avec le bouton de
-    // réduction. Pas d'onglet « Document » séparé.
-    let doc_nom = project
-        .document
-        .as_ref()
-        .map(|d| d.file_name().unwrap_or_default().to_string_lossy().to_string())
-        .unwrap_or_else(|| project.name.clone());
-
+    // SIDEBAR-06-02 : le sommaire est en haut du panneau. Le bouton de
+    // réduction est le seul élément d'en-tête — les noms de document et
+    // de projet sont supprimés de cette zone.
     content = content.push(
         row![
-            palette
-                .label(doc_nom.clone())
-                .size(theme::jetons::SAILLANT)
-                .color(palette.text),
             Space::new().width(Length::Fill),
             button(theme::icon(
                 lucide_icons::iced::icon_panel_left_close::<Theme>(),
@@ -55,15 +46,50 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     );
 
-    // ---- Le projet ----
-    content = content.push(
-        palette
-            .label(project.name.to_uppercase())
-            .size(theme::jetons::CHAPEAU)
-            .color(palette.text_muted),
-    );
+    content = content.push(Space::new().height(6));
 
-    content = content.push(Space::new().height(14));
+    // SIDEBAR-06-02 : le sommaire est le premier élément du panneau.
+    if !state.render.outline.is_empty() {
+        content = content.push(section_title("Sommaire", palette));
+
+        for (index, entry) in state.render.outline.iter().enumerate() {
+            let level = entry.level.saturating_sub(1);
+            let est_dernier = state.render.outline[index + 1..]
+                .iter()
+                .all(|e| e.level <= entry.level);
+
+            let mut label = String::new();
+            for ancetre in 0..level {
+                let parent_dernier = state.render.outline[..index]
+                    .iter()
+                    .rev()
+                    .find(|e| e.level.saturating_sub(1) == ancetre)
+                    .map(|e| {
+                        state.render.outline[index..]
+                            .iter()
+                            .all(|s| s.level <= e.level || s.level.saturating_sub(1) > ancetre)
+                    })
+                    .unwrap_or(true);
+                label.push_str(if parent_dernier { "    " } else { "│   " });
+            }
+            label.push_str(if est_dernier { "└── " } else { "├── " });
+            label.push_str(entry.text.trim());
+
+            content = content.push(
+                button(
+                    row![palette.label(label).size(theme::jetons::CORPS)]
+                        .align_y(Alignment::Center),
+                )
+                .on_press(Message::GotoHeading(index))
+                .width(Fill)
+                .height(Length::Fixed(ENTRY_HEIGHT))
+                .padding([4, 8])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+            );
+        }
+
+        content = content.push(Space::new().height(12));
+    }
 
     // LEFT-04-02 : la section « Document » est supprimée — le nom du
     // document est en en-tête, le compte de mots dans la barre d'état.
@@ -140,50 +166,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .padding([7, 10])
             .style(move |t, status| primary_style(t, status, palette)),
         );
-    }
-
-    // ---- Le sommaire ----
-    //
-    // Les titres du document, avec le retrait de leur niveau : c'est la table
-    // des matières qu'on consulte en écrivant, et un clic y va — dans les deux
-    // vues à la fois.
-    if !state.render.outline.is_empty() {
-        content = content.push(Space::new().height(18));
-        content = content.push(section_title("Sommaire", palette));
-
-        for (index, entry) in state.render.outline.iter().enumerate() {
-            // LEFT-04 : arborescence avec lignes de connexion.
-            let level = entry.level.saturating_sub(1);
-            let est_dernier = state.render.outline[index + 1..]
-                .iter()
-                .all(|e| e.level <= entry.level);
-
-            let mut label = String::new();
-            for ancetre in 0..level {
-                let parent_dernier = state.render.outline[..index]
-                    .iter()
-                    .rev()
-                    .find(|e| e.level.saturating_sub(1) == ancetre)
-                    .map(|e| {
-                        state.render.outline[index..]
-                            .iter()
-                            .all(|s| s.level <= e.level || s.level.saturating_sub(1) > ancetre)
-                    })
-                    .unwrap_or(true);
-                label.push_str(if parent_dernier { "    " } else { "│   " });
-            }
-            label.push_str(if est_dernier { "└── " } else { "├── " });
-            label.push_str(entry.text.trim());
-
-            content = content.push(
-                button(palette.label(label).size(theme::jetons::CORPS))
-                    .on_press(Message::GotoHeading(index))
-                    .width(Fill)
-                    .height(Length::Fixed(ENTRY_HEIGHT))
-                    .padding([4, 8])
-                    .style(move |t, status| entry_style(t, status, palette, false)),
-            );
-        }
     }
 
     // ---- La bibliographie ----
