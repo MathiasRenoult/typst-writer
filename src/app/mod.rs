@@ -1092,6 +1092,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 Some(mise) => {
                     if let Some(dialogue) = state.mise_en_page.as_mut() {
                         dialogue.reglages = mise;
+                        dialogue.norme = nom.clone();
+                        dialogue.norme_originale = nom.clone();
+                        dialogue.modifie = false;
                     }
                     state.note = Some(crate::app::state::Note::info(format!(
                         "La norme « {nom} » est appliquée au document."

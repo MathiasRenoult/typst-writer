@@ -19,6 +19,8 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
 
             state.mise_en_page = Some(DialogueMiseEnPage {
                 norme: String::new(),
+                norme_originale: String::new(),
+                modifie: false,
                 reglages,
                 panneau: 0,
                 accrocher: accroche_manquante,
@@ -38,6 +40,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageChamp(champ, valeur) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.reglages.modifier(champ, valeur);
+                dialogue.modifie = true;
             }
 
             Task::none()
@@ -48,6 +51,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                 let actuel = dialogue.reglages.valeur(champ);
                 let nouveau = incrémenter(&actuel, pas);
                 dialogue.reglages.modifier(champ, nouveau);
+                dialogue.modifie = true;
             }
 
             Task::none()

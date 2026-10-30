@@ -318,6 +318,13 @@ pub struct DialogueMiseEnPage {
     /// ordonne les règles — et il vaut mieux le savoir avant de croire son
     /// réglage appliqué.
     pub regles_main: usize,
+
+    /// Le nom de la norme quand la fenêtre s'est ouverte — pour savoir
+    /// si l'utilisateur travaille sur une norme existante ou sur un brouillon.
+    pub norme_originale: String,
+
+    /// Les réglages ont-ils changé depuis le chargement ?
+    pub modifie: bool,
 }
 
 /// Un renommage de symbole en cours.
