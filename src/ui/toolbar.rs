@@ -318,24 +318,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
     }
 
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_refresh_cw::<Theme>(),
-        "Relire le dossier des thèmes",
-        Message::RefreshThemes,
-        palette,
-        false,
-    ));
-
-    // Un thème s'écrit à la main : sans ce bouton, le seul moyen d'atteindre le
-    // dossier était de connaître son chemin par cœur.
-    bar = bar.push(icon_button(
-        lucide_icons::iced::icon_folder_cog::<Theme>(),
-        "Ouvrir le dossier des thèmes",
-        Message::OpenThemesFolder,
-        palette,
-        false,
-    ));
-
     // La barre déborde parfois la fenêtre : plutôt que rogner des boutons
     // inatteignables, elle défile — sans barre de défilement visible, le
     // reste est au diapason de la sobriété de la fenêtre.
