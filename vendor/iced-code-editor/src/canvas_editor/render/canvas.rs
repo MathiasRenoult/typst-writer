@@ -58,10 +58,19 @@ impl canvas::Program<Message> for CodeEditor {
         let last_visible_line =
             (first_visible_line + visible_lines_count).min(visual_lines.len());
 
+        // EDITOR-04-03 : l'étendue de rendu doit toujours couvrir la
+        // plage visible, même si la fenêtre de cache est périmée après un
+        // changement de contenu sans défilement.
         let (start_idx, end_idx) =
             if self.cache_window_end_line > self.cache_window_start_line {
-                let s = self.cache_window_start_line.min(visual_lines.len());
-                let e = self.cache_window_end_line.min(visual_lines.len());
+                let s = self
+                    .cache_window_start_line
+                    .min(first_visible_line)
+                    .min(visual_lines.len());
+                let e = self
+                    .cache_window_end_line
+                    .max(last_visible_line)
+                    .min(visual_lines.len());
                 (s, e)
             } else {
                 (first_visible_line, last_visible_line)
