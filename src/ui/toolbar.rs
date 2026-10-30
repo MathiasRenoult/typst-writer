@@ -127,16 +127,58 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::CitationBloc,
             palette,
         ));
+        // TOPBAR-06 : la pastille applique la dernière couleur choisie,
+        // le picker ouvre le choix. La pastille mémorise la couleur courante.
+        let derniere = state.derniere_couleur.clone().unwrap_or_else(|| "red".to_string());
+        let couleur_actuelle = crate::theming::HexColor::parse(&derniere).ok().map(|c| c.0);
+
+        let pastille = iced::widget::button(
+            iced::widget::container(
+                iced::widget::Space::new()
+                    .width(Length::Fixed(14.0))
+                    .height(Length::Fixed(14.0)),
+            )
+            .style(move |_t| iced::widget::container::Style {
+                background: couleur_actuelle.map(iced::Background::from),
+                border: iced::Border {
+                    width: 1.0,
+                    color: palette.border,
+                    radius: 3.0.into(),
+                },
+                ..Default::default()
+            }),
+        )
+        .on_press(Message::Format(crate::app::message::FormatAction::Couleur(
+            derniere.clone(),
+        )))
+        .padding(4)
+        .style(move |_, s| button_style(s, palette));
+
+        bar = bar.push(iced::widget::tooltip(
+            pastille,
+            container(palette.label("Appliquer la dernière couleur choisie").size(12).color(palette.text))
+                .padding([4, 8])
+                .style(move |_| container::Style {
+                    background: Some(palette.surface_hover.into()),
+                    border: iced::Border {
+                        color: palette.border,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
+            iced::widget::tooltip::Position::Bottom,
+        ).gap(6));
+
         bar = bar.push(format_picker(
             COULEURS
                 .iter()
                 .map(|(libelle, _)| (*libelle).to_string())
                 .collect(),
-            "Couleur",
+            "Choisir une couleur",
             |choisi| {
-                Message::Format(crate::app::message::FormatAction::Couleur(
-                    couleur_typst(&choisi).unwrap_or("red").to_string(),
-                ))
+                let nom = couleur_typst(&choisi).unwrap_or("red").to_string();
+                Message::Format(crate::app::message::FormatAction::Couleur(nom))
             },
             palette,
             96.0,

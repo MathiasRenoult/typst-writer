@@ -267,6 +267,9 @@ pub struct State {
     /// Les thèmes disponibles : les natifs, puis les fichiers locaux.
     pub themes: Vec<crate::theming::Theme>,
 
+    /// La dernière couleur choisie dans la barre — TOPBAR-06.
+    pub derniere_couleur: Option<String>,
+
     /// Les fichiers de thème qui n'ont pas pu être lus.
     ///
     /// Conservés pour être **montrés** : un thème qui n'apparaît pas dans la

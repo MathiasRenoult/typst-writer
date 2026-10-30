@@ -159,6 +159,7 @@ impl State {
             lsp: Default::default(),
             system_theme: None,
             themes: Vec::new(),
+            derniere_couleur: None,
             theme_problems: Vec::new(),
             // Le thème retenu est restauré **avant** la première lecture du
             // dossier : `refresh_themes` applique le thème, il doit donc savoir
