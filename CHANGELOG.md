@@ -1,5 +1,58 @@
 # Journal des versions
 
+## 0.3.0-alpha.2 — rapports 5 et 6 soldés, interface fiabilisée
+
+Les rapports de bugs 5 (23 demandes) et 6 (8 demandes) sont
+intégralement traités. Corrections visuelles et fonctionnelles.
+
+### Navigation et onglets
+
+- **Shift/Ctrl+clic** sur un projet = nouvel onglet (sans remplacer l'actif) ;
+- **clic sur onglet** ne split plus la fenêtre (vérification de distance) ;
+- **Ctrl+Maj+Tab** bascule entre panneaux ;
+- dépôt d'onglet hors panneau = nouveau panneau.
+
+### Interface
+
+- **top bar** : trois groupes équilibrés (général / édition / thème) ;
+- **bouton de fermeture** dans la barre, plus dans le panneau ;
+- **panneau latéral** : sommaire en haut, noms de document supprimés ;
+- **alignements** : textes centrés verticalement dans leurs boutons ;
+- **menu des titres** : `pick_list` au lieu de `tooltip` (restait ouvert) ;
+- **police** : sélecteur retiré de la barre (normes uniquement) ;
+- **aperçu** : boutons supprimés (gérés depuis l'espace).
+
+### Éditeur de thème
+
+- **picker RVB intégré** : sliders R/G/B, aperçu, Valider/Annuler ;
+- **zenity supprimé** : plus de fenêtre native séparée ;
+- **pastille cliquable** : ouvre le picker directement ;
+- **fond synchronisé** : l'éditeur suit toujours le fond de l'application.
+
+### Normes
+
+- **config par niveau de titre** : couleur, graisse, espacement, casse ;
+- **flèches** uniquement sur les champs numériques ;
+- **modèles** en haut de la fenêtre.
+
+### Éditeur
+
+- **suppression de glyphe** : `has_selection()` au lieu de `anchor.is_some()` ;
+- **overlay de note** : fermeture au clic extérieur ;
+- **rendu des dernières lignes** : étendue de rendu corrigée ;
+- **surlignage** des occurrences de recherche.
+
+### Recherche
+
+- **mode littéral / regex** : bouton `Aa` / `.*` ;
+- **surlignage** dans l'éditeur.
+
+### Qualité
+
+- **clippy 0** projet et vendor ;
+- **nettoyage** : imports explicites, `enumerate()`, `#[allow]` documentés ;
+- **comptage bibliographique** fiabilisé.
+
 ## 0.3.0-alpha — suite : le rapport 4 soldé, la qualité au sommet
 
 Le rapport de bugs 4 (63 demandes d'interface et de qualité) est
