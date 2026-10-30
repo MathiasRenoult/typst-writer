@@ -63,6 +63,7 @@ impl CodeEditor {
             }
             Message::Backspace | Message::Delete => Task::none(),
             Message::DeleteSelection => self.handle_delete_selection(),
+            Message::DeleteWord => self.handle_delete_word(),
 
             // Navigation operations
             Message::ArrowKey(direction, shift) => {

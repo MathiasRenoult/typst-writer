@@ -240,6 +240,65 @@ impl CodeEditor {
         Task::none()
     }
 
+    /// Handles Ctrl+Delete: deletes the word after the cursor.
+    ///
+    /// # Returns
+    ///
+    /// A `Task<Message>` that scrolls to keep the cursor visible
+    pub(crate) fn handle_delete_word(&mut self) -> Task<Message> {
+        if !self.keep_vim_insert_group() {
+            self.end_grouping_if_active();
+        }
+
+        self.selectionner_les_notes_au_bord(false);
+
+        if self.delete_selection_if_present() {
+            return self.scroll_to_cursor();
+        }
+
+        self.clear_selection();
+
+        let order = self.cursors.descending_order();
+
+        for &idx in &order {
+            let pos = self.cursors.as_slice()[idx].position;
+            let line_str = self.buffer.line(pos.0).to_string();
+            let end = Self::word_end_in_line(&line_str, pos.1);
+            let delete_len = end.saturating_sub(pos.1);
+
+            if delete_len == 0 && pos.0 + 1 < self.buffer.line_count() {
+                // At end of word on this line: merge with next line
+                let line_len = self.buffer.line_len(pos.0);
+                let edit_kind = EditType::MergeNext { edit_line_len: line_len };
+                let mut cmd = DeleteForwardCommand::new(&self.buffer, pos.0, pos.1, pos);
+                let mut cursor_pos = pos;
+                cmd.execute(&mut self.buffer, &mut cursor_pos);
+                self.cursors.as_mut_slice()[idx].position = cursor_pos;
+                adjust_other_cursors(self.cursors.as_mut_slice(), idx, pos.0, pos.1, edit_kind);
+                self.history.push(Box::new(cmd));
+            } else if delete_len > 0 {
+                let edit_kind = EditType::DeleteCharForward;
+                for _ in 0..delete_len {
+                    let mut cmd = DeleteForwardCommand::new(&self.buffer, pos.0, pos.1, pos);
+                    let mut cursor_pos = self.cursors.as_slice()[idx].position;
+                    cmd.execute(&mut self.buffer, &mut cursor_pos);
+                    self.cursors.as_mut_slice()[idx].position = cursor_pos;
+                    adjust_other_cursors(
+                        self.cursors.as_mut_slice(),
+                        idx,
+                        pos.0,
+                        pos.1,
+                        edit_kind,
+                    );
+                    self.history.push(Box::new(cmd));
+                }
+            }
+        }
+
+        self.finish_edit_operation();
+        self.scroll_to_cursor()
+    }
+
     /// Handles explicit selection deletion (Shift+Delete).
     ///
     /// Deletes the selected text if a selection exists.

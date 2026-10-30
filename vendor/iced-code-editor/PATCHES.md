@@ -301,3 +301,17 @@ Jamais de texte fondu laissé à nu.
 
 `input/update/deletion.rs` (`etendre_selections_aux_marques`),
 `editing/clipboard.rs` (appel en tête de `delete_selection`).
+
+### 16. Ctrl+Suppr supprime le mot après le curseur
+
+`DeleteWord` (Ctrl+Suppr) supprime le mot situé après le curseur, au lieu
+d'un seul caractère. `handle_delete_word` calcule la fin du mot via
+`word_end_in_line`, supprime les caractères par `DeleteForwardCommand`
+(un par un, pour que l'annulation reprenne le geste entier), ou fusionne
+la ligne suivante si le curseur est en fin de mot. La sélection existante
+est d'abord emportée — la note entière avec, comme partout.
+
+`canvas_editor/mod.rs` (`Message::DeleteWord`),
+`input/shortcuts.rs` (Ctrl+Suppr), `input/update/dispatch.rs`,
+`input/update/mod.rs` (liste des opérations d'édition),
+`input/update/deletion.rs` (`handle_delete_word`).

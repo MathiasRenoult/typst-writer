@@ -426,6 +426,8 @@ pub enum Message {
     Paste(String),
     /// Delete selected text (Shift+Delete)
     DeleteSelection,
+    /// Delete the word after the cursor (Ctrl+Delete)
+    DeleteWord,
     /// Select the complete document
     SelectAll,
     /// Request redraw for cursor blink

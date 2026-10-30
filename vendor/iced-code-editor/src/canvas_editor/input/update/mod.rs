@@ -175,6 +175,7 @@ impl CodeEditor {
                 | Message::Backspace
                 | Message::Delete
                 | Message::DeleteSelection
+                | Message::DeleteWord
                 | Message::Paste(_)
                 | Message::ImeCommit(_)
                 | Message::MoveLineUp

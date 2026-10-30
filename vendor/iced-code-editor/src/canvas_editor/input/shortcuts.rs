@@ -194,6 +194,15 @@ fn editing_shortcut(
         return Some(Action::publish(Message::ToggleComment).and_capture());
     }
 
+    // Ctrl+Delete : supprimer le mot après le curseur. Avant Shift+Delete
+    // pour que Ctrl+Maj+Delete (le cas où les deux modifiers sont tenus)
+    // choisisse la suppression de mot, plus ciblée.
+    if modifiers.control()
+        && matches!(key, keyboard::Key::Named(keyboard::key::Named::Delete))
+    {
+        return Some(Action::publish(Message::DeleteWord).and_capture());
+    }
+
     if modifiers.shift()
         && matches!(key, keyboard::Key::Named(keyboard::key::Named::Delete))
     {
