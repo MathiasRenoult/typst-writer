@@ -23,5 +23,5 @@
 | EDITOR-04-02 — fermer overlay au clic extérieur | DONE | ui/mod.rs | 395 | mouse_area |
 | EDITOR-04-03 — rendu dernières lignes | DONE | vendor canvas.rs | 395+654 | min/max plage visible |
 | NORMS-04-01 — flèches sur champs non numériques | DONE | ui/reglages.rs | 395 | saisie_numerique |
-| NORMS-04-02 — config par niveau de titre | TODO | | | |
+| NORMS-04-02 — config par niveau de titre | DONE | mise_en_page/modele.rs, gabarit.rs | 395 | couleur/gras/espacement/casse par niveau |
 | NORMS-04-03 — déplacer gestion modèles | DONE | ui/reglages.rs | 395 | En haut de la fenêtre |
