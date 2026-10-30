@@ -121,7 +121,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 
         // THEME-EDITOR-02 : le color picker natif.
         let champ_copie = champ;
-        let valeur_copie = valeur.clone();
+        let _valeur_copie = valeur.clone();
         nuancier = nuancier.push(
             button(palette.label("…").size(11))
                 .on_press(Message::ThemeEditeurColorPicker(champ_copie))

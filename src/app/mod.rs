@@ -617,7 +617,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ThemeEditeurColorPicker(champ) => {
             // THEME-EDITOR-02 : le color picker natif via zenity.
-            return Task::perform(
+            Task::perform(
                 async move {
                     std::process::Command::new("zenity")
                         .args(["--color-selection", "--title=Choisir une couleur"])
@@ -633,7 +633,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                     Some((champ, hex)) => Message::ThemeEditeurChamp(champ, hex),
                     None => Message::ThemeEditeurChamp("", String::new()),
                 },
-            );
+            )
         }
 
         Message::ThemeEditeurChamp(champ, valeur) => {

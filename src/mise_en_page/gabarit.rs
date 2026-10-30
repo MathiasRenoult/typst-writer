@@ -322,7 +322,7 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
 
                 // On échappe le texte, puis on replace les marqueurs par
                 // leur code Typst — non échappé, c'est du code.
-                let texte_echappe = echapper(&morceau);
+                let texte_echappe = echapper(morceau);
                 let texte_echappe = texte_echappe.replace("\\x01", "#sys.inputs.at(\"document\", default: \"\")");
                 let texte_echappe = texte_echappe.replace("\\x02", "#datetime.today().display()");
                 let texte_echappe = texte_echappe.replace("\\x03", "#sys.inputs.at(\"auteur\", default: \"\")");

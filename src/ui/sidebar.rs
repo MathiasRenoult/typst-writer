@@ -186,7 +186,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         for (index, entry) in state.render.outline.iter().enumerate() {
             // LEFT-04 : arborescence avec lignes de connexion.
-            let level = entry.level.saturating_sub(1) as usize;
+            let level = entry.level.saturating_sub(1);
             let est_dernier = state.render.outline[index + 1..]
                 .iter()
                 .all(|e| e.level <= entry.level);
@@ -196,11 +196,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 let parent_dernier = state.render.outline[..index]
                     .iter()
                     .rev()
-                    .find(|e| (e.level.saturating_sub(1) as usize) == ancetre)
+                    .find(|e| e.level.saturating_sub(1) == ancetre)
                     .map(|e| {
                         state.render.outline[index..]
                             .iter()
-                            .all(|s| s.level <= e.level || (s.level.saturating_sub(1) as usize) > ancetre)
+                            .all(|s| s.level <= e.level || s.level.saturating_sub(1) > ancetre)
                     })
                     .unwrap_or(true);
                 label.push_str(if parent_dernier { "    " } else { "│   " });
