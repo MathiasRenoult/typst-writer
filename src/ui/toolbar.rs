@@ -51,11 +51,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
         false,
     ));
 
+    // TOPBAR-03 : l'import regroupe le chargement de fichiers externes.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_folder_open::<Theme>(),
         // Le libellé dit ce que fait l'action : le fichier est ajouté au projet,
         // il n'est pas seulement affiché.
-        "Charger un document dans le projet (Ctrl+O)",
+        "Importer un document .tw ou .typ dans le projet (Ctrl+O)",
         Message::OpenFile,
         palette,
         false,
