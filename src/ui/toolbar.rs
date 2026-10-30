@@ -483,57 +483,27 @@ fn couleur_typst(label: &str) -> Option<&'static str> {
 }
 
 
-/// Une liste déroulante qui applique une mise en forme au choix.
+/// Le menu des niveaux de titre : un `pick_list`, pas un `tooltip`.
 ///
-/// Contrairement à un bouton, elle **montre** les possibilités avant le clic :
-/// L'icône de titre : au survol, les six niveaux H1-H6.
+/// Un `tooltip` se ferme dès que la souris quitte le bouton — impossible
+/// de choisir un niveau. Un `pick_list` reste ouvert jusqu'au choix ou au
+/// clic extérieur, et se conduit au clavier. TOPBAR-04-04.
 fn titre_menu(palette: Palette) -> Element<'static, Message> {
-    let bouton = |niveau: u8| {
-        let libelle = format!("H{niveau}");
-        button(iced::widget::text(libelle).size(11).color(palette.text))
-            .on_press(Message::Format(crate::app::message::FormatAction::Titre(niveau)))
-            .padding([4, 8])
-            .style(move |_, statut| button::Style {
-                background: Some(if matches!(statut, button::Status::Hovered) {
-                    palette.surface_hover
-                } else {
-                    palette.surface
-                }
-                .into()),
-                text_color: palette.text,
-                ..Default::default()
-            })
-    };
-    let menu = container(
-        iced::widget::column![
-            palette.label("Insérer un titre").size(10).color(palette.text_muted),
-            row![bouton(1), bouton(2), bouton(3)].spacing(2),
-            row![bouton(4), bouton(5), bouton(6)].spacing(2),
-        ]
-        .spacing(4),
-    )
-    .padding(8)
-    .style(move |_| container::Style {
-        background: Some(palette.surface_hover.into()),
-        border: iced::Border {
-            color: palette.border,
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..Default::default()
-    });
-    let icone = button(theme::icon(
-        lucide_icons::iced::icon_heading::<Theme>(),
-        ICON_SIZE,
-        palette.text_muted,
-    ))
-    .padding([6, 7])
-    .width(Length::Fixed(BUTTON))
-    .height(Length::Fixed(BUTTON))
-    .style(move |_, statut| button_style(statut, palette));
-    iced::widget::tooltip(icone, menu, iced::widget::tooltip::Position::Bottom)
-        .gap(0)
-        .into()
+    let niveaux: Vec<String> = (1..=6).map(|n| format!("H{n}")).collect();
+
+    pick_list(niveaux, None::<String>, |choisi: String| {
+        let niveau: u8 = choisi
+            .strip_prefix('H')
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        Message::Format(crate::app::message::FormatAction::Titre(niveau))
+    })
+    .placeholder("Titre")
+    .text_size(12)
+    .font(palette.interface)
+    .padding([4, 8])
+    .width(Length::Fixed(56.0))
+    .into()
 }
 
 /// c'est ce qui rend le choix d'un niveau de titre ou d'une couleur immédiat,
