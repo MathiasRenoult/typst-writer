@@ -62,6 +62,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
     ));
 
     bar = bar.push(icon_button(
+        lucide_icons::iced::icon_library::<Theme>(),
+        "Les projets et leurs étagères",
+        Message::ProjetsVue,
+        palette,
+        state.projets_vue,
+    ));
+
+    bar = bar.push(icon_button(
         lucide_icons::iced::icon_save::<Theme>(),
         "Enregistrer (Ctrl+S)",
         Message::SaveFile,
@@ -165,14 +173,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
             Message::ThemeEditeurOuvrir,
             palette,
             state.editeur_theme.is_some(),
-        ));
-
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_library::<Theme>(),
-            "Les projets et leurs étagères",
-            Message::ProjetsVue,
-            palette,
-            state.projets_vue,
         ));
 
         bar = bar.push(icon_button(
