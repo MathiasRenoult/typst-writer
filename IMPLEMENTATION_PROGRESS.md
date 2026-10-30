@@ -20,7 +20,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | TOPBAR-05 — menu des titres utilisable | TODO | | | |
 | THEME-EDITOR-01 — édition des valeurs hex | DONE | state.rs, theme_editeur.rs | editeur_theme_textes | Saisie brute préservée |
 | WINDOWS-01 — focus entre fenêtres | TODO | | | |
-| WINDOWS-02 — règles de clic pour ouvrir | TODO | | | |
+| WINDOWS-02 — règles de clic | DONE | app/espace_runtime.rs | Clic=Remplacer (bascule si ouvert), Maj+clic=Nouvel (toujours) |
 | NORMS-01 — chevauchement barre de défilement | TODO | | | |
 | NORMS-02 — prévisualisation au mauvais endroit | TODO | | | |
 | FIND-03 — dépassement des placeholders | DONE | ui/recherche.rs | Length::Fill au lieu de Fixed | |

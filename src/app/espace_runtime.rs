@@ -143,7 +143,14 @@ impl State {
     ///
     /// `nouvel_onglet = false` (clic simple) : le document remplace le contenu
     /// de l'onglet actif, ou rejoint son onglet existant s'il est déjà ouvert.
-    /// `nouvel_onglet = true` (shift+clic) : un nouvel onglet, toujours.
+    /// Ouvre un document dans l'espace de travail.
+///
+/// Les règles de clic sont strictes — WINDOWS-02 :
+/// - **Clic simple** (`Ouverture::Remplacer`) : ouvre dans l'onglet actuel ;
+///   si le document est déjà ouvert, bascule vers son onglet existant.
+/// - **Maj+clic** (`Ouverture::Nouvel`) : toujours un nouvel onglet, même si
+///   le document est déjà ouvert. C'est le geste explicite de « montrer
+///   côte à côte », pas un simple basculement.
     pub(crate) fn ouvrir_vue(&mut self, projet: crate::project::Project, chemin: PathBuf, contenu: String, ouverture: Ouverture) {
         if !projet.owns(&chemin) {
             self.note = Some(Note::erreur("Ce fichier n'appartient pas au projet."));
