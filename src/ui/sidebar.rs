@@ -382,12 +382,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
         let survole = state.survol_projet.as_deref() == Some(other.dir.as_path());
 
         let mut ligne = row![
-            button(palette.label(other.name.clone()).size(theme::jetons::CORPS))
-                .on_press(Message::OpenProject(other.dir.clone()))
-                .width(Fill)
-                .height(Length::Fixed(ENTRY_HEIGHT))
-                .padding([4, 8])
-                .style(move |t, status| entry_style(t, status, palette, is_current)),
+            button(
+                row![palette.label(other.name.clone()).size(theme::jetons::CORPS)]
+                    .align_y(Alignment::Center),
+            )
+            .on_press(Message::OpenProject(other.dir.clone()))
+            .width(Fill)
+            .height(Length::Fixed(ENTRY_HEIGHT))
+            .padding([4, 8])
+            .style(move |t, status| entry_style(t, status, palette, is_current)),
         ]
         .spacing(2);
 
