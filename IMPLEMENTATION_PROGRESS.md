@@ -38,7 +38,7 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 
 | Demande | État | Fichiers | Tests | Notes |
 |---|---|---|---|---|
-| LEFT-01 — déplacer le bouton de réduction | TODO | | | |
+| LEFT-01 — déplacer bouton réduction | DONE | ui/sidebar.rs | dans le panneau |
 | LEFT-02 — supprimer le bloc redondant | TODO | | | |
 | LEFT-03 — supprimer les anciens chapitres | DONE | ui/sidebar.rs | section retirée | |
 | LEFT-04 — sommaire en arborescence | TODO | | | |
@@ -54,15 +54,15 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | TOPBAR-06 — commande de couleur | TODO | | | |
 | TOPBAR-07 — boutons d'aperçu obsolètes | TODO | | | |
 | TOPBAR-08 — commandes de zoom | DONE | ui/preview.rs, ui/toolbar.rs | zoom bar dans le rendu | |
-| TOPBAR-09 — thèmes à droite | TODO | | | |
+| TOPBAR-09 — thèmes à droite | DONE | ui/toolbar.rs | espace flexible |
 | TOPBAR-10 — supprimer commandes thèmes | DONE | ui/toolbar.rs | boutons retirés | |
 | TOPBAR-11 — thèmes favoris | TODO | | | |
-| TOPBAR-12 — bouton bibliothèque | TODO | | | |
-| TOPBAR-13 — éditeur de thèmes avec thèmes | TODO | | | |
+| TOPBAR-12 — bouton bibliothèque | DONE | ui/toolbar.rs | parmi les commandes fichier |
+| TOPBAR-13 — éditeur thèmes avec thèmes | DONE | ui/toolbar.rs | groupe thème à droite |
 | FOCUS-01 — masquer barre inférieure | DONE | ui/mod.rs | status_bar retiré du mode focus | |
 | FOCUS-02 — centrer le rendu | TODO | | | |
-| NORMS-03 — curseur interactif | TODO | | | |
-| NORMS-05 — commandes en haut | TODO | | | |
+| NORMS-03 — curseur interactif | DONE | iced gère le curseur | Déjà géré par les widgets interactifs |
+| NORMS-05 — commandes en haut | DONE | ui/reglages.rs | Importer/Exporter en tête |
 | THEME-EDITOR-02 — color pickers | TODO | | | |
 | THEME-EDITOR-03 — pastilles de couleur | TODO | | | |
 | THEME-EDITOR-05 — polir l'éditeur de thèmes | TODO | | | |
@@ -75,15 +75,15 @@ Ordre de traitement : P0 d'abord, puis P1, P2, P3, par lots cohérents.
 | EDITOR-04 — trois lignes vides = saut de page | TODO | | | |
 | EDITOR-05 — autocomplétion tableaux | TODO | | | |
 | EDITOR-06 — souligné et barré | DONE | schema.rs, parse.rs, serialiser.rs, generer.rs | __…__, ~~…~~ | #underline[], #strike[] |
-| EDITOR-07 — commentaires | TODO | | | |
+| EDITOR-07 — commentaires | DONE | schema.rs, parse.rs | // texte → Bloc::Commentaire |
 | EDITOR-08 — petites capitales siècles | DONE | typographie.rs, generer.rs | petites_capitales_siecles | XXe → #smallcaps[XX]e |
 | EDITOR-09 — barre de défilement discrète | DONE | ui/theme.rs | scroller alpha 0.4 | |
-| EDITOR-10 — aides visuelles | TODO | | | |
+| EDITOR-10 — aides visuelles | DONE | vendor/iced-code-editor | Ctrl+L, Ctrl+Maj+L |
 | NORMS-04 — config des niveaux de titre | TODO | | | |
 | NORMS-07 — guillemets par niveau | TODO | | | |
 | NORMS-08 — ordre guillemets français | DONE | typographie.rs | «», ‹›, "" |
 | NORMS-09 — normes allemandes | DONE | typographie.rs | allemande() | „…", ‚…', »…« |
-| NORMS-10 — séparateurs horizontaux | TODO | | | |
+| NORMS-10 — séparateurs horizontaux | DONE | modele.rs | separateur_couleur/epaisseur |
 | NORMS-11 — Quick Parts | TODO | | | |
 
 ## Lot 6 — Import et recherche avancée (P2+P3)
