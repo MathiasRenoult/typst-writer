@@ -42,6 +42,8 @@ pub enum Bloc {
     Formule(String),
     /// Un séparateur horizontal : `---`.
     Separateur,
+    /// Un commentaire : `// texte`. Conservé dans le `.tw`, ignoré au rendu.
+    Commentaire(String),
     /// Un tableau : `| A | B |`, sa ligne de séparation, ses lignes.
     Tableau {
         /// L'en-tête, cellule par cellule — jamais vide.
@@ -348,6 +350,7 @@ impl Bloc {
             // Un bloc brut est pris tel quel : son délimiteur s'adapte à son
             // contenu, tout lui est permis.
             Bloc::Separateur => true,
+            Bloc::Commentaire(_) => true,
             Bloc::Brut(_) => true,
             // La formule est opaque : sa barre de dollars n'y paraît pas.
             Bloc::Formule(texte) => !texte.contains('$') && !texte.trim().is_empty(),
@@ -650,7 +653,7 @@ impl Bloc {
                 .map(|item| inline_texte_nu(item))
                 .collect::<Vec<_>>()
                 .join(" "),
-            Bloc::Separateur => String::new(),
+            Bloc::Separateur | Bloc::Commentaire(_) => String::new(),
             Bloc::Brut(_) | Bloc::Graphique { .. } => String::new(),
             Bloc::Formule(texte) => texte.clone(),
         }

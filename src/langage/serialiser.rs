@@ -113,6 +113,11 @@ pub fn serialiser(document: &Document) -> String {
             Bloc::Separateur => {
                 out.push_str("---\n");
             }
+            Bloc::Commentaire(texte) => {
+                out.push_str("// ");
+                out.push_str(texte);
+                out.push('\n');
+            }
             Bloc::Image { légende, cible } => {
                 out.push_str("![");
                 ecrire_inline(légende, &mut out);

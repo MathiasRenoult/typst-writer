@@ -142,6 +142,14 @@ pub fn parse(texte: &str) -> Document {
             continue;
         }
 
+        // Un commentaire : `// texte`. Conservé dans le .tw, ignoré au rendu.
+        if !echappee && ligne.trim_start().starts_with("//") {
+            let texte = ligne.trim_start().trim_start_matches("//").trim().to_string();
+            blocs.push(habiller(Bloc::Commentaire(texte), &mut en_attente));
+            index += 1;
+            continue;
+        }
+
         // Un tableau : son en-tête, sa ligne de séparation, ses lignes.
         // Sans séparation, ce n'en est pas un — la ligne reste du texte.
         if !echappee
