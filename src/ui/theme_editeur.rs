@@ -9,11 +9,7 @@ use crate::ui::theme;
 use iced::widget::{Space, button, column, container, pick_list, row, text_input};
 use iced::{Element, Length};
 
-/// Les couleurs à portée de clic : le nuancier de l'éditeur (bug 11 du
-/// rapport 2). La valeur libre reste possible à côté.
-const NUANCIER: &[&str] = &[
-    "#8c7853", "#4f5b66", "#7a9e7e", "#c47c6c", "#7c6f9e", "#d4af37",
-];
+// THEME-06-01 : le nuancier est supprimé — la pastille ouvre le picker.
 
 /// Les champs de couleur, et le libellé qu'ils portent.
 /// Les champs du thème, groupés par section : un marqueur `("", "…")`
@@ -102,51 +98,33 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
                 _ => couleurs.success.map(hexa).unwrap_or_default(),
             });
 
-        // La pastille montre la couleur telle qu'elle sera : les mots ne
-        // suffisent pas à choisir une teinte (bug 10 du rapport 2).
+        // THEME-06-02 : la pastille est cliquable et ouvre le color picker.
+        // THEME-06-01 : les pastilles redondantes et le bouton "…" sont
+        // supprimés — la pastille suffit.
         let teinte = crate::theming::HexColor::parse(valeur.trim()).ok().map(|c| c.0);
 
-        let pastille = container(Space::new().width(Length::Fixed(18.0)).height(Length::Fixed(18.0)))
-            .style(move |_theme| container::Style {
-                background: teinte.map(iced::Background::from),
-                border: iced::Border {
-                    width: 1.0,
-                    color: palette.border,
-                    ..Default::default()
-                },
-                ..Default::default()
-            });
-
-        let mut nuancier = row![].spacing(3);
-
-        // THEME-EDITOR-02 : le color picker natif.
-        let champ_copie = champ;
-        let _valeur_copie = valeur.clone();
-        nuancier = nuancier.push(
-            button(palette.label("…").size(11))
-                .on_press(Message::ThemeEditeurColorPicker(champ_copie))
-                .padding([4, 6]),
-        );
-
-        for teinte in NUANCIER {
-            let teinte = *teinte;
-            let voulue = crate::theming::HexColor::parse(teinte).ok().map(|c| c.0);
-
-            nuancier = nuancier.push(
-                button(Space::new().width(Length::Fixed(12.0)).height(Length::Fixed(12.0)))
-                    .on_press(Message::ThemeEditeurChamp(champ, teinte.to_string()))
-                    .padding(2)
-                    .style(move |_t, _s| iced::widget::button::Style {
-                        background: voulue.map(iced::Background::from),
-                        border: iced::Border {
-                            width: 1.0,
-                            color: palette.border,
-                            ..Default::default()
-                        },
+        let pastille = button(
+            container(Space::new().width(Length::Fixed(18.0)).height(Length::Fixed(18.0)))
+                .style(move |_theme| container::Style {
+                    background: teinte.map(iced::Background::from),
+                    border: iced::Border {
+                        width: 1.0,
+                        color: palette.border,
                         ..Default::default()
-                    }),
-            );
-        }
+                    },
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::ThemeEditeurColorPicker(champ))
+        .padding(2)
+        .style(move |_, _| button::Style {
+            background: None,
+            border: iced::Border {
+                width: 0.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         corps = corps.push(
             row![
@@ -156,14 +134,13 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
                     .width(Length::Fixed(170.0)),
                 iced::widget::tooltip(
                     pastille,
-                    palette.label("La couleur actuelle de ce champ").size(11),
+                    palette.label("Cliquer pour choisir la couleur").size(11),
                     iced::widget::tooltip::Position::Top,
                 ),
                 text_input("#1a1a1a", &valeur)
                     .on_input(move |v| Message::ThemeEditeurChamp(champ, v))
                     .padding(5)
                     .width(Length::Fixed(110.0)),
-                nuancier,
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center),
