@@ -93,6 +93,30 @@ pub fn accroche_manquante(projet: &Path) -> bool {
         .unwrap_or(true)
 }
 
+/// L'aperçu des titres : les six niveaux **réellement rendus par le
+/// moteur** avec les normes données — jamais une imitation.
+///
+/// Le gabarit des normes passe par `overrides` : le dialogue montre ce
+/// qui sera, sans rien écrire au projet avant l'application.
+pub fn apercu_titres(
+    projet: &Path,
+    mise_en_page: &modele::MiseEnPage,
+) -> Option<crate::typst::render::PageImage> {
+    let source = format!(
+        "{}= Titre de niveau 1\n\n== Titre de niveau 2\n\n=== Titre de niveau 3\n\n==== Titre de niveau 4\n\n===== Titre de niveau 5\n\n====== Titre de niveau 6\n",
+        gabarit::accroche()
+    );
+
+    let overrides = [(
+        projet.join(gabarit::FICHIER),
+        gabarit::generer(mise_en_page),
+    )];
+
+    let compilation = crate::typst::render::compile(projet, &source, &overrides);
+    let document = compilation.document?;
+    crate::typst::render::render_page(&document, 0, 1.0)
+}
+
 /// `main.typ` porte-t-il déjà des règles `#set` écrites à la main ?
 ///
 /// Elles priment sur la mise en page choisie — c'est ainsi que Typst les

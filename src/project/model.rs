@@ -136,6 +136,9 @@ pub fn list_projects() -> Vec<Project> {
     let mut projects: Vec<Project> = entries
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())
+        // Un dossier caché n'est jamais un projet : c'est un travail en cours
+        // de création, qui ne paraîtra qu'une fois complet.
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
         .map(|entry| load(&entry.path()))
         .collect();
 
@@ -317,31 +320,6 @@ pub fn import_writing_document(project: &Project, source: &Path) -> std::io::Res
     Ok(destination)
 }
 
-/// Convertit un fragment Typst pris en charge et l'ajoute au document unique.
-///
-/// Le fichier d'origine n'est pas supprimé ni modifié. Le document du projet
-/// est sérialisé dans un fichier temporaire puis remplacé atomiquement, afin
-/// qu'une erreur d'écriture ne laisse pas un texte partiel.
-pub fn append_typst_to_document(project: &Project, source: &str) -> std::io::Result<PathBuf> {
-    let destination = migrate_to_document(project)?;
-    let current = std::fs::read_to_string(&destination)?;
-    let mut document = crate::langage::parse(&current);
-    let imported = crate::langage::migration::importer_typst(source);
-
-    document.blocs.extend(imported.blocs);
-
-    let temporary = project.dir.join(".document.tw.import.tmp");
-    std::fs::write(&temporary, crate::langage::serialiser(&document))?;
-
-    if let Err(error) = std::fs::rename(&temporary, &destination) {
-        let _ = std::fs::remove_file(&temporary);
-
-        return Err(error);
-    }
-
-    Ok(destination)
-}
-
 /// Assemblage de compilation du document unique, sans les includes des anciens
 /// chapitres. `main.typ` lui-même n'est jamais réécrit.
 pub fn assembly_without_chapters(project: &Project, main: &str) -> String {
@@ -363,34 +341,38 @@ pub fn assembly_without_chapters(project: &Project, main: &str) -> String {
     assembly
 }
 
-/// Crée un projet vide : ses dossiers, son assemblage et sa bibliographie.
+/// Crée un projet vide sans réutiliser un dossier existant.
 ///
-/// La bibliographie est créée même vide : un fichier absent serait à deviner,
-/// alors qu'un fichier avec un exemple commenté montre quoi mettre dedans.
+/// Le projet se prépare complet dans un temporaire caché, sous le verrou et
+/// sans remplacement, puis paraît d'un seul renommage ; en cas d'échec, le
+/// temporaire est conservé pour qu'aucun fichier ne soit supprimé en silence.
 pub fn create(name: &str) -> std::io::Result<PathBuf> {
-    let dir = projects_dir().join(slug(name));
-
-    std::fs::create_dir_all(dir.join("chapitres"))?;
-
-    let main = dir.join("main.typ");
-
-    if !main.exists() {
-        std::fs::write(&main, MAIN_TEMPLATE)?;
-    }
-
-    let document = dir.join("document.tw");
-
-    if !document.exists() {
-        std::fs::write(&document, "")?;
-    }
-
-    let bibliography = dir.join("references.bib");
-
-    if !bibliography.exists() {
-        std::fs::write(&bibliography, BIBLIOGRAPHY_TEMPLATE)?;
-    }
-
+    let (dir, verrou) = create_avec_verrou(name)?;
+    drop(verrou);
     Ok(dir)
+}
+
+/// Variante utilisée par la migration, qui garde le verrou pendant la reprise.
+pub(super) fn create_avec_verrou(name: &str) -> std::io::Result<(PathBuf, super::Verrou)> {
+    creer_avec_modele_verrou(name, Modele::Classique)
+}
+
+/// Crée un projet selon l'un des modèles de R5, en un geste.
+pub fn create_avec_modele(name: &str, modele: Modele) -> std::io::Result<PathBuf> {
+    let (dir, verrou) = creer_avec_modele_verrou(name, modele)?;
+    drop(verrou);
+    Ok(dir)
+}
+
+/// Le cœur : création verrouillée selon un modèle.
+fn creer_avec_modele_verrou(
+    name: &str,
+    modele: Modele,
+) -> std::io::Result<(PathBuf, super::Verrou)> {
+    let parent = projects_dir();
+    let (dir, verrou) = super::creer_et_publier(&parent, &slug(name), true, modele.gabarit())?;
+    let verrou = verrou.expect("le verrou était demandé");
+    Ok((dir, verrou))
 }
 
 /// Crée un chapitre et l'ajoute à l'assemblage.
@@ -422,8 +404,28 @@ pub fn create_chapter(project: &Project, title: &str) -> std::io::Result<PathBuf
     Ok(path)
 }
 
+/// Vérifie la cible avant toute modification de l'assemblage ou du disque.
+fn verifier_chapitre_du_projet(project: &Project, path: &Path) -> std::io::Result<()> {
+    let racine = project.dir.canonicalize()?;
+    let dossier = project.dir.join("chapitres").canonicalize()?;
+    let chapitre = path.canonicalize()?;
+    let assemblage = project.main.canonicalize()?;
+    if dossier.parent() != Some(racine.as_path())
+        || chapitre.parent() != Some(dossier.as_path())
+        || assemblage.parent() != Some(racine.as_path())
+        || path.extension().is_none_or(|extension| extension != "typ")
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Le chapitre ou l'assemblage ne se trouve pas dans le projet courant.",
+        ));
+    }
+    Ok(())
+}
+
 /// Retire un chapitre de l'assemblage, puis du disque.
 pub fn remove_chapter(project: &Project, path: &Path) -> std::io::Result<std::path::PathBuf> {
+    verifier_chapitre_du_projet(project, path)?;
     remove_include(&project.main, path)?;
 
     // La corbeille, jamais la destruction : un chapitre supprimé par
@@ -629,6 +631,7 @@ fn parse_include_line(line: &str) -> Option<PathBuf> {
 ///
 /// Renvoie le nouveau chemin.
 pub fn rename_chapter(project: &Project, path: &Path, title: &str) -> std::io::Result<PathBuf> {
+    verifier_chapitre_du_projet(project, path)?;
     let order = project
         .chapters
         .iter()
@@ -1041,6 +1044,129 @@ pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 #bibliography("references.bib", style: "chicago-notes")
 "#;
 
+/// Les modèles de documents, choisis en un geste à la création (R5).
+///
+/// Aucun n'impose une institution : les métadonnées sont celles de
+/// l'écrivain, et les normes du projet (`mise-en-page.toml`) s'appliquent
+/// par-dessus. Les champs dynamiques (pagination, en-tête courant) sont
+/// résolus par le moteur lui-même — jamais imités.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modele {
+    /// Le gabarit d'origine, inchangé : les projets existants gardent
+    /// exactement leur rendu.
+    Classique,
+    /// Le devoir court : page de titre, sommaire, sections, bibliographie.
+    DevoirCourt,
+    /// Le travail long : page de titre, sommaire à numérotation romaine,
+    /// corps numéroté avec en-tête courant, bibliographie.
+    TravailLong,
+}
+
+impl Modele {
+    /// Son assemblage typst, écrit pour être relu et modifié à la main.
+    pub fn gabarit(&self) -> &'static str {
+        match self {
+            Modele::Classique => MAIN_TEMPLATE,
+            Modele::DevoirCourt => MAIN_DEVOIR_COURT,
+            Modele::TravailLong => MAIN_TRAVAIL_LONG,
+        }
+    }
+
+    /// Son nom, tel qu'il se dit à l'écran.
+    pub fn nom(&self) -> &'static str {
+        match self {
+            Modele::Classique => "classique",
+            Modele::DevoirCourt => "devoir court",
+            Modele::TravailLong => "travail long",
+        }
+    }
+}
+
+/// Le devoir court : quelques pages, mais déjà un vrai document — page de
+/// titre, sommaire, sections et bibliographie.
+pub const MAIN_DEVOIR_COURT: &str = r#"// Métadonnées : les vôtres. Aucune institution n'est imposée — les normes
+// du projet (mise-en-page.toml) s'appliquent par-dessus.
+#let titre = "Titre du devoir"
+#let auteur = "Prénom Nom"
+#let matiere = "Matière"
+#let date = "Date de remise"
+
+#set page(margin: 2.5cm, numbering: "1")
+#set text(font: "New Computer Modern", size: 11pt)
+
+// Page de titre
+#page(header: none, footer: none)[
+  #v(1fr)
+  #text(size: 1.5em, weight: "bold")[#titre]
+  #v(0.5cm)
+  #text(size: 1.1em)[#matiere]
+  #v(2cm)
+  #auteur
+  #linebreak()
+  #date
+  #v(1fr)
+]
+
+// Sommaire
+#outline(title: "Sommaire", depth: 2)
+
+// L'assemblage : les chapitres sont inclus ici, dans l'ordre.
+// Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
+
+= Introduction
+
+= Développement
+
+= Conclusion
+
+// Bibliographie
+#bibliography("references.bib", style: "chicago-notes", title: "Bibliographie")
+"#;
+
+/// Le travail long : les préliminaires à numérotation romaine, le corps
+/// numéroté avec son en-tête courant — résolu par le moteur, fidèlement.
+pub const MAIN_TRAVAIL_LONG: &str = r#"// Métadonnées : les vôtres. Aucune institution n'est imposée — les normes
+// du projet (mise-en-page.toml) s'appliquent par-dessus.
+#let titre = "Titre du travail"
+#let auteur = "Prénom Nom"
+#let date = "Date de remise"
+
+#set text(font: "New Computer Modern", size: 11pt)
+
+// Page de titre
+#page(margin: 2.5cm, header: none, footer: none)[
+  #v(1fr)
+  #text(size: 1.6em, weight: "bold")[#titre]
+  #v(2cm)
+  #auteur
+  #linebreak()
+  #date
+  #v(1fr)
+]
+
+// Préliminaires : sommaire à numérotation romaine.
+#set page(margin: 2.5cm, numbering: "i", header: none)
+#outline(title: "Sommaire", depth: 3)
+
+// Le corps : numérotation arabe, en-tête courant — le moteur résout titre
+// et auteur à chaque page ; jamais un champ que le moteur ne saurait lire.
+// Les chapitres sont numérotés : un renvoi de titre montre son numéro
+// (Typst refuse de référencer un titre sans numérotation).
+#set heading(numbering: "1.1")
+#counter(page).update(1)
+#set page(numbering: "1", header: context [
+  #titre #h(1fr) #auteur
+])
+
+// L'assemblage : les chapitres sont inclus ici, dans l'ordre.
+// Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
+
+= Introduction
+
+// Bibliographie
+#bibliography("references.bib", style: "chicago-notes", title: "Bibliographie")
+"#;
+
 /// Bibliographie d'un nouveau projet.
 pub const BIBLIOGRAPHY_TEMPLATE: &str = r#"% Une entrée par référence, au format BibTeX.
 % La clé (ici « exemple2026 ») est ce qui se cite dans le texte : @exemple2026.
@@ -1367,23 +1493,24 @@ mod tests {
 
     /// Un fichier Typst importé est converti et ajouté au document unique,
     /// sans remplacer le texte déjà rédigé.
+    ///
+    /// L'application n'écrit plus l'import sur le disque : il rejoint le
+    /// tampon ouvert, prévisualisé avant d'y entrer (voir les épreuves de
+    /// l'espace). La conversion elle-même reste éprouvée ici.
     #[test]
     fn importing_typst_appends_to_the_writing_document() {
-        let dir = scratch("import-typst-into-document");
-        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).unwrap();
-        std::fs::write(dir.join("document.tw"), "Texte déjà présent.\n").unwrap();
-
-        let destination =
-            append_typst_to_document(&load(&dir), "= Section importée\n\nTexte *important*.\n")
-                .unwrap();
-        let document = crate::langage::parse(&std::fs::read_to_string(destination).unwrap());
+        let mut document = crate::langage::parse("Texte déjà présent.\n");
+        let imported = crate::langage::migration::importer_typst_avec_rapport(
+            "= Section importée\n\nTexte *important*.\n",
+        )
+        .0;
+        document.blocs.extend(imported.blocs);
+        let relu = crate::langage::parse(&crate::langage::serialiser(&document));
 
         assert_eq!(
-            document.texte_nu(),
+            relu.texte_nu(),
             "Texte déjà présent. Section importée Texte important."
         );
-
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Les anciens chapitres simples sont réunis en respectant l'ordre de
@@ -2022,5 +2149,108 @@ mod tests {
         assert!(!project.owns(std::path::Path::new("/tmp/autre-projet/main.typ")));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod epreuves_de_modele {
+    use super::{BIBLIOGRAPHY_TEMPLATE, Modele};
+
+    /// Un dossier de projet fabriqué, avec l'assemblage du modèle. Chaque
+    /// appelant a le sien : les tests tournent en parallèle.
+    fn projet(modele: Modele, essai: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "typst-writer-modele-{}-{}-{}",
+            modele.nom().replace(' ', "-"),
+            essai,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("chapitres")).expect("dossier");
+        std::fs::write(dir.join("main.typ"), modele.gabarit()).expect("assemblage");
+        std::fs::write(dir.join("references.bib"), BIBLIOGRAPHY_TEMPLATE).expect("bibliographie");
+        dir
+    }
+
+    /// Les deux modèles de R5 compilent réellement — la promesse d'un
+    /// modèle qui refuse de compiler n'est rien.
+    #[test]
+    fn les_deux_modeles_compilent() {
+        for modele in [Modele::DevoirCourt, Modele::TravailLong] {
+            let dir = projet(modele, "compilent");
+            let resultat = crate::typst::render::compile(&dir, modele.gabarit(), &[]);
+            assert!(
+                resultat.errors.is_empty(),
+                "{} : {:?}",
+                modele.nom(),
+                resultat.errors
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// Le devoir court tient ses promesses dans le PDF même : page de
+    /// titre, sommaire, sections, bibliographie.
+    #[test]
+    fn le_devoir_promet_page_de_titre_sommaire_et_bibliographie() {
+        let dir = projet(Modele::DevoirCourt, "devoir");
+        let pdf = crate::typst::render::render_pdf(&dir, Modele::DevoirCourt.gabarit(), &[])
+            .expect("PDF");
+        let fichier = dir.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
+
+        for promesse in [
+            "titre du devoir",
+            "sommaire",
+            "introduction",
+            "bibliographie",
+        ] {
+            assert!(texte.contains(promesse), "« {promesse} » manque : {texte}");
+        }
+    }
+
+    /// Le travail long résout ses champs dynamiques **dans le PDF** :
+    /// l'en-tête courant porte réellement le titre et l'auteur à chaque
+    /// page du corps — c'est le moteur qui les écrit, pas une imitation.
+    #[test]
+    fn le_travail_long_resout_son_entete_courant() {
+        let dir = projet(Modele::TravailLong, "long");
+        let pdf = crate::typst::render::render_pdf(&dir, Modele::TravailLong.gabarit(), &[])
+            .expect("PDF");
+        let fichier = dir.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
+
+        for promesse in ["titre du travail", "sommaire", "bibliographie"] {
+            assert!(texte.contains(promesse), "« {promesse} » manque : {texte}");
+        }
+
+        // Le titre apparaît sur la page de titre **et** dans l'en-tête
+        // courant d'au moins une page du corps : plus d'une fois.
+        assert!(
+            texte.matches("titre du travail").count() >= 2,
+            "l'en-tête courant est résolu par le moteur : {texte}"
+        );
     }
 }

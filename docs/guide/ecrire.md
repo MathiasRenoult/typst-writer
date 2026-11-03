@@ -52,6 +52,9 @@ Voir [La bibliographie](bibliographie.md).
 
 Une image avec légende compose une **figure numérotée** ; sans légende —
 `![](planche.png)` — c'est l'image seule. Le chemin est relatif au projet.
+Lorsqu'une image extérieure est importée depuis l'application, elle est copiée
+dans `images/` ; si un fichier porte déjà ce nom, la copie reçoit un suffixe
+(`figure-2.png`, par exemple) plutôt que de remplacer l'image existante.
 
 La légende peut se séparer de l'alt par une barre :
 
@@ -87,9 +90,10 @@ portent du texte ordinaire — emphase, code, citations ; une barre dedans
 s'échappe : `\|`. Sans la ligne de séparation, ce n'est pas un tableau :
 la ligne reste du texte.
 
-Les lignes du corps sont normalisées automatiquement au nombre de
-colonnes de l'en-tête : les cellules manquantes sont comblées, les
-excédentes tronquées.
+**Attention : dans la version actuelle**, les cellules excédant le nombre
+de colonnes de l'en-tête sont ignorées lors de l'analyse et de la
+génération. Évitez les lignes irrégulières et vérifiez vos tableaux dans
+le PDF ; ne comptez pas sur une conservation complète à la conversion.
 
 Le décor l'habille comme tout bloc — `{encadré}` prend sa tenue dans les
 normes.
@@ -107,9 +111,9 @@ Chaque ligne est `libellé | valeur`. Le `type` dit la forme : `barre`
 (par défaut), `ligne` ou `secteur`. Le `titre` est facultatif — il devient
 la légende de la figure.
 
-Les graphiques sont rendus par le paquet Typst
-[cetz](https://typst.app/universe/package/cetz) — la première compilation
-le télécharge automatiquement.
+Les graphiques utilisent le paquet Typst
+[cetz](https://typst.app/universe/package/cetz). Sa résolution dans
+l'application doit être vérifiée avant de compter sur ce rendu.
 
 ## Le décor : l'intention, jamais la mesure
 

@@ -314,8 +314,12 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
     }
 
     // La casse globale s'applique aux niveaux sans casse propre.
-    if titres.casse_1.is_none() && titres.casse_2.is_none() && titres.casse_3.is_none()
-        && titres.casse_4.is_none() && titres.casse_5.is_none() && titres.casse_6.is_none()
+    if titres.casse_1.is_none()
+        && titres.casse_2.is_none()
+        && titres.casse_3.is_none()
+        && titres.casse_4.is_none()
+        && titres.casse_5.is_none()
+        && titres.casse_6.is_none()
     {
         match titres.casse.as_str() {
             "majuscules" => out.push_str("  show heading: it => upper(it)\n"),
@@ -383,16 +387,21 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
 
             for (rang, morceau) in morceau.split("\\x00").enumerate() {
                 if rang > 0 {
-                    out.push_str(&format!("#context numbering(\"{forme}\", ..counter(page).final())"));
+                    out.push_str(&format!(
+                        "#context numbering(\"{forme}\", ..counter(page).final())"
+                    ));
                 }
 
                 // On échappe le texte, puis on replace les marqueurs par
                 // leur code Typst — non échappé, c'est du code.
                 let texte_echappe = echapper(morceau);
-                let texte_echappe = texte_echappe.replace("\\x01", "#sys.inputs.at(\"document\", default: \"\")");
+                let texte_echappe =
+                    texte_echappe.replace("\\x01", "#sys.inputs.at(\"document\", default: \"\")");
                 let texte_echappe = texte_echappe.replace("\\x02", "#datetime.today().display()");
-                let texte_echappe = texte_echappe.replace("\\x03", "#sys.inputs.at(\"auteur\", default: \"\")");
-                let texte_echappe = texte_echappe.replace("\\x04", "#sys.inputs.at(\"projet\", default: \"\")");
+                let texte_echappe =
+                    texte_echappe.replace("\\x03", "#sys.inputs.at(\"auteur\", default: \"\")");
+                let texte_echappe =
+                    texte_echappe.replace("\\x04", "#sys.inputs.at(\"projet\", default: \"\")");
 
                 out.push_str(&texte_echappe);
             }
@@ -700,37 +709,41 @@ fn un_pied_redige_porte_son_numero() {
     );
 }
 
-    /// **Un document ne compile jamais mal.** La preuve se donne au vrai
-    /// compilateur : le gabarit, pied et en-tête rédigés, forme grecque et
-    /// tout, se compile. C'est la règle absolue du rapport 2.
-    #[test]
-    fn un_document_ne_compile_jamais_mal() {
-        if std::process::Command::new("typst").arg("--version").output().is_err() {
-            println!("typst n'est pas installé : test sauté");
-            return;
-        }
-        let mut mise = MiseEnPage::default();
-        mise.entete_pied.entete.gauche = "Ma thèse".to_string();
-        mise.entete_pied.pied.droite = "p. {page}".to_string();
-        mise.entete_pied.pied.centre = "page {page} sur {pages}".to_string();
-        mise.entete_pied.numerotation = "α".to_string();
-
-        let gabarit = generer(&mise);
-        let dossier = std::env::temp_dir().join("typst-writer-epreuve-compile");
-        let _ = std::fs::create_dir_all(&dossier);
-        let chemin = dossier.join("document.typ");
-
-        let document = format!("{gabarit}\nUn texte d'épreuve.\n");
-        std::fs::write(&chemin, &document).expect("le document s'écrit");
-
-        let sortie = std::process::Command::new("typst")
-            .args(["compile", chemin.to_str().unwrap()])
-            .output()
-            .expect("typst s'exécute");
-
-        assert!(
-            sortie.status.success(),
-            "le document compile toujours : {}",
-            String::from_utf8_lossy(&sortie.stderr)
-        );
+/// **Un document ne compile jamais mal.** La preuve se donne au vrai
+/// compilateur : le gabarit, pied et en-tête rédigés, forme grecque et
+/// tout, se compile. C'est la règle absolue du rapport 2.
+#[test]
+fn un_document_ne_compile_jamais_mal() {
+    if std::process::Command::new("typst")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        println!("typst n'est pas installé : test sauté");
+        return;
     }
+    let mut mise = MiseEnPage::default();
+    mise.entete_pied.entete.gauche = "Ma thèse".to_string();
+    mise.entete_pied.pied.droite = "p. {page}".to_string();
+    mise.entete_pied.pied.centre = "page {page} sur {pages}".to_string();
+    mise.entete_pied.numerotation = "α".to_string();
+
+    let gabarit = generer(&mise);
+    let dossier = std::env::temp_dir().join("typst-writer-epreuve-compile");
+    let _ = std::fs::create_dir_all(&dossier);
+    let chemin = dossier.join("document.typ");
+
+    let document = format!("{gabarit}\nUn texte d'épreuve.\n");
+    std::fs::write(&chemin, &document).expect("le document s'écrit");
+
+    let sortie = std::process::Command::new("typst")
+        .args(["compile", chemin.to_str().unwrap()])
+        .output()
+        .expect("typst s'exécute");
+
+    assert!(
+        sortie.status.success(),
+        "le document compile toujours : {}",
+        String::from_utf8_lossy(&sortie.stderr)
+    );
+}

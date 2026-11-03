@@ -52,6 +52,22 @@ pub struct MiseEnPage {
     /// La forme de la numérotation des figures : "1", "A", "a", "I", "i", "1.1".
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
+
+    /// La bibliographie : le style des citations et de la liste finale.
+    pub bibliographie: Bibliographie,
+}
+
+/// La bibliographie d'un projet.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Bibliographie {
+    /// Le style des citations et de la liste finale, tel que le moteur
+    /// Typst l'attend (« chicago-notes », « apa »…).
+    ///
+    /// `None` : le document décide par sa propre directive, et à défaut le
+    /// style de base du moteur. Un nom refusé par le moteur n'est jamais
+    /// appliqué — il se dit (R4).
+    pub style: Option<String>,
 }
 
 /// Les défauts du décor d'un document.
@@ -604,6 +620,65 @@ impl MiseEnPage {
             )),
         }
 
+        // Les réglages **par niveau** suivent exactement les mêmes règles
+        // que les globaux : une édition cohérente par niveau, une
+        // validation cohérente par niveau (R5). Rien ne s'ignore en silence.
+        for niveau in 1..=6usize {
+            let espacement = match niveau {
+                1 => self.titres.espacement_1.as_deref(),
+                2 => self.titres.espacement_2.as_deref(),
+                3 => self.titres.espacement_3.as_deref(),
+                4 => self.titres.espacement_4.as_deref(),
+                5 => self.titres.espacement_5.as_deref(),
+                _ => self.titres.espacement_6.as_deref(),
+            };
+            if let Some(valeur) = espacement
+                && !longueur_valide(valeur)
+            {
+                out.push((
+                    format!("espacement du titre {niveau}"),
+                    format!("« {valeur} » n'est pas une longueur (ex. 2.5cm, 11pt, 0.65em)"),
+                ));
+            }
+
+            let casse = match niveau {
+                1 => self.titres.casse_1.as_deref(),
+                2 => self.titres.casse_2.as_deref(),
+                3 => self.titres.casse_3.as_deref(),
+                4 => self.titres.casse_4.as_deref(),
+                5 => self.titres.casse_5.as_deref(),
+                _ => self.titres.casse_6.as_deref(),
+            };
+            if let Some(valeur) = casse
+                && !matches!(
+                    valeur,
+                    "normale" | "majuscules" | "minuscules" | "petites-majuscules"
+                )
+            {
+                out.push((
+                    format!("casse du titre {niveau}"),
+                    format!("« {valeur} » n'est pas une casse connue"),
+                ));
+            }
+
+            let couleur = match niveau {
+                1 => self.titres.couleur_1.as_deref(),
+                2 => self.titres.couleur_2.as_deref(),
+                3 => self.titres.couleur_3.as_deref(),
+                4 => self.titres.couleur_4.as_deref(),
+                5 => self.titres.couleur_5.as_deref(),
+                _ => self.titres.couleur_6.as_deref(),
+            };
+            if let Some(valeur) = couleur.filter(|valeur| !valeur.is_empty())
+                && !couleur_valide(valeur)
+            {
+                out.push((
+                    format!("couleur du titre {niveau}"),
+                    format!("« {valeur} » n'est pas une couleur (ex. #1e1e2e)"),
+                ));
+            }
+        }
+
         // La typographie : une valeur inconnue se perdait en silence, et
         // la règle tombait en « aucune » sans le dire à personne.
         let espaces = [
@@ -758,6 +833,7 @@ pub enum Champ {
     CouleurGras,
     CouleurItalique,
     CouleurFond,
+    BibliographieStyle,
 }
 
 impl MiseEnPage {
@@ -826,12 +902,36 @@ impl MiseEnPage {
             Champ::TitresCouleur4 => self.titres.couleur_4.clone().unwrap_or_default(),
             Champ::TitresCouleur5 => self.titres.couleur_5.clone().unwrap_or_default(),
             Champ::TitresCouleur6 => self.titres.couleur_6.clone().unwrap_or_default(),
-            Champ::TitresGras1 => self.titres.gras_1.map(|v| v.to_string()).unwrap_or_default(),
-            Champ::TitresGras2 => self.titres.gras_2.map(|v| v.to_string()).unwrap_or_default(),
-            Champ::TitresGras3 => self.titres.gras_3.map(|v| v.to_string()).unwrap_or_default(),
-            Champ::TitresGras4 => self.titres.gras_4.map(|v| v.to_string()).unwrap_or_default(),
-            Champ::TitresGras5 => self.titres.gras_5.map(|v| v.to_string()).unwrap_or_default(),
-            Champ::TitresGras6 => self.titres.gras_6.map(|v| v.to_string()).unwrap_or_default(),
+            Champ::TitresGras1 => self
+                .titres
+                .gras_1
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresGras2 => self
+                .titres
+                .gras_2
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresGras3 => self
+                .titres
+                .gras_3
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresGras4 => self
+                .titres
+                .gras_4
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresGras5 => self
+                .titres
+                .gras_5
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresGras6 => self
+                .titres
+                .gras_6
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             Champ::TitresEspacement1 => self.titres.espacement_1.clone().unwrap_or_default(),
             Champ::TitresEspacement2 => self.titres.espacement_2.clone().unwrap_or_default(),
             Champ::TitresEspacement3 => self.titres.espacement_3.clone().unwrap_or_default(),
@@ -846,6 +946,7 @@ impl MiseEnPage {
             Champ::CouleurGras => self.couleurs.gras.clone(),
             Champ::CouleurItalique => self.couleurs.italique.clone(),
             Champ::CouleurFond => self.couleurs.fond.clone(),
+            Champ::BibliographieStyle => self.bibliographie.style.clone().unwrap_or_default(),
         }
     }
 
@@ -914,18 +1015,42 @@ impl MiseEnPage {
             Champ::TitresCouleur4 => self.titres.couleur_4 = (!valeur.is_empty()).then_some(valeur),
             Champ::TitresCouleur5 => self.titres.couleur_5 = (!valeur.is_empty()).then_some(valeur),
             Champ::TitresCouleur6 => self.titres.couleur_6 = (!valeur.is_empty()).then_some(valeur),
-            Champ::TitresGras1 => self.titres.gras_1 = (!valeur.is_empty()).then_some(valeur == "true"),
-            Champ::TitresGras2 => self.titres.gras_2 = (!valeur.is_empty()).then_some(valeur == "true"),
-            Champ::TitresGras3 => self.titres.gras_3 = (!valeur.is_empty()).then_some(valeur == "true"),
-            Champ::TitresGras4 => self.titres.gras_4 = (!valeur.is_empty()).then_some(valeur == "true"),
-            Champ::TitresGras5 => self.titres.gras_5 = (!valeur.is_empty()).then_some(valeur == "true"),
-            Champ::TitresGras6 => self.titres.gras_6 = (!valeur.is_empty()).then_some(valeur == "true"),
-            Champ::TitresEspacement1 => self.titres.espacement_1 = (!valeur.is_empty()).then_some(valeur),
-            Champ::TitresEspacement2 => self.titres.espacement_2 = (!valeur.is_empty()).then_some(valeur),
-            Champ::TitresEspacement3 => self.titres.espacement_3 = (!valeur.is_empty()).then_some(valeur),
-            Champ::TitresEspacement4 => self.titres.espacement_4 = (!valeur.is_empty()).then_some(valeur),
-            Champ::TitresEspacement5 => self.titres.espacement_5 = (!valeur.is_empty()).then_some(valeur),
-            Champ::TitresEspacement6 => self.titres.espacement_6 = (!valeur.is_empty()).then_some(valeur),
+            Champ::TitresGras1 => {
+                self.titres.gras_1 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresGras2 => {
+                self.titres.gras_2 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresGras3 => {
+                self.titres.gras_3 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresGras4 => {
+                self.titres.gras_4 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresGras5 => {
+                self.titres.gras_5 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresGras6 => {
+                self.titres.gras_6 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresEspacement1 => {
+                self.titres.espacement_1 = (!valeur.is_empty()).then_some(valeur)
+            }
+            Champ::TitresEspacement2 => {
+                self.titres.espacement_2 = (!valeur.is_empty()).then_some(valeur)
+            }
+            Champ::TitresEspacement3 => {
+                self.titres.espacement_3 = (!valeur.is_empty()).then_some(valeur)
+            }
+            Champ::TitresEspacement4 => {
+                self.titres.espacement_4 = (!valeur.is_empty()).then_some(valeur)
+            }
+            Champ::TitresEspacement5 => {
+                self.titres.espacement_5 = (!valeur.is_empty()).then_some(valeur)
+            }
+            Champ::TitresEspacement6 => {
+                self.titres.espacement_6 = (!valeur.is_empty()).then_some(valeur)
+            }
             Champ::TitresNumerotation => self.titres.numerotation = valeur,
             Champ::TitresEspacement => self.titres.espacement = valeur,
             Champ::CouleurTexte => self.couleurs.texte = valeur,
@@ -934,6 +1059,9 @@ impl MiseEnPage {
             Champ::CouleurGras => self.couleurs.gras = valeur,
             Champ::CouleurItalique => self.couleurs.italique = valeur,
             Champ::CouleurFond => self.couleurs.fond = valeur,
+            Champ::BibliographieStyle => {
+                self.bibliographie.style = (!valeur.is_empty()).then_some(valeur)
+            }
         }
     }
 
@@ -1047,5 +1175,27 @@ mod tests {
         let noms: Vec<&str> = problemes.iter().map(|(nom, _)| nom.as_str()).collect();
 
         assert_eq!(noms, ["marge gauche", "couleur du texte"]);
+    }
+
+    /// Les réglages **par niveau** sont validés comme les globaux : une
+    /// édition cohérente par niveau, une validation cohérente par niveau.
+    #[test]
+    fn les_reglages_par_niveau_sont_valides_comme_les_globaux() {
+        let mut mise_en_page = MiseEnPage::default();
+        mise_en_page.titres.espacement_1 = Some("beaucoup".to_string());
+        mise_en_page.titres.casse_2 = Some("Majuscules".to_string());
+        mise_en_page.titres.couleur_3 = Some("rouge".to_string());
+
+        let problemes = mise_en_page.problemes();
+        let noms: Vec<&str> = problemes.iter().map(|(nom, _)| nom.as_str()).collect();
+
+        assert_eq!(
+            noms,
+            [
+                "espacement du titre 1",
+                "casse du titre 2",
+                "couleur du titre 3"
+            ]
+        );
     }
 }

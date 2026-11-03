@@ -57,26 +57,16 @@ des pages se choisit par forme :
 
 La numérotation s'active ou non, et se positionne où l'on veut.
 
-### Les champs prédéfinis (Quick Parts)
-
-Dans l'en-tête et le pied de page, quatre champs se glissent dans le
-texte et se mettent à jour à chaque compilation :
-
-| Champ | Contenu |
-| --- | --- |
-| `{document}` | le nom du document |
-| `{date}` | la date du jour |
-| `{auteur}` | le nom de l'auteur |
-| `{projet}` | le titre du projet |
-
-Ils cohabitent avec `{page}` et `{pages}`. Les champs sont dynamiques :
-jamais figés, toujours à jour.
+La saisie prévoit aussi les champs `{document}`, `{date}`, `{auteur}` et
+`{projet}`, mais leur remplacement dynamique n'est pas fiable dans cette
+version : ne les utilisez pas pour des informations essentielles. Vérifiez
+les en-têtes et pieds dans le PDF exporté.
 
 ## Les titres par niveau
 
-Chaque niveau de titre (1 à 6) se règle indépendamment : taille, casse
-(normale, majuscules, minuscules, petites-majuscules). La casse globale
-s'applique par défaut ; une casse par niveau la remplace si elle est
-renseignée.
+Les tailles se règlent par niveau. Des champs de couleur, graisse et
+espacement sont également proposés pour chaque niveau, mais leur application
+complète au rendu reste à vérifier. La casse présentée dans la fenêtre est
+un réglage global.
 
 Voir [Écrire](ecrire.md).
