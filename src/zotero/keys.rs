@@ -36,9 +36,12 @@ impl Keyring {
 
     /// Écrit le trousseau, tel qu'il sera relu.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let texte = serde_json::to_string_pretty(&self.keys).map_err(std::io::Error::other)?;
+        crate::project::ecrire_atomique(path, &self.texte()?)
+    }
 
-        crate::project::ecrire_atomique(path, &texte)
+    /// Le trousseau, en texte — pour la transaction d'export.
+    pub fn texte(&self) -> std::io::Result<String> {
+        serde_json::to_string_pretty(&self.keys).map_err(std::io::Error::other)
     }
 
     /// La clé d'une notice, qu'elle soit déjà attribuée ou à attribuer.
@@ -420,7 +423,11 @@ mod tests_de_stabilisation {
     /// racine.
     #[test]
     fn la_stabilisation_ne_casse_jamais_le_bibtex() {
-        if std::process::Command::new("typst").arg("--version").output().is_err() {
+        if std::process::Command::new("typst")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             println!("typst n'est pas installé : test sauté");
             return;
         }
@@ -432,7 +439,10 @@ mod tests_de_stabilisation {
 
         // Chaque notice garde son corps : le titre protégé s'y trouve,
         // accolades comprises.
-        assert!(sortie.contains("{{Protégé}}"), "le titre protégé survit : {sortie}");
+        assert!(
+            sortie.contains("{{Protégé}}"),
+            "le titre protégé survit : {sortie}"
+        );
 
         // Le fichier se compile : c'est le compilateur qui juge.
         let dossier = std::env::temp_dir().join("typst-writer-epreuve-bib");

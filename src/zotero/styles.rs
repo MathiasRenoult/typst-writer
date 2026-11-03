@@ -83,6 +83,33 @@ fn element_text(text: &str, name: &str) -> Option<String> {
     None
 }
 
+/// L'identifiant CSL d'un fichier — celui que le `parent` d'un style
+/// dépendant réclame.
+pub fn identifiant_csl(texte: &str) -> Option<String> {
+    element_text(texte, "id").filter(|id| !id.is_empty())
+}
+
+/// Télécharge un style depuis le dépôt public des styles.
+///
+/// **Jamais sans consentement** : c'est l'appelant qui a demandé — le
+/// geste est explicite, la note annonce le téléchargement (R4). Un échec
+/// se dit en mots, et n'empêche rien d'autre.
+pub fn telecharger_style(url: &str) -> Result<String, String> {
+    let url = if url.starts_with("http://www.zotero.org/styles/") {
+        url.replacen("http://", "https://", 1)
+    } else {
+        url.to_string()
+    };
+
+    let reponse = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(15))
+        .call()
+        .map_err(|erreur| format!("Téléchargement impossible : {erreur}"))?;
+    reponse
+        .into_string()
+        .map_err(|erreur| format!("Style illisible : {erreur}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +122,34 @@ mod tests {
     <title-short>APA</title-short>
   </info>
 </style>"#;
+
+    /// Le téléchargement lit le style — et ne se fait jamais sans que
+    /// l'appelant l'ait demandé (le consentement est à l'appel).
+    #[test]
+    fn le_telechargement_lit_le_style() {
+        use std::io::{Read, Write};
+
+        let ecouteur = std::net::TcpListener::bind("127.0.0.1:0").expect("écoute");
+        let adresse = ecouteur.local_addr().expect("adresse");
+        let reponse = APA.to_string();
+
+        let serveur = std::thread::spawn(move || {
+            if let Ok((mut flux, _)) = ecouteur.accept() {
+                let mut requete = [0u8; 1024];
+                let _ = flux.read(&mut requete);
+                let corps = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.citationstyles.csl+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reponse.len(),
+                    reponse
+                );
+                let _ = flux.write_all(corps.as_bytes());
+            }
+        });
+
+        let lu = telecharger_style(&format!("http://{adresse}/apa")).expect("téléchargé");
+        assert!(lu.contains("American Psychological Association"), "{lu}");
+        let _ = serveur.join();
+    }
 
     /// Un style se lit par son identifiant et son titre.
     #[test]

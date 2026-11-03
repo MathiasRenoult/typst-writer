@@ -682,6 +682,31 @@ impl World for PreviewWorld {
 
 #[cfg(test)]
 mod tests {
+    /// Le moteur est **verrouillé** : chaque brique Typst est épinglée à sa
+    /// version exacte. Un glissement même mineur changerait des rendus —
+    /// le contrat de rendu du projet ne le permet pas (R4, moteur
+    /// verrouillé).
+    #[test]
+    fn le_moteur_typst_est_verrouille() {
+        let manifeste = include_str!("../../Cargo.toml");
+
+        for brique in [
+            "typst =",
+            "typst-assets =",
+            "typst-layout =",
+            "typst-pdf =",
+            "typst-render =",
+        ] {
+            let ligne = manifeste
+                .lines()
+                .find(|ligne| ligne.trim_start().starts_with(brique))
+                .unwrap_or_else(|| panic!("{brique} absente du manifeste"));
+            assert!(
+                ligne.contains("=0.15.1"),
+                "{brique} n'est pas épinglée exactement : {ligne}"
+            );
+        }
+    }
 
     /// Un sommaire, pour éprouver les sauts de titre.
     fn sommaire() -> Vec<OutlineEntry> {

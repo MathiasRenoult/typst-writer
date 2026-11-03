@@ -67,8 +67,9 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
 /// Crée un projet au nom choisi — et jamais sur un dossier existant.
 ///
 /// Le nom est celui du dossier, plié à une forme qui tient partout :
-/// minuscules, sans espace ni barre. Un dossier existant n'est pas
-/// réutilisé en silence : c'est peut-être le travail de quelqu'un.
+/// minuscules, sans espace ni barre. Le projet se prépare complet dans un
+/// temporaire caché et ne paraît qu'une fois prêt ; un dossier existant
+/// n'est pas réutilisé en silence : c'est peut-être le travail de quelqu'un.
 pub fn creer_au_nom(parent: &Path, nom: &str) -> Result<PathBuf, String> {
     let plie = plier_nom(nom);
 
@@ -78,16 +79,129 @@ pub fn creer_au_nom(parent: &Path, nom: &str) -> Result<PathBuf, String> {
 
     let dossier = parent.join(&plie);
 
+    // Un dossier existant n'est pas réutilisé en silence : c'est peut-être
+    // le travail de quelqu'un.
     if dossier.exists() {
         return Err(format!(
             "« {plie} » existe déjà — un autre nom, ou l'ouvrir."
         ));
     }
 
-    std::fs::create_dir_all(&dossier)
-        .map_err(|erreur| format!("{} : {erreur}", dossier.display()))?;
+    creer_et_publier(parent, &plie, false, crate::project::model::MAIN_TEMPLATE)
+        .map(|(dir, _)| dir)
+        .map_err(|erreur| {
+            if erreur.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("« {plie} » existe déjà — un autre nom, ou l'ouvrir.")
+            } else {
+                format!("{} : {erreur}", dossier.display())
+            }
+        })
+}
 
-    Ok(dossier)
+/// Prépare un projet complet dans un temporaire caché, puis le publie d'un
+/// seul renommage.
+///
+/// Le dossier ne paraît au balayage qu'une fois ses gabarits en place :
+/// jamais un demi-projet en vitrine. La publication reste exclusive — deux
+/// créations au même nom ne gagnent jamais toutes les deux. Un travail
+/// interrompu reste dans son temporaire : rien ne disparaît en silence.
+pub(super) fn creer_et_publier(
+    parent: &Path,
+    plie: &str,
+    avec_verrou: bool,
+    gabarit: &str,
+) -> std::io::Result<(PathBuf, Option<Verrou>)> {
+    std::fs::create_dir_all(parent)?;
+
+    let mut numero = 0;
+    let temporaire = loop {
+        let candidat = parent.join(format!(".{plie}.creation-{}-{numero}", std::process::id()));
+        match std::fs::create_dir(&candidat) {
+            Ok(()) => break candidat,
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => numero += 1,
+            Err(erreur) => return Err(erreur),
+        }
+    };
+
+    let mut verrou = if avec_verrou {
+        match Verrou::prendre(&temporaire) {
+            Ok(verrou) => Some(verrou),
+            Err(probleme) => return Err(std::io::Error::other(probleme)),
+        }
+    } else {
+        None
+    };
+
+    std::fs::create_dir(temporaire.join("chapitres"))?;
+    for (nom, contenu) in [
+        ("main.typ", gabarit),
+        ("document.tw", ""),
+        (
+            "references.bib",
+            crate::project::model::BIBLIOGRAPHY_TEMPLATE,
+        ),
+    ] {
+        use std::io::Write;
+        let mut fichier = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temporaire.join(nom))?;
+        fichier.write_all(contenu.as_bytes())?;
+        fichier.sync_all()?;
+    }
+
+    let dir = parent.join(plie);
+    match std::fs::rename(&temporaire, &dir) {
+        Ok(()) => {
+            if let Some(verrou) = &mut verrou {
+                verrou.suivre_deplacement(&dir);
+            }
+            Ok((dir, verrou))
+        }
+        Err(erreur) => Err(if dir.exists() {
+            std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("« {plie} » existe déjà"),
+            )
+        } else {
+            erreur
+        }),
+    }
+}
+
+/// Les temporaires de création abandonnés partent à la corbeille.
+///
+/// Une création interrompue — panne avant la publication — laisse un
+/// dossier caché ; quand son auteur n'existe plus, il va à la corbeille,
+/// comme tout le reste, plutôt que d'encombrer à jamais. Un temporaire dont
+/// l'auteur est vivant est une création en cours : on n'y touche pas. Hors
+/// Linux, un auteur est toujours présumé vivant.
+pub fn nettoyer_temporaires_de_creation(parent: &Path) {
+    let Ok(entrees) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entree in entrees.filter_map(Result::ok) {
+        if !entree.path().is_dir() {
+            continue;
+        }
+        let nom = entree.file_name().to_string_lossy().into_owned();
+        let Some((_plie, reste)) = nom
+            .strip_prefix('.')
+            .and_then(|nu| nu.rsplit_once(".creation-"))
+        else {
+            continue;
+        };
+        let Some((pid, _numero)) = reste.rsplit_once('-') else {
+            continue;
+        };
+        let Ok(pid) = pid.parse::<i32>() else {
+            continue;
+        };
+        if pid <= 0 || process_vivant(pid) {
+            continue;
+        }
+        let _ = vers_la_corbeille(&entree.path());
+    }
 }
 
 /// Renomme un projet — le dossier suit, et tout ce qui y vit avec lui.
@@ -137,21 +251,66 @@ pub fn plier_nom(nom: &str) -> String {
     plie.trim_matches('-').to_string()
 }
 
-/// Le verrou d'un projet : une seule instance y travaille.
+/// Le verrou d'un projet : une seule instance récente y travaille.
 ///
-/// Deux instances s'écrasent leurs auto-sauvegardes — le texte de l'une
-/// efface celui de l'autre, sans qu'on sache lequel a gagné. Le verrou est
-/// un fichier qui porte le processus qui le tient : un mort le libère, un
-/// vivant le garde.
+/// L'ancre native est permanente : la supprimer permettrait à deux instances
+/// de verrouiller des fichiers différents au même chemin. Le marqueur PID
+/// conserve une compatibilité limitée avec les anciennes versions ; elles ne
+/// respectent pas le verrou natif et ne doivent pas travailler simultanément.
 #[derive(Debug)]
 pub struct Verrou {
     chemin: std::path::PathBuf,
+    _ancre: std::fs::File,
 }
 
 impl Verrou {
+    /// Met à jour le chemin du marqueur après déplacement du projet.
+    pub fn suivre_deplacement(&mut self, dir: &Path) {
+        self.chemin = dir.join(".verrou");
+    }
+
     /// Prend le verrou d'un projet. `Err` si une instance vivante le tient.
     pub fn prendre(dir: &Path) -> Result<Self, String> {
         let chemin = dir.join(".verrou");
+        let ancre_chemin = dir.join(".verrou-natif");
+        let ancre = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&ancre_chemin)
+            .map_err(|erreur| {
+                format!(
+                    "Le verrou {} ne peut pas être ouvert : {erreur}.",
+                    ancre_chemin.display()
+                )
+            })?;
+        match ancre.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err("Une autre instance travaille sur ce projet.".to_string());
+            }
+            Err(std::fs::TryLockError::Error(erreur)) => {
+                return Err(format!(
+                    "Le verrou {} ne peut pas être acquis : {erreur}.",
+                    ancre_chemin.display()
+                ));
+            }
+        }
+
+        // Le dossier a pu être déplacé après ouverture de l'ancre. Ne jamais
+        // écrire au chemin demandé si l'ancre n'est plus celle de ce chemin.
+        let identite = same_file::Handle::from_file(ancre.try_clone().map_err(|e| e.to_string())?)
+            .map_err(|e| format!("Identité du verrou inaccessible : {e}"))?;
+        let actuelle = same_file::Handle::from_path(&ancre_chemin)
+            .map_err(|e| format!("Le projet a été déplacé pendant son ouverture : {e}"))?;
+        if identite != actuelle {
+            return Err(
+                "Le projet a été déplacé pendant son ouverture ; ouvrez-le à nouveau.".to_string(),
+            );
+        }
+        drop(actuelle);
+        drop(identite);
 
         match std::fs::OpenOptions::new()
             .write(true)
@@ -160,68 +319,490 @@ impl Verrou {
         {
             Ok(mut fichier) => {
                 use std::io::Write;
-                let _ = writeln!(fichier, "{}", std::process::id());
-                Ok(Self { chemin })
+                if let Err(erreur) = writeln!(fichier, "{}", std::process::id()) {
+                    drop(fichier);
+                    let _ = std::fs::remove_file(&chemin);
+                    return Err(format!(
+                        "Le verrou {} ne s'écrit pas : {erreur}.",
+                        chemin.display()
+                    ));
+                }
+                Ok(Self {
+                    chemin,
+                    _ancre: ancre,
+                })
             }
 
-            Err(_) => {
-                // Il existe : qui le tient ? Un mort l'a laissé, on le reprend.
-                let contenu = std::fs::read_to_string(&chemin).unwrap_or_default();
-                let pid: i32 = contenu.trim().parse().unwrap_or(0);
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Un fichier vide peut être en cours de création par une autre
+                // instance. Son propriétaire n'est pas connu : ne pas le voler.
+                let contenu = std::fs::read_to_string(&chemin).map_err(|erreur| {
+                    format!("Le verrou {} est illisible : {erreur}.", chemin.display())
+                })?;
+                let pid: i32 = contenu.trim().parse().ok().filter(|pid| *pid > 0).ok_or_else(|| {
+                    format!("Le verrou {} est incomplet ou invalide. Fermez toutes les instances, puis retirez ce fichier s'il subsiste.", chemin.display())
+                })?;
 
-                if pid > 0 && process_vivant(pid) {
+                if process_vivant(pid) {
                     return Err(format!(
-                        "Une autre instance travaille sur ce projet (processus {pid})."
+                        "Une autre instance travaille peut-être sur ce projet (processus {pid}). Fermez les autres instances avant de réessayer."
                     ));
                 }
 
                 std::fs::write(&chemin, format!("{}\n", std::process::id()))
                     .map_err(|erreur| format!("{} : {erreur}", chemin.display()))?;
 
-                Ok(Self { chemin })
+                Ok(Self {
+                    chemin,
+                    _ancre: ancre,
+                })
             }
+            Err(erreur) => Err(format!(
+                "Le verrou {} ne peut pas être créé : {erreur}.",
+                chemin.display()
+            )),
         }
     }
 }
 
 impl Drop for Verrou {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.chemin);
+        let attendu = std::process::id().to_string();
+        if std::fs::read_to_string(&self.chemin).is_ok_and(|contenu| contenu.trim() == attendu) {
+            let _ = std::fs::remove_file(&self.chemin);
+        }
+        // Un descripteur dupliqué ou brièvement hérité par un enfant ne doit
+        // pas prolonger un verrou que l'instance a explicitement relâché.
+        let _ = self._ancre.unlock();
     }
 }
 
-/// Un processus existe-t-il encore ? Un mort ne tient pas de verrou.
+/// Un PID inconnu est considéré vivant quand sa vérification n'est pas fiable.
+#[cfg(target_os = "linux")]
 fn process_vivant(pid: i32) -> bool {
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
+    !std::path::Path::new("/proc/self").exists()
+        || std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
 
-/// Écrit un fichier d'un seul tenant : temporaire, puis renommage.
-///
-/// Une écriture directe tronque le fichier si la machine s'arrête au
-/// milieu ; celle-ci n'écrit jamais qu'un temporaire, et l'ancien contenu
-/// tient jusqu'au bout. C'est la même voie que prennent déjà les
-/// migrations — un document d'écriture ne mérite pas moins.
-pub fn ecrire_atomique(chemin: &std::path::Path, contenu: &str) -> std::io::Result<()> {
-    let nom = chemin
-        .file_name()
-        .and_then(|nom| nom.to_str())
-        .unwrap_or("fichier");
-    let temporaire = chemin.with_file_name(format!(".{nom}.tmp"));
+#[cfg(not(target_os = "linux"))]
+fn process_vivant(_pid: i32) -> bool {
+    true
+}
 
-    std::fs::write(&temporaire, contenu)?;
-    std::fs::rename(&temporaire, chemin)
+/// Écrit un fichier d'un seul tenant : temporaire unique, puis renommage.
+///
+/// Un ancien temporaire peut contenir une version à récupérer : il ne doit
+/// jamais être réutilisé. Le fichier temporaire est synchronisé avant le
+/// remplacement et les permissions du fichier existant sont conservées.
+pub fn ecrire_atomique(chemin: &std::path::Path, contenu: &str) -> std::io::Result<()> {
+    ecrire_atomique_octets(chemin, contenu.as_bytes())
 }
 
 /// La même voie, pour des octets qui ne sont pas du texte (un import).
 pub fn ecrire_atomique_octets(chemin: &std::path::Path, octets: &[u8]) -> std::io::Result<()> {
-    let nom = chemin
-        .file_name()
-        .and_then(|nom| nom.to_str())
-        .unwrap_or("fichier");
-    let temporaire = chemin.with_file_name(format!(".{nom}.tmp"));
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    std::fs::write(&temporaire, octets)?;
-    std::fs::rename(&temporaire, chemin)
+    static PROCHAIN_TEMPORAIRE: AtomicU64 = AtomicU64::new(0);
+    let nom = chemin.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "nom de fichier absent")
+    })?;
+    let (temporaire, mut fichier) = loop {
+        let numero = PROCHAIN_TEMPORAIRE.fetch_add(1, Ordering::Relaxed);
+        let mut nom_temporaire = std::ffi::OsString::from(".");
+        nom_temporaire.push(nom);
+        nom_temporaire.push(format!(".tmp-{}-{numero}", std::process::id()));
+        let temporaire = chemin.with_file_name(nom_temporaire);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporaire)
+        {
+            Ok(fichier) => break (temporaire, fichier),
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(erreur) => return Err(erreur),
+        }
+    };
+
+    let resultat = (|| {
+        match std::fs::metadata(chemin) {
+            Ok(metadata) => fichier.set_permissions(metadata.permissions())?,
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => {}
+            Err(erreur) => return Err(erreur),
+        }
+        fichier.write_all(octets)?;
+        fichier.sync_all()?;
+        drop(fichier);
+        std::fs::rename(&temporaire, chemin)?;
+        // Le renommage lui-même doit survivre à une coupure : sans la
+        // synchronisation du dossier, la panne peut le perdre.
+        #[cfg(unix)]
+        if let Some(parent) = chemin.parent()
+            && let Ok(dossier) = std::fs::File::open(parent)
+        {
+            let _ = dossier.sync_all();
+        }
+        Ok(())
+    })();
+    if resultat.is_err() {
+        let _ = std::fs::remove_file(&temporaire);
+    }
+    resultat
+}
+
+/// Empreinte du contenu d'un fichier, pour reconnaître le nôtre au retour.
+///
+/// Comparée à celle du disque, elle distingue notre propre écriture d'un
+/// changement extérieur. Elle ne vit qu'en mémoire pendant la session.
+pub fn empreinte_contenu(octets: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hacheur = std::collections::hash_map::DefaultHasher::new();
+    octets.hash(&mut hacheur);
+    hacheur.finish()
+}
+
+/// Écrit plusieurs fichiers **ensemble** : ou tous, ou aucun.
+///
+/// Une transaction Zotero produit trois fichiers (clés, bibliothèque,
+/// liaison) ; écrits l'un après l'autre, une panne à mi-chemin laisserait
+/// un projet mi-écrit — clés revendiquées sans bibliothèque, ou liaison
+/// sans clés. Ici chaque contenu est d'abord posé en temporaire voisin,
+/// puis les anciennes versions sont écartées de même, et les nouvelles
+/// mises en place ; le moindre échec remet **exactement** l'état d'avant.
+/// Après coupure, les temporaires restent lisibles à côté — jamais de
+/// fichier à moitié écrit.
+pub fn ecrire_en_transaction(ecrits: &[(std::path::PathBuf, String)]) -> std::io::Result<()> {
+    // 0. Une cible qui n'est pas un fichier est un refus immédiat :
+    //    jamais un dossier ne sera écarté ni remplacé en silence.
+    for (chemin, _) in ecrits {
+        if let Ok(meta) = std::fs::metadata(chemin)
+            && !meta.is_file()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} n'est pas un fichier", chemin.display()),
+            ));
+        }
+    }
+
+    // 1. Tout poser en temporaire : rien n'existe encore à son vrai nom.
+    let mut temporaires = Vec::new();
+    for (chemin, contenu) in ecrits {
+        let nom = chemin.file_name().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "nom de fichier absent")
+        })?;
+        let mut nom_temporaire = std::ffi::OsString::from(".");
+        nom_temporaire.push(nom);
+        nom_temporaire.push(".transaction-tmp");
+        let temporaire = chemin.with_file_name(nom_temporaire);
+
+        let resultat = std::fs::write(&temporaire, contenu)
+            .and_then(|_| std::fs::File::open(&temporaire).and_then(|fichier| fichier.sync_all()));
+        if let Err(erreur) = resultat {
+            let _ = std::fs::remove_file(&temporaire);
+            for (autre, _) in &temporaires {
+                let _ = std::fs::remove_file(autre);
+            }
+
+            return Err(erreur);
+        }
+        temporaires.push((temporaire, chemin.clone()));
+    }
+
+    // 2. Écarter les anciennes versions, une par une : tout est encore
+    //    récupérable.
+    let mut ecartes = Vec::new();
+    for (_, chemin) in &temporaires {
+        if chemin.exists() {
+            let nom = chemin.file_name().expect("nom déjà contrôlé");
+            let mut nom_ancien = std::ffi::OsString::from(".");
+            nom_ancien.push(nom);
+            nom_ancien.push(".transaction-ancien");
+            let ancien = chemin.with_file_name(nom_ancien);
+            let _ = std::fs::remove_file(&ancien);
+
+            if let Err(erreur) = std::fs::rename(chemin, &ancien) {
+                for (cible, sauvegarde) in &ecartes {
+                    let _ = std::fs::rename(sauvegarde, cible);
+                }
+                for (autre, _) in &temporaires {
+                    let _ = std::fs::remove_file(autre);
+                }
+
+                return Err(erreur);
+            }
+            ecartes.push((chemin.clone(), ancien));
+        }
+    }
+
+    // 3. Les nouvelles en place ; à la moindre faute, l'ancien état revient.
+    for (temporaire, chemin) in &temporaires {
+        if let Err(erreur) = std::fs::rename(temporaire, chemin) {
+            for (cible, sauvegarde) in &ecartes {
+                let _ = std::fs::remove_file(cible);
+                let _ = std::fs::rename(sauvegarde, cible);
+            }
+            for (autre, _) in &temporaires {
+                let _ = std::fs::remove_file(autre);
+            }
+
+            return Err(erreur);
+        }
+    }
+
+    // 4. Tout est en place : les versions écartées ne restent pas.
+    for (_, ancien) in &ecartes {
+        let _ = std::fs::remove_file(ancien);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod epreuves_de_transaction {
+    use super::ecrire_en_transaction;
+
+    fn reste_un_debris(dossier: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dossier)
+            .expect("dossier")
+            .filter_map(|entree| entree.ok())
+            .map(|entree| entree.file_name().to_string_lossy().into_owned())
+            .filter(|nom| nom.contains("transaction-"))
+            .collect()
+    }
+
+    /// Tout s'écrit, ensemble, sans laisser de débris.
+    #[test]
+    fn une_transaction_ecrit_tous_les_fichiers_ensemble() {
+        let dossier =
+            std::env::temp_dir().join(format!("typst-writer-transaction-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dossier);
+        std::fs::create_dir_all(&dossier).expect("dossier");
+        std::fs::write(dossier.join("b.txt"), "ANCIEN").expect("préparation");
+
+        ecrire_en_transaction(&[
+            (dossier.join("a.txt"), "PREMIER".to_string()),
+            (dossier.join("b.txt"), "SECOND".to_string()),
+        ])
+        .expect("transaction");
+
+        assert_eq!(
+            std::fs::read_to_string(dossier.join("a.txt")).expect("a"),
+            "PREMIER"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dossier.join("b.txt")).expect("b"),
+            "SECOND"
+        );
+        assert!(
+            reste_un_debris(&dossier).is_empty(),
+            "aucun débris : {:?}",
+            reste_un_debris(&dossier)
+        );
+    }
+
+    /// Si un seul écrit échoue, **rien** n'est écrit : l'état d'avant
+    /// revient exactement, y compris pour les fichiers déjà remplacés.
+    #[test]
+    fn une_transaction_faillie_ne_change_rien() {
+        let dossier = std::env::temp_dir().join(format!(
+            "typst-writer-transaction-faute-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dossier);
+        std::fs::create_dir_all(&dossier).expect("dossier");
+        std::fs::write(dossier.join("a.txt"), "ANCIEN A").expect("préparation");
+        std::fs::write(dossier.join("b.txt"), "ANCIEN B").expect("préparation");
+
+        // Un dossier occupe la place du troisième fichier : le renommage
+        // vers lui échoue, à la dernière étape — la plus cruelle.
+        std::fs::create_dir_all(dossier.join("c.txt")).expect("obstacle");
+
+        let echec = ecrire_en_transaction(&[
+            (dossier.join("a.txt"), "NOUVEAU A".to_string()),
+            (dossier.join("b.txt"), "NOUVEAU B".to_string()),
+            (dossier.join("c.txt"), "NOUVEAU C".to_string()),
+        ]);
+        assert!(echec.is_err(), "la transaction dit son échec");
+
+        assert_eq!(
+            std::fs::read_to_string(dossier.join("a.txt")).expect("a"),
+            "ANCIEN A",
+            "l'ancien état revient"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dossier.join("b.txt")).expect("b"),
+            "ANCIEN B"
+        );
+        assert!(
+            reste_un_debris(&dossier).is_empty(),
+            "aucun débris : {:?}",
+            reste_un_debris(&dossier)
+        );
+    }
+}
+
+/// Le dossier des versions antérieures d'un projet, à côté de son document.
+pub fn sauvegardes_dir(projet: &std::path::Path) -> std::path::PathBuf {
+    projet.join("sauvegardes")
+}
+
+/// Conserve la version d'un fichier juste avant qu'elle ne soit remplacée.
+///
+/// Une copie porte le nom du document suivi de l'heure, ce qui les range dans
+/// l'ordre ; le gestionnaire de fichiers affiche la date lisible de chacune.
+/// Les copies d'un même document sont espacées d'au moins une minute et les
+/// vingt dernières sont gardées. `force` passe cet espacement : la version
+/// extérieure d'un conflit est conservée même à la seconde près.
+pub fn sauvegarder_version(
+    projet: &std::path::Path,
+    chemin: &std::path::Path,
+    contenu: &str,
+    force: bool,
+) -> std::io::Result<()> {
+    let dossier = sauvegardes_dir(projet);
+    std::fs::create_dir_all(&dossier)?;
+    let nom = chemin.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "nom de fichier absent")
+    })?;
+    let maintenant = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let prefixe = format!("{}.", nom.to_string_lossy());
+    let mut copies: Vec<std::path::PathBuf> = std::fs::read_dir(&dossier)?
+        .filter_map(Result::ok)
+        .map(|entree| entree.path())
+        .filter(|copie| {
+            copie
+                .file_name()
+                .and_then(|nom_copie| nom_copie.to_str())
+                .is_some_and(|nom_copie| nom_copie.starts_with(&prefixe))
+        })
+        .collect();
+    copies.sort();
+    copies.reverse();
+
+    if !force
+        && let Some(plus_recente) = copies.first()
+        && let Some(heure) = plus_recente
+            .file_name()
+            .and_then(|nom_copie| nom_copie.to_str())
+            .and_then(|nom_copie| nom_copie.strip_prefix(&prefixe))
+            .and_then(|souffle| souffle.parse::<u64>().ok())
+        && maintenant.saturating_sub(heure) < 60
+    {
+        return Ok(());
+    }
+
+    conserver_une_version(
+        projet,
+        &nom.to_string_lossy(),
+        contenu.as_bytes(),
+        maintenant,
+    )
+}
+
+/// Conserve une version d'un document dans `sauvegardes/`, sans jamais
+/// écraser une copie déjà là : les copies d'une même seconde se suivent.
+///
+/// La rétention s'applique à toutes les copies du document, quelles qu'en
+/// soient l'origine et la forme du nom : les vingt dernières sont gardées.
+pub fn conserver_une_version(
+    projet: &std::path::Path,
+    nom: &str,
+    octets: &[u8],
+    heure: u64,
+) -> std::io::Result<()> {
+    let dossier = sauvegardes_dir(projet);
+    std::fs::create_dir_all(&dossier)?;
+
+    let mut copie = dossier.join(format!("{nom}.{heure}"));
+    let mut numero = 1;
+    while copie.exists() {
+        copie = dossier.join(format!("{nom}.{heure}-recuperee{numero}"));
+        numero += 1;
+    }
+    ecrire_atomique_octets(&copie, octets)?;
+
+    let prefixe = format!("{nom}.");
+    let mut copies: Vec<std::path::PathBuf> = std::fs::read_dir(&dossier)?
+        .filter_map(Result::ok)
+        .map(|entree| entree.path())
+        .filter(|copie| {
+            copie
+                .file_name()
+                .and_then(|nom_copie| nom_copie.to_str())
+                .is_some_and(|nom_copie| nom_copie.starts_with(&prefixe))
+        })
+        .collect();
+    copies.sort();
+    copies.reverse();
+    for vieille in copies.into_iter().skip(20) {
+        let _ = std::fs::remove_file(vieille);
+    }
+    Ok(())
+}
+
+/// Récupère les temporaires qu'une interruption a laissés auprès d'un document.
+///
+/// Une écriture interrompue — panne, plantage — laisse à côté du document un
+/// temporaire commencé, qui peut porter la dernière version écrite nulle part
+/// ailleurs. Quand son auteur n'existe plus, il devient une copie de
+/// `sauvegardes/`, récupérable comme les autres, à la date où il a été écrit.
+/// Un temporaire dont l'auteur est vivant est une écriture en cours : on n'y
+/// touche jamais. Hors Linux, un auteur est toujours présumé vivant.
+pub fn recuperer_temporaires_perdus(projet: &std::path::Path, chemin: &std::path::Path) {
+    let Some(nom) = chemin.file_name() else {
+        return;
+    };
+    let Some(dossier) = chemin.parent() else {
+        return;
+    };
+    let nom = nom.to_string_lossy().into_owned();
+    let prefixe = format!(".{nom}.tmp-");
+    let Ok(entrees) = std::fs::read_dir(dossier) else {
+        return;
+    };
+    for temporaire in entrees.filter_map(Result::ok).map(|entree| entree.path()) {
+        let Some(reste) = temporaire
+            .file_name()
+            .and_then(|nom_fichier| nom_fichier.to_str())
+            .and_then(|nom_fichier| nom_fichier.strip_prefix(&prefixe))
+        else {
+            continue;
+        };
+        let Some((pid, _numero)) = reste.rsplit_once('-') else {
+            continue;
+        };
+        let Ok(pid) = pid.parse::<i32>() else {
+            continue;
+        };
+        if pid <= 0 || process_vivant(pid) {
+            continue;
+        }
+        let Ok(octets) = std::fs::read(&temporaire) else {
+            continue;
+        };
+        let heure = std::fs::metadata(&temporaire)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|mtime| mtime.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|depuis| depuis.as_secs())
+            .unwrap_or_else(heure_actuelle);
+        if conserver_une_version(projet, &nom, &octets, heure).is_ok() {
+            let _ = std::fs::remove_file(&temporaire);
+        }
+    }
+}
+
+/// L'heure actuelle en secondes, pour nommer une copie.
+fn heure_actuelle() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Session de travail : ce qu'il faut rouvrir au démarrage.
@@ -622,7 +1203,7 @@ fn champ_plage(bloc: &str, nom: &str) -> Option<(usize, usize)> {
 /// Une notice n'est pas un fichier : elle part **avec** son entrée, et le
 /// fichier reste propre. La suppression ne touche jamais à une bibliothèque
 /// Zotero : elle, se lit seulement.
-pub fn supprimer_reference(path: &Path, cle: &str) -> Result<(), String> {
+pub fn supprimer_reference(path: &Path, cle: &str) -> Result<std::path::PathBuf, String> {
     let contenu = std::fs::read_to_string(path).map_err(|e| format!("{e}"))?;
     let (ouverture, fermeture) =
         plage_de_notice(&contenu, cle).ok_or_else(|| format!("« {cle} » introuvable."))?;
@@ -634,10 +1215,203 @@ pub fn supprimer_reference(path: &Path, cle: &str) -> Result<(), String> {
         fin += 1;
     }
 
+    // La notice entière va à la corbeille **avant** toute suppression : si
+    // la copie échoue, la bibliographie ne bouge pas, et rien n'est jamais
+    // détruit en silence.
+    let copie = vers_la_corbeille_texte(&format!("notice-{cle}.bib"), &contenu[ouverture..fin])?;
+
     let mut reste = contenu[..ouverture].to_string();
     reste.push_str(&contenu[fin..]);
 
-    ecrire_atomique(path, &reste).map_err(|e| format!("{e}"))
+    ecrire_atomique(path, &reste).map_err(|e| format!("{e}"))?;
+    Ok(copie)
+}
+
+/// Le résultat de l'import d'un style.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportationStyle {
+    /// Le style est choisi — éventuellement avec un écart connu à dire.
+    Choisi {
+        /// Le chemin du projet, celui que la directive lira.
+        chemin: PathBuf,
+        /// Un écart connu du moteur à dire — jamais un silence.
+        avertissement: Option<String>,
+    },
+
+    /// Un style dépendant dont le parent n'est pas sur la machine : le
+    /// geste est dit, rien n'est choisi.
+    ParentManquant {
+        /// La copie du style dépendant, conservée dans le projet.
+        chemin: PathBuf,
+        /// Son titre.
+        titre: String,
+        /// Le parent qu'il réclame.
+        parent: String,
+    },
+}
+
+/// Importe un style CSL dans le projet : contrôlé comme le moteur le
+/// ferait, copié sous `styles/` avec un nom qui n'appartient à personne.
+///
+/// L'original n'est jamais touché, et la copie suit le projet hors ligne.
+/// Un style **dépendant** se résout par son parent quand celui-ci vit
+/// quelque part sur la machine (les styles du projet, ou les styles
+/// installés dans Zotero — `styles_zotero`) ; sinon rien n'est choisi et
+/// le parent qu'il faut se dit (R4).
+pub fn importer_style_csl(
+    projet: &Path,
+    nom_souhaite: &str,
+    texte: &str,
+    styles_zotero: Option<&Path>,
+) -> Result<ImportationStyle, String> {
+    let style = crate::typst::styles::controler_csl(texte)?;
+
+    match style {
+        crate::typst::styles::StyleCsl::Independant { titre: _ } => {
+            let relatif = copier_style(projet, nom_souhaite, texte)?;
+
+            Ok(ImportationStyle::Choisi {
+                chemin: relatif,
+                avertissement: None,
+            })
+        }
+        crate::typst::styles::StyleCsl::Dependant { titre, parent } => {
+            // « Conserver le nom demandé » : le style dépendant entre lui
+            // aussi, quoi qu'il arrive.
+            let dependant = copier_style(projet, nom_souhaite, texte)?;
+
+            let Some(parent_url) = parent else {
+                return Ok(ImportationStyle::ParentManquant {
+                    chemin: dependant,
+                    titre,
+                    parent: String::new(),
+                });
+            };
+
+            match resoudre_parent(projet, styles_zotero, &parent_url) {
+                Some(chemin) => Ok(ImportationStyle::Choisi {
+                    chemin,
+                    // Écart connu du moteur : il n'exécute que des styles
+                    // indépendants — la locale du style dépendant ne
+                    // s'applique pas, et il faut le dire.
+                    avertissement: Some(format!(
+                        "Style dépendant « {titre} » : le moteur utilise son parent. Écart connu : la locale du style dépendant n'est pas appliquée, c'est celle du document qui sert."
+                    )),
+                }),
+                None => Ok(ImportationStyle::ParentManquant {
+                    chemin: dependant,
+                    titre,
+                    parent: parent_url,
+                }),
+            }
+        }
+    }
+}
+
+/// Le parent d'un style dépendant, cherché où il peut vivre : les styles
+/// du projet d'abord, les styles installés dans Zotero ensuite.
+fn resoudre_parent(
+    projet: &Path,
+    styles_zotero: Option<&Path>,
+    parent_url: &str,
+) -> Option<PathBuf> {
+    let dossier = projet.join("styles");
+
+    if let Ok(entrees) = std::fs::read_dir(&dossier) {
+        for entree in entrees.flatten() {
+            let chemin = entree.path();
+
+            if chemin.extension().is_some_and(|ext| ext == "csl")
+                && let Ok(texte) = std::fs::read_to_string(&chemin)
+                && crate::zotero::styles::identifiant_csl(&texte).as_deref() == Some(parent_url)
+            {
+                return Some(
+                    std::path::PathBuf::from("styles").join(chemin.file_name().unwrap_or_default()),
+                );
+            }
+        }
+    }
+
+    let styles_zotero = styles_zotero?;
+    for style in crate::zotero::styles::installed(styles_zotero) {
+        if style.id == parent_url {
+            let texte = std::fs::read_to_string(&style.path).ok()?;
+            return copier_style(projet, "parent.csl", &texte).ok();
+        }
+    }
+
+    None
+}
+
+/// Copie un texte de style sous `styles/`, avec un nom libre.
+fn copier_style(projet: &Path, nom_souhaite: &str, texte: &str) -> Result<PathBuf, String> {
+    let dossier = projet.join("styles");
+    std::fs::create_dir_all(&dossier).map_err(|e| format!("{e}"))?;
+
+    let base = std::path::Path::new(nom_souhaite)
+        .file_stem()
+        .map(|base| base.to_string_lossy().into_owned())
+        .filter(|base| !base.is_empty())
+        .unwrap_or_else(|| "style".to_string());
+    let mut destination = dossier.join(format!("{base}.csl"));
+    let mut numero = 2;
+
+    while destination.exists() {
+        destination = dossier.join(format!("{base}-{numero}.csl"));
+        numero += 1;
+    }
+
+    ecrire_atomique(&destination, texte).map_err(|e| format!("{e}"))?;
+
+    Ok(std::path::PathBuf::from("styles").join(destination.file_name().unwrap_or_default()))
+}
+
+/// Écrit un texte à la corbeille, sous un nom qui ne marche sur personne.
+fn vers_la_corbeille_texte(nom: &str, texte: &str) -> Result<std::path::PathBuf, String> {
+    let base = nom.trim_end_matches(".bib");
+    let mut destination = corbeille().join(format!("{base}.bib"));
+    let mut numero = 2;
+
+    while destination.exists() {
+        destination = corbeille().join(format!("{base}-{numero}.bib"));
+        numero += 1;
+    }
+
+    ecrire_atomique(&destination, texte).map_err(|e| format!("{e}"))?;
+    Ok(destination)
+}
+
+/// Remet dans la bibliographie la notice que la corbeille a recueillie.
+///
+/// La copie s'ajoute telle quelle ; une clé déjà présente ne se dédouble
+/// jamais — la restauration dit le problème au lieu de le créer.
+pub fn restaurer_reference(bibliotheque: &Path, copie: &Path) -> Result<String, String> {
+    let texte =
+        std::fs::read_to_string(copie).map_err(|e| format!("La copie est illisible : {e}"))?;
+    let entree = crate::project::parse_bibliography_text(&texte)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "La copie ne contient aucune notice.".to_string())?;
+
+    let contenu = std::fs::read_to_string(bibliotheque).unwrap_or_default();
+    if crate::project::parse_bibliography_text(&contenu)
+        .iter()
+        .any(|autre| autre.key == entree.key)
+    {
+        return Err(format!(
+            "« {} » est déjà dans la bibliographie.",
+            entree.key
+        ));
+    }
+
+    let mut nouveau = contenu;
+    if !nouveau.is_empty() && !nouveau.ends_with('\n') {
+        nouveau.push('\n');
+    }
+    nouveau.push_str(texte.trim());
+    nouveau.push('\n');
+    ecrire_atomique(bibliotheque, &nouveau).map_err(|e| format!("{e}"))?;
+    Ok(entree.key)
 }
 
 /// L'étendue d'une notice : sa tête `@type{clé,` et son accolade fermante.
@@ -675,6 +1449,29 @@ pub fn parse_bibliography_text(content: &str) -> Vec<BibliographyEntry> {
     while let Some(debut) = content[curseur..].find('@') {
         let debut = curseur + debut;
 
+        // Un `@` dans un commentaire BibLaTeX (une ligne % …, ou un
+        // commentaire de fin de ligne) n'ouvre jamais de notice : un
+        // exemple commenté reste un commentaire (fidélité BibLaTeX).
+        let ligne_debut = content[..debut].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let mut en_commentaire = false;
+        let mut echappe = false;
+
+        for lettre in content[ligne_debut..debut].chars() {
+            match lettre {
+                '\\' if !echappe => echappe = true,
+                '%' if !echappe => {
+                    en_commentaire = true;
+                    break;
+                }
+                _ => echappe = false,
+            }
+        }
+
+        if en_commentaire {
+            curseur = debut + 1;
+            continue;
+        }
+
         // Une entrée tronquée (accolade non fermée) est ignorée — elle
         // ne doit pas emporter les suivantes.
         let Some(fin) = fin_d_entree(octets, debut) else {
@@ -690,6 +1487,204 @@ pub fn parse_bibliography_text(content: &str) -> Vec<BibliographyEntry> {
     }
 
     entrees
+}
+
+/// Le rapport d'un import BibLaTeX : ce qui est entré, ce qui était déjà
+/// là, ce qui s'est heurté — jamais un silence.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RapportBib {
+    /// Les clés entrées au projet.
+    pub ajoutees: Vec<String>,
+    /// Les clés déjà là, à l'identique : rien n'a bougé.
+    pub deja_la: Vec<String>,
+    /// Les clés déjà là, avec une autre notice : **la première tient**,
+    /// et le conflit se dit.
+    pub conflits: Vec<String>,
+}
+
+/// Importe un fichier BibLaTeX dans la bibliothèque locale du projet —
+/// l'alternative sans plugin : Zotero sait exporter lui-même un `.bib`,
+/// et cette voie n'a besoin ni de plugin ni d'API locale.
+///
+/// La bibliothèque Zotero (`references-zotero.bib`) n'est jamais visée :
+/// elle, se lit seulement. Les clés communes ne s'écrasent jamais : une
+/// notice identique est ignorée (« déjà là »), une notice différente est
+/// **conservée et dite** (conflit) — la première venue tient.
+pub fn importer_bib(
+    projet: &std::path::Path,
+    source: &std::path::Path,
+) -> Result<RapportBib, String> {
+    let texte = std::fs::read_to_string(source)
+        .map_err(|erreur| format!("{} : {erreur}", source.display()))?;
+    let entrees = parse_bibliography_text(&texte);
+
+    if entrees.is_empty() {
+        return Err(format!(
+            "{} : aucune notice BibLaTeX lue — rien n'a changé.",
+            source.display()
+        ));
+    }
+
+    let cible = projet.join("references.bib");
+
+    // La base d'un fichier qui naît est celle du modèle — le même squelette
+    // que le geste « Créer la bibliographie locale ».
+    let existant = std::fs::read_to_string(&cible)
+        .unwrap_or_else(|_| crate::project::model::BIBLIOGRAPHY_TEMPLATE.to_string());
+    let existantes = parse_bibliography_text(&existant);
+
+    let mut rapport = RapportBib::default();
+    let mut ajouts = String::new();
+
+    for entree in &entrees {
+        let Some((ouverture, fermeture)) = plage_de_notice(&texte, &entree.key) else {
+            continue;
+        };
+        let brut = texte[ouverture..fermeture].trim();
+
+        if let Some(autre) = existantes.iter().find(|e| e.key == entree.key) {
+            if let Some((debut, fin)) = plage_de_notice(&existant, &autre.key) {
+                if existant[debut..fin].trim() == brut {
+                    rapport.deja_la.push(entree.key.clone());
+                } else {
+                    rapport.conflits.push(entree.key.clone());
+                }
+            } else {
+                // La clé est là mais sa notice est illisible : conflit.
+                rapport.conflits.push(entree.key.clone());
+            }
+
+            continue;
+        }
+
+        // Une clé répétée dans le même import n'entre qu'une fois.
+        if rapport.ajoutees.contains(&entree.key) {
+            continue;
+        }
+        rapport.ajoutees.push(entree.key.clone());
+
+        if !ajouts.is_empty() {
+            ajouts.push('\n');
+        }
+        ajouts.push_str(brut);
+        ajouts.push('\n');
+    }
+
+    if !ajouts.is_empty() {
+        let mut final_ = existant;
+        if !final_.is_empty() && !final_.ends_with('\n') {
+            final_.push('\n');
+        }
+        final_.push_str(&ajouts);
+        ecrire_atomique(&cible, &final_)
+            .map_err(|erreur| format!("{} : {erreur}", cible.display()))?;
+    }
+
+    Ok(rapport)
+}
+
+#[cfg(test)]
+mod epreuves_d_import_bib {
+    use super::{importer_bib, parse_bibliography_text};
+
+    fn dossier(nom: &str) -> std::path::PathBuf {
+        let dossier =
+            std::env::temp_dir().join(format!("typst-writer-import-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dossier);
+        std::fs::create_dir_all(&dossier).expect("dossier");
+        dossier
+    }
+
+    const DEUX: &str = "@book{dupont2023,\n  author = {Dupont},\n  title = {Un titre},\n}\n\n@article{martin2024,\n  author = {Martin},\n  title = {Un autre},\n}\n";
+
+    /// Les notices entrent, ensemble, dans la bibliothèque locale.
+    #[test]
+    fn un_import_bib_rejoint_la_bibliographie() {
+        let projet = dossier("entree");
+        let source = projet.join("export-zotero.bib");
+        std::fs::write(&source, DEUX).expect("source");
+
+        let rapport = importer_bib(&projet, &projet.join("export-zotero.bib")).expect("import");
+        assert_eq!(rapport.ajoutees, vec!["dupont2023", "martin2024"]);
+        assert!(rapport.deja_la.is_empty() && rapport.conflits.is_empty());
+
+        let bibliotheque =
+            std::fs::read_to_string(projet.join("references.bib")).expect("bibliothèque");
+        assert_eq!(
+            parse_bibliography_text(&bibliotheque).len(),
+            2,
+            "les deux notices sont là"
+        );
+    }
+
+    /// La même clé : identique, elle ne se répète pas ; différente, elle
+    /// ne s'écrase pas et le conflit se dit.
+    #[test]
+    fn un_import_bib_ne_ecrase_jamais_une_notice() {
+        let projet = dossier("conflit");
+        std::fs::write(
+            projet.join("references.bib"),
+            "@book{dupont2023,\n  author = {Dupont},\n  title = {Premier},\n}\n",
+        )
+        .expect("bibliothèque");
+
+        // Identique, à l'entourage près : déjà là.
+        let identique = projet.join("identique.bib");
+        std::fs::write(
+            &identique,
+            "@book{dupont2023,\n  author = {Dupont},\n  title = {Premier},\n}\n",
+        )
+        .expect("source");
+        let rapport = importer_bib(&projet, &identique).expect("import");
+        assert_eq!(rapport.deja_la, vec!["dupont2023"]);
+        assert!(rapport.ajoutees.is_empty() && rapport.conflits.is_empty());
+
+        // Différente : la première tient, le conflit se dit.
+        let differente = projet.join("differente.bib");
+        std::fs::write(
+            &differente,
+            "@book{dupont2023,\n  author = {Dupont},\n  title = {Second},\n}\n",
+        )
+        .expect("source");
+        let rapport = importer_bib(&projet, &differente).expect("import");
+        assert_eq!(rapport.conflits, vec!["dupont2023"]);
+
+        let bibliotheque =
+            std::fs::read_to_string(projet.join("references.bib")).expect("bibliothèque");
+        assert!(
+            bibliotheque.contains("Premier") && !bibliotheque.contains("Second"),
+            "la première tient : {bibliotheque}"
+        );
+    }
+
+    /// Un fichier sans notice lue : le problème se dit, rien n'entre.
+    #[test]
+    fn un_import_bib_sans_notice_dit_le_probleme() {
+        let projet = dossier("vide");
+        let source = projet.join("sans-notice.bib");
+        std::fs::write(&source, "ceci n'est pas du BibLaTeX").expect("source");
+
+        let probleme = importer_bib(&projet, &source).expect_err("refusé");
+        assert!(probleme.contains("aucune notice"), "{probleme}");
+        assert!(!projet.join("references.bib").exists(), "rien n'est écrit");
+    }
+
+    /// Un `@` dans un commentaire BibLaTeX n'ouvre jamais de notice : un
+    /// exemple commenté reste un commentaire, et ne devient pas un fantôme
+    /// dans la bibliographie.
+    #[test]
+    fn un_exemple_commente_nest_jamais_une_notice() {
+        let entrees = parse_bibliography_text(
+            "% @article{exemple2026,\n%   title = {Un titre},\n% }\n\n@book{vrai2025,\n  title = {Réel},\n}\n",
+        );
+
+        let cles: Vec<_> = entrees.iter().map(|entree| entree.key.as_str()).collect();
+        assert_eq!(
+            cles,
+            vec!["vrai2025"],
+            "le commentaire n'est pas une notice"
+        );
+    }
 }
 
 /// Ajoute une référence au fichier `.bib` et rend la clé retenue.
@@ -896,11 +1891,11 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
     let work = work_dir();
     let flat = locate_flat_documents(&work);
 
-    if flat.is_empty() {
+    if flat.is_empty() || !model::list_projects().is_empty() {
         return None;
     }
 
-    let dir = model::create(MIGRATED_PROJECT).ok()?;
+    let (dir, _verrou) = model::create_avec_verrou(MIGRATED_PROJECT).ok()?;
 
     // Une bibliographie restée à la racine doit rejoindre le projet : sans
     // cela, un chapitre qui la cite perdrait sa référence.
@@ -1019,6 +2014,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&parent);
     }
 
+    #[test]
+    fn des_creations_simultanees_ne_reutilisent_pas_le_meme_projet() {
+        use std::sync::{Arc, Barrier};
+        let parent =
+            std::env::temp_dir().join(format!("tw-creations-concurrentes-{}", std::process::id()));
+        std::fs::create_dir_all(&parent).expect("dossier isolé");
+        for tour in 0..40 {
+            let depart = Arc::new(Barrier::new(33));
+            let resultats = std::thread::scope(|scope| {
+                let participants: Vec<_> = (0..32)
+                    .map(|_| {
+                        let depart = Arc::clone(&depart);
+                        let parent = &parent;
+                        scope.spawn(move || {
+                            depart.wait();
+                            creer_au_nom(parent, &format!("projet-{tour}"))
+                        })
+                    })
+                    .collect();
+                depart.wait();
+                participants
+                    .into_iter()
+                    .map(|p| p.join().unwrap())
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(
+                resultats.iter().filter(|r| r.is_ok()).count(),
+                1,
+                "une seule création gagne, tour {tour}"
+            );
+        }
+        std::fs::remove_dir_all(parent).expect("nettoyage");
+    }
+
     /// Un projet se renomme — le dossier suit.
     #[test]
     fn un_projet_se_renomme() {
@@ -1052,7 +2081,114 @@ mod tests {
         let _ = std::fs::remove_file(&corbeille);
     }
 
-    /// Une seule instance tient le verrou ; un mort le libère.
+    #[test]
+    fn une_sauvegarde_necrase_pas_un_ancien_fichier_temporaire() {
+        let dossier = std::env::temp_dir().join(format!("tw-ancien-temp-{}", std::process::id()));
+        std::fs::create_dir_all(&dossier).expect("dossier de test");
+        let chemin = dossier.join("document.tw");
+        let ancien_temporaire = dossier.join(".document.tw.tmp");
+        std::fs::write(&chemin, "ancienne version").expect("document initial");
+        std::fs::write(&ancien_temporaire, "texte à récupérer").expect("temporaire précédent");
+
+        ecrire_atomique(&chemin, "nouvelle version").expect("sauvegarde");
+
+        assert_eq!(
+            std::fs::read_to_string(&chemin).unwrap(),
+            "nouvelle version"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&ancien_temporaire).unwrap(),
+            "texte à récupérer"
+        );
+        std::fs::remove_dir_all(&dossier).expect("nettoyage");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn une_sauvegarde_conserve_les_permissions_du_fichier() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dossier = std::env::temp_dir().join(format!("tw-permissions-{}", std::process::id()));
+        std::fs::create_dir_all(&dossier).expect("dossier de test");
+        let chemin = dossier.join("document.tw");
+        std::fs::write(&chemin, "ancien").expect("document initial");
+        std::fs::set_permissions(&chemin, std::fs::Permissions::from_mode(0o600))
+            .expect("permissions initiales");
+        ecrire_atomique(&chemin, "nouveau").expect("sauvegarde");
+        assert_eq!(
+            std::fs::metadata(&chemin).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::remove_dir_all(&dossier).expect("nettoyage");
+    }
+
+    #[test]
+    fn les_sauvegardes_concurrentes_ne_se_partagent_pas_de_temporaire() {
+        let dossier =
+            std::env::temp_dir().join(format!("tw-ecritures-concurrentes-{}", std::process::id()));
+        std::fs::create_dir_all(&dossier).expect("dossier de test");
+        let chemin = dossier.join("document.tw");
+        let a = "A".repeat(262_144);
+        let b = "B".repeat(262_144);
+        std::thread::scope(|scope| {
+            for texte in [&a, &b] {
+                let chemin = &chemin;
+                scope.spawn(move || {
+                    for _ in 0..20 {
+                        ecrire_atomique(chemin, texte).expect("écriture concurrente");
+                    }
+                });
+            }
+        });
+        let contenu = std::fs::read_to_string(&chemin).expect("document final");
+        assert!(contenu == a || contenu == b, "le document est entier");
+        std::fs::remove_dir_all(&dossier).expect("nettoyage");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn les_chemins_alias_dun_projet_partagent_le_verrou() {
+        use std::os::unix::fs::symlink;
+        let racine = std::env::temp_dir().join(format!("tw-verrou-alias-{}", std::process::id()));
+        let dossier = racine.join("projet");
+        std::fs::create_dir_all(&dossier).expect("projet isolé");
+        let alias = racine.join("alias");
+        symlink(&dossier, &alias).expect("lien symbolique");
+        let verrou = Verrou::prendre(&dossier).expect("première prise");
+        assert!(
+            Verrou::prendre(&alias).is_err(),
+            "le même projet ne se verrouille pas deux fois"
+        );
+        drop(verrou);
+        std::fs::remove_dir_all(&racine).expect("nettoyage");
+    }
+
+    #[test]
+    fn liberer_le_verrou_ne_depend_pas_dun_descripteur_duplique() {
+        let dir = std::env::temp_dir().join(format!("tw-verrou-dup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier isolé");
+        let verrou = Verrou::prendre(&dir).expect("première prise");
+        let double = verrou._ancre.try_clone().expect("descripteur dupliqué");
+        drop(verrou);
+        let repris = Verrou::prendre(&dir).expect("le verrou doit être explicitement libéré");
+        drop(repris);
+        drop(double);
+        std::fs::remove_dir_all(&dir).expect("nettoyage");
+    }
+
+    #[test]
+    fn liberer_un_verrou_ne_supprime_pas_un_marqueur_remplace() {
+        let dir = std::env::temp_dir().join(format!("tw-verrou-remplace-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier isolé");
+        let verrou = Verrou::prendre(&dir).expect("prise du verrou");
+        let chemin = dir.join(".verrou");
+        std::fs::write(&chemin, "999999999\n").expect("marqueur remplacé");
+        drop(verrou);
+        assert_eq!(std::fs::read_to_string(&chemin).unwrap(), "999999999\n");
+        std::fs::remove_dir_all(&dir).expect("nettoyage");
+    }
+
+    /// Une seule instance tient le verrou ; elle le libère en partant.
     #[test]
     fn le_verrou_garde_le_projet() {
         let dir = std::env::temp_dir().join(format!("tw-verrou-{}", std::process::id()));
@@ -1061,18 +2197,141 @@ mod tests {
 
         let fichier = dir.join(".verrou");
         let premier = Verrou::prendre(&dir).expect("premier verrou");
-
-        // Un mort l'a laissé : le verrou se reprend.
-        std::fs::write(&fichier, "999999999\n").expect("un mort");
+        assert!(
+            Verrou::prendre(&dir).is_err(),
+            "la deuxième instance est refusée"
+        );
         drop(premier);
 
-        let repris = Verrou::prendre(&dir).expect("un mort libère");
+        let repris = Verrou::prendre(&dir).expect("le verrou est libéré");
         drop(repris);
-
-        // Et parti, le fichier n'est plus.
-        assert!(!fichier.exists(), "le verrou part avec l'instance");
+        assert!(!fichier.exists(), "le marqueur part avec l'instance");
+        assert!(
+            dir.join(".verrou-natif").exists(),
+            "l'ancre native reste stable"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn la_reprise_concurrente_dun_verrou_abandonne_na_quun_seul_gagnant() {
+        use std::sync::{Arc, Barrier};
+
+        let dir =
+            std::env::temp_dir().join(format!("tw-reprise-concurrente-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier isolé");
+        for tour in 0..80 {
+            std::fs::write(dir.join(".verrou"), "999999999\n").expect("ancien verrou");
+            let depart = Arc::new(Barrier::new(33));
+            let arrives = Arc::new(Barrier::new(33));
+            std::thread::scope(|scope| {
+                let mut participants = Vec::new();
+                for _ in 0..32 {
+                    let depart = Arc::clone(&depart);
+                    let arrives = Arc::clone(&arrives);
+                    let dir = &dir;
+                    participants.push(scope.spawn(move || {
+                        depart.wait();
+                        let resultat = Verrou::prendre(dir);
+                        arrives.wait();
+                        resultat
+                    }));
+                }
+                depart.wait();
+                arrives.wait();
+                let resultats: Vec<_> = participants
+                    .into_iter()
+                    .map(|p| p.join().unwrap())
+                    .collect();
+                let gagnes = resultats.iter().filter(|r| r.is_ok()).count();
+                assert_eq!(
+                    gagnes, 1,
+                    "tour {tour} : une seule instance peut reprendre le projet"
+                );
+            });
+        }
+        std::fs::remove_dir_all(dir).expect("nettoyage");
+    }
+
+    /// Sous-processus de l'épreuve interprocessus ; jamais lancé sans fixture.
+    #[test]
+    #[ignore = "sous-processus contrôlé par l'épreuve de verrouillage"]
+    fn processus_qui_tient_le_verrou() {
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("TYPST_WRITER_LOCK_TEST_DIR").expect("fixture"),
+        );
+        assert!(dir.starts_with(std::env::temp_dir()));
+        let _verrou = Verrou::prendre(&dir).expect("verrou du sous-processus");
+        std::fs::write(dir.join("pret"), "ok").expect("signal");
+        for _ in 0..1000 {
+            if dir.join("terminer").exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("le parent n'a pas terminé l'épreuve");
+    }
+
+    #[test]
+    fn le_verrou_exclut_un_autre_processus_et_survit_a_son_crash() {
+        let dir = std::env::temp_dir().join(format!("tw-verrou-processus-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier isolé");
+        let mut enfant =
+            std::process::Command::new(std::env::current_exe().expect("binaire de test"))
+                .args([
+                    "--exact",
+                    "project::tests::processus_qui_tient_le_verrou",
+                    "--ignored",
+                ])
+                .env("TYPST_WRITER_LOCK_TEST_DIR", &dir)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("sous-processus");
+        for _ in 0..500 {
+            if dir.join("pret").exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let pret = dir.join("pret").exists();
+        let refuse = pret && Verrou::prendre(&dir).is_err();
+        enfant.kill().expect("arrêt brutal du sous-processus");
+        enfant.wait().expect("fin du sous-processus");
+        assert!(pret, "le sous-processus a obtenu le verrou");
+        assert!(
+            refuse,
+            "une seconde instance ne peut pas acquérir le verrou"
+        );
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(
+                Verrou::prendre(&dir).is_err(),
+                "un PID ancien ne peut pas être vérifié sur cette plateforme"
+            );
+            std::fs::remove_file(dir.join(".verrou")).expect("reprise hors ligne simulée");
+        }
+        let repris = Verrou::prendre(&dir).expect("le verrou natif est libéré après crash");
+        drop(repris);
+        std::fs::remove_dir_all(dir).expect("nettoyage");
+    }
+
+    #[test]
+    fn un_verrou_sans_identite_ne_donne_pas_le_droit_decrire() {
+        let dir = std::env::temp_dir().join(format!("tw-verrou-vide-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dossier");
+        let chemin = dir.join(".verrou");
+        std::fs::write(&chemin, "").expect("verrou en cours de création");
+
+        let refus = Verrou::prendre(&dir).expect_err("un verrou vide est indéterminé");
+        assert!(
+            refus.contains("verrou"),
+            "le refus explique le problème : {refus}"
+        );
+        assert_eq!(std::fs::read(&chemin).expect("verrou conservé"), b"");
+        std::fs::remove_dir_all(&dir).expect("nettoyage");
     }
 
     /// Une instance vivante est refusée — et le refus nomme le processus.
@@ -1762,7 +3021,8 @@ pub fn definir_etagere(projet: &str, etagere: &str) -> Result<(), String> {
         table.insert(projet.to_string(), etagere.to_string());
     }
 
-    let brut = serde_json::to_string_pretty(&table).map_err(|erreur| format!("Les étagères ne s'écrivent pas : {erreur}."))?;
+    let brut = serde_json::to_string_pretty(&table)
+        .map_err(|erreur| format!("Les étagères ne s'écrivent pas : {erreur}."))?;
     ecrire_atomique(&work_dir().join("etageres.json"), &brut)
         .map_err(|erreur| format!("Le fichier des étagères ne s'écrit pas : {erreur}."))
 }
@@ -1799,7 +3059,10 @@ mod tests_du_champ_soude {
         println!("SORTIE:\n{maj}");
 
         // La fermeture reste sur sa ligne, et le champ est complet.
-        assert!(maj.contains("\n  year = {2014}\n}"), "le champ se pose proprement : {maj}");
+        assert!(
+            maj.contains("\n  year = {2014}\n}"),
+            "le champ se pose proprement : {maj}"
+        );
     }
 }
 
@@ -1899,18 +3162,20 @@ pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)
 #[cfg(test)]
 mod tests_du_parseur_vrai {
     #[test]
-    fn le_parseur_lit_les_vrais_anciens_fichiers() {
-        if !std::path::Path::new("/home/mat/.typst-writer/projets/mon-travail/references.bib").is_file() {
-            println!("les fichiers bibliographiques réels ne sont pas là : test sauté");
-            return;
-        }
-        for chemin in [
-            std::path::Path::new("/home/mat/.typst-writer/projets/mon-travail/references.bib"),
-            std::path::Path::new("/home/mat/.typst-writer/projets/projet/references.bib"),
-        ] {
-            let contenu = std::fs::read_to_string(chemin).expect("lu");
-            let entrees = crate::project::parse_bibliography_text(&contenu);
-            println!("{} : {} notices lues", chemin.display(), entrees.len());
-        }
+    fn le_parseur_lit_des_fichiers_bibliographiques_synthetiques() {
+        let racine =
+            std::env::temp_dir().join(format!("tw-bibliographie-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(&racine).expect("dossier de test");
+        let fichier = racine.join("references.bib");
+        std::fs::write(
+            &fichier,
+            "@book{ouvrage, author = {Durand, Alice}, title = {Un titre}, year = {2020}}\n",
+        )
+        .expect("fixture");
+        let entrees = crate::project::parse_bibliography(&fichier);
+        assert_eq!(entrees.len(), 1);
+        assert_eq!(entrees[0].key, "ouvrage");
+        assert_eq!(entrees[0].titre, "Un titre");
+        std::fs::remove_dir_all(&racine).expect("nettoyage");
     }
 }

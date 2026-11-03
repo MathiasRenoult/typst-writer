@@ -4,9 +4,12 @@
 
 L'application s'ouvre sur le dernier projet ouvert, ou sur un projet neuf
 au premier lancement. La disposition de l'espace de travail — panneaux,
-onglets, modes — se retrouve telle que vous l'avez laissée. Tout ce que
-vous écrivez est enregistré automatiquement, une seconde après la
-frappe : rien ne se perd à fermer.
+onglets, modes — se retrouve telle que vous l'avez laissée. L'application
+sauvegarde automatiquement à intervalles d'environ une seconde. À la
+fermeture normale, elle tente aussi d'enregistrer tous les documents modifiés ;
+si une écriture échoue, elle conserve la fenêtre ouverte et signale le
+problème. Une panne ou une interruption brutale peut toujours emporter les
+dernières frappes : gardez une copie de vos travaux importants.
 
 ## Les trois gestes du quotidien
 

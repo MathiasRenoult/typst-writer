@@ -130,8 +130,14 @@ pub fn lien_du_projet(dir: &std::path::Path) -> Result<Option<Lien>, String> {
 
 /// Lie un projet à une collection — et jamais à la place de l'utilisateur.
 pub fn lier(dir: &std::path::Path, lien: &Lien) -> std::io::Result<()> {
-    let texte = serde_json::to_string_pretty(lien).map_err(std::io::Error::other)?;
-    crate::project::ecrire_atomique(&dir.join(FICHIER), &texte)
+    crate::project::ecrire_atomique(&dir.join(FICHIER), &lien.texte()?)
+}
+
+impl Lien {
+    /// La liaison, en texte — pour la transaction d'export.
+    pub fn texte(&self) -> std::io::Result<String> {
+        serde_json::to_string_pretty(self).map_err(std::io::Error::other)
+    }
 }
 
 /// Délie un projet : il retrouve sa bibliothèque locale.

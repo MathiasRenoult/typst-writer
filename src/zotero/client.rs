@@ -179,7 +179,11 @@ fn lecture_notices(corps: &str) -> Result<Vec<Notice>, Erreur> {
 
         let mut auteurs = Vec::new();
 
-        for createur in donnees["creators"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        for createur in donnees["creators"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
             if createur["creatorType"].as_str() != Some("author")
                 && createur["creatorType"].as_str() != Some("editor")
             {
@@ -202,7 +206,10 @@ fn lecture_notices(corps: &str) -> Result<Vec<Notice>, Erreur> {
 
         // L'année est le début de la date : « 2013 » ou « 2013-05-12 ».
         let date = donnees["date"].as_str().unwrap_or_default();
-        let annee = date.chars().take_while(char::is_ascii_digit).collect::<String>();
+        let annee = date
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>();
 
         notices.push(Notice {
             identite: item["key"].as_str().unwrap_or_default().to_string(),
@@ -210,7 +217,10 @@ fn lecture_notices(corps: &str) -> Result<Vec<Notice>, Erreur> {
             titre: donnees["title"].as_str().unwrap_or_default().to_string(),
             auteurs,
             annee,
-            editeur: donnees["publisher"].as_str().unwrap_or_default().to_string(),
+            editeur: donnees["publisher"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             lieu: donnees["place"].as_str().unwrap_or_default().to_string(),
             revue: donnees["publicationTitle"]
                 .as_str()
@@ -651,7 +661,11 @@ mod tests {
     /// entier (bug 2 du rapport 2).
     #[test]
     fn le_bibtex_se_compose_depuis_les_donnees() {
-        if std::process::Command::new("typst").arg("--version").output().is_err() {
+        if std::process::Command::new("typst")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             println!("typst n'est pas installé : test sauté");
             return;
         }
@@ -664,14 +678,29 @@ mod tests {
 
         let bibtex = bibtex_depuis(&base, "AAAA1111").expect("bibtex");
 
-        assert!(bibtex.contains("@book{ABCD1234,"), "la notice y est : {bibtex}");
-        assert!(bibtex.contains("author = {Wright, N. T.}"), "l'auteur s'y trouve : {bibtex}");
-        assert!(bibtex.contains("year = {2013}"), "l'année est celle de la date : {bibtex}");
-        assert!(bibtex.contains("zotero = {ABCD1234}"), "l'identifiant y est : {bibtex}");
+        assert!(
+            bibtex.contains("@book{ABCD1234,"),
+            "la notice y est : {bibtex}"
+        );
+        assert!(
+            bibtex.contains("author = {Wright, N. T.}"),
+            "l'auteur s'y trouve : {bibtex}"
+        );
+        assert!(
+            bibtex.contains("year = {2013}"),
+            "l'année est celle de la date : {bibtex}"
+        );
+        assert!(
+            bibtex.contains("zotero = {ABCD1234}"),
+            "l'identifiant y est : {bibtex}"
+        );
 
         // Le titre reste nu : pas d'accolades de protection autour des
         // noms (bug 14 du rapport 2).
-        assert!(bibtex.contains("title = {Un titre Protégé}"), "le titre est nu : {bibtex}");
+        assert!(
+            bibtex.contains("title = {Un titre Protégé}"),
+            "le titre est nu : {bibtex}"
+        );
 
         // Et le fichier se compile : c'est le compilateur qui juge.
         let dossier = std::env::temp_dir().join("typst-writer-epreuve-zotero");
