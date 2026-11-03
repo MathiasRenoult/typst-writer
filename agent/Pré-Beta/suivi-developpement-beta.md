@@ -2,7 +2,17 @@
 
 Référence : `roadmap-vers-beta-2026-11.md`. Les étapes ne sont validées que lorsque leurs critères automatiques passent ; les essais humains restent à faire par l'auteur. Aucune publication ni aucun push ne sont implicites.
 
-## R2 (en cours) — import sans perte et source fiable
+## Historique git (2026-11-02)
+
+Cinq commits, un par jalon, sans push : `7b59047` R2, `d6467a2` R3,
+`ce5216a` R4, `0a3bda2` R5, `cd05ad1` R6. Attribution **par fichier** — le
+travail s'est entremêlé dans les mêmes fichiers, si bien que les états
+intermédiaires de la série ne compilent pas seuls (noté dans chaque
+message). L'état final est vérifié : build, clippy `-D warnings`, fmt,
+batterie complète verte. Version laissée à `0.3.0-alpha.3` : la
+numérotation n'avance qu'à la prochaine release (choix explicite).
+
+## R2 (terminé) — import sans perte et source fiable
 
 - Fait : l'import Typst travaille sur le tampon ouvert, avec aperçu de la conversion (convertis / restés bruts / avertissements) avant d'entrer dans le texte ; application d'un seul geste, annulable d'un seul ; le fichier d'origine n'est jamais touché ; aucune écriture avant la sauvegarde. Épreuves rouges puis vertes : frappes non sauvegardées préservées, annulation sans effet de bord, annulation d'un seul geste (undo/redo).
 - Fait : un fichier `.tw` rejoint lui aussi le tampon ouvert après aperçu, et un tampon modifié n'est jamais remplacé en silence par la copie d'ouverture ; rouvrir son propre document avec des changements non sauvegardés le dit au lieu de l'écraser.
@@ -13,7 +23,7 @@ Référence : `roadmap-vers-beta-2026-11.md`. Les étapes ne sont validées que 
 - Fait : un import dont le **fichier d'origine a changé** depuis l'aperçu se refuse — l'empreinte du fichier est prise à l'aperçu et revérifiée à la décision ; jamais de texte périmé dans le tampon. Épreuve rouge puis verte (`un_import_annule_si_le_fichier_a_change_depuis_l_apercu`).
 - À faire (R2) : aperçu d'import en panneau plutôt qu'en question, erreurs à mi-opération (le conflit interne tampon est déjà refusé).
 
-## R3 (premier incrément livré) — références locales correctes
+## R3 (terminé) — références locales correctes
 
 - Fait : une citation inconnue ne se cache plus. Les deux voies de neutralisation (`@cle` et `#cite(<cle>)`, dans le texte, les chapitres inclus et le texte généré depuis le `.tw`) produisent désormais un **diagnostic** — clé, ligne, fichier — qui rejoint les avertissements de compilation : le panneau de l'aperçu et la barre d'état les montrent, au lieu du silence d'un `[cle]` nu. Épreuves : citation inconnue signalée et jamais transformée en fausse référence, `#cite` inconnu signalé, une citation perdue dans un chapitre nomme **son** fichier. Les fonctions sans diagnostic sont cantonnées aux tests.
 - Fait : les clés non ASCII sont des clés à part entière (même alphabet que le parseur) — et une clé non ASCII **manquante** se neutralise au lieu de casser la compilation. Une adresse électronique n'est **jamais** une clé : le `@` collé à un mot et suivi d'un point s'échappe (`\@`), Typst la lit comme du texte — avant, `user@example.com` devenait `user[example].com` alors que le commentaire du code promettait le contraire. Le point final d'une citation reste de la ponctuation (`@vivante.` n'est pas la clé `vivante.`). Le composeur ne s'ouvre plus sur une adresse. Épreuves : `une_cle_non_ascii_manquante_ne_casse_jamais_le_document`, `une_cle_non_ascii_vivante_reste_une_vraie_reference`, `une_adresse_electronique_nest_jamais_une_cle`. Limite connue : un `@` dans l'URL d'un lien (`https://…/@user`) reste neutralisé comme aujourd'hui — à traiter avec les liens.
