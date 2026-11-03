@@ -22,11 +22,6 @@ pub struct Rapport {
     pub avertissements: Vec<String>,
 }
 
-/// Traduit un chapitre Typst simple en AST ; conserve le reste tel quel.
-pub fn importer_typst(source: &str) -> Document {
-    importer_typst_avec_rapport(source).0
-}
-
 /// La même migration, avec son rapport.
 pub fn importer_typst_avec_rapport(source: &str) -> (Document, Rapport) {
     let mut avertissements = Vec::new();
@@ -321,6 +316,11 @@ mod tests {
 
     use super::*;
 
+    /// Raccourci de test : la conversion seule, sans son rapport.
+    fn importer_typst(source: &str) -> Document {
+        importer_typst_avec_rapport(source).0
+    }
+
     /// Le rapport dit ce qui s'est passé : converti ou brut, et pourquoi.
     #[test]
     fn le_rapport_dit_ce_qui_s_est_passe() {
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn importe_les_titres_paragraphes_gras_italiques_et_listes_simples() {
-        let document = super::importer_typst(
+        let document = importer_typst(
             "= Introduction\n\nUne phrase avec *gras* et _italique_.\n\n- une puce\n+ un élément numéroté\n",
         );
 
@@ -446,7 +446,7 @@ mod tests {
         let source = "// commentaire conservé\n#set page(margin: 2cm)\n= Titre";
 
         assert_eq!(
-            super::importer_typst(source),
+            importer_typst(source),
             Document {
                 blocs: vec![Bloc::Brut(source.to_string())],
             }

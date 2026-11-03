@@ -36,12 +36,50 @@ et un geste qui défait quelque chose **demande son mot** avant de partir :
 Les projets se classent sur des **étagères** — glisser une carte de
 projet d'une étagère à l'autre. Le classement vit dans `etageres.json`.
 
-Une seule instance travaille sur un projet à la fois : la seconde
-s'ouvre **en lecture seule**, et la raison s'affiche en barre d'état.
-Deux écritures ne se dévorent jamais leur texte.
+Les instances récentes utilisent une ancre de verrouillage
+`.verrou-natif`, qui reste dans le projet même après fermeture. Ne la
+supprimez pas pendant que l'application est ouverte. Si le projet est déjà
+utilisé, une autre instance l'ouvre en lecture seule.
+
+Ne travaillez pas simultanément sur un projet avec une ancienne version de
+Typst Writer : elle ne respecte pas le verrou natif. La protection a été
+éprouvée sous Linux ; Windows et macOS restent à vérifier. Après un arrêt
+brutal, un ancien marqueur `.verrou` peut demander une intervention :
+fermez toutes les instances avant de retirer ce marqueur, jamais l'ancre
+native. Conservez des copies de vos travaux importants.
 
 ## Exporter
 
 `Ctrl+E` écrit le PDF à côté du projet. L'export suit les normes du
 document — papier, marges, typographie, décor — et la bibliographie s'y
 imprime selon le style du projet.
+
+## Versions et changements extérieurs
+
+Avant chaque remplacement, la version qui se trouvait sur le disque est
+conservée dans le dossier `sauvegardes/` du projet, à côté du document.
+Une copie porte le nom du document suivi de son heure
+(`document.tw.1762000000`) ; les copies d'un même document sont espacées
+d'au moins une minute et les vingt dernières sont gardées. Le gestionnaire
+de fichiers y affiche la date lisible de chacune.
+
+**Restaurer une version** :
+
+1. Fermez Typst Writer — le projet ne doit pas être ouvert.
+2. Ouvrez `sauvegardes/` à côté de votre document.
+3. Choisissez la copie voulue, d'après sa date, et copiez-la à la place du
+   document : `document.tw.1762000000` devient `document.tw`.
+4. Rouvrez le projet.
+
+Si le fichier a été modifié **hors de l'application** — synchronisation,
+autre éditeur — l'application ne l'écrase jamais en silence : elle le dit,
+garde vos frappes en mémoire, et demande votre décision. Confirmer écrit
+votre texte et conserve la version du disque dans `sauvegardes/` ; `Échap`
+laisse tout en place. Une sauvegarde impossible — permission refusée,
+disque plein — n'écrit rien non plus : le texte reste dans l'application,
+et la version précédente est déjà conservée.
+
+Si l'application a été **interrompue en pleine écriture** — panne,
+plantage — la version en cours se retrouve elle aussi dans `sauvegardes/`
+à la réouverture du document, datée de son écriture : elle se restaure
+comme les autres.

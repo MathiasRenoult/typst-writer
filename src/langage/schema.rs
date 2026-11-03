@@ -377,9 +377,7 @@ impl Bloc {
                 // ligne. Ses parenthèses s'échappent, comme au lien.
                 !cible.is_empty() && !cible.contains('\n') && inline_canonique(légende)
             }
-            Bloc::Graphique { type_, donnees, .. } => {
-                !donnees.is_empty() && !type_.is_empty()
-            }
+            Bloc::Graphique { type_, donnees, .. } => !donnees.is_empty() && !type_.is_empty(),
             Bloc::Décor { proprietes, bloc } => {
                 // Un seul manteau, jamais deux : un décor dans un décor se
                 // rassemble à l'écriture.
@@ -402,17 +400,16 @@ impl Inline {
                 // porte aucun, c'est ce qui rend l'écriture univoque.
                 !texte.is_empty()
                     && !texte.contains('\n')
-                    && !texte
-                        .contains(['\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$', '~'])
+                    && !texte.contains([
+                        '\\', '*', '`', '@', '[', '{', '}', ']', '^', '_', '|', '$', '~',
+                    ])
             }
             Inline::Litteral(texte) => !texte.is_empty() && !texte.contains('\n'),
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)
             | Inline::Souligne(contenu)
-            | Inline::Barre(contenu) => {
-                est_emphase_canonique(contenu)
-            }
+            | Inline::Barre(contenu) => est_emphase_canonique(contenu),
             // Le code est littéral : son délimiteur n'y paraît pas.
             Inline::Code(texte) => !texte.contains('`') && !texte.contains('\n'),
             // La formule aussi : ni sa barre, ni saut de ligne.
@@ -442,7 +439,11 @@ impl Inline {
     pub fn est_emphase(&self) -> bool {
         matches!(
             self,
-            Inline::Gras(_) | Inline::Italique(_) | Inline::GrasItalique(_) | Inline::Souligne(_) | Inline::Barre(_)
+            Inline::Gras(_)
+                | Inline::Italique(_)
+                | Inline::GrasItalique(_)
+                | Inline::Souligne(_)
+                | Inline::Barre(_)
         )
     }
 }

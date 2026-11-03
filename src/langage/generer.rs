@@ -40,9 +40,10 @@ pub fn generer_avec(
 
     // L'import `cetz` pour les graphiques, seulement si le document en
     // contient — un import inutile alourdit le préambule.
-    let a_graphique = document.blocs.iter().any(|b| {
-        matches!(b, Bloc::Graphique { .. })
-    });
+    let a_graphique = document
+        .blocs
+        .iter()
+        .any(|b| matches!(b, Bloc::Graphique { .. }));
     if a_graphique {
         out.push_str("#import \"@preview/cetz:0.3.2\": chart\n\n");
     }
@@ -262,7 +263,11 @@ fn generer_bloc(
 
             out.push_str("\n]\n\n");
         }
-        Bloc::Graphique { type_, titre, donnees } => {
+        Bloc::Graphique {
+            type_,
+            titre,
+            donnees,
+        } => {
             // Un graphique `cetz` : le paquet est importé par le préambule
             // du document généré. Les données deviennent un tableau de
             // couples (label, valeur) que `cetz` sait dessiner.
@@ -274,7 +279,9 @@ fn generer_bloc(
             }
             out.push('(');
             for (i, (label, valeur)) in donnees.iter().enumerate() {
-                if i > 0 { out.push_str(", "); }
+                if i > 0 {
+                    out.push_str(", ");
+                }
                 out.push_str("(label: \"");
                 echapper_chaine(label, out);
                 out.push_str(&format!("\", values: ({valeur},))"));
@@ -985,4 +992,3 @@ mod tests {
         texte
     }
 }
-

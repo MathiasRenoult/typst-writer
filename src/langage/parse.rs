@@ -155,7 +155,11 @@ pub fn parse(texte: &str) -> Document {
 
         // Un commentaire : `// texte`. Conservé dans le .tw, ignoré au rendu.
         if !echappee && ligne.trim_start().starts_with("//") {
-            let texte = ligne.trim_start().trim_start_matches("//").trim().to_string();
+            let texte = ligne
+                .trim_start()
+                .trim_start_matches("//")
+                .trim()
+                .to_string();
             blocs.push(habiller(Bloc::Commentaire(texte), &mut en_attente));
             index += 1;
             continue;
@@ -466,23 +470,33 @@ fn lire_tableau(lignes: &[&str], index: usize) -> Option<(crate::langage::schema
 
     let mut corps = Vec::new();
     let mut suivant = index + 2;
-    let nb_colonnes = entete.len();
+    let mut nb_colonnes = entete.len();
 
     while let Some(ligne) = lignes.get(suivant) {
         if !ligne.trim_start().starts_with('|') {
             break;
         }
 
-        let Some(mut cellules) = cellules(ligne) else {
+        let Some(cellules) = cellules(ligne) else {
             break;
         };
 
-        // EDITOR-05 : autoformatage — les lignes du corps ont le même
-        // nombre de colonnes que l'en-tête. On comble ou on tronque.
-        cellules.resize(nb_colonnes, "");
+        // EDITOR-05 : les lignes du corps ont le même nombre de colonnes.
+        // Une cellule en plus **élargit** le tableau — jamais de troncature :
+        // comble les trous, garde tout le reste.
+        nb_colonnes = nb_colonnes.max(cellules.len());
 
         corps.push(cellules);
         suivant += 1;
+    }
+
+    // L'en-tête et les alignements suivent la plus large des lignes.
+    let mut entete = entete;
+    entete.resize(nb_colonnes, "");
+    let mut alignements = alignements;
+    alignements.resize(nb_colonnes, crate::langage::schema::Alignement::Gauche);
+    for ligne in &mut corps {
+        ligne.resize(nb_colonnes, "");
     }
 
     let entete = entete.into_iter().map(parse_inline).collect();
@@ -612,7 +626,14 @@ pub fn lire_graphique(
         return None;
     }
 
-    Some((crate::langage::schema::Bloc::Graphique { type_, titre, donnees }, suivant))
+    Some((
+        crate::langage::schema::Bloc::Graphique {
+            type_,
+            titre,
+            donnees,
+        },
+        suivant,
+    ))
 }
 
 pub fn lire_image(ligne: &str) -> Option<(Vec<crate::langage::schema::Inline>, String)> {
@@ -1136,6 +1157,16 @@ pub fn appel_autour(texte: &str, offset: usize) -> Option<(Vec<Reference>, usize
             continue;
         }
 
+        // Un `@` collé à un mot est du texte : une adresse électronique
+        // n'ouvre jamais le composeur.
+        if texte[..start]
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+
         candidats.push(start);
     }
 
@@ -1256,6 +1287,58 @@ fn jusqu_a_l_accolade_fermante(texte: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Une cellule en plus n'est jamais tronquée : le tableau s'élargit, et
+    /// tout se relit. La seule transformation admise est la mise à largeur —
+    /// comble les trous, garde tout le reste.
+    #[test]
+    fn une_cellule_en_plus_nest_jamais_perdue() {
+        let source = "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 | 4 |\n";
+        let document = super::parse(source);
+        let super::super::schema::Bloc::Tableau {
+            entete,
+            lignes,
+            alignements,
+        } = document.blocs.first().expect("tableau")
+        else {
+            panic!("ce devrait être un tableau");
+        };
+        assert_eq!(lignes[0].len(), 4, "la cellule en plus devient une colonne");
+        assert_eq!(entete.len(), 4, "l'en-tête suit");
+        assert_eq!(alignements.len(), 4, "les alignements suivent");
+        let relu = super::parse(&crate::langage::serialiser(&document));
+        assert!(
+            relu.texte_nu().contains('4'),
+            "la cellule survit au round-trip"
+        );
+        assert_eq!(
+            crate::langage::serialiser(&relu),
+            crate::langage::serialiser(&document),
+            "le round-trip est stable"
+        );
+    }
+
+    /// Un tableau irrégulier ne perd aucune cellule, quelle que soit la forme
+    /// des lignes — courtes, longues, seules.
+    #[test]
+    fn un_tableau_irregulier_ne_perd_aucune_cellule() {
+        let source = "| A | B |\n| --- | --- |\n| 1 | 2 | 3 |\n| seul |\n| 5 | 6 |\n";
+        let document = super::parse(source);
+        let nu = document.texte_nu();
+        for valeur in ["A", "B", "1", "2", "3", "seul", "5", "6"] {
+            assert!(nu.contains(valeur), "« {valeur} » perdue : {nu}");
+        }
+    }
+
+    /// Les cellules unicode se relisent telles quelles.
+    #[test]
+    fn les_cellules_unicode_se_relisent_telles_quelles() {
+        let source = "| Été | été |\n| --- | --- |\n| ça | naïve — « guillemets » |\n";
+        let document = super::parse(source);
+        let relu = super::parse(&crate::langage::serialiser(&document));
+        assert_eq!(relu.texte_nu(), document.texte_nu());
+        assert!(relu.texte_nu().contains("naïve — « guillemets »"));
+    }
 
     /// Un `_` intramot est du texte : `snake_case` ne devient pas
     /// `snake` + italique `case`, et ne se réécrit pas en le devenant.

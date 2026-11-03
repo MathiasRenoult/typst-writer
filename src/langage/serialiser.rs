@@ -133,7 +133,11 @@ pub fn serialiser(document: &Document) -> String {
                 // les manteaux emboîtés se fondent en un seul.
                 ecrire_seul(bloc, &mut out);
             }
-            Bloc::Graphique { type_, titre, donnees } => {
+            Bloc::Graphique {
+                type_,
+                titre,
+                donnees,
+            } => {
                 out.push_str(&format!("{{graphique type={type_}"));
                 if !titre.is_empty() {
                     out.push_str(&format!(" titre=\"{titre}\""));
