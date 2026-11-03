@@ -42,6 +42,11 @@ dit ce qui reste à faire.
 
 ## La bibliographie imprimée
 
-Le style du projet est `chicago-notes` : les appels deviennent des notes
-de bas de page, et la bibliographie s'imprime à la fin du document. Un
-style défini explicitement dans `main.typ` reste prioritaire.
+Le style par défaut est `chicago-notes` ; un style défini explicitement
+dans `main.typ` reste prioritaire. Le choix et l'import de styles CSL ne
+sont pas encore exposés dans l'interface.
+
+Attention : pour un projet lié à Zotero, la bibliothèque affichée et celle
+utilisée par l'assemblage Typst peuvent différer. Vérifiez les citations et
+la bibliographie dans le PDF final avant de le remettre ; la correction de
+cette divergence fait partie des priorités avant la bêta.

@@ -16,20 +16,57 @@ pub const GENERATED_FILE: &str = "document.generated.typ";
 /// mémoire, résolu par le `World` de rendu existant. L'include se place avant
 /// la bibliographie ; si `references.bib` existe mais que l'ancien `main.typ`
 /// n'a pas de directive, celle-ci est ajoutée à l'assemblage en mémoire.
+/// Sans les diagnostics : le raccourci des tests qui n'en ont pas besoin.
+#[cfg(test)]
 pub fn compilation_unit(
     root: &Path,
     main: &str,
     writing_source: &str,
 ) -> (String, Vec<(PathBuf, String)>) {
-    compilation_unit_document(root, main, &parse(writing_source))
+    let (entree, corrections, _) = compilation_unit_avec_diagnostics(root, main, writing_source);
+    (entree, corrections)
+}
+
+/// Comme [`compilation_unit`], mais dit aussi les citations neutralisées.
+///
+/// Une citation inconnue devient `[cle]` — un texte, jamais une fausse
+/// référence. Ce texte la voit, mais l'auteur aussi doit la **savoir** :
+/// chaque neutralisation revient ici avec sa clé, sa ligne et son fichier,
+/// pour devenir un avertissement au lieu d'un silence.
+pub fn compilation_unit_avec_diagnostics(
+    root: &Path,
+    main: &str,
+    writing_source: &str,
+) -> (
+    String,
+    Vec<(PathBuf, String)>,
+    Vec<crate::typst::render::Diagnostic>,
+) {
+    compilation_unit_document_avec_diagnostics(root, main, &parse(writing_source))
 }
 
 /// Assemble une valeur AST déjà tenue par l'éditeur.
+/// Sans les diagnostics : le raccourci des tests qui n'en ont pas besoin.
+#[cfg(test)]
 pub fn compilation_unit_document(
     root: &Path,
     main: &str,
     document: &super::Document,
 ) -> (String, Vec<(PathBuf, String)>) {
+    let (entree, corrections, _) = compilation_unit_document_avec_diagnostics(root, main, document);
+    (entree, corrections)
+}
+
+/// Le cœur de l'assemblage, avec la liste des citations neutralisées.
+pub fn compilation_unit_document_avec_diagnostics(
+    root: &Path,
+    main: &str,
+    document: &super::Document,
+) -> (
+    String,
+    Vec<(PathBuf, String)>,
+    Vec<crate::typst::render::Diagnostic>,
+) {
     let include = format!("#include \"{GENERATED_FILE}\"");
     let entry = if main.lines().any(|line| line.trim() == include) {
         main.to_string()
@@ -40,15 +77,30 @@ pub fn compilation_unit_document(
     // citation inconnue ne casse jamais le document — elle se montre
     // telle quelle, et le problème se dit ailleurs qu'en une erreur de
     // compilateur.
-    let cles = cles_vivantes(root, &entry);
+    let mut rapports = Vec::new();
+    let (cles, etiquettes, collisions) = cles_vivantes(root, &entry);
+    rapports.extend(collisions);
 
-    let entry = corriger_le_typst(root, &entry, &cles);
-    let mut corrections = corriger_les_inclus(root, &entry, &cles);
-    let entry = ensure_default_bibliography(root, &entry);
+    let entry = corriger_le_typst(
+        root,
+        &entry,
+        &cles,
+        &etiquettes,
+        &root.join("main.typ"),
+        &mut rapports,
+    );
+    let mut corrections = corriger_les_inclus(root, &entry, &cles, &etiquettes, &mut rapports);
 
-    // La typographie se lit dans les normes du projet : c'est là qu'elle se
-    // choisit, et le générateur l'applique au texte qu'il compose.
+    // La typographie et le style se lisent dans les normes du projet : c'est
+    // là qu'ils se choisissent, et le générateur les applique.
     let normes = crate::mise_en_page::charger(root);
+    let entry = appliquer_le_style_du_projet(
+        &entry,
+        normes.bibliographie.style.as_deref(),
+        &root.join("main.typ"),
+        &mut rapports,
+    );
+    let entry = ensure_default_bibliography(root, &entry);
     let mut regles = normes.typographie.regles();
     regles.numerotation_figures = normes.numerotation_figures.clone();
     let generated = generer_avec(document, &regles, &normes.decor);
@@ -59,11 +111,18 @@ pub fn compilation_unit_document(
 
     // Le généré aussi : le document source peut porter sa propre
     // directive, et elle y meurt comme ailleurs.
-    let generated = corriger_le_typst(root, &generated, &cles);
+    let generated = corriger_le_typst(
+        root,
+        &generated,
+        &cles,
+        &etiquettes,
+        &root.join(GENERATED_FILE),
+        &mut rapports,
+    );
 
     corrections.push((root.join(GENERATED_FILE), generated));
 
-    (entry, corrections)
+    (entry, corrections, rapports)
 }
 
 /// Place l'include avant la première bibliographie, ou à la fin de l'en-tête.
@@ -103,6 +162,102 @@ fn is_bibliography_directive(line: &str) -> bool {
 
     line.strip_prefix("#bibliography")
         .is_some_and(|remainder| remainder.trim_start().starts_with('('))
+}
+
+/// Applique le style du projet aux citations et à la bibliographie — et
+/// ne **réécrit jamais** un style qu'une directive impose déjà (R4).
+///
+/// Les règles de priorité, explicites :
+/// - une directive sans style reçoit celui du projet, s'il est connu du
+///   moteur ; à défaut, le style de base (« chicago-notes ») ;
+/// - une directive qui impose **son** style reste maîtresse : le conflit
+///   avec le style du projet se dit, sans rien écraser ;
+/// - un style du projet refusé par le moteur n'est jamais appliqué : il
+///   se dit, et le style de base prend le relais.
+fn appliquer_le_style_du_projet(
+    main: &str,
+    style_projet: Option<&str>,
+    fichier: &Path,
+    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+) -> String {
+    // Le style du projet doit être connu du moteur — jamais deviné.
+    let style_valide = match style_projet {
+        Some(style) if crate::typst::styles::style_valide(style) => Some(style),
+        Some(style) => {
+            rapports.push(crate::typst::render::Diagnostic {
+                message: format!(
+                    "Le style « {style} » est inconnu du moteur : non appliqué, le style de base le remplace."
+                ),
+                line: None,
+                column: None,
+                file: Some(fichier.to_path_buf()),
+            });
+            None
+        }
+        None => None,
+    };
+
+    // Les appels bibliographiques, tous — chacun porte son style.
+    let mut appels = Vec::new();
+    let mut offset = 0;
+
+    while let Some((ouverture, fermeture)) = bibliography_call_range(&main[offset..]) {
+        appels.push((offset + ouverture, offset + fermeture));
+        offset += fermeture;
+    }
+
+    // De la fin vers le début : chaque réécriture déplace ce qui suit.
+    let mut sortie = main.to_string();
+
+    for (ouverture, fermeture) in appels.into_iter().rev() {
+        let arguments = &sortie[ouverture + 1..fermeture];
+
+        if let Some(position) = arguments.find("style:") {
+            // Un style est déjà explicite : le document fait autorité.
+            let valeur = arguments[position + "style:".len()..]
+                .split(',')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_matches('"')
+                .to_string();
+
+            if let Some(style) = style_valide
+                && valeur != style
+            {
+                rapports.push(crate::typst::render::Diagnostic {
+                    message: format!(
+                        "Le document impose le style « {valeur} » alors que le projet choisit « {style} » : c'est le document qui fait autorité. Accordez les deux pour lever l'ambiguïté."
+                    ),
+                    line: None,
+                    column: None,
+                    file: Some(fichier.to_path_buf()),
+                });
+            }
+
+            continue;
+        }
+
+        // Aucun style : celui du projet s'y inscrit, ou le style de base.
+        let style = style_valide.unwrap_or("chicago-notes");
+        let arguments = arguments.trim_end();
+        let insertion = ouverture + 1 + arguments.len();
+        let separateur = if arguments.trim().is_empty() {
+            ""
+        } else if arguments.ends_with(',') {
+            " "
+        } else {
+            ", "
+        };
+
+        sortie = format!(
+            "{}{separateur}style: \"{style}\"{}",
+            &sortie[..insertion],
+            &sortie[insertion..]
+        );
+    }
+
+    sortie
 }
 
 /// Ajoute la bibliographie conventionnelle aux anciens assemblages qui ont le
@@ -331,6 +486,909 @@ mod tests {
         assert_eq!(entry.matches("#bibliography").count(), 1, "{entry}");
     }
 
+    /// Une citation inconnue ne devient jamais une fausse référence — et
+    /// désormais, elle ne se cache plus : la neutralisation se dit avec sa
+    /// clé, sa ligne et son fichier (R3, fidélité des citations).
+    #[test]
+    fn une_citation_inconnue_est_signalee_et_ne_devient_jamais_une_reference() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-diagnostic-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let (entry, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n",
+            "Selon @inconnue, et @vivante qui existe.\n",
+        );
+
+        let genere = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .expect("le généré");
+        assert!(genere.contains("[inconnue]"), "{genere}");
+        assert!(
+            !genere.contains("[vivante]"),
+            "une clé vivante reste une vraie référence : {genere}"
+        );
+        assert!(entry.contains("#include"), "{entry}");
+        assert_eq!(rapports.len(), 1, "une seule neutralisation : {rapports:?}");
+        let diagnostic = &rapports[0];
+        assert!(
+            diagnostic.message.contains("inconnue"),
+            "{}",
+            diagnostic.message
+        );
+        assert_eq!(diagnostic.line, Some(1), "{}", diagnostic.message);
+        assert!(
+            diagnostic
+                .file
+                .as_ref()
+                .is_some_and(|fichier| fichier.ends_with("document.generated.typ")),
+            "le fichier est dit : {diagnostic:?}"
+        );
+    }
+
+    /// `#cite(<cle>)` suit exactement le même contrat.
+    #[test]
+    fn un_cite_inconnu_est_signale() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-diagnostic-cite-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let (_, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n#cite(<perdue>)\n",
+            "",
+        );
+
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        assert!(
+            rapports[0].message.contains("perdue"),
+            "{}",
+            rapports[0].message
+        );
+    }
+
+    /// Une citation perdue dans un chapitre est signalée avec **son** fichier,
+    /// pas celui de l'assemblage : c'est là qu'il faut la corriger.
+    #[test]
+    fn une_citation_perdue_dans_un_chapitre_dit_son_fichier() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-diagnostic-chapitre-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("chapitres")).expect("arborescence");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+        std::fs::write(
+            root.join("chapitres").join("1.typ"),
+            "Un texte @perdue au chapitre.\n",
+        )
+        .expect("chapitre");
+
+        let (_, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#include \"chapitres/1.typ\"\n#bibliography(\"references.bib\")\n",
+            "",
+        );
+
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        assert!(
+            rapports[0]
+                .file
+                .as_ref()
+                .is_some_and(|fichier| fichier.ends_with("1.typ")),
+            "le chapitre est nommé : {:?}",
+            rapports[0]
+        );
+    }
+
+    /// Les clés non ASCII sont des clés à part entière — et une clé non
+    /// ASCII **manquante** se neutralise comme les autres : elle ne casse
+    /// jamais la compilation (acceptation R3 : « clés non ASCII et
+    /// manquantes »).
+    #[test]
+    fn une_cle_non_ascii_manquante_ne_casse_jamais_le_document() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-cle-unicode-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let (entry, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n",
+            "Selon @été2020, clé non ASCII.\n",
+        );
+
+        let genere = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .unwrap_or_default();
+        assert!(entry.contains("#include"), "{entry}");
+        assert!(
+            genere.contains("[été2020]"),
+            "la clé manquante devient un texte visible : {genere}"
+        );
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        assert!(
+            rapports[0].message.contains("été2020"),
+            "{}",
+            rapports[0].message
+        );
+    }
+
+    /// Une clé non ASCII vivante reste une vraie référence, jamais
+    /// neutralisée à tort.
+    #[test]
+    fn une_cle_non_ascii_vivante_reste_une_vraie_reference() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-cle-unicode-vivante-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{été2020, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let (_, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n",
+            "Selon @été2020, qui existe.\n",
+        );
+
+        let genere = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .unwrap_or_default();
+        assert!(
+            genere.contains("@été2020"),
+            "la clé vivante reste une référence : {genere}"
+        );
+        assert!(
+            !genere.contains("[été2020]"),
+            "jamais neutralisée à tort : {genere}"
+        );
+        assert!(rapports.is_empty(), "{rapports:?}");
+    }
+
+    /// Deux bibliographies différentes, des clés communes — et chaque
+    /// citation reste fidèle : jamais neutralisée, jamais renvoyée à
+    /// l'autre source en silence (acceptation R3).
+    #[test]
+    fn deux_bibliographies_a_cles_communes_ne_se_contredisent_pas() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-deux-bib-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("chapitres")).expect("arborescence");
+        std::fs::create_dir_all(root.join("Bibliographie")).expect("arborescence");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{commune, title = {La première}, author = {Dupont, Jean}}\n",
+        )
+        .expect("première bibliographie");
+        std::fs::write(
+            root.join("chapitres").join("ma-bib.bib"),
+            "@book{commune, title = {La seconde}, author = {Martin, Marie}}\n\
+             @book{secondaire, title = {Un autre}, author = {Bernard, Paul}}\n",
+        )
+        .expect("seconde bibliographie");
+        std::fs::write(
+            root.join("chapitres").join("1.typ"),
+            "#bibliography(\"ma-bib.bib\")\n\nSelon @commune et @secondaire.\n",
+        )
+        .expect("chapitre");
+
+        let (_entree, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#include \"chapitres/1.typ\"\n#bibliography(\"references.bib\")\n",
+            "",
+        );
+
+        let chapitre = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("1.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .unwrap_or_else(|| {
+                std::fs::read_to_string(root.join("chapitres").join("1.typ")).expect("chapitre")
+            });
+        assert!(
+            chapitre.contains("@commune") && chapitre.contains("@secondaire"),
+            "les deux clés restent des références : {chapitre}"
+        );
+        assert!(
+            !chapitre.contains("[commune]") && !chapitre.contains("[secondaire]"),
+            "aucune n'est neutralisée : {chapitre}"
+        );
+
+        // La clé commune est dans deux bibliographies : la collision se
+        // dit. La clé d'une seule source ne produit aucun bruit.
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        assert!(
+            rapports[0].message.contains("commune"),
+            "la collision nomme la clé : {}",
+            rapports[0].message
+        );
+        assert!(
+            !rapports[0].message.contains("secondaire"),
+            "la clé sans ambiguïté n'est pas mêlée : {}",
+            rapports[0].message
+        );
+
+        // Sans la clé commune, deux bibliographies complémentaires ne
+        // disent rien — et le compilateur tranche, sans erreur.
+        std::fs::write(
+            root.join("chapitres").join("ma-bib.bib"),
+            "@book{secondaire, title = {Un autre}, author = {Bernard, Paul}}\n",
+        )
+        .expect("seconde bibliographie");
+        let (entry, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#include \"chapitres/1.typ\"\n#bibliography(\"references.bib\")\n",
+            "",
+        );
+        assert!(rapports.is_empty(), "{rapports:?}");
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "deux bibliographies complémentaires compilent : {:?}",
+            outcome.errors
+        );
+    }
+
+    /// De l'insertion au PDF : le texte **extrait** porte bien la source
+    /// citée — pas seulement un compilateur qui ne râle pas (acceptation R3).
+    #[test]
+    fn le_texte_extrait_du_pdf_porte_la_source_citee() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-pdf-texte-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{dupont2023, title = {La théologie du lien}, \
+             author = {Dupont, Jean}, year = {2023}}\n",
+        )
+        .expect("bibliographie");
+
+        let (entry, corrections, _) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n#bibliography(\"references.bib\")\n",
+            "Selon @dupont2023, la thèse est posée.\n",
+        );
+
+        let pdf = crate::typst::render::render_pdf(&root, &entry, &corrections)
+            .expect("le PDF se produit");
+        assert!(
+            pdf.starts_with(b"%PDF"),
+            "un vrai PDF : {} octets",
+            pdf.len()
+        );
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        // La bibliographie met les titres en capitales : la comparaison ne
+        // distingue pas les casse.
+        let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
+        assert!(
+            texte.contains("dupont") && texte.contains("théologie"),
+            "la source citée est dans le texte extrait du PDF : {texte}"
+        );
+    }
+
+    /// Auteurs multiples : la note et la bibliographie les portent tous,
+    /// et le texte extrait du PDF le prouve (acceptation R3).
+    #[test]
+    fn les_auteurs_multiples_se_lisent_dans_le_texte_extrait() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-pdf-auteurs-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{collectif2020, title = {L'ouvrage collectif}, \
+             author = {Dupont, Jean and Martin, Marie and Bernard, Paul}, year = {2020}}\n",
+        )
+        .expect("bibliographie");
+
+        let (entry, corrections, _) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n#bibliography(\"references.bib\")\n",
+            "Selon @collectif2020, la thèse est posée.\n",
+        );
+
+        let pdf = crate::typst::render::render_pdf(&root, &entry, &corrections)
+            .expect("le PDF se produit");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output()
+        else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
+        for nom in ["dupont", "martin", "bernard"] {
+            assert!(
+                texte.contains(nom),
+                "l'auteur {nom} est dans le texte extrait : {texte}"
+            );
+        }
+    }
+
+    /// Compilation en erreur : les erreurs du document se disent avec son
+    /// message, et les avertissements de préparation — ici une citation
+    /// inconnue — restent visibles à côté. Rien n'est avalé (acceptation
+    /// R3 : « conflits et compilation en erreur »).
+    #[test]
+    fn une_compilation_en_erreur_dit_erreurs_et_avertissements() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-erreur-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let (entry, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n#bibliography(\"references.bib\")\n#panic(\"panne synthétique\")\n",
+            "Selon @inconnue, la thèse est posée.\n",
+        );
+
+        // La citation inconnue est dite en préparation…
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        assert!(
+            rapports[0].message.contains("inconnue"),
+            "{}",
+            rapports[0].message
+        );
+
+        // …et la panne du document se dit au compilateur, avec son mot.
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            !outcome.errors.is_empty(),
+            "la compilation en erreur dit ses erreurs"
+        );
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("panne synthétique")),
+            "le message est celui du document : {:?}",
+            outcome.errors
+        );
+    }
+
+    /// Le style du projet gouverne citations et bibliographie ensemble :
+    /// une directive sans style le reçoit (R4).
+    #[test]
+    fn le_style_du_projet_s_applique_a_la_bibliographie() {
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-langage-style-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+        std::fs::write(
+            root.join("mise-en-page.toml"),
+            "[bibliographie]\nstyle = \"apa\"\n",
+        )
+        .expect("normes");
+
+        let (entry, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#bibliography(\"references.bib\")\n",
+            "",
+        );
+
+        assert!(
+            entry.contains("style: \"apa\""),
+            "le style du projet s'y inscrit : {entry}"
+        );
+        assert!(rapports.is_empty(), "{rapports:?}");
+    }
+
+    /// Une directive qui impose **son** style reste maîtresse : le conflit
+    /// avec le style du projet se dit, sans rien écraser (R4).
+    #[test]
+    fn une_directive_qui_impose_son_style_ne_se_ecrase_jamais() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-style-conflit-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+        std::fs::write(
+            root.join("mise-en-page.toml"),
+            "[bibliographie]\nstyle = \"apa\"\n",
+        )
+        .expect("normes");
+
+        let (entry, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#bibliography(\"references.bib\", style: \"ieee\")\n",
+            "",
+        );
+
+        assert!(
+            entry.contains("style: \"ieee\""),
+            "le style du document reste : {entry}"
+        );
+        assert!(
+            !entry.contains("style: \"apa\""),
+            "rien n'est écrasé : {entry}"
+        );
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        let message = &rapports[0].message;
+        assert!(
+            message.contains("ieee") && message.contains("apa"),
+            "le conflit nomme les deux styles : {message}"
+        );
+        assert!(
+            message.contains("autorité"),
+            "la priorité est dite : {message}"
+        );
+    }
+
+    /// Un style que le moteur refuse n'est jamais appliqué : il se dit, et
+    /// le style de base prend le relais (R4).
+    #[test]
+    fn un_style_de_projet_inconnu_est_dit_pas_applique() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-style-inconnu-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+        std::fs::write(
+            root.join("mise-en-page.toml"),
+            "[bibliographie]\nstyle = \"un-style-qui-nexiste-pas\"\n",
+        )
+        .expect("normes");
+
+        let (entry, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#bibliography(\"references.bib\")\n",
+            "",
+        );
+
+        assert!(
+            entry.contains("style: \"chicago-notes\""),
+            "le style de base le remplace : {entry}"
+        );
+        assert!(
+            !entry.contains("un-style-qui-nexiste-pas"),
+            "le style refusé n'est jamais appliqué : {entry}"
+        );
+        assert_eq!(rapports.len(), 1, "{rapports:?}");
+        assert!(
+            rapports[0].message.contains("inconnu"),
+            "{}",
+            rapports[0].message
+        );
+    }
+
+    /// Changer de style ne touche jamais aux clés ni aux notices (R4).
+    #[test]
+    fn changer_le_style_ne_touche_jamais_aux_notices() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-style-notices-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        let bibliotheque = "@book{vivante, title = {Un titre}}\n";
+        std::fs::write(root.join("references.bib"), bibliotheque).expect("bibliographie");
+        std::fs::write(
+            root.join("mise-en-page.toml"),
+            "[bibliographie]\nstyle = \"ieee\"\n",
+        )
+        .expect("normes");
+
+        let _ = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#bibliography(\"references.bib\")\n",
+            "",
+        );
+
+        assert_eq!(
+            std::fs::read_to_string(root.join("references.bib")).expect("bibliographie"),
+            bibliotheque,
+            "les notices sont intactes"
+        );
+    }
+
+    /// Un style `.csl` importé suit le projet hors ligne, jamais l'original —
+    /// et se lit dans la directive (R4).
+    #[test]
+    fn un_style_csl_importe_se_lit_dans_la_directive() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-csl-import-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let csl = r#"<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="note">
+  <info>
+    <id>https://example.org/styles/test</id>
+    <title>Style de test</title>
+    <updated>2026-01-01T00:00:00+00:00</updated>
+  </info>
+  <citation><layout><text variable="title"/></layout></citation>
+  <bibliography><layout><text variable="title"/></layout></bibliography>
+</style>"#;
+
+        // L'original vit hors du projet et n'en bouge pas.
+        let original = std::env::temp_dir().join("style-de-test-externe.csl");
+        std::fs::write(&original, csl).expect("style d'origine");
+
+        let crate::project::ImportationStyle::Choisi {
+            chemin: relatif,
+            avertissement,
+        } = crate::project::importer_style_csl(&root, "style-de-test.csl", csl, None)
+            .expect("import")
+        else {
+            panic!("un style indépendant est choisi")
+        };
+        assert_eq!(avertissement, None, "pas d'écart à dire");
+        assert_eq!(
+            relatif,
+            std::path::PathBuf::from("styles").join("style-de-test.csl")
+        );
+        assert!(
+            root.join("styles").join("style-de-test.csl").is_file(),
+            "la copie suit le projet"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&original).expect("original"),
+            csl,
+            "l'original n'a pas bougé"
+        );
+
+        // Une seconde fois : le nom est libre, rien ne s'écrase.
+        let crate::project::ImportationStyle::Choisi { chemin: second, .. } =
+            crate::project::importer_style_csl(&root, "style-de-test.csl", csl, None)
+                .expect("import")
+        else {
+            panic!("un style indépendant est choisi")
+        };
+        assert_ne!(relatif, second, "le second import prend un nom libre");
+
+        // Le style du projet se lit dans la directive.
+        std::fs::write(
+            root.join("mise-en-page.toml"),
+            format!("[bibliographie]\nstyle = \"{}\"\n", relatif.display()),
+        )
+        .expect("normes");
+        let (entry, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#bibliography(\"references.bib\")\n",
+            "",
+        );
+        assert!(
+            entry.contains(&format!("style: \"{}\"", relatif.display())),
+            "le style de fichier se lit dans la directive : {entry}"
+        );
+        assert!(rapports.is_empty(), "{rapports:?}");
+    }
+
+    /// Un style dépendant sans parent sur la machine : le style est
+    /// conservé, rien n'est choisi, et le geste se dit (R4).
+    #[test]
+    fn un_style_dependant_sans_parent_dit_le_geste() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-csl-dependant-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+
+        let dependant = DEPENDANT;
+
+        let crate::project::ImportationStyle::ParentManquant {
+            chemin,
+            titre,
+            parent,
+        } = crate::project::importer_style_csl(&root, "dependant.csl", dependant, None)
+            .expect("conservé")
+        else {
+            panic!("le parent manque")
+        };
+
+        assert_eq!(
+            parent, "https://example.org/styles/parent",
+            "le parent est dit"
+        );
+        assert_eq!(titre, "Style dépendant");
+        assert!(
+            root.join("styles").join("dependant.csl").is_file(),
+            "le style demandé est conservé : {}",
+            chemin.display()
+        );
+    }
+
+    /// Le parent, quand il vit dans les styles du projet, résout le style
+    /// dépendant — avec l'écart de locale dit (R4).
+    #[test]
+    fn un_parent_du_projet_resout_le_style_dependant() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-csl-parent-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("styles")).expect("arborescence");
+        std::fs::write(root.join("styles").join("parent.csl"), PARENT).expect("parent");
+
+        let crate::project::ImportationStyle::Choisi {
+            chemin,
+            avertissement,
+        } = crate::project::importer_style_csl(&root, "dependant.csl", DEPENDANT, None)
+            .expect("résolu")
+        else {
+            panic!("le parent local résout le style")
+        };
+
+        assert_eq!(
+            chemin,
+            std::path::PathBuf::from("styles").join("parent.csl"),
+            "le moteur utilisera le parent"
+        );
+        let avertissement = avertissement.expect("l'écart de locale se dit");
+        assert!(
+            avertissement.contains("locale") && avertissement.contains("dépendant"),
+            "{avertissement}"
+        );
+    }
+
+    /// Un parent installé dans Zotero est trouvé, copié dans le projet, et
+    /// résout le style — sans jamais modifier Zotero (R4).
+    #[test]
+    fn un_parent_de_zotero_resout_le_style_dependant() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-csl-zotero-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+
+        // Un dossier de styles Zotero fabriqué — jamais les données
+        // personnelles de la machine.
+        let zotero =
+            std::env::temp_dir().join(format!("typst-writer-zotero-styles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&zotero);
+        std::fs::create_dir_all(&zotero).expect("styles Zotero");
+        std::fs::write(zotero.join("parent-zotero.csl"), PARENT).expect("parent");
+
+        let crate::project::ImportationStyle::Choisi {
+            chemin,
+            avertissement: _,
+        } = crate::project::importer_style_csl(&root, "dependant.csl", DEPENDANT, Some(&zotero))
+            .expect("résolu")
+        else {
+            panic!("le parent de Zotero résout le style")
+        };
+
+        assert!(
+            root.join(&chemin).is_file(),
+            "le parent est copié dans le projet : {}",
+            chemin.display()
+        );
+        assert_eq!(
+            std::fs::read_to_string(zotero.join("parent-zotero.csl")).expect("parent"),
+            PARENT,
+            "Zotero n'est jamais modifié"
+        );
+    }
+
+    /// Le parent d'un style dépendant et le style lui-même, pour les tests.
+    const PARENT: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="note">
+  <info>
+    <id>https://example.org/styles/parent</id>
+    <title>Le parent</title>
+    <updated>2026-01-01T00:00:00+00:00</updated>
+  </info>
+  <citation><layout><text variable="title"/></layout></citation>
+  <bibliography><layout><text variable="title"/></layout></bibliography>
+</style>"#;
+
+    const DEPENDANT: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text">
+  <info>
+    <id>https://example.org/styles/dependent</id>
+    <title>Style dépendant</title>
+    <updated>2026-01-01T00:00:00+00:00</updated>
+    <link href="https://example.org/styles/parent" rel="independent-parent"/>
+  </info>
+</style>"#;
+    /// Acceptation R4 : auteur-date, numérique et notes rendent des textes
+    /// **différents** — comparés sur le PDF réel, pas seulement au
+    /// compilateur.
+    #[test]
+    fn les_trois_familles_rendent_des_textes_differents() {
+        let mut extraits = Vec::new();
+
+        for style in ["apa", "ieee", "chicago-notes"] {
+            let root = std::env::temp_dir().join(format!(
+                "typst-writer-langage-familles-{style}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("racine du projet");
+            std::fs::write(
+                root.join("references.bib"),
+                "@book{dupont2023, title = {La théologie du lien}, \
+                 author = {Dupont, Jean}, year = {2023}}\n",
+            )
+            .expect("bibliographie");
+
+            let (entry, corrections, _) = super::compilation_unit_avec_diagnostics(
+                &root,
+                &format!(
+                    "#set page(paper: \"a6\")\n#bibliography(\"references.bib\", style: \"{style}\")\n"
+                ),
+                "Selon @dupont2023, la thèse est posée.\n",
+            );
+
+            let pdf = crate::typst::render::render_pdf(&root, &entry, &corrections)
+                .expect("le PDF se produit");
+            let fichier = root.join("sortie.pdf");
+            std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+            let Ok(sortie) = std::process::Command::new("pdftotext")
+                .arg(&fichier)
+                .arg("-")
+                .output()
+            else {
+                eprintln!("pdftotext absent — épreuve des familles sautée");
+                return;
+            };
+            assert!(sortie.status.success(), "pdftotext s'exécute");
+            extraits.push((
+                style,
+                String::from_utf8_lossy(&sortie.stdout).to_lowercase(),
+            ));
+        }
+
+        // Chaque famille a sa voix : aucune ne ressemble à une autre.
+        for (i, (style_a, texte_a)) in extraits.iter().enumerate() {
+            for (style_b, texte_b) in extraits.iter().skip(i + 1) {
+                assert_ne!(
+                    texte_a, texte_b,
+                    "{style_a} et {style_b} rendent le même texte : {texte_a}"
+                );
+            }
+        }
+    }
+
+    /// Une adresse électronique n'est jamais une clé — le commentaire du
+    /// pipeline le promet, voici l'épreuve qui le garantit.
+    #[test]
+    fn une_adresse_electronique_nest_jamais_une_cle() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-courriel-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{vivante, title = {Un titre}}\n",
+        )
+        .expect("bibliographie");
+
+        let (_, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n",
+            "Contactez user@example.com svp. Comme dit @vivante. Ensuite.\n",
+        );
+
+        let genere = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .unwrap_or_default();
+        // Le `@` d'une adresse s'échappe — c'est ainsi que Typst la lit
+        // comme du texte. Une fois l'échappement retiré, l'adresse est
+        // entière.
+        let visible = genere.replace("\\@", "@");
+        assert!(
+            visible.contains("user@example.com"),
+            "l'adresse reste entière : {genere}"
+        );
+        assert!(
+            !genere.contains("[example]"),
+            "jamais neutralisée : {genere}"
+        );
+        // La citation suivie d'un point final : le point est de la
+        // ponctuation, la clé reste une vraie référence.
+        assert!(
+            visible.contains("@vivante."),
+            "le point final ne fait pas partie de la clé : {genere}"
+        );
+        assert!(
+            !genere.contains("[vivante]"),
+            "jamais neutralisée à tort : {genere}"
+        );
+        assert!(rapports.is_empty(), "{rapports:?}");
+    }
+
     /// Le `.tw` devient un include in-memory derrière l'en-tête, et compile par
     /// le même moteur Typst que les chapitres existants.
     #[test]
@@ -526,6 +1584,9 @@ fn corriger_le_typst(
     root: &Path,
     main: &str,
     cles: &std::collections::BTreeSet<String>,
+    etiquettes: &std::collections::BTreeSet<String>,
+    fichier: &Path,
+    rapports: &mut Vec<crate::typst::render::Diagnostic>,
 ) -> String {
     // `#cite(<cle>)` d'abord, sur le bloc entier : la clé peut couvrir
     // plusieurs lignes, et une citation inconnue ne casse jamais le
@@ -557,6 +1618,14 @@ fn corriger_le_typst(
         if cles.contains(&cle) {
             main_corrige.push_str(&main[position..fin]);
         } else {
+            // La neutralisation se dit : la clé, sa ligne, son fichier.
+            let ligne = main[..position].matches('\n').count() + 1;
+            rapports.push(crate::typst::render::Diagnostic {
+                message: format!("Citation « {cle} » inconnue : neutralisée en [{cle}]."),
+                line: Some(ligne),
+                column: None,
+                file: Some(fichier.to_path_buf()),
+            });
             main_corrige.push_str(&format!("[{cle}]"));
         }
 
@@ -568,7 +1637,7 @@ fn corriger_le_typst(
 
     let mut sortie = String::new();
 
-    for ligne in main.split_inclusive('\n') {
+    for (numero, ligne) in main.split_inclusive('\n').enumerate() {
         if is_bibliography_directive(ligne) {
             // Le chemin : la première chaîne de la directive.
             let chemin = ligne
@@ -591,7 +1660,8 @@ fn corriger_le_typst(
                         .map(|nom| nom.to_string_lossy().to_string())
                         .unwrap_or_else(|| "references.bib".to_string());
 
-                    sortie.push_str(&ligne.replace(&format!("\"{chemin}\""), &format!("\"{nom}\"")));
+                    sortie
+                        .push_str(&ligne.replace(&format!("\"{chemin}\""), &format!("\"{nom}\"")));
                 }
                 None => {
                     // Aucune bibliographie : la directive se commente.
@@ -612,17 +1682,61 @@ fn corriger_le_typst(
 
         while curseur < octets.len() {
             if octets[curseur] == b'@' {
-                let mut fin_cle = curseur + 1;
+                // Déjà échappé par l'auteur : la suite est du texte.
+                let echappe = ligne[..curseur].ends_with('\\');
 
-                while fin_cle < octets.len()
-                    && (octets[fin_cle].is_ascii_alphanumeric() || octets[fin_cle] == b'_' || octets[fin_cle] == b'-')
-                {
-                    fin_cle += 1;
+                // La clé se lit caractère par caractère : ses lettres
+                // peuvent être accentuées, et le point s'y lit aussi — c'est
+                // lui qui distingue une adresse électronique d'une clé.
+                let mut fin_cle = curseur + 1;
+                let mut deux_points = false;
+
+                for caractere in ligne[curseur + 1..].chars() {
+                    if caractere.is_alphanumeric()
+                        || caractere == '_'
+                        || caractere == '-'
+                        || caractere == '.'
+                    {
+                        fin_cle += caractere.len_utf8();
+                    } else if caractere == ':' {
+                        // Un renvoi (`@fig:une`) porte deux points : ce
+                        // n'est jamais une citation (R5).
+                        deux_points = true;
+                        fin_cle += caractere.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Le point final est de la ponctuation, pas de la clé.
+                while fin_cle > curseur + 1 && ligne[..fin_cle].ends_with('.') {
+                    fin_cle -= 1;
                 }
 
                 let cle = &ligne[curseur + 1..fin_cle];
 
-                if !cle.is_empty() && !cle.contains('.') && !cles.contains(cle) {
+                // Un renvoi traverse intact : étiquette à deux points, ou
+                // étiquette définie dans le document. Une cible manquante
+                // sera diagnostiquée par le moteur, jamais déguisée en
+                // `[cle]` (R5, « diagnostics »).
+                let est_renvoi = deux_points || (!cle.is_empty() && etiquettes.contains(cle));
+
+                if !echappe && !est_renvoi && cle.contains('.') {
+                    // Une adresse électronique a un point, et n'est jamais
+                    // une clé : elle s'échappe, pour que Typst la lise comme
+                    // du texte au lieu d'y chercher une référence.
+                    ligne_sortie.push_str("\\@");
+                    curseur += 1;
+                    continue;
+                }
+
+                if !echappe && !est_renvoi && !cle.is_empty() && !cles.contains(cle) {
+                    rapports.push(crate::typst::render::Diagnostic {
+                        message: format!("Citation « {cle} » inconnue : neutralisée en [{cle}]."),
+                        line: Some(numero + 1),
+                        column: None,
+                        file: Some(fichier.to_path_buf()),
+                    });
                     ligne_sortie.push_str(&format!("[{cle}]"));
                     curseur = fin_cle;
                     continue;
@@ -650,6 +1764,8 @@ fn corriger_les_inclus(
     root: &Path,
     entry: &str,
     cles: &std::collections::BTreeSet<String>,
+    etiquettes: &std::collections::BTreeSet<String>,
+    rapports: &mut Vec<crate::typst::render::Diagnostic>,
 ) -> Vec<(PathBuf, String)> {
     let mut corrections = Vec::new();
     let mut vus = std::collections::HashSet::new();
@@ -680,7 +1796,7 @@ fn corriger_les_inclus(
         }
 
         let base = chemin.parent().unwrap_or(root).to_path_buf();
-        let corrige = corriger_le_typst(&base, &contenu, cles);
+        let corrige = corriger_le_typst(&base, &contenu, cles, etiquettes, &chemin, rapports);
 
         if corrige != contenu {
             corrections.push((chemin, corrige));
@@ -705,7 +1821,11 @@ fn guerir_commentaires(contenu: &str) -> String {
             let nu = ligne.trim_start();
 
             if nu.starts_with("//") {
-                format!("{}%{}", &ligne[..ligne.len() - nu.len()], nu.strip_prefix("//").unwrap_or(nu))
+                format!(
+                    "{}%{}",
+                    &ligne[..ligne.len() - nu.len()],
+                    nu.strip_prefix("//").unwrap_or(nu)
+                )
             } else {
                 ligne.to_string()
             }
@@ -770,10 +1890,59 @@ fn guerir_les_bibliographies(
 /// correction porte un fichier que BibLaTeX refuse tout entier. La
 /// guérison se fait au compilateur, par substitution — le fichier sur
 /// disque n'est pas touché, et le document compile.
-fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String> {
-    let mut cles = std::collections::BTreeSet::new();
+/// Les étiquettes définies par `<nom>` dans un texte — les cibles de
+/// renvois de R5. Un `<` de code (comparaison) n'a pas de `>` fermant au
+/// nom d'étiquette valide, et ne s'y lit pas.
+fn etiquettes_du_texte(texte: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let octets = texte.as_bytes();
+    let mut curseur = 0usize;
 
-    // Toutes les bibliographies citées, et la conventionnelle.
+    while curseur < octets.len() {
+        if octets[curseur] == b'<'
+            && let Some(fin) = texte[curseur + 1..].find('>')
+        {
+            let nom = &texte[curseur + 1..curseur + 1 + fin];
+            let valide = nom
+                .chars()
+                .next()
+                .is_some_and(|lettre| lettre.is_alphabetic() || lettre == '_')
+                && nom.chars().all(|lettre| {
+                    lettre.is_alphanumeric() || lettre == '_' || lettre == '-' || lettre == ':'
+                });
+
+            if valide {
+                out.push(nom.to_string());
+            }
+            curseur += fin + 2;
+            continue;
+        }
+        curseur += 1;
+    }
+
+    out
+}
+
+fn cles_vivantes(
+    root: &Path,
+    entry: &str,
+) -> (
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+    Vec<crate::typst::render::Diagnostic>,
+) {
+    let mut cles = std::collections::BTreeSet::new();
+    let mut etiquettes = std::collections::BTreeSet::new();
+    let mut collisions = Vec::new();
+
+    // Les étiquettes de l'assemblage : `<nom>` définit une cible de renvoi,
+    // jamais une citation (R5).
+    etiquettes.extend(etiquettes_du_texte(entry));
+
+    // Toutes les bibliographies citées, et la conventionnelle — celles de
+    // l'assemblage **et** celles que portent les chapitres inclus : une clé
+    // n'est vivante que si une bibliographie du projet la connaît, où
+    // qu'elle soit citée.
     let mut citees = vec![crate::project::find_bibliography(root)];
 
     for ligne in entry.lines() {
@@ -784,6 +1953,52 @@ fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String>
         }
     }
 
+    let mut vus_fichiers = std::collections::HashSet::new();
+    let mut a_voir: Vec<PathBuf> = crate::project::model::read_includes(&root.join("main.typ"));
+
+    // L'entrée peut elle-même en porter — elle est en mémoire, pas encore
+    // sur le disque.
+    for ligne in entry.lines() {
+        if let Some(reste) = ligne.trim().strip_prefix("#include")
+            && let Some(chemin) = reste.trim().trim_matches('"').lines().next()
+        {
+            a_voir.push(PathBuf::from(chemin));
+        }
+    }
+
+    while let Some(relatif) = a_voir.pop() {
+        if !vus_fichiers.insert(relatif.clone()) {
+            continue;
+        }
+
+        let chemin = root.join(&relatif);
+        let Ok(contenu) = std::fs::read_to_string(&chemin) else {
+            continue;
+        };
+
+        for sous in crate::project::model::read_includes(&chemin) {
+            a_voir.push(relatif.parent().unwrap_or(Path::new("")).join(sous));
+        }
+
+        etiquettes.extend(etiquettes_du_texte(&contenu));
+
+        for ligne in contenu.lines() {
+            // La directive d'un chapitre : son chemin est relatif à **sa**
+            // place, pas à celle de l'assemblage.
+            if is_bibliography_directive(ligne)
+                && let Some(chemin_bib) = ligne.split('"').nth(1)
+            {
+                let base = chemin.parent().unwrap_or(root);
+                citees.push(Some(base.join(chemin_bib)));
+            }
+        }
+    }
+
+    // Les clés, fichier par fichier — et la collision se dit : la même clé
+    // dans deux bibliographies rend la citation ambiguë, ce n'est jamais un
+    // silence (R3, « détection des erreurs et collisions »).
+    let mut origines: std::collections::BTreeMap<String, Vec<PathBuf>> = Default::default();
+
     for chemin in citees.into_iter().flatten() {
         if let Ok(contenu) = std::fs::read_to_string(&chemin) {
             // Le contenu guéri d'abord : un `.bib` aux commentaires `//`
@@ -792,157 +2007,467 @@ fn cles_vivantes(root: &Path, entry: &str) -> std::collections::BTreeSet<String>
             let gueri = guerir_commentaires(&contenu);
 
             for entree in crate::project::parse_bibliography_text(&gueri) {
-                cles.insert(entree.key);
+                origines.entry(entree.key).or_default().push(chemin.clone());
             }
         }
     }
 
-    cles
+    for (cle, fichiers) in &origines {
+        let mut uniques: Vec<&PathBuf> = Vec::new();
+
+        for fichier in fichiers {
+            if !uniques.contains(&fichier) {
+                uniques.push(fichier);
+            }
+        }
+
+        if uniques.len() > 1 {
+            let noms = uniques
+                .iter()
+                .map(|fichier| fichier.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            collisions.push(crate::typst::render::Diagnostic {
+                message: format!(
+                    "La clé « {cle} » est dans plusieurs bibliographies ({noms}) : la citation est ambiguë."
+                ),
+                line: None,
+                column: None,
+                file: Some(uniques[1].clone().clone()),
+            });
+        }
+
+        cles.insert(cle.clone());
+    }
+
+    (cles, etiquettes, collisions)
 }
 
-    /// **Un document ne compile jamais mal, quoi qu'il arrive** — les
-    /// trois fautes réelles du rapport, ensemble, jugées par le vrai
-    /// compilateur : le chemin mort d'un chapitre, le `.bib` aux
-    /// commentaires `//`, et les citations inconnues sous leurs deux
-    /// formes.
-    #[test]
-    fn un_document_ne_compile_jamais_mal_quoi_qu_il_arrive() {
-        if std::process::Command::new("typst").arg("--version").output().is_err() {
-            println!("typst n'est pas installé : test sauté");
-            return;
-        }
-        let root = std::env::temp_dir().join("typst-writer-epreuve-trois-fautes");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("chapitres")).expect("dossier");
+/// **Un document ne compile jamais mal, quoi qu'il arrive** — les
+/// trois fautes réelles du rapport, ensemble, jugées par le vrai
+/// compilateur : le chemin mort d'un chapitre, le `.bib` aux
+/// commentaires `//`, et les citations inconnues sous leurs deux
+/// formes.
+#[test]
+fn un_document_ne_compile_jamais_mal_quoi_qu_il_arrive() {
+    if std::process::Command::new("typst")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        println!("typst n'est pas installé : test sauté");
+        return;
+    }
+    let root = std::env::temp_dir().join("typst-writer-epreuve-trois-fautes");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("chapitres")).expect("dossier");
 
-        // La bibliographie du projet, aux commentaires `//` — notre
-        // propre modèle d'avant la correction.
-        std::fs::write(
-            root.join("references.bib"),
-            "// Une entrée par référence, au format BibTeX.\n//\n@book{vivante, title = {Vivante}}\n",
-        )
-        .expect("bib");
+    // La bibliographie du projet, aux commentaires `//` — notre
+    // propre modèle d'avant la correction.
+    std::fs::write(
+        root.join("references.bib"),
+        "// Une entrée par référence, au format BibTeX.\n//\n@book{vivante, title = {Vivante}}\n",
+    )
+    .expect("bib");
 
-        // Le chapitre : le chemin mort, et les deux formes de citation
-        // inconnue — l'une couvrant plusieurs lignes.
-        std::fs::write(
+    // Le chapitre : le chemin mort, et les deux formes de citation
+    // inconnue — l'une couvrant plusieurs lignes.
+    std::fs::write(
             root.join("chapitres/1.typ"),
             "Un texte @grudemInconnu.\n\n#cite(<inconnueMultiLignes>,\n  style: \"chicago-notes\")\n\n#cite(<vivante>)\n",
         )
         .expect("chapitre");
 
-        std::fs::write(
+    std::fs::write(
             root.join("main.typ"),
             "#include \"chapitres/1.typ\"\n\n#bibliography(\"Bibliographie/Adoption spirituelle.bib\")\n",
         )
         .expect("main");
 
-        let document = parse("Un texte.\n");
-        let (entry, corrections) =
-            compilation_unit_document(&root, &std::fs::read_to_string(root.join("main.typ")).expect("main"), &document);
+    let document = parse("Un texte.\n");
+    let (entry, corrections) = compilation_unit_document(
+        &root,
+        &std::fs::read_to_string(root.join("main.typ")).expect("main"),
+        &document,
+    );
 
-        // Les substitutions sont prêtes, et le disque n'a pas bougé.
-        assert!(
-            std::fs::read_to_string(root.join("chapitres/1.typ"))
-                .expect("lu")
-                .contains("@grudemInconnu"),
-            "le fichier sur disque n'est jamais touché"
-        );
+    // Les substitutions sont prêtes, et le disque n'a pas bougé.
+    assert!(
+        std::fs::read_to_string(root.join("chapitres/1.typ"))
+            .expect("lu")
+            .contains("@grudemInconnu"),
+        "le fichier sur disque n'est jamais touché"
+    );
 
-        // Tout se pose, et le compilateur juge.
-        std::fs::write(root.join("main.typ"), &entry).expect("entrée");
-        std::fs::write(root.join(GENERATED_FILE), "Un texte.\n").expect("généré");
+    // Tout se pose, et le compilateur juge.
+    std::fs::write(root.join("main.typ"), &entry).expect("entrée");
+    std::fs::write(root.join(GENERATED_FILE), "Un texte.\n").expect("généré");
 
-        for (chemin, contenu) in &corrections {
-            if chemin != &root.join(GENERATED_FILE) {
-                std::fs::write(chemin, contenu).expect("correction");
-            }
+    for (chemin, contenu) in &corrections {
+        if chemin != &root.join(GENERATED_FILE) {
+            std::fs::write(chemin, contenu).expect("correction");
         }
+    }
 
+    let rendu = std::process::Command::new("typst")
+        .args(["compile", "main.typ"])
+        .current_dir(&root)
+        .output()
+        .expect("typst s'exécute");
+
+    assert!(
+        rendu.status.success(),
+        "le document compile toujours : {}",
+        String::from_utf8_lossy(&rendu.stderr)
+    );
+}
+
+#[cfg(test)]
+mod tests_du_pipeline_vrai {
+    /// Le pipeline et le compilateur travaillent sur un projet synthétique.
+    #[test]
+    fn un_projet_synthetique_compile() {
+        if std::process::Command::new("typst")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            println!("typst n'est pas installé : test sauté");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("tw-pipeline-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("dossier");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{ouvrage, title = {Un ouvrage}, author = {Durand, Alice}, year = {2020}}\n",
+        )
+        .expect("bibliographie");
+        let main = "#set text(lang: \"fr\")\n#bibliography(\"references.bib\")\n";
+        let document = super::super::parse("# Chapitre\n\nUn texte de test.\n");
+        let (entry, corrections) = super::compilation_unit_document(&root, main, &document);
+        std::fs::write(root.join("main.typ"), entry).expect("entrée");
+        for (chemin, contenu) in corrections {
+            std::fs::write(chemin, contenu).expect("correction");
+        }
         let rendu = std::process::Command::new("typst")
             .args(["compile", "main.typ"])
             .current_dir(&root)
             .output()
-            .expect("typst s'exécute");
-
+            .expect("typst");
         assert!(
             rendu.status.success(),
-            "le document compile toujours : {}",
+            "le projet compile : {}",
             String::from_utf8_lossy(&rendu.stderr)
+        );
+        assert!(root.join("main.pdf").is_file(), "le PDF est produit");
+        std::fs::remove_dir_all(&root).expect("nettoyage");
+    }
+}
+
+#[cfg(test)]
+mod epreuves_de_mise_en_page {
+    //! L'application réelle des normes, prouvée dans le PDF extrait — pas
+    //! seulement dans le gabarit généré (R5, « réellement appliquée »).
+
+    fn racine(nom: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-mep-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+        root
+    }
+
+    fn texte_extrait(root: &std::path::Path, source: &str) -> String {
+        let pdf = crate::typst::render::render_pdf(root, source, &[]).expect("PDF");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return String::new();
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        String::from_utf8_lossy(&sortie.stdout).into_owned()
+    }
+
+    /// La casse d'un niveau est appliquée **au rendu** : le titre de
+    /// niveau 1 est en capitales dans le PDF, celui de niveau 2 ne bouge
+    /// pas — le texte extrait ne se compare pas en minuscules ici, c'est
+    /// la casse elle-même qui est éprouvée.
+    #[test]
+    fn la_casse_par_niveau_s_applique_au_rendu() {
+        let root = racine("casse");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.titres.casse_1 = Some("majuscules".to_string());
+
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+
+        let source = format!(
+            "{}= Introduction\n\n== Partie\n",
+            crate::mise_en_page::gabarit::accroche()
+        );
+        let texte = texte_extrait(&root, &source);
+        assert!(!texte.is_empty(), "pdftotext présent");
+
+        assert!(
+            texte.contains("INTRODUCTION"),
+            "le niveau 1 est en capitales : {texte}"
+        );
+        assert!(
+            !texte.contains("Introduction"),
+            "seule la capitale initiale n'a pas cédé : {texte}"
+        );
+        assert!(
+            !texte.contains("PARTIE"),
+            "le niveau 2 garde sa casse : {texte}"
+        );
+        assert!(texte.contains("Partie"), "le niveau 2 est là : {texte}");
+    }
+
+    /// L'aperçu des titres est un **vrai rendu** : les mêmes normes
+    /// donnent les mêmes pixels (le moteur est déterministe), et une norme
+    /// différente donne une image différente — les pixels portent les
+    /// normes, jamais une imitation (R5).
+    #[test]
+    fn l_apercu_des_titres_est_rendu_par_le_moteur() {
+        let root = racine("apercu");
+
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        let premier = crate::mise_en_page::apercu_titres(&root, &normes).expect("rendu");
+        let encore = crate::mise_en_page::apercu_titres(&root, &normes).expect("rendu");
+        assert_eq!(
+            premier.pixels, encore.pixels,
+            "le moteur est déterministe : mêmes normes, mêmes pixels"
+        );
+
+        normes.titres.casse_1 = Some("majuscules".to_string());
+        let autre = crate::mise_en_page::apercu_titres(&root, &normes).expect("rendu");
+        assert_ne!(
+            premier.pixels, autre.pixels,
+            "la casse change l'image : les normes sont dans le rendu"
         );
     }
 
-#[cfg(test)]
-mod tests_du_pipeline_vrai {
-    /// Le compilateur `typst` est-il sur le PATH ? Sans lui, ces tests
-    /// n'ont rien à juger : ils sautent au lieu de faillir.
-    fn typst_disponible() -> bool {
-        std::process::Command::new("typst")
-            .arg("--version")
-            .output()
-            .is_ok()
-    }
-
-    /// Les vrais projets de l'utilisateur sont-ils là ? En CI, les fichiers
-    /// n'existent pas : le test saute.
-    fn projets_disponibles() -> bool {
-        std::path::Path::new("/home/mat/.typst-writer/projets/mon-travail/document.tw").is_file()
-    }
-
-    /// Le pipeline complet sur les vrais projets anciens : l'entrée, les
-    /// substitutions, et le compilateur réel.
+    /// L'audit de `cetz`, exigé par R5 **avant** de présenter les
+    /// graphiques comme fiables : le moteur embarqué ne résout **pas** les
+    /// paquets Typst (`@preview/…` cherche un fichier du projet). Les
+    /// graphiques cetz ne sont donc pas fiables aujourd'hui, et le jour où
+    /// le monde de rendu les résoudra, cette garde cassera — signal qu'il
+    /// faut réévaluer la promesse, pas la faire en silence.
     #[test]
-    fn les_anciens_projets_compilent() {
-        if !typst_disponible() {
-            println!("typst n'est pas installé : test sauté");
-            return;
-        }
-        if !projets_disponibles() {
-            println!("les projets réels ne sont pas là : test sauté");
-            return;
-        }
-        for nom in ["mon-travail", "projet", "projet-2"] {
-            let source = std::path::PathBuf::from("/home/mat/.typst-writer/projets").join(nom);
-            let root = std::env::temp_dir().join(format!("tw-pipeline-{nom}"));
-            let _ = std::fs::remove_dir_all(&root);
-            copy_dir(&source, &root);
+    fn cetz_ne_se_charge_pas_dans_le_moteur_embarque() {
+        let root = racine("cetz");
+        let source = "#import \"@preview/cetz:0.3.4\": canvas\n#canvas(length: 1cm, {})\n";
+        let outcome = crate::typst::render::compile(&root, source, &[]);
 
-            let main = std::fs::read_to_string(root.join("main.typ")).unwrap_or_default();
-            let document = super::super::parse(&std::fs::read_to_string(root.join("document.tw")).unwrap_or_default());
-            let (entry, corrections) = super::compilation_unit_document(&root, &main, &document);
-
-            std::fs::write(root.join("main.typ"), &entry).expect("entrée");
-            for (chemin, contenu) in &corrections {
-                std::fs::write(chemin, contenu).expect("correction");
-            }
-
-            let rendu = std::process::Command::new("typst")
-                .args(["compile", "main.typ"])
-                .current_dir(&root)
-                .output()
-                .expect("typst");
-
-            println!("{nom} : {}", if rendu.status.success() { "OK" } else { "ÉCHEC" });
-
-            if !rendu.status.success() {
-                println!("{}", String::from_utf8_lossy(&rendu.stderr));
-            }
-
-            assert!(rendu.status.success(), "{nom} doit compiler");
-        }
+        assert!(
+            !outcome.errors.is_empty(),
+            "cetz se charge soudain : réévaluer les graphiques avant d'en parler"
+        );
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("file not found")),
+            "le refus est un diagnostic lu, pas un silence : {:?}",
+            outcome.errors
+        );
     }
 
-    fn copy_dir(source: &std::path::Path, cible: &std::path::Path) {
-        std::fs::create_dir_all(cible).expect("dossier");
-        for entree in std::fs::read_dir(source).expect("lu") {
-            let entree = entree.expect("entrée");
-            let chemin = entree.path();
-            let dest = cible.join(entree.file_name());
-            if chemin.is_dir() {
-                copy_dir(&chemin, &dest);
-            } else {
-                std::fs::copy(&chemin, &dest).expect("copie");
-            }
-        }
+    /// Les champs dynamiques du pied sont résolus **par le moteur** :
+    /// `{page}` et `{pages}` deviennent les vrais numéros du PDF — jamais
+    /// imités, jamais laissés en clair (R5).
+    #[test]
+    fn les_champs_dynamiques_se_resolvent_par_le_moteur() {
+        let root = racine("champs");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.entete_pied.pied.centre = "p. {page} — {pages} pages".to_string();
+
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+
+        let source = format!(
+            "{}Première page\n\n#pagebreak()\n\nSeconde page\n",
+            crate::mise_en_page::gabarit::accroche()
+        );
+        let texte = texte_extrait(&root, &source);
+        assert!(!texte.is_empty(), "pdftotext présent");
+
+        assert!(
+            texte.contains("p. 1 — 2 pages"),
+            "la première page dit ses numéros : {texte}"
+        );
+        assert!(
+            texte.contains("p. 2 — 2 pages"),
+            "la seconde page dit ses numéros : {texte}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod epreuves_de_renvois {
+    //! Notes, légendes, références croisées : ce que R5 promet « accessible »
+    //! est vérifié au rendu — et un renvoi cassé est un diagnostic, jamais un
+    //! silence.
+
+    fn racine(nom: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-renvois-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+        root
+    }
+
+    /// Un renvoi à une figure labellisée n'est **jamais** une citation : il
+    /// traverse le correcteur intact et se résout au rendu.
+    #[test]
+    fn un_renvoi_a_une_figure_se_resout_au_rendu() {
+        let root = racine("figure");
+        let (entry, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#figure(rect(width: 1cm), caption: [Légende partagée]) <fig:une>\n\nVoir @fig:une.\n",
+            "",
+        );
+
+        assert!(
+            entry.contains("@fig:une"),
+            "le renvoi traverse le correcteur intact : {entry}"
+        );
+        assert!(
+            !rapports
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("neutralisée")),
+            "aucun renvoi neutralisé : {rapports:?}"
+        );
+
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "le renvoi se compile : {:?}",
+            outcome.errors
+        );
+    }
+
+    /// Une étiquette du document est une cible de renvoi, pas une citation
+    /// manquante : `@chapitre` vers `<chapitre>` ne se neutralise jamais.
+    #[test]
+    fn une_etiquette_du_document_est_un_renvoi() {
+        let root = racine("etiquette");
+        let (entry, _, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "= Un chapitre <chapitre>\n\nVoir @chapitre.\n",
+            "",
+        );
+
+        assert!(entry.contains("@chapitre"), "le renvoi survit : {entry}");
+        assert!(
+            !rapports
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("neutralisée")),
+            "aucun renvoi neutralisé : {rapports:?}"
+        );
+    }
+
+    /// Un renvoi sans cible se **diagnostique** (par le moteur, avec son
+    /// nom) — jamais neutralisé en silence, jamais un faux `[cle]`.
+    #[test]
+    fn un_renvoi_sans_cible_est_diagnostique() {
+        let root = racine("sans-cible");
+        let (entry, corrections, rapports) =
+            super::compilation_unit_avec_diagnostics(&root, "Voir @fig:introuvable.\n", "");
+
+        assert!(
+            entry.contains("@fig:introuvable"),
+            "le renvoi n'est pas déguisé en texte : {entry}"
+        );
+        assert!(
+            !rapports
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("neutralisée")),
+            "pas de neutralisation : {rapports:?}"
+        );
+
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome
+                .errors
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("fig:introuvable")),
+            "le moteur nomme la cible manquante : {:?}",
+            outcome.errors
+        );
+    }
+
+    /// Une note de bas de page se lit dans le PDF — la note exacte, pas
+    /// seulement un compilateur content.
+    #[test]
+    fn une_note_de_bas_de_page_se_lit_dans_le_pdf() {
+        let root = racine("note");
+        let pdf = crate::typst::render::render_pdf(
+            &root,
+            "Texte avec note#footnote[La note exacte.] suite.\n",
+            &[],
+        )
+        .expect("PDF");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+
+        assert!(
+            texte.contains("La note exacte."),
+            "la note est dans le PDF : {texte}"
+        );
+    }
+
+    /// La légende d'une figure se lit dans le PDF.
+    #[test]
+    fn une_legende_de_figure_se_lit_dans_le_pdf() {
+        let root = racine("legende");
+        let pdf = crate::typst::render::render_pdf(
+            &root,
+            "#figure(rect(width: 1cm), caption: [La légende exacte.])\n",
+            &[],
+        )
+        .expect("PDF");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+
+        assert!(
+            texte.contains("La légende exacte."),
+            "la légende est dans le PDF : {texte}"
+        );
     }
 }
