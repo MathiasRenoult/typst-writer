@@ -1545,7 +1545,12 @@ pub fn enregistrer(fichier: &ThemeFile) -> Result<Vec<String>, String> {
                 .and_then(|texte| ThemeFile::parse(&texte, Some(chemin)).ok())
                 .is_some_and(|charge| charge.meta.name == fichier.meta.name)
         })
-        .ok_or_else(|| format!("Le fichier du thème « {} » est introuvable.", fichier.meta.name))?;
+        .ok_or_else(|| {
+            format!(
+                "Le fichier du thème « {} » est introuvable.",
+                fichier.meta.name
+            )
+        })?;
 
     let texte = toml::to_string_pretty(fichier)
         .map_err(|erreur| format!("Le thème ne s'écrit pas : {erreur}."))?;

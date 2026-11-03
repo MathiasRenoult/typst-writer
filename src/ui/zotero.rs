@@ -11,7 +11,7 @@ use crate::app::Message;
 use crate::app::state::LiaisonZotero;
 use crate::ui::theme::{self, Palette};
 use crate::zotero::client::Collection;
-use iced::widget::{text_input, Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
 /// La largeur du panneau.
@@ -26,11 +26,19 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
 
-    crate::ui::voile(fenetre(liaison, state.resolved.palette, &state.zotero_recherche))
+    crate::ui::voile(fenetre(
+        liaison,
+        state.resolved.palette,
+        &state.zotero_recherche,
+    ))
 }
 
 /// Le panneau, dans l'état où il est.
-fn fenetre<'a>(liaison: &'a LiaisonZotero, palette: Palette, recherche: &'a str) -> Element<'a, Message> {
+fn fenetre<'a>(
+    liaison: &'a LiaisonZotero,
+    palette: Palette,
+    recherche: &'a str,
+) -> Element<'a, Message> {
     let entete = row![
         palette.label("Lier à Zotero").size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
@@ -211,7 +219,15 @@ fn liste<'a>(
                 );
             }
 
-            pousser(rangs, par_parent, Some(collection.cle.as_str()), profondeur + 1, palette, noms, filtre);
+            pousser(
+                rangs,
+                par_parent,
+                Some(collection.cle.as_str()),
+                profondeur + 1,
+                palette,
+                noms,
+                filtre,
+            );
         }
     }
 
@@ -228,8 +244,7 @@ fn liste<'a>(
         text_input("chercher une collection", recherche)
             .on_input(Message::ZoteroRecherche)
             .padding(5),
-        scrollable(colonne)
-            .height(Length::Fixed(HAUTEUR - 34.0)),
+        scrollable(colonne).height(Length::Fixed(HAUTEUR - 34.0)),
     ]
     .spacing(6);
 

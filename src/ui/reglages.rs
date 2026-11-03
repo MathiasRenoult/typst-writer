@@ -50,6 +50,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         onglet(palette, "Typographie", 1, dialogue.panneau),
         onglet(palette, "Décor", 2, dialogue.panneau),
         onglet(palette, "En-tête et pied", 3, dialogue.panneau),
+        onglet(palette, "Bibliographie", 4, dialogue.panneau),
         Space::new().width(8),
         button(text("Importer").size(12))
             .on_press(Message::MiseEnPageImporter)
@@ -106,7 +107,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
         1 => corps_typographie(palette, reglages),
         2 => corps_decor(palette, reglages),
         3 => corps_entete_pied(palette, reglages),
-        _ => corps_mise_en_page(palette, reglages),
+        4 => corps_bibliographie(palette, dialogue),
+        _ => corps_mise_en_page(palette, reglages, dialogue.apercu_titres.as_ref()),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----
     let mut pied = column![].spacing(10);
@@ -162,12 +164,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let largeur = 760.0_f32.min(state.window_size.width - 32.0).max(320.0);
     let hauteur = 640.0_f32.min(state.window_size.height - 32.0).max(320.0);
 
-    let fenetre =
-        container(column![entete, modele_section, scrollable(corps).height(Length::Fill), pied].spacing(16))
-            .padding(18)
-            .style(bubble_style(palette))
-            .width(Length::Fixed(largeur))
-            .height(Length::Fixed(hauteur));
+    let fenetre = container(
+        column![
+            entete,
+            modele_section,
+            scrollable(corps).height(Length::Fill),
+            pied
+        ]
+        .spacing(16),
+    )
+    .padding(18)
+    .style(bubble_style(palette))
+    .width(Length::Fixed(largeur))
+    .height(Length::Fixed(hauteur));
 
     crate::ui::voile(
         container(fenetre)
@@ -272,10 +281,11 @@ fn corps_entete_pied(
     corps
 }
 
-fn corps_mise_en_page(
+fn corps_mise_en_page<'a>(
     palette: Palette,
     reglages: &crate::mise_en_page::modele::MiseEnPage,
-) -> iced::widget::Column<'static, Message> {
+    apercu: Option<&'a crate::typst::render::PageImage>,
+) -> iced::widget::Column<'a, Message> {
     let mut corps = column![].spacing(20);
 
     // ---- La page ----
@@ -398,6 +408,7 @@ fn corps_mise_en_page(
         palette,
         "Titres de chapitres",
         column![
+            apercu_titres(palette, apercu),
             ligne(
                 palette,
                 "Police (vide : celle du texte)",
@@ -480,12 +491,42 @@ fn corps_mise_en_page(
                 "Couleurs par niveau",
                 "La couleur de chaque titre. Vide : la couleur de titres s'applique.",
                 row![
-                    saisie(palette, reglages.titres.couleur_1.as_deref().unwrap_or(""), Champ::TitresCouleur1, "#1a1a2e"),
-                    saisie(palette, reglages.titres.couleur_2.as_deref().unwrap_or(""), Champ::TitresCouleur2, "#1a1a2e"),
-                    saisie(palette, reglages.titres.couleur_3.as_deref().unwrap_or(""), Champ::TitresCouleur3, "#1a1a2e"),
-                    saisie(palette, reglages.titres.couleur_4.as_deref().unwrap_or(""), Champ::TitresCouleur4, "#1a1a2e"),
-                    saisie(palette, reglages.titres.couleur_5.as_deref().unwrap_or(""), Champ::TitresCouleur5, "#1a1a2e"),
-                    saisie(palette, reglages.titres.couleur_6.as_deref().unwrap_or(""), Champ::TitresCouleur6, "#1a1a2e"),
+                    saisie(
+                        palette,
+                        reglages.titres.couleur_1.as_deref().unwrap_or(""),
+                        Champ::TitresCouleur1,
+                        "#1a1a2e"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.couleur_2.as_deref().unwrap_or(""),
+                        Champ::TitresCouleur2,
+                        "#1a1a2e"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.couleur_3.as_deref().unwrap_or(""),
+                        Champ::TitresCouleur3,
+                        "#1a1a2e"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.couleur_4.as_deref().unwrap_or(""),
+                        Champ::TitresCouleur4,
+                        "#1a1a2e"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.couleur_5.as_deref().unwrap_or(""),
+                        Champ::TitresCouleur5,
+                        "#1a1a2e"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.couleur_6.as_deref().unwrap_or(""),
+                        Champ::TitresCouleur6,
+                        "#1a1a2e"
+                    ),
                 ]
                 .spacing(4)
             ),
@@ -495,12 +536,66 @@ fn corps_mise_en_page(
                 "Graisse par niveau",
                 "true = gras, false = normal. Vide : le réglage global s'applique.",
                 row![
-                    saisie(palette, &reglages.titres.gras_1.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras1, "true"),
-                    saisie(palette, &reglages.titres.gras_2.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras2, "true"),
-                    saisie(palette, &reglages.titres.gras_3.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras3, "true"),
-                    saisie(palette, &reglages.titres.gras_4.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras4, "true"),
-                    saisie(palette, &reglages.titres.gras_5.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras5, "true"),
-                    saisie(palette, &reglages.titres.gras_6.map(|v| v.to_string()).unwrap_or_default(), Champ::TitresGras6, "true"),
+                    saisie(
+                        palette,
+                        &reglages
+                            .titres
+                            .gras_1
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                        Champ::TitresGras1,
+                        "true"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages
+                            .titres
+                            .gras_2
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                        Champ::TitresGras2,
+                        "true"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages
+                            .titres
+                            .gras_3
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                        Champ::TitresGras3,
+                        "true"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages
+                            .titres
+                            .gras_4
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                        Champ::TitresGras4,
+                        "true"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages
+                            .titres
+                            .gras_5
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                        Champ::TitresGras5,
+                        "true"
+                    ),
+                    saisie(
+                        palette,
+                        &reglages
+                            .titres
+                            .gras_6
+                            .map(|v| v.to_string())
+                            .unwrap_or_default(),
+                        Champ::TitresGras6,
+                        "true"
+                    ),
                 ]
                 .spacing(4)
             ),
@@ -510,12 +605,42 @@ fn corps_mise_en_page(
                 "Espacement par niveau",
                 "L'espace avant/après. Vide : l'espacement global s'applique.",
                 row![
-                    saisie(palette, reglages.titres.espacement_1.as_deref().unwrap_or(""), Champ::TitresEspacement1, "1.2em"),
-                    saisie(palette, reglages.titres.espacement_2.as_deref().unwrap_or(""), Champ::TitresEspacement2, "1.2em"),
-                    saisie(palette, reglages.titres.espacement_3.as_deref().unwrap_or(""), Champ::TitresEspacement3, "1.2em"),
-                    saisie(palette, reglages.titres.espacement_4.as_deref().unwrap_or(""), Champ::TitresEspacement4, "1.2em"),
-                    saisie(palette, reglages.titres.espacement_5.as_deref().unwrap_or(""), Champ::TitresEspacement5, "1.2em"),
-                    saisie(palette, reglages.titres.espacement_6.as_deref().unwrap_or(""), Champ::TitresEspacement6, "1.2em"),
+                    saisie(
+                        palette,
+                        reglages.titres.espacement_1.as_deref().unwrap_or(""),
+                        Champ::TitresEspacement1,
+                        "1.2em"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.espacement_2.as_deref().unwrap_or(""),
+                        Champ::TitresEspacement2,
+                        "1.2em"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.espacement_3.as_deref().unwrap_or(""),
+                        Champ::TitresEspacement3,
+                        "1.2em"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.espacement_4.as_deref().unwrap_or(""),
+                        Champ::TitresEspacement4,
+                        "1.2em"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.espacement_5.as_deref().unwrap_or(""),
+                        Champ::TitresEspacement5,
+                        "1.2em"
+                    ),
+                    saisie(
+                        palette,
+                        reglages.titres.espacement_6.as_deref().unwrap_or(""),
+                        Champ::TitresEspacement6,
+                        "1.2em"
+                    ),
                 ]
                 .spacing(4)
             ),
@@ -923,6 +1048,144 @@ fn onglet(
     .into()
 }
 
+/// L'onglet Bibliographie : le style des citations et de la liste finale.
+///
+/// Le choix se fait parmi les styles que le moteur embarqué connaît — la
+/// vitrine est validée par lui, jamais tenue à la main — et « le document
+/// décide » laisse la directive du fichier faire autorité.
+fn corps_bibliographie(
+    palette: Palette,
+    dialogue: &crate::app::state::DialogueMiseEnPage,
+) -> iced::widget::Column<'static, Message> {
+    use crate::mise_en_page::modele::Champ;
+
+    let reglages = &dialogue.reglages;
+
+    /// Le choix qui laisse le document décider par sa propre directive.
+    const DOCUMENT: &str = "Le document décide (sa directive)";
+
+    let courant = reglages.valeur(Champ::BibliographieStyle);
+    let courant = if courant.is_empty() {
+        DOCUMENT.to_string()
+    } else {
+        courant
+    };
+
+    let styles = crate::typst::styles::styles_integres();
+    let mut options = vec![DOCUMENT.to_string()];
+    options.extend(styles.iter().map(|(nom, _, _)| nom.clone()));
+
+    let type_style = styles
+        .iter()
+        .find(|(nom, _, _)| *nom == courant)
+        .map(|(_, type_style, _)| match type_style {
+            crate::typst::styles::TypeStyle::Notes => "en notes de bas de page",
+            crate::typst::styles::TypeStyle::AuteurDate => "en auteur-date dans le texte",
+            crate::typst::styles::TypeStyle::Numerique => "numéroté dans le texte",
+        })
+        .unwrap_or("fixé par le document");
+
+    let mut corps = column![].spacing(20);
+
+    corps = corps.push(section(
+        palette,
+        "Style des citations et de la bibliographie",
+        column![
+            row![
+                pick_list(options, Some(courant.clone()), |choisi: String| {
+                    let valeur = if choisi == DOCUMENT {
+                        String::new()
+                    } else {
+                        choisi
+                    };
+
+                    Message::MiseEnPageChamp(Champ::BibliographieStyle, valeur)
+                })
+                .width(Length::Fixed(260.0)),
+                button(
+                    palette
+                        .label("Importer un fichier .csl…")
+                        .size(theme::jetons::DETAIL)
+                )
+                .on_press(Message::StyleCslImporter)
+                .padding([5, 12]),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            palette
+                .label(format!("Rendu des références : {type_style}."))
+                .size(theme::jetons::DETAIL),
+        ]
+        .spacing(8),
+    ));
+
+    // La troisième porte : les styles installés dans Zotero, choisis et
+    // copiés dans le projet — Zotero n'est jamais modifié. Absents, ils le
+    // disent : pas de liste vide qui ferait silence.
+    if dialogue.styles_zotero.is_empty() {
+        corps = corps.push(section(
+            palette,
+            "Styles installés dans Zotero",
+            column![
+                palette
+                    .label("Aucun style installé (ou Zotero absent de cette machine).")
+                    .size(theme::jetons::DETAIL)
+            ]
+            .spacing(8),
+        ));
+    } else {
+        let mut titres: Vec<String> = dialogue
+            .styles_zotero
+            .iter()
+            .map(|style| style.title.clone())
+            .collect();
+        titres.sort();
+
+        let styles = dialogue.styles_zotero.clone();
+        corps = corps.push(section(
+            palette,
+            "Styles installés dans Zotero",
+            column![
+                pick_list(titres, None::<String>, move |titre: String| {
+                    let id = styles
+                        .iter()
+                        .find(|style| style.title == titre)
+                        .map(|style| style.id.clone())
+                        .unwrap_or_default();
+
+                    Message::StyleZoteroChoisi(id)
+                })
+                .width(Length::Fixed(260.0))
+            ]
+            .spacing(8),
+        ));
+    }
+
+    // L'aperçu est rendu par le moteur même — pas une imitation — et la
+    // ligne dit **quel** style on regarde : jamais d'aperçu muet sur son
+    // origine (R4).
+    let apercu = dialogue
+        .apercu_style
+        .clone()
+        .unwrap_or_else(|| "Le moteur refuse ce style : rien à prévisualiser.".to_string());
+
+    corps = corps.push(section(
+        palette,
+        "Aperçu citation et bibliographie",
+        column![
+            palette
+                .label(format!(
+                    "Rendu par le moteur du projet — style « {courant} »."
+                ))
+                .size(theme::jetons::DETAIL),
+            text(apercu).size(theme::jetons::CORPS),
+        ]
+        .spacing(8),
+    ));
+
+    corps
+}
+
 fn section<'a>(
     palette: Palette,
     titre: &'a str,
@@ -1080,7 +1343,9 @@ fn saisie_interne(
         .size(12);
     let contenu: Element<'static, Message> = if numerique {
         iced::widget::mouse_area(
-            row![champ, fleches].spacing(2).align_y(iced::Alignment::Center),
+            row![champ, fleches]
+                .spacing(2)
+                .align_y(iced::Alignment::Center),
         )
         .on_scroll(move |delta| {
             let pas = match delta {
@@ -1206,4 +1471,35 @@ fn couleur_depuis_hexa(valeur: &str) -> Option<iced::Color> {
         )),
         _ => None,
     }
+}
+
+/// L'aperçu des titres : l'image rendue par le moteur, et la ligne qui dit
+/// son origine. Absente, elle le dit — jamais un aperçu muet (R5).
+fn apercu_titres<'a>(
+    palette: crate::ui::theme::Palette,
+    image: Option<&'a crate::typst::render::PageImage>,
+) -> Element<'a, Message> {
+    let Some(image) = image else {
+        return column![
+            palette
+                .label("Aperçu indisponible : ces normes ne se rendent pas.")
+                .size(theme::jetons::DETAIL)
+        ]
+        .spacing(8)
+        .into();
+    };
+
+    column![
+        iced::widget::image(iced::widget::image::Handle::from_rgba(
+            image.width,
+            image.height,
+            image.pixels.clone()
+        ))
+        .width(Length::Fixed(260.0)),
+        palette
+            .label("Six niveaux, rendus par le moteur du projet.")
+            .size(theme::jetons::DETAIL),
+    ]
+    .spacing(8)
+    .into()
 }

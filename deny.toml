@@ -79,6 +79,9 @@ allow = [
     # Unicode et NCSA (exigées par des « AND »)
     "Unicode-3.0",                  # Unicode data files (icu, etc.)
     "NCSA",                         # Université de l'Illinois, exigée par (MIT OR Apache-2.0) AND NCSA
+
+    # Données TLS (téléchargement de styles, consenti)
+    "CDLA-Permissive-2.0",          # webpki-roots : magasin de racines Mozilla, usage libre avec attribution
 ]
 confidence-threshold = 0.8
 

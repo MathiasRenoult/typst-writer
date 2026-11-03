@@ -4,7 +4,8 @@ Un éditeur pour écrire des documents en Typst — thèses, mémoires, livres.
 L'aperçu affiché est celui du document final : c'est le vrai compilateur
 Typst qui le compose.
 
-**Version 0.3.0-alpha.** Utilisable au quotidien — c'est avec elle
+**Version 0.3.0-alpha.3 — coffre-fort des documents.** Utilisable au
+quotidien — c'est avec elle
 qu'elle s'écrit — mais elle change encore.
 
 ## Ce qu'elle fait
@@ -22,12 +23,11 @@ qu'elle s'écrit — mais elle change encore.
 - **Citer** : une bibliographie par projet, une fiche complète (éditeur,
   lieu, titre court, type de document), et un projet lié à une collection
   **Zotero** — lue, jamais réécrite ;
-- **Mettre en page** par des normes — papier, marges, titres (par
-  niveau), couleurs, typographie par langue, décor, en-tête et pied de
-  page avec champs prédéfinis (Quick Parts) — jamais par des mesures
-  portées dans le texte ;
+- **Mettre en page** par des normes — papier, marges, titres, couleurs,
+  typographie par langue, décor, en-tête et pied de page ;
 - **Chercher** en texte littéral ou en expressions régulières, avec
-  surlignage des occurrences et remplacement à rappel de groupes ;
+  remplacement à rappel de groupes ; la mise en évidence et le remplacement
+  comportent encore des limites décrites dans le guide ;
 - **Personnaliser** l'apparence : onze thèmes livrés, un éditeur de thème
   intégré, des étagères pour classer les projets ;
 - **Exporter** en PDF, et travailler au clavier d'un bout à l'autre —
@@ -93,15 +93,11 @@ python3 site/construire.py
 
 Le site se lit dans `site/dist/`.
 
-## Qualité
+## Qualité et précautions
 
-- **395 tests**, clippy à zéro, `cargo deny` sans erreur ;
-- **zéro `unsafe`** dans le code applicatif ;
-- les licences des dépendances sont auditées (`deny.toml`) : MIT,
-  Apache-2.0, BSD, ISC, Zlib — toutes permissives, compatibles avec la
-  licence du projet ;
-- les écritures sont sûres : corbeille pour les suppressions, verrou
-  d'instance, sauvegarde automatique.
+La suite de tests ne couvre pas tous les gestes de l'interface. La sauvegarde
+automatique est différée : conservez des copies de vos travaux importants et
+vérifiez les références ainsi que le PDF avant de remettre un document.
 
 ## Limites connues
 
@@ -111,8 +107,11 @@ Le site se lit dans `site/dist/`.
   l'histoire d'annulation du document ouvert repart avec ;
 - l'aller à la définition d'une citation ne mène nulle part : la
   bibliographie n'est pas un fichier éditable ici ;
-- les graphiques utilisent le paquet `cetz` de Typst — la première
-  compilation le télécharge.
+- la connexion Zotero et le rendu des citations doivent être vérifiés dans
+  le PDF ; voir les réserves du [guide bibliographique](docs/guide/bibliographie.md) ;
+- les champs dynamiques d'en-tête ne sont pas fiables dans cette version ;
+- les graphiques utilisent le paquet `cetz` de Typst ; leur disponibilité
+  dépend de la résolution de ce paquet, à vérifier dans l'application.
 
 ## Licence
 

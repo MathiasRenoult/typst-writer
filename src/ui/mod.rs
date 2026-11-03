@@ -3,11 +3,10 @@ pub mod completion;
 pub mod confirmation;
 pub mod editor;
 pub mod layout;
+pub mod onglets;
 pub mod preview;
 pub mod projet;
-pub mod onglets;
 pub mod projets;
-pub mod theme_editeur;
 pub mod recherche;
 pub mod reference;
 mod reglages;
@@ -16,6 +15,7 @@ pub mod sidebar;
 pub mod status_bar;
 pub mod tableau;
 pub mod theme;
+pub mod theme_editeur;
 pub mod toolbar;
 pub mod zotero;
 
@@ -92,7 +92,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 /// le fil du document. Entrée enregistre, Échap ferme.
 fn note_overlay(state: &State) -> Element<'_, Message> {
     let Some(note) = state.note_overlay.as_ref() else {
-        return iced::widget::Space::new().width(Length::Fill).height(Length::Fill).into();
+        return iced::widget::Space::new()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
     };
     let palette = state.resolved.palette;
     let champ = iced::widget::text_input("Texte de la note…", &note.contenu)
@@ -104,10 +107,18 @@ fn note_overlay(state: &State) -> Element<'_, Message> {
     let contenu = iced::widget::container(
         column![
             iced::widget::row![
-                palette.label("Note de bas de page").size(theme::jetons::DETAIL).color(palette.text_muted),
+                palette
+                    .label("Note de bas de page")
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
                 iced::widget::Space::new().width(Length::Fill),
-                palette.label("Entrée : enregistrer · Échap : fermer").size(theme::jetons::CHAPEAU).color(palette.text_muted),
-            ].spacing(8).align_y(iced::Alignment::Center),
+                palette
+                    .label("Entrée : enregistrer · Échap : fermer")
+                    .size(theme::jetons::CHAPEAU)
+                    .color(palette.text_muted),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
             iced::widget::row![
                 champ,
                 iced::widget::button(palette.label("✓").size(14))
@@ -116,8 +127,11 @@ fn note_overlay(state: &State) -> Element<'_, Message> {
                 iced::widget::button(palette.label("✕").size(14))
                     .on_press(Message::NoteOverlayFermer)
                     .padding([6, 10]),
-            ].spacing(6).align_y(iced::Alignment::Center),
-        ].spacing(8),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(8),
     )
     .padding(14)
     .width(Length::Fill)
@@ -134,20 +148,18 @@ fn note_overlay(state: &State) -> Element<'_, Message> {
     // vides au-dessus et en dessous du contenu portent le geste ; le
     // contenu lui-même ne le porte pas.
     let fond = iced::widget::mouse_area(
-        iced::widget::Space::new().width(Length::Fill).height(Length::Fill),
+        iced::widget::Space::new()
+            .width(Length::Fill)
+            .height(Length::Fill),
     )
     .on_press(Message::NoteOverlayFermer);
 
-    iced::widget::container(
-        column![
-            fond,
-            contenu,
-            iced::widget::mouse_area(
-                iced::widget::Space::new().width(Length::Fill).height(12.0),
-            )
+    iced::widget::container(column![
+        fond,
+        contenu,
+        iced::widget::mouse_area(iced::widget::Space::new().width(Length::Fill).height(12.0),)
             .on_press(Message::NoteOverlayFermer),
-        ]
-    )
+    ])
     .padding(16)
     .width(Length::Fill)
     .height(Length::Fill)

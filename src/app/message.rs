@@ -31,7 +31,10 @@ pub enum Message {
     PanneauChoisir(iced::widget::pane_grid::Pane),
     PanneauRedimensionner(iced::widget::pane_grid::ResizeEvent),
     OngletPrendre(u64),
-    OngletCible(iced::widget::pane_grid::Pane, Option<iced::widget::pane_grid::Edge>),
+    OngletCible(
+        iced::widget::pane_grid::Pane,
+        Option<iced::widget::pane_grid::Edge>,
+    ),
     OngletPoser,
     Editor(EditorMessage),
     Format(FormatAction),
@@ -52,6 +55,9 @@ pub enum Message {
 
     /// Crée un projet, puis l'ouvre.
     NewProject,
+
+    /// Créer un projet selon l'un des modèles de R5, en un geste.
+    ProjetCreerAvecModele(crate::project::model::Modele),
 
     /// Ouvre un autre projet.
     OpenProject(PathBuf),
@@ -95,7 +101,9 @@ pub enum Message {
 
     ZoteroChoisir(String, String),
 
-    ZoteroExport(String, String, Result<String, String>),
+    /// Résultat d'un export Zotero (clé, nom de collection, projet
+    /// demandeur, export) : écrit **dans le projet demandeur** seulement.
+    ZoteroExport(String, String, std::path::PathBuf, Result<String, String>),
 
     ZoteroActiverApi,
 
@@ -113,8 +121,20 @@ pub enum Message {
     SaveAs,
     FileSaved(Option<PathBuf>),
 
+    /// Écrase un changement extérieur après décision de l'auteur, avec
+    /// l'empreinte de ce changement : elle évite de reposer la question
+    /// après un refus.
+    SauvegardeForcee(u64),
+
+    /// Pose dans le tampon l'import prévisualisé — le fragment converti
+    /// rejoint la fin du texte d'un seul geste, annulable d'un seul.
+    ImportAppliquer,
+
     /// Exporte le document courant en PDF (dialogue de destination).
     ExportPdf,
+
+    /// Destination choisie et PDF compilé, avant écriture.
+    PdfDestination(Result<(PathBuf, Vec<u8>), String>),
 
     /// Résultat de l'export PDF : chemin du fichier ou message d'erreur.
     PdfExported(Result<String, String>),
@@ -145,6 +165,9 @@ pub enum Message {
 
     /// Modifie le zoom libre par incréments de 10 %.
     PreviewZoomStep(i8),
+
+    /// Le système demande la fermeture ; les documents doivent être sauvés.
+    FermetureDemandee,
 
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,
@@ -227,6 +250,41 @@ pub enum Message {
 
     ReferenceSupprimer(String),
 
+    /// Remet dans la bibliographie la notice que la corbeille a recueillie.
+    ReferenceRestaurer(std::path::PathBuf),
+
+    /// Importer un style CSL local dans le projet.
+    StyleCslImporter,
+
+    /// Le fichier CSL choisi, prêt à être contrôlé et copié.
+    StyleCslChoisi(Option<std::path::PathBuf>),
+
+    /// Télécharger le parent d'un style dépendant — jamais sans le
+    /// consentement donné par la question.
+    StyleParentTelecharger,
+
+    /// Choisir un style installé dans Zotero, par son identifiant CSL.
+    StyleZoteroChoisi(String),
+
+    /// Insérer une note de bas de page au curseur.
+    NoteInserer,
+
+    /// Insérer une figure avec sa légende au curseur.
+    FigureInserer,
+
+    /// Insérer une étiquette de renvoi au curseur.
+    EtiquetteInserer,
+
+    /// Insérer un renvoi (`@`), la liste des étiquettes venant avec la
+    /// complétion.
+    RenvoiInserer,
+
+    /// Le fichier BibLaTeX choisi, prêt à rejoindre la bibliothèque.
+    BibImporte(Option<std::path::PathBuf>),
+
+    /// Ouvrir le sélecteur d'un fichier `.bib` à importer.
+    BibliographieImporter,
+
     ProjetNom(String),
     SurvolReference(Option<String>),
     SurvolOnglet(Option<u64>),
@@ -274,7 +332,10 @@ pub enum Message {
     Rien,
 
     /// `Ctrl` ou `Maj` tenu ou relâché — le zoom et le shift+clic écoutent.
-    ModificateursTenus { controle: bool, maj: bool },
+    ModificateursTenus {
+        controle: bool,
+        maj: bool,
+    },
 
     /// La molette de la souris : le zoom avec `Ctrl`, le reste au défilement.
     Molette(f32),
@@ -339,6 +400,9 @@ pub enum Message {
 
     /// Exporte la mise en page vers un fichier.
     MiseEnPageExporter,
+
+    /// Destination choisie et réglages sérialisés, avant écriture.
+    MiseEnPageDestination(std::path::PathBuf, String),
 
     /// Une note pour la barre d'état : ce qui vient de se faire, ou pas.
     MiseEnPageNote(String),

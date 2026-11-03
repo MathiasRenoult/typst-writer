@@ -16,6 +16,18 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageOuvrir => {
             let reglages = mise_en_page::charger(&state.project.dir);
             let accroche_manquante = mise_en_page::accroche_manquante(&state.project.dir);
+            let apercu_style = crate::typst::styles::apercu_du_style(
+                &state.project.dir,
+                reglages
+                    .bibliographie
+                    .style
+                    .as_deref()
+                    .unwrap_or("chicago-notes"),
+            );
+            let styles_zotero = crate::zotero::data_dir()
+                .map(|dir| crate::zotero::styles::installed(&dir.join("styles")))
+                .unwrap_or_default();
+            let apercu_titres = crate::mise_en_page::apercu_titres(&state.project.dir, &reglages);
 
             state.mise_en_page = Some(DialogueMiseEnPage {
                 norme: String::new(),
@@ -26,6 +38,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                 accrocher: accroche_manquante,
                 accroche_manquante,
                 regles_main: mise_en_page::regles_ecrites_a_la_main(&state.project.dir),
+                apercu_style,
+                apercu_titres,
+                styles_zotero,
             });
 
             Task::none()
@@ -39,8 +54,30 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
 
         Message::MiseEnPageChamp(champ, valeur) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
+                let concerne_le_style = matches!(
+                    champ,
+                    crate::mise_en_page::modele::Champ::BibliographieStyle
+                );
+
                 dialogue.reglages.modifier(champ, valeur);
                 dialogue.modifie = true;
+
+                // Le style change : l'aperçu se refait par le moteur même.
+                if concerne_le_style {
+                    let dir = state.project.dir.clone();
+                    let style = dialogue
+                        .reglages
+                        .bibliographie
+                        .style
+                        .clone()
+                        .unwrap_or_else(|| "chicago-notes".to_string());
+                    dialogue.apercu_style = crate::typst::styles::apercu_du_style(&dir, &style);
+                }
+
+                // Les titres suivent : leur aperçu est un vrai rendu.
+                let dir = state.project.dir.clone();
+                dialogue.apercu_titres =
+                    crate::mise_en_page::apercu_titres(&dir, &dialogue.reglages);
             }
 
             Task::none()
@@ -52,6 +89,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                 let nouveau = incrémenter(&actuel, pas);
                 dialogue.reglages.modifier(champ, nouveau);
                 dialogue.modifie = true;
+
+                let dir = state.project.dir.clone();
+                dialogue.apercu_titres =
+                    crate::mise_en_page::apercu_titres(&dir, &dialogue.reglages);
             }
 
             Task::none()
@@ -60,6 +101,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageBascule(champ) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.reglages.basculer(champ);
+
+                let dir = state.project.dir.clone();
+                dialogue.apercu_titres =
+                    crate::mise_en_page::apercu_titres(&dir, &dialogue.reglages);
             }
 
             Task::none()
@@ -150,13 +195,21 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                     return Message::MiseEnPageNote("Export annulé".to_string());
                 };
 
-                match std::fs::write(file.path(), texte) {
-                    Ok(()) => {
-                        Message::MiseEnPageNote(format!("Exporté : {}", file.path().display()))
-                    }
-                    Err(erreur) => Message::MiseEnPageNote(format!("Écrire le fichier : {erreur}")),
-                }
+                Message::MiseEnPageDestination(file.path().to_path_buf(), texte)
             })
+        }
+
+        Message::MiseEnPageDestination(chemin, texte) => {
+            let resultat = crate::app::fichiers::verifier_destination_export(state, &chemin)
+                .and_then(|()| {
+                    crate::project::ecrire_atomique(&chemin, &texte)
+                        .map_err(|erreur| format!("Écrire le fichier : {erreur}"))
+                });
+            let note = match resultat {
+                Ok(()) => format!("Exporté : {}", chemin.display()),
+                Err(erreur) => erreur,
+            };
+            return update(state, Message::MiseEnPageNote(note));
         }
 
         Message::MiseEnPageNote(note) => {

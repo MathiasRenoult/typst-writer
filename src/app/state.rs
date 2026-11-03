@@ -80,6 +80,24 @@ pub struct Confirmation {
     pub action: crate::app::Message,
 }
 
+/// Un import en attente de décision.
+///
+/// La transformation est calculée d'avance et montrée — ce qui s'est
+/// converti, ce qui reste brut — avant d'entrer dans le texte. Le fichier
+/// d'origine n'est ni lu autrement, ni modifié, ni supprimé.
+pub struct Importation {
+    /// Le fichier importé, à nommer dans la question et à l'application.
+    pub chemin: std::path::PathBuf,
+
+    /// Le résultat de la conversion, prêt à rejoindre la fin du tampon.
+    pub texte: String,
+
+    /// L'empreinte du fichier au moment de l'aperçu : si le disque change
+    /// avant la décision, la conversion montrée n'est plus celle qu'on
+    /// appliquerait, et l'import se refuse.
+    pub empreinte: u64,
+}
+
 /// L'état de l'application.
 ///
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
@@ -190,6 +208,23 @@ pub struct State {
     /// Le geste attendu vient d'être confirmé : il passe au travers de la
     /// question, qui ne se reposera pas.
     pub geste_confirme: bool,
+
+    /// Le changement extérieur dont l'écrasement a été refusé, identifié par
+    /// l'empreinte de ce qu'il a mis sur disque. Un autre changement extérieur
+    /// est une question neuve ; le même ne se représente pas à chaque sauvegarde.
+    pub conflit_refuse: Option<u64>,
+
+    /// L'import en attente de décision : la transformation est montrée avant
+    /// d'entrer dans le texte, et l'original ne se touche jamais.
+    pub importation: Option<Importation>,
+
+    /// La copie de la dernière notice supprimée, à la corbeille : c'est le
+    /// chemin du regret possible.
+    pub derniere_notice_supprimee: Option<std::path::PathBuf>,
+
+    /// Un style dépendant attend son parent : son titre et l'adresse du
+    /// parent, tant que la question de téléchargement est ouverte.
+    pub style_dependant_en_attente: Option<(String, String)>,
 
     /// La carte des raccourcis, quand elle est demandée (`F1`).
     pub aide: bool,
@@ -328,6 +363,18 @@ pub struct DialogueMiseEnPage {
     /// ordonne les règles — et il vaut mieux le savoir avant de croire son
     /// réglage appliqué.
     pub regles_main: usize,
+
+    /// L'aperçu du style choisi : le petit jeu représentatif, rendu par le
+    /// moteur même — jamais une imitation (R4).
+    pub apercu_style: Option<String>,
+
+    /// L'aperçu des titres : les six niveaux rendus par le moteur avec les
+    /// normes du dialogue — jamais une imitation (R5).
+    pub apercu_titres: Option<crate::typst::render::PageImage>,
+
+    /// Les styles installés dans Zotero, tels qu'ils étaient à l'ouverture
+    /// de la fenêtre : la troisième porte du choix (R4).
+    pub styles_zotero: Vec<crate::zotero::styles::CslStyle>,
 
     /// Le nom de la norme quand la fenêtre s'est ouverte — pour savoir
     /// si l'utilisateur travaille sur une norme existante ou sur un brouillon.
@@ -1053,6 +1100,16 @@ impl State {
 }
 
 impl RenderState {
+    /// Le dernier aperçu valide est affiché alors que la compilation
+    /// actuelle a échoué : il est **ancien**, et doit se dire tel.
+    ///
+    /// Un échec ne vide pas l'aperçu — la dernière image bonne reste sous
+    /// les erreurs — mais sans cette déclaration, un aperçu périmé se ferait
+    /// passer pour l'état du texte courant (R3).
+    pub fn apercu_perime(&self) -> bool {
+        self.document.is_some() && !self.errors.is_empty()
+    }
+
     /// Le voisinage conservé autour des pages visibles.
     ///
     /// Une image de page pèse environ 2 Mo ; un document long parcouru

@@ -37,8 +37,15 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau, focus: bool) -> Eleme
 
         // Le nom du document, en pleine couleur pour l'onglet actif,
         // atténué pour les autres — mais toujours lisible.
-        let couleur_texte = if actif { palette.text } else { palette.text_muted };
-        let etiquette = text(nom).size(theme::jetons::CORPS).color(couleur_texte).font(palette.interface);
+        let couleur_texte = if actif {
+            palette.text
+        } else {
+            palette.text_muted
+        };
+        let etiquette = text(nom)
+            .size(theme::jetons::CORPS)
+            .color(couleur_texte)
+            .font(palette.interface);
 
         // Un petit repère de mode : un point coloré, pas un mot de plus.
         let point_couleur = match mode {
@@ -65,7 +72,9 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau, focus: bool) -> Eleme
         } else {
             // L'espace est réservé même quand le × est caché, pour que
             // l'onglet ne change pas de largeur au survol.
-            container(text(" ").size(13)).padding(iced::Padding::new(2.0).right(4.0).bottom(2.0).left(4.0)).into()
+            container(text(" ").size(13))
+                .padding(iced::Padding::new(2.0).right(4.0).bottom(2.0).left(4.0))
+                .into()
         };
 
         let contenu = row![etiquette, point, fermer]
@@ -165,14 +174,16 @@ fn melange(a: iced::Color, b: iced::Color, poids: f32) -> iced::Color {
 
 pub fn source_typst(palette: Palette, genere: &str) -> Element<'_, Message> {
     scrollable(
-        container(iced::widget::column![
-            palette
-                .label("Typst généré — lecture seule")
-                .size(theme::jetons::DETAIL)
-                .color(palette.text_muted),
-            iced::widget::text(genere).size(12),
-        ]
-        .spacing(8))
+        container(
+            iced::widget::column![
+                palette
+                    .label("Typst généré — lecture seule")
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
+                iced::widget::text(genere).size(12),
+            ]
+            .spacing(8),
+        )
         .padding(12)
         .width(Length::Fill),
     )

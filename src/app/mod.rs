@@ -44,13 +44,22 @@ impl State {
         // dans le dossier de travail. Sans effet si un projet existe déjà.
         crate::project::migrate_flat_documents();
 
+        // Une création interrompue laisse un temporaire caché : son auteur
+        // n'existe plus, il part à la corbeille plutôt que d'encombrer.
+        crate::project::nettoyer_temporaires_de_creation(&crate::project::projects_dir());
+
         let mut projects = crate::project::list_projects();
 
         // Aucun projet : c'est le premier démarrage, on en crée un.
         if projects.is_empty() {
             match crate::project::create(FIRST_PROJECT) {
                 Ok(dir) => projects = vec![crate::project::load(&dir)],
-                Err(error) => eprintln!("Création du premier projet : {error}"),
+                Err(error) => {
+                    eprintln!("Création du premier projet : {error}");
+                    // Une autre instance a pu créer le projet entre les deux
+                    // lectures : ne pas ouvrir le dossier racine à sa place.
+                    projects = crate::project::list_projects();
+                }
             }
         }
 
@@ -66,23 +75,40 @@ impl State {
             .or_else(|| projects.first().cloned())
             .unwrap_or_else(|| crate::project::load(&crate::project::projects_dir()));
 
-        // La migration ne se fait pas en silence : ce qu'elle n'a pas
-        // traduit se dit, à l'écran, dès le démarrage.
-        let note_de_migration = match crate::project::migrate_to_document_avec_rapport(&project) {
-            Ok((_, rapport)) => {
-                if rapport.avertissements.is_empty() {
-                    None
-                } else {
-                    Some(crate::app::state::Note::info(format!(
-                        "Migration : {} bloc(s) laissé(s) en Typst brut — {}",
-                        rapport.blocs_bruts,
-                        rapport.avertissements.join(" ; ")
-                    )))
-                }
+        // Le verrou doit être acquis avant toute migration : une seconde
+        // instance n'a pas le droit de modifier le projet qu'elle consulte.
+        let verrou = match crate::project::Verrou::prendre(&project.dir) {
+            Ok(verrou) => Some(verrou),
+            Err(probleme) => {
+                note_au_demarrage = Some(crate::app::state::Note::erreur(format!(
+                    "{probleme} Ce projet est ouvert en lecture seule."
+                )));
+                None
             }
-            Err(error) => Some(crate::app::state::Note::erreur(format!(
-                "Migration vers document.tw : {error}"
-            ))),
+        };
+
+        // La migration ne se fait pas en silence : ce qu'elle n'a pas
+        // traduit se dit, à l'écran, dès le démarrage. Elle ne touche jamais
+        // un projet dont le verrou n'a pas été obtenu.
+        let note_de_migration = if verrou.is_some() {
+            match crate::project::migrate_to_document_avec_rapport(&project) {
+                Ok((_, rapport)) => {
+                    if rapport.avertissements.is_empty() {
+                        None
+                    } else {
+                        Some(crate::app::state::Note::info(format!(
+                            "Migration : {} bloc(s) laissé(s) en Typst brut — {}",
+                            rapport.blocs_bruts,
+                            rapport.avertissements.join(" ; ")
+                        )))
+                    }
+                }
+                Err(error) => Some(crate::app::state::Note::erreur(format!(
+                    "Migration vers document.tw : {error}"
+                ))),
+            }
+        } else {
+            None
         };
 
         let project = crate::project::load(&project.dir);
@@ -96,18 +122,6 @@ impl State {
                 crate::zotero::Source::Locale
             },
             lie: project.zotero.is_some(),
-        };
-
-        // Le verrou du projet : une seule instance y travaille. Refusé,
-        // rien ne s'écrira — et c'est dit, plutôt que de se dévorer.
-        let verrou = match crate::project::Verrou::prendre(&project.dir) {
-            Ok(verrou) => Some(verrou),
-            Err(probleme) => {
-                note_au_demarrage = Some(crate::app::state::Note::erreur(format!(
-                    "{probleme} Ce projet est ouvert en lecture seule."
-                )));
-                None
-            }
         };
 
         let mut state = Self {
@@ -134,6 +148,10 @@ impl State {
             onglets: Vec::new(),
             etagere_brouillon: String::new(),
             geste_confirme: false,
+            conflit_refuse: None,
+            importation: None,
+            derniere_notice_supprimee: None,
+            style_dependant_en_attente: None,
             confirmation: None,
             verrou,
             aide: false,
@@ -270,12 +288,28 @@ impl State {
     /// Les images du chapitre précédent ne doivent pas survivre au changement :
     /// les `Handle` sont relâchés pour que le backend libère les textures.
     fn open_document(&mut self, path: PathBuf, content: String, nouvel_onglet: bool) {
+        // Une écriture interrompue a pu laisser un temporaire qui porte la
+        // dernière version du document : il devient récupérable, à condition
+        // de détenir le verrou — un projet en lecture seule ne s'écrit pas.
+        if self.projet_verrouille(&self.project.dir) {
+            crate::project::recuperer_temporaires_perdus(&self.project.dir, &path);
+        }
         if self.espace.initialise {
-            let ouverture = if nouvel_onglet { crate::app::espace::Ouverture::Nouvel } else { crate::app::espace::Ouverture::Remplacer };
+            let ouverture = if nouvel_onglet {
+                crate::app::espace::Ouverture::Nouvel
+            } else {
+                crate::app::espace::Ouverture::Remplacer
+            };
             self.ouvrir_vue(self.project.clone(), path, content, ouverture);
             return;
         }
-        self.editor = crate::editor::EditorState::new_file(path, content);
+        self.editor = crate::editor::EditorState::new_file(path.clone(), content.clone());
+        // Ce que le tampon vient de recevoir est ce que le disque contenait :
+        // c'est la référence dont tout changement extérieur s'écartera.
+        self.espace
+            .disques
+            .entry((self.project.dir.clone(), path))
+            .or_insert(crate::project::empreinte_contenu(content.as_bytes()));
         // Le chapitre neuf reçoit le thème courant : sans cela il garderait
         // celui du widget de la bibliothèque jusqu'au prochain changement.
         self.editor.retheme(&self.resolved);
@@ -397,6 +431,20 @@ impl State {
     /// depuis le disque : sans cet apport, l'aperçu aurait jusqu'à une seconde
     /// de retard sur la frappe, le temps de la sauvegarde différée.
     fn compilation_unit(&self) -> (String, Vec<(PathBuf, String)>) {
+        let (entree, substitutions, _) = self.compilation_unit_avec_diagnostics();
+        (entree, substitutions)
+    }
+
+    /// Comme [`State::compilation_unit`], mais dit les citations neutralisées
+    /// pendant la préparation : elles deviennent des avertissements, au même
+    /// titre que ceux du compilateur.
+    fn compilation_unit_avec_diagnostics(
+        &self,
+    ) -> (
+        String,
+        Vec<(PathBuf, String)>,
+        Vec<crate::typst::render::Diagnostic>,
+    ) {
         let open = self.editor.path.clone();
         let buffer = self.editor.content();
 
@@ -405,7 +453,9 @@ impl State {
         let entry = if assembly_is_open {
             buffer.clone()
         } else {
-            self.espace.documents.get(&(self.project.dir.clone(), self.project.main.clone()))
+            self.espace
+                .documents
+                .get(&(self.project.dir.clone(), self.project.main.clone()))
                 .map(|d| d.source.contenu())
                 .unwrap_or_else(|| std::fs::read_to_string(&self.project.main).unwrap_or_default())
         };
@@ -423,7 +473,13 @@ impl State {
             self.project
                 .document
                 .as_deref()
-                .and_then(|path| self.espace.documents.get(&(self.project.dir.clone(), path.to_path_buf())).map(|d| d.source.contenu()).or_else(|| std::fs::read_to_string(path).ok()))
+                .and_then(|path| {
+                    self.espace
+                        .documents
+                        .get(&(self.project.dir.clone(), path.to_path_buf()))
+                        .map(|d| d.source.contenu())
+                        .or_else(|| std::fs::read_to_string(path).ok())
+                })
                 .map(|source| crate::langage::parse(&source))
         } else {
             None
@@ -432,7 +488,7 @@ impl State {
         if let Some(document) = writing_document {
             let entry = crate::project::assembly_without_chapters(&self.project, &entry);
 
-            return crate::langage::pipeline::compilation_unit_document(
+            return crate::langage::pipeline::compilation_unit_document_avec_diagnostics(
                 &self.project.dir,
                 &entry,
                 &document,
@@ -442,7 +498,11 @@ impl State {
         if is_intermediate {
             let entry = crate::project::assembly_without_chapters(&self.project, &entry);
 
-            return crate::langage::pipeline::compilation_unit(&self.project.dir, &entry, &buffer);
+            return crate::langage::pipeline::compilation_unit_avec_diagnostics(
+                &self.project.dir,
+                &entry,
+                &buffer,
+            );
         }
 
         let overrides = match open {
@@ -452,7 +512,7 @@ impl State {
             None => Vec::new(),
         };
 
-        (entry, overrides)
+        (entry, overrides, Vec::new())
     }
 
     /// Empreinte de ce qui serait compilé : sert à ne relancer que si quelque
@@ -482,24 +542,140 @@ impl State {
         self.project.dir.clone()
     }
 
+    /// Un projet n'est écrit que par l'instance qui en tient le verrou.
+    ///
+    /// Avant l'initialisation de l'espace, le verrou courant est celui du
+    /// projet ouvert ; ensuite, chaque projet possède le sien.
+    fn projet_verrouille(&self, dir: &std::path::Path) -> bool {
+        (self.verrou.is_some() && dir == self.project.dir) || self.espace.verrous.contains_key(dir)
+    }
+
     /// Écrit le contenu courant et enregistre la session.
-    fn persist(&mut self) {
+    fn persist(&mut self) -> bool {
         // Sans verrou, rien ne s'écrit : deux instances ne se dévorent
         // jamais leur texte. La raison a été dite au démarrage.
         if self.verrou.is_none() && !self.espace.verrous.contains_key(&self.project.dir) {
-            return;
+            return false;
         }
 
-        if self.editor.path.is_some() {
-            if let Err(error) = self.editor.save() {
-                self.note = Some(crate::app::state::Note::erreur(format!(
-                    "Sauvegarde impossible : {error}"
-                )));
-            }
+        let Some(chemin) = self.editor.path.clone() else {
+            return false;
+        };
 
-            self.save_session();
+        match self.sauvegarder_document(&chemin, false) {
+            Ok(()) => {
+                self.save_session();
+                true
+            }
+            Err(SauvegardeRefusee::Conflit(empreinte)) => {
+                self.poser_la_question_du_conflit(empreinte);
+                false
+            }
+            Err(SauvegardeRefusee::Echec(probleme)) => {
+                self.note = Some(crate::app::state::Note::erreur(format!(
+                    "Sauvegarde impossible : {probleme}"
+                )));
+                false
+            }
         }
     }
+
+    /// Écrit le document courant, en conservant d'abord la version qui va
+    /// l'être remplacée.
+    ///
+    /// Un changement extérieur n'est jamais écrasé en silence : sans `force`,
+    /// la sauvegarde est refusée et dit son remède. La copie de la version
+    /// précédente précède toute écriture — si elle ne peut être conservée,
+    /// rien ne se remplace.
+    fn sauvegarder_document(
+        &mut self,
+        chemin: &std::path::Path,
+        force: bool,
+    ) -> Result<(), SauvegardeRefusee> {
+        let contenu = self.editor.content();
+        let cle = (self.project.dir.clone(), chemin.to_path_buf());
+        let sur_disque = match std::fs::read(chemin) {
+            Ok(octets) => Some(octets),
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => None,
+            Err(erreur) => {
+                return Err(SauvegardeRefusee::Echec(format!(
+                    "Lire la version du disque : {erreur}"
+                )));
+            }
+        };
+
+        let mut changement_externe = false;
+        if let Some(octets) = &sur_disque {
+            let empreinte = crate::project::empreinte_contenu(octets);
+            if self
+                .espace
+                .disques
+                .get(&cle)
+                .is_some_and(|attendue| *attendue != empreinte)
+            {
+                if !force {
+                    return Err(SauvegardeRefusee::Conflit(empreinte));
+                }
+                changement_externe = true;
+            }
+        }
+
+        if let Some(ancien) = sur_disque.as_deref() {
+            crate::project::sauvegarder_version(
+                &self.project.dir,
+                chemin,
+                &String::from_utf8_lossy(ancien),
+                changement_externe,
+            )
+            .map_err(|erreur| {
+                SauvegardeRefusee::Echec(format!("Conserver la version précédente : {erreur}"))
+            })?;
+        }
+
+        self.editor
+            .save()
+            .map_err(|erreur| SauvegardeRefusee::Echec(erreur.to_string()))?;
+        self.espace
+            .disques
+            .insert(cle, crate::project::empreinte_contenu(contenu.as_bytes()));
+        self.conflit_refuse = None;
+        Ok(())
+    }
+
+    /// Un fichier a changé hors de l'application : le dire, et demander une
+    /// fois — jamais à chaque sauvegarde, jamais deux fois pour le même
+    /// changement refusé.
+    fn poser_la_question_du_conflit(&mut self, empreinte: u64) {
+        let nom = self
+            .editor
+            .path
+            .as_ref()
+            .and_then(|chemin| chemin.file_name())
+            .map(|nom| nom.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Le document".to_string());
+        self.note = Some(crate::app::state::Note::erreur(format!(
+            "Sauvegarde en attente : {nom} a été modifié hors de l'application. Vos frappes restent en mémoire."
+        )));
+        if self.conflit_refuse == Some(empreinte) || self.confirmation.is_some() {
+            return;
+        }
+        self.confirmation = Some(crate::app::state::Confirmation {
+            question: format!(
+                "{nom} a été modifié hors de l'application. Remplacer sa version par votre texte ? Elle restera dans « sauvegardes/ »."
+            ),
+            action: Message::SauvegardeForcee(empreinte),
+        });
+    }
+}
+
+/// Ce qui empêche une sauvegarde d'aboutir.
+enum SauvegardeRefusee {
+    /// Le fichier a changé hors de l'application, avec l'empreinte de ce
+    /// changement : elle distingue les conflits entre eux.
+    Conflit(u64),
+
+    /// Une erreur d'entrée-sortie, à dire telle quelle.
+    Echec(String),
 }
 
 /// Nom du projet créé au premier démarrage.
@@ -510,8 +686,81 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 }
 
 fn update_interne(state: &mut State, message: Message) -> Task<Message> {
+    // Toutes les actions qui écrivent dans le projet doivent passer par le
+    // même contrôle, y compris les messages issus d'une confirmation.
+    let modifie_le_projet = match &message {
+        Message::ReferenceSupprimer(_)
+        | Message::ReferenceRestaurer(_)
+        | Message::BibliographieCreer
+        | Message::EditionReferenceEnregistrer
+        | Message::ImageChoisie(Some(_))
+        | Message::StyleCslChoisi(_)
+        | Message::StyleZoteroChoisi(_)
+        | Message::StyleParentTelecharger
+        | Message::BibImporte(Some(_))
+        | Message::MiseEnPageAppliquer
+        | Message::NewFile
+        | Message::NewChapter
+        | Message::DeleteChapter(_)
+        | Message::RenameCommit
+        | Message::SymbolRenameApply
+        | Message::ZoteroDelier
+        | Message::ZoteroExport(_, _, _, Ok(_))
+        | Message::Format(_)
+        | Message::NoteInserer
+        | Message::FigureInserer
+        | Message::EtiquetteInserer
+        | Message::RenvoiInserer
+        | Message::TitreInserer(_)
+        | Message::InsertCitation(_)
+        | Message::TableauInserer
+        | Message::BlocMonter
+        | Message::BlocDescendre
+        | Message::RechercheRemplacer
+        | Message::RechercheRemplacerTout
+        | Message::CompletionAccept
+        | Message::CompletionPick(_)
+        | Message::ComposeurTerminer
+        | Message::SauvegardeForcee(_)
+        | Message::ImportAppliquer
+        | Message::NoteOverlayEnregistrer => true,
+        Message::Editor(message) => crate::editor::EditorState::message_may_change_content(message),
+        Message::FileOpened(Some((chemin, _))) => {
+            !crate::project::same_file(chemin, &state.project.main)
+                && !state
+                    .project
+                    .document
+                    .as_ref()
+                    .is_some_and(|document| crate::project::same_file(chemin, document))
+        }
+        _ => false,
+    };
+    if modifie_le_projet
+        && state.verrou.is_none()
+        && !state.espace.verrous.contains_key(&state.project.dir)
+    {
+        state.geste_confirme = false;
+        state.note = Some(crate::app::state::Note::erreur(
+            "Projet en lecture seule : fermez l'autre instance avant de modifier ses fichiers.",
+        ));
+        return Task::none();
+    }
     match message {
-        Message::RetourDocument(..) | Message::VersVue(..) | Message::RetourVue(..) | Message::VueChoisir(..) | Message::VueFermer(..) | Message::VueDupliquer | Message::Scinder(..) | Message::OngletSuivant | Message::PanneauSuivant | Message::PanneauChoisir(..) | Message::PanneauRedimensionner(..) | Message::OngletPrendre(..) | Message::OngletCible(..) | Message::OngletPoser => unreachable!("messages traités par l’espace"),
+        Message::FermetureDemandee => unreachable!("fermeture traitée par l’espace"),
+        Message::RetourDocument(..)
+        | Message::VersVue(..)
+        | Message::RetourVue(..)
+        | Message::VueChoisir(..)
+        | Message::VueFermer(..)
+        | Message::VueDupliquer
+        | Message::Scinder(..)
+        | Message::OngletSuivant
+        | Message::PanneauSuivant
+        | Message::PanneauChoisir(..)
+        | Message::PanneauRedimensionner(..)
+        | Message::OngletPrendre(..)
+        | Message::OngletCible(..)
+        | Message::OngletPoser => unreachable!("messages traités par l’espace"),
         // Une notice locale se supprime — vers la corbeille, avec son mot.
         Message::ReferenceSupprimer(cle) => {
             if !state.geste_confirme {
@@ -538,9 +787,10 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             };
 
             match crate::project::supprimer_reference(&bibliotheque, &cle) {
-                Ok(()) => {
+                Ok(copie) => {
                     state.bibliography = crate::project::parse_bibliography(&bibliotheque);
                     state.edition_reference = None;
+                    state.derniere_notice_supprimee = Some(copie);
                     state.note = Some(crate::app::state::Note::info(format!(
                         "La notice « {cle} » part à la corbeille."
                     )));
@@ -552,6 +802,27 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                     Task::none()
                 }
             }
+        }
+
+        Message::ReferenceRestaurer(copie) => {
+            let Some(bibliotheque) = state.project.bibliography.clone() else {
+                return Task::none();
+            };
+
+            match crate::project::restaurer_reference(&bibliotheque, &copie) {
+                Ok(cle) => {
+                    state.bibliography = crate::project::parse_bibliography(&bibliotheque);
+                    state.derniere_notice_supprimee = None;
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "La notice « {cle} » est de retour."
+                    )));
+                    state.refresh_context();
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                }
+            }
+            Task::none()
         }
 
         // Les projets : le nom en frappe, puis les trois gestes.
@@ -618,7 +889,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ThemeEditeurColorPicker(champ) => {
             // THEME-EDITOR-04-01 : le picker RVB intégré, pas zenity.
-            let courante = state.editeur_theme_textes.get(champ)
+            let courante = state
+                .editeur_theme_textes
+                .get(champ)
                 .and_then(|v| crate::theming::HexColor::parse(v.trim()).ok())
                 .map(|c| {
                     let (r, g, b) = (c.0.r * 255.0, c.0.g * 255.0, c.0.b * 255.0);
@@ -642,7 +915,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Message::ColorPickerValider => {
             if let Some(picker) = state.color_picker.take() {
                 let hex = format!("#{:02x}{:02x}{:02x}", picker.r, picker.g, picker.b);
-                state.editeur_theme_textes.insert(picker.champ.to_string(), hex.clone());
+                state
+                    .editeur_theme_textes
+                    .insert(picker.champ.to_string(), hex.clone());
                 if let Some(fichier) = state.editeur_theme.as_mut()
                     && let Ok(valeur) = crate::theming::HexColor::parse(&hex)
                 {
@@ -690,7 +965,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             // La saisie brute reste dans le champ, même incomplète : c'est
             // elle que l'utilisateur voit. La couleur n'est mise à jour
             // que si la valeur se parse.
-            state.editeur_theme_textes.insert(champ.to_string(), valeur.clone());
+            state
+                .editeur_theme_textes
+                .insert(champ.to_string(), valeur.clone());
 
             if let Some(fichier) = state.editeur_theme.as_mut() {
                 let Ok(valeur) = crate::theming::HexColor::parse(valeur.trim()) else {
@@ -837,6 +1114,73 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                     state.note = Some(crate::app::state::Note::erreur(format!(
                         "La bibliographie n'a pas pu naître : {erreur}"
                     )));
+                }
+            }
+
+            Task::none()
+        }
+
+        // L'alternative sans plugin : Zotero sait exporter un `.bib` tout
+        // seul, et ce fichier rejoint la bibliothèque locale sans rien
+        // écraser.
+        Message::BibliographieImporter => Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Bibliographie BibLaTeX", &["bib"])
+                    .pick_file()
+                    .await
+                    .map(|fichier| fichier.path().to_path_buf())
+            },
+            Message::BibImporte,
+        ),
+
+        Message::BibImporte(result) => {
+            let Some(source) = result else {
+                return Task::none();
+            };
+
+            match crate::project::importer_bib(&state.project.dir, &source) {
+                Ok(rapport) => {
+                    let dir = state.project.dir.clone();
+                    let chemin = dir.join("references.bib");
+                    state.project = crate::project::load(&dir);
+                    state.bibliography = crate::project::parse_bibliography(&chemin);
+
+                    // Le rapport se lit entièrement : ce qui est entré, ce
+                    // qui était déjà là, ce qui s'est heurté.
+                    let mut parties = Vec::new();
+                    if !rapport.ajoutees.is_empty() {
+                        parties.push(format!(
+                            "{} entrée(s) : {}",
+                            rapport.ajoutees.len(),
+                            rapport.ajoutees.join(", ")
+                        ));
+                    }
+                    if !rapport.deja_la.is_empty() {
+                        parties.push(format!(
+                            "{} déjà là : {}",
+                            rapport.deja_la.len(),
+                            rapport.deja_la.join(", ")
+                        ));
+                    }
+                    if !rapport.conflits.is_empty() {
+                        parties.push(format!(
+                            "{} conflit(s), la première tient : {}",
+                            rapport.conflits.len(),
+                            rapport.conflits.join(", ")
+                        ));
+                    }
+
+                    let message = format!("Import BibLaTeX — {}.", parties.join(" ; "));
+                    state.note = Some(if rapport.conflits.is_empty() {
+                        crate::app::state::Note::info(message)
+                    } else {
+                        crate::app::state::Note::erreur(message)
+                    });
+                }
+                Err(probleme) => {
+                    // Rien n'a changé — la notice le dit déjà.
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
                 }
             }
 
@@ -1026,12 +1370,36 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            // Avant un renommage, le verrou du projet sort de la map :
-            // il suit le dossier sur le disque, mais sa clé de map est
-            // l'ancien chemin. Le laisser créerait un faux conflit à la
-            // réouverture, le `.verrou` portant notre propre PID.
+            // Le verrou suit le dossier pendant tout le renommage. Les vues
+            // modifiées sont enregistrées avant que leurs chemins changent.
+            let mut verrou_renommage = None;
+            let mut verrou_deja_detenu = false;
             if let Some(dir) = &dialogue.cible {
-                state.espace.verrous.remove(dir);
+                verrou_deja_detenu = state.espace.verrous.contains_key(dir)
+                    || (state.project.dir == *dir && state.verrou.is_some());
+                if !verrou_deja_detenu {
+                    match crate::project::Verrou::prendre(dir) {
+                        Ok(verrou) => verrou_renommage = Some(verrou),
+                        Err(probleme) => {
+                            state.note = Some(crate::app::state::Note::erreur(format!(
+                                "Renommage refusé : {probleme}"
+                            )));
+                            return Task::none();
+                        }
+                    }
+                }
+                if let Err(probleme) = state.sauvegarder_avant_deplacer(dir) {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Renommage annulé : {probleme}. Corrigez la sauvegarde et réessayez."
+                    )));
+                    return Task::none();
+                }
+                if verrou_renommage.is_none() {
+                    verrou_renommage = state.espace.verrous.remove(dir);
+                    if verrou_renommage.is_none() && state.project.dir == *dir {
+                        verrou_renommage = state.verrou.take();
+                    }
+                }
             }
 
             let rendu = match &dialogue.cible {
@@ -1041,6 +1409,16 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
             match rendu {
                 Ok(dir) => {
+                    if let Some(mut verrou) = verrou_renommage.take() {
+                        verrou.suivre_deplacement(&dir);
+                        state.espace.verrous.insert(dir.clone(), verrou);
+                    }
+                    if let Some(ancien) = &dialogue.cible
+                        && ancien != &dir
+                    {
+                        state.suivre_projet_renomme(ancien, &dir);
+                        state.save_session();
+                    }
                     state.projet_dialogue = None;
                     // Le nom a changé : la liste des projets se relit pour
                     // que l'onglet et le panneau portent le nouveau nom.
@@ -1067,6 +1445,12 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                     update(state, Message::OpenProject(dir))
                 }
                 Err(probleme) => {
+                    if verrou_deja_detenu
+                        && let (Some(dir), Some(verrou)) =
+                            (&dialogue.cible, verrou_renommage.take())
+                    {
+                        state.espace.verrous.insert(dir.clone(), verrou);
+                    }
                     state.note = Some(crate::app::state::Note::erreur(probleme));
                     Task::none()
                 }
@@ -1090,20 +1474,59 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
             state.geste_confirme = false;
 
+            // La carte peut viser un projet autre que la vue courante. Un
+            // verrou propre à cette cible reste tenu jusqu'au déplacement.
+            let deja_verrouille = state.espace.verrous.contains_key(&dir)
+                || (state.project.dir == dir && state.verrou.is_some());
+            let mut temporaire = if deja_verrouille {
+                None
+            } else {
+                match crate::project::Verrou::prendre(&dir) {
+                    Ok(verrou) => Some(verrou),
+                    Err(probleme) => {
+                        state.note = Some(crate::app::state::Note::erreur(format!(
+                            "Suppression refusée : {probleme}"
+                        )));
+                        return Task::none();
+                    }
+                }
+            };
+
+            if let Err(probleme) = state.sauvegarder_avant_deplacer(&dir) {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "Suppression annulée : {probleme}. Corrigez la sauvegarde et réessayez."
+                )));
+                return Task::none();
+            }
+
+            if let Err(probleme) = state.preparer_suppression_projet(&dir) {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "Suppression annulée : {probleme}. Le projet reste en place."
+                )));
+                return Task::none();
+            }
+
             match crate::project::supprimer(&dir) {
                 Ok(corbeille) => {
+                    if let Some(mut verrou) = temporaire.take() {
+                        verrou.suivre_deplacement(&corbeille);
+                    }
+                    if let Some(mut verrou) = state.espace.verrous.remove(&dir) {
+                        verrou.suivre_deplacement(&corbeille);
+                    }
+                    if state.project.dir == dir
+                        && let Some(mut verrou) = state.verrou.take()
+                    {
+                        verrou.suivre_deplacement(&corbeille);
+                    }
                     state.note = Some(crate::app::state::Note::info(format!(
                         "Le projet part à la corbeille : {}",
                         corbeille.display()
                     )));
 
-                    // Le projet ouvert disparaît : un autre prend sa place.
                     state.projects.retain(|projet| projet.dir != dir);
-
-                    match state.projects.first() {
-                        Some(projet) => update(state, Message::OpenProject(projet.dir.clone())),
-                        None => Task::none(),
-                    }
+                    state.retirer_projet_supprime(&dir);
+                    Task::none()
                 }
                 Err(probleme) => {
                     state.note = Some(crate::app::state::Note::erreur(probleme));
@@ -1341,6 +1764,17 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         },
 
         Message::ConfirmationAnnuler => {
+            // Refuser d'écraser un changement extérieur est une réponse pour ce
+            // changement-ci : un autre en sera une question neuve.
+            if let Some(crate::app::state::Confirmation {
+                action: Message::SauvegardeForcee(empreinte),
+                ..
+            }) = state.confirmation.as_ref()
+            {
+                state.conflit_refuse = Some(*empreinte);
+            }
+            // Un import refusé ne laisse rien derrière lui.
+            state.importation = None;
             state.confirmation = None;
             Task::none()
         }
@@ -1364,6 +1798,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::MiseEnPageImporter
         | Message::MiseEnPageImportee(_)
         | Message::MiseEnPageExporter
+        | Message::MiseEnPageDestination(_, _)
         | Message::MiseEnPageNote(_) => {
             crate::app::reglages::update(state, message).unwrap_or_else(Task::none)
         }
@@ -1376,6 +1811,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ChapterOpened(_, _, _)
         | Message::NewChapter
         | Message::NewProject
+        | Message::ProjetCreerAvecModele(_)
         | Message::OpenProject(_)
         | Message::RefreshProject
         | Message::StartRename(_)
@@ -1384,8 +1820,18 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RenameCancel
         | Message::ImageInserer
         | Message::ImageChoisie(_)
+        | Message::StyleCslImporter
+        | Message::StyleCslChoisi(_)
+        | Message::StyleZoteroChoisi(_)
+        | Message::StyleParentTelecharger
         | Message::InsertCitation(_)
+        | Message::NoteInserer
+        | Message::FigureInserer
+        | Message::EtiquetteInserer
+        | Message::RenvoiInserer
         | Message::SaveFile
+        | Message::SauvegardeForcee(_)
+        | Message::ImportAppliquer
         | Message::SaveAs
         | Message::FileSaved(_)
         | Message::ExportPdf
@@ -1394,6 +1840,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::SymbolRenameAsk
         | Message::SymbolRenameApply
         | Message::SymbolRenameCancel
+        | Message::PdfDestination(_)
         | Message::PdfExported(_) => crate::app::fichiers::update(state, message),
 
         // L'édition d'une référence : une fenêtre, des champs, et une
@@ -1458,7 +1905,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Message::ZoteroLierOuvrir
         | Message::ZoteroCollections(_)
         | Message::ZoteroChoisir(_, _)
-        | Message::ZoteroExport(_, _, _)
+        | Message::ZoteroExport(_, _, _, _)
         | Message::ZoteroActiverApi
         | Message::ZoteroSynchroniser
         | Message::ZoteroLiaisonFermer => liaison_zotero(state, message),
@@ -1628,7 +2075,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                             // curseur ni déranger le fil du document.
                             let texte = &contenu[note.debut..note.fin];
                             let nu = texte
-                                .strip_prefix("^[").and_then(|s| s.strip_suffix(']'))
+                                .strip_prefix("^[")
+                                .and_then(|s| s.strip_suffix(']'))
                                 .unwrap_or(texte);
                             state.note_overlay = Some(crate::app::state::NoteOverlay {
                                 contenu: nu.to_string(),
@@ -1662,7 +2110,10 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             // L'insertion simple au curseur : `#` × n + espace. Pas de
             // reformatage de bloc — on tape, comme à la main.
             let marque = "#".repeat(niveau.clamp(1, 6) as usize);
-            state.editor.insert_at_cursor(&format!("{marque} ")).map(Message::Editor)
+            state
+                .editor
+                .insert_at_cursor(&format!("{marque} "))
+                .map(Message::Editor)
         }
 
         Message::Format(action) => {
@@ -1900,6 +2351,15 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
         Message::RenderDone(outcome) => {
             state.render.pending = false;
+            // Un retour périmé ne se fait pas passer pour l'état courant : le
+            // texte a changé depuis la compilation, ou le projet portant ce
+            // chemin a été remplacé sous le même nom. Comparer les deux
+            // empreintes — celle que `compile` rapporte et celle que la vue
+            // compilerait maintenant — est la seule façon de le savoir ; le
+            // tick suivant recompile ce qui est réellement à l'écran.
+            if outcome.content != state.compilation_fingerprint() {
+                return Task::none();
+            }
             state.render.done = true;
             let chapter_page = outcome.chapter_page;
 
@@ -2106,13 +2566,14 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             // c'est même là qu'il en a le plus besoin — une coupure ne
             // doit jamais emporter ce qui a été tapé.
             if state.editor.is_modified() {
-                state.persist();
+                let ecrit = state.persist();
                 state.refresh_context();
 
                 // Le serveur suit les écritures : c'est ainsi qu'il sait
                 // recompiler le projet, et que les diagnostics des *autres*
-                // chapitres se mettent à jour.
-                if let Some(session) = state.lsp.session.as_mut() {
+                // chapitres se mettent à jour. Une sauvegarde refusée n'a rien
+                // écrit dont il pourrait témoigner.
+                if ecrit && let Some(session) = state.lsp.session.as_mut() {
                     session.did_save();
                 }
             }
@@ -2421,13 +2882,10 @@ fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
         return Task::none();
     };
 
-    let motif = if etat.mode_regex {
-        etat.motif.clone()
-    } else {
-        regex::escape(&etat.motif)
-    };
     let texte = state.editor.content();
-    let trouve = crate::app::recherche::occurrences(&motif, &texte);
+    let trouve = crate::app::recherche::occurrences(etat.mode_regex, &etat.motif, &texte);
+    let apercu =
+        crate::app::recherche::apercu(etat.mode_regex, &etat.motif, &etat.remplacement, &texte);
 
     let etat = state.recherche.as_mut().expect("recherche ouverte");
     etat.courante = 0;
@@ -2443,15 +2901,16 @@ fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
         }
     }
 
-    // FIND-02 : surligner les occurrences dans l'éditeur.
+    // L'aperçu des changements : ce que chaque occurrence devient — voir
+    // avant de remplacer (R6). Un motif cassé n'a pas d'aperçu qui mente.
+    etat.apercu = apercu.unwrap_or_default();
+
+    // FIND-02 : surligner les occurrences dans l'éditeur — le motif
+    // effectif : la regex du motif, ou le littéral échappé.
     if etat.motif.is_empty() {
         let _ = state.editor.editor.close_search_dialog();
     } else {
-        let motif = if etat.mode_regex {
-            etat.motif.clone()
-        } else {
-            regex::escape(&etat.motif)
-        };
+        let motif = crate::app::recherche::motif_effectif(etat.mode_regex, &etat.motif);
         state.editor.editor.set_search_query(motif);
     }
 
@@ -2496,7 +2955,14 @@ fn remplacer_courant(state: &mut State) -> Task<Message> {
     let (motif, remplacement) = (etat.motif.clone(), etat.remplacement.clone());
     let texte = state.editor.content();
 
-    let neuf = crate::app::recherche::remplacement(&motif, &remplacement, &texte, debut, fin);
+    let neuf = crate::app::recherche::remplacement(
+        etat.mode_regex,
+        &motif,
+        &remplacement,
+        &texte,
+        debut,
+        fin,
+    );
 
     match neuf {
         Ok(neuf) => {
@@ -2522,7 +2988,8 @@ fn remplacer_tout(state: &mut State) -> Task<Message> {
     let (motif, remplacement) = (etat.motif.clone(), etat.remplacement.clone());
     let texte = state.editor.content();
 
-    let neuf = crate::app::recherche::remplacer_tout(&motif, &remplacement, &texte);
+    let neuf =
+        crate::app::recherche::remplacer_tout(etat.mode_regex, &motif, &remplacement, &texte);
 
     match neuf {
         Ok(neuf) => {
@@ -2616,11 +3083,15 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
 
-            let (demande, rendu) = (lien.cle.clone(), (lien.cle, lien.nom));
+            let (demande, rendu, projet) = (
+                lien.cle.clone(),
+                (lien.cle, lien.nom),
+                state.project.dir.clone(),
+            );
 
             Task::perform(
                 async move { crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string()) },
-                move |resultat| Message::ZoteroExport(rendu.0, rendu.1, resultat),
+                move |resultat| Message::ZoteroExport(rendu.0, rendu.1, projet.clone(), resultat),
             )
         }
 
@@ -2629,85 +3100,111 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
             // que ce soit au projet.
             state.liaison = Some(crate::app::state::LiaisonZotero::Chargement);
 
-            let (demande, rendu) = (cle.clone(), (cle, nom));
+            let (demande, rendu, projet) = (cle.clone(), (cle, nom), state.project.dir.clone());
 
             Task::perform(
                 async move { crate::zotero::client::bibtex(&demande).map_err(|e| e.to_string()) },
-                move |resultat| Message::ZoteroExport(rendu.0, rendu.1, resultat),
+                move |resultat| Message::ZoteroExport(rendu.0, rendu.1, projet.clone(), resultat),
             )
         }
 
-        Message::ZoteroExport(cle, nom, resultat) => match resultat {
-            Ok(bibtex) => {
-                let dir = state.project.dir.clone();
-
-                // Les clés se stabilisent avant l'écriture : une clé
-                // attribuée ne bouge plus, quoi que la collection devienne.
-                // Les clés de la bibliothèque locale sont prises d'abord —
-                // une notice Zotero ne vient jamais heurter un livre tenu
-                // par l'écrivain lui-même.
-                let mut pris = std::collections::BTreeSet::new();
-
-                for entree in &state.bibliography {
-                    pris.insert(entree.key.clone());
-                }
-
-                let chemin = dir.join("citations.json");
-                let mut trousseau = crate::zotero::keys::Keyring::load(&chemin);
-                let bibtex = trousseau.stabiliser(&bibtex, &pris);
-
-                if let Err(erreur) = trousseau.save(&chemin) {
-                    state.note = Some(crate::app::state::Note::erreur(format!(
-                        "Les clés de citation n'ont pas pu être gardées : {erreur}"
-                    )));
-                }
-
-                if let Err(erreur) =
-                    crate::project::ecrire_atomique(&dir.join("references-zotero.bib"), &bibtex)
-                {
-                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
-                        motif: format!("La bibliothèque n'a pas pu être écrite : {erreur}"),
-                        reglable: false,
-                    });
-
-                    return Task::none();
-                }
-
-                if let Err(erreur) = crate::zotero::lier(&dir, &crate::zotero::Lien { cle, nom }) {
-                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
-                        motif: format!("La liaison n'a pas pu être gardée : {erreur}"),
-                        reglable: false,
-                    });
-
-                    return Task::none();
-                }
-
-                // La liaison est faite : le projet la porte, et la
-                // bibliothèque montrée devient celle de Zotero — lue, jamais
-                // écrite.
-                state.project = crate::project::load(&dir);
-                state.bibliography = state
-                    .project
-                    .bibliography
-                    .as_ref()
-                    .map(|path| crate::project::parse_bibliography(path))
-                    .unwrap_or_default();
-                state.zotero = crate::zotero::Etat {
-                    source: crate::zotero::Source::Zotero,
-                    lie: true,
-                };
+        Message::ZoteroExport(cle, nom, projet, resultat) => {
+            // La requête est rattachée au projet demandeur : si l'on a
+            // changé de projet en cours de route, rien ne s'écrit ici —
+            // jamais dans un projet qui n'a rien demandé.
+            if projet != state.project.dir {
                 state.liaison = None;
+                state.note = Some(crate::app::state::Note::info(
+                    "La synchronisation Zotero visait un autre projet : rien n'a été écrit dans celui-ci.",
+                ));
 
-                Task::none()
+                return Task::none();
             }
-            Err(erreur) => {
-                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
-                    motif: erreur,
-                    reglable: false,
-                });
-                Task::none()
+
+            match resultat {
+                Ok(bibtex) => {
+                    let dir = state.project.dir.clone();
+
+                    // Les clés se stabilisent avant l'écriture : une clé
+                    // attribuée ne bouge plus, quoi que la collection devienne.
+                    // Les clés de la bibliothèque locale sont prises d'abord —
+                    // une notice Zotero ne vient jamais heurter un livre tenu
+                    // par l'écrivain lui-même.
+                    let mut pris = std::collections::BTreeSet::new();
+
+                    for entree in &state.bibliography {
+                        pris.insert(entree.key.clone());
+                    }
+
+                    let chemin = dir.join("citations.json");
+                    let mut trousseau = crate::zotero::keys::Keyring::load(&chemin);
+                    let bibtex = trousseau.stabiliser(&bibtex, &pris);
+
+                    // La transaction : clés, bibliothèque et liaison — les
+                    // trois fichiers produits, ensemble ou pas du tout. Jamais
+                    // de clés revendiquées sans bibliothèque, ni de liaison
+                    // sans clés.
+                    let ecrits = {
+                        let cles = trousseau.texte();
+                        let liaison = crate::zotero::Lien { cle, nom }.texte();
+
+                        match (cles, liaison) {
+                            (Ok(cles), Ok(liaison)) => vec![
+                                (chemin.clone(), cles),
+                                (dir.join("references-zotero.bib"), bibtex),
+                                (dir.join("zotero.json"), liaison),
+                            ],
+                            (Err(erreur), _) | (_, Err(erreur)) => {
+                                state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                                    motif: format!(
+                                        "La bibliothèque n'a pas pu être préparée (rien n'a changé) : {erreur}"
+                                    ),
+                                    reglable: false,
+                                });
+
+                                return Task::none();
+                            }
+                        }
+                    };
+
+                    if let Err(erreur) = crate::project::ecrire_en_transaction(&ecrits) {
+                        state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                            motif: format!(
+                                "La bibliothèque n'a pas pu être écrite (rien n'a changé) : {erreur}"
+                            ),
+                            reglable: false,
+                        });
+
+                        return Task::none();
+                    }
+
+                    // La liaison est faite : le projet la porte, et la
+                    // bibliothèque montrée devient celle de Zotero — lue, jamais
+                    // écrite.
+                    state.project = crate::project::load(&dir);
+                    state.bibliography = state
+                        .project
+                        .bibliography
+                        .as_ref()
+                        .map(|path| crate::project::parse_bibliography(path))
+                        .unwrap_or_default();
+                    state.zotero = crate::zotero::Etat {
+                        source: crate::zotero::Source::Zotero,
+                        lie: true,
+                    };
+                    state.liaison = None;
+
+                    Task::none()
+                }
+                Err(erreur) => {
+                    state.liaison = Some(crate::app::state::LiaisonZotero::Erreur {
+                        motif: erreur,
+                        reglable: false,
+                    });
+                    Task::none()
+                }
             }
-        },
+        }
 
         Message::ZoteroDelier => {
             let dir = state.project.dir.clone();
@@ -2928,12 +3425,10 @@ fn plan_touche(
         "e" if modifiers.shift() => Action::Message(Message::ModeTypst),
         "e" => Action::Message(Message::ModeBasculer),
         // Scinder la vue : `\` divise, Maj inverse la direction.
-        "\\" if modifiers.shift() => Action::Message(Message::Scinder(
-            iced::widget::pane_grid::Edge::Bottom,
-        )),
-        "\\" => Action::Message(Message::Scinder(
-            iced::widget::pane_grid::Edge::Right,
-        )),
+        "\\" if modifiers.shift() => {
+            Action::Message(Message::Scinder(iced::widget::pane_grid::Edge::Bottom))
+        }
+        "\\" => Action::Message(Message::Scinder(iced::widget::pane_grid::Edge::Right)),
         // Titres : Ctrl+1 à Ctrl+6 insèrent le niveau demandé.
         "1" => Action::Message(Message::TitreInserer(1)),
         "2" => Action::Message(Message::TitreInserer(2)),
@@ -3360,12 +3855,26 @@ fn map_outline_to_source(
 
 /// Lance la compilation du document (moteur Typst en bibliothèque).
 fn compile_task(state: &State) -> Task<Message> {
-    let cle = (state.project.dir.clone(), state.editor.path.clone().unwrap_or_else(|| state.project.main.clone()));
+    let cle = (
+        state.project.dir.clone(),
+        state
+            .editor
+            .path
+            .clone()
+            .unwrap_or_else(|| state.project.main.clone()),
+    );
     let dir = state.document_dir();
-    let (entry, overrides) = state.compilation_unit();
+    let (entry, overrides, preparation) = state.compilation_unit_avec_diagnostics();
 
     Task::perform(
-        async move { crate::typst::render::compile(&dir, &entry, &overrides) },
+        async move {
+            let mut resultat = crate::typst::render::compile(&dir, &entry, &overrides);
+            // Les citations neutralisées pendant la préparation sont des
+            // avertissements au même titre que ceux du compilateur — les
+            // masquer ici les condamnerait au silence.
+            resultat.warnings.splice(0..0, preparation);
+            resultat
+        },
         move |resultat| Message::RetourDocument(cle, Box::new(Message::RenderDone(resultat))),
     )
 }
@@ -3438,21 +3947,29 @@ fn subscription_keys() -> Subscription<Message> {
 /// Traduction des événements natifs, y compris ceux capturés par le rendu.
 fn message_evenement(event: Event, status: Status) -> Option<Message> {
     match event {
+        Event::Window(iced::window::Event::CloseRequested) => Some(Message::FermetureDemandee),
         // Ctrl seul est annoncé par ModifiersChanged, indépendamment de
         // toute frappe. Le suivre ici évite aussi d'avaler Ctrl+S, Ctrl+E…
         Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
-            Some(Message::ModificateursTenus { controle: modifiers.control(), maj: modifiers.shift() })
+            Some(Message::ModificateursTenus {
+                controle: modifiers.control(),
+                maj: modifiers.shift(),
+            })
         }
-        Event::Window(iced::window::Event::Unfocused) => {
-            Some(Message::ModificateursTenus { controle: false, maj: false })
-        }
+        Event::Window(iced::window::Event::Unfocused) => Some(Message::ModificateursTenus {
+            controle: false,
+            maj: false,
+        }),
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => match status {
             Status::Ignored => Some(Message::RawKey(key, modifiers)),
             Status::Captured => None,
         },
 
         Event::Keyboard(keyboard::Event::KeyReleased { modifiers, .. }) if !modifiers.control() => {
-            Some(Message::ModificateursTenus { controle: false, maj: modifiers.shift() })
+            Some(Message::ModificateursTenus {
+                controle: false,
+                maj: modifiers.shift(),
+            })
         }
 
         // La molette tient le zoom — `Ctrl` de la souris, comme dans tout
@@ -3496,7 +4013,10 @@ mod tests_de_la_molette {
                 Event::Window(iced::window::Event::Unfocused),
                 Status::Ignored,
             ),
-            Some(Message::ModificateursTenus { controle: false, maj: false })
+            Some(Message::ModificateursTenus {
+                controle: false,
+                maj: false
+            })
         ));
     }
 
@@ -3507,7 +4027,10 @@ mod tests_de_la_molette {
             Status::Captured,
         );
         assert!(
-            matches!(ctrl, Some(Message::ModificateursTenus { controle: true, .. })),
+            matches!(
+                ctrl,
+                Some(Message::ModificateursTenus { controle: true, .. })
+            ),
             "Ctrl seul doit armer le zoom, sans attendre une lettre"
         );
         assert!(matches!(message_evenement(
@@ -3522,7 +4045,10 @@ mod tests_de_la_molette {
                 )),
                 Status::Captured,
             ),
-            Some(Message::ModificateursTenus { controle: false, .. })
+            Some(Message::ModificateursTenus {
+                controle: false,
+                ..
+            })
         ));
     }
 }
@@ -3847,5 +4373,79 @@ mod tests {
         assert_eq!(mapped[0].page, 0);
         assert_eq!(mapped[1].line, 3);
         assert_eq!(mapped[1].page, 2);
+    }
+}
+
+#[cfg(test)]
+mod tests_plan_touche {
+    use super::{Action, Message, Situation, plan_touche};
+    use iced::keyboard::{Key, Modifiers, key::Named};
+
+    fn touche(caractere: &str) -> Key {
+        Key::Character(caractere.into())
+    }
+
+    /// Une frappe de texte ne lance **aucun** raccourci : les raccourcis
+    /// exigent le Contrôleur, et la saisie reste à la saisie (R6, « sans
+    /// conflit avec la saisie »).
+    #[test]
+    fn une_frappe_sans_ctrl_ne_lance_aucun_raccourci() {
+        let etat = Situation::default();
+
+        for caractere in [
+            "s", "i", "n", "o", "f", "t", "p", "e", "1", "2", "3", "4", "5", "6", "+", "0", "\\",
+        ] {
+            assert!(
+                matches!(
+                    plan_touche(etat, &touche(caractere), Modifiers::empty()),
+                    Action::Rien
+                ),
+                "« {caractere} » nu ne doit rien lancer"
+            );
+
+            // Même avec Maj : le texte garde ses capitales.
+            assert!(
+                matches!(
+                    plan_touche(etat, &touche(caractere), Modifiers::SHIFT),
+                    Action::Rien
+                ),
+                "« {caractere} » en majuscule ne doit rien lancer"
+            );
+        }
+    }
+
+    /// Les raccourcis annoncés font leur geste — et l'aide a sa touche.
+    #[test]
+    fn les_raccourcis_ctrl_font_leur_geste() {
+        let etat = Situation::default();
+
+        assert!(matches!(
+            plan_touche(etat, &touche("s"), Modifiers::CTRL),
+            Action::Enregistrer
+        ));
+        assert!(matches!(
+            plan_touche(etat, &touche("f"), Modifiers::CTRL),
+            Action::Message(Message::RechercheOuvrir)
+        ));
+        assert!(matches!(
+            plan_touche(etat, &touche("1"), Modifiers::CTRL),
+            Action::Message(Message::TitreInserer(1))
+        ));
+        assert!(matches!(
+            plan_touche(etat, &Key::Named(Named::F1), Modifiers::empty()),
+            Action::Message(Message::AideBasculer)
+        ));
+    }
+
+    /// Contrôleur + Alt : le raccourci ne part pas — les combinaisons du
+    /// système gardent leurs touches.
+    #[test]
+    fn ctrl_alt_ne_lance_pas_le_raccourci() {
+        let etat = Situation::default();
+
+        assert!(matches!(
+            plan_touche(etat, &touche("s"), Modifiers::CTRL | Modifiers::ALT),
+            Action::Rien
+        ));
     }
 }

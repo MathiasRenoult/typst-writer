@@ -132,10 +132,7 @@ fn carte<'a>(
         ..Default::default()
     });
 
-    let contenu = column![
-        ouvrir,
-        Space::new().height(12),
-    ];
+    let contenu = column![ouvrir, Space::new().height(12),];
     mouse_area(
         container(contenu)
             .width(Length::Fixed(202.0))
@@ -200,44 +197,46 @@ pub fn view(state: &State) -> Element<'_, Message> {
             );
         }
         // La carte de création : la taille d'une vignette, à la suite.
-        let creer = || button(
-            container(
-                iced::widget::column![
-                    crate::ui::theme::icon(
-                        lucide_icons::iced::icon_plus::<iced::Theme>(),
-                        28.0,
-                        palette.accent,
-                    ),
-                    palette
-                        .label("Nouveau projet")
-                        .size(theme::jetons::DETAIL)
-                        .color(palette.text_muted),
-                ]
-                .spacing(8)
-                .align_x(Alignment::Center),
+        let creer = || {
+            button(
+                container(
+                    iced::widget::column![
+                        crate::ui::theme::icon(
+                            lucide_icons::iced::icon_plus::<iced::Theme>(),
+                            28.0,
+                            palette.accent,
+                        ),
+                        palette
+                            .label("Nouveau projet")
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted),
+                    ]
+                    .spacing(8)
+                    .align_x(Alignment::Center),
+                )
+                .center_x(Length::Fixed(202.0))
+                .center_y(Length::Fixed(196.0)),
             )
-            .center_x(Length::Fixed(202.0))
-            .center_y(Length::Fixed(196.0)),
-        )
-        .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
-        .padding(12)
-        .style(move |_, statut| button::Style {
-            background: Some(
-                if matches!(statut, button::Status::Hovered) {
-                    palette.surface_hover
-                } else {
-                    palette.background
-                }
-                .into(),
-            ),
-            text_color: palette.text,
-            border: iced::Border {
-                color: palette.border,
-                width: 1.0,
-                radius: theme::jetons::RAYON.into(),
-            },
-            ..Default::default()
-        });
+            .on_press(Message::ProjetDepuisEtagere(etagere.clone()))
+            .padding(12)
+            .style(move |_, statut| button::Style {
+                background: Some(
+                    if matches!(statut, button::Status::Hovered) {
+                        palette.surface_hover
+                    } else {
+                        palette.background
+                    }
+                    .into(),
+                ),
+                text_color: palette.text,
+                border: iced::Border {
+                    color: palette.border,
+                    width: 1.0,
+                    radius: theme::jetons::RAYON.into(),
+                },
+                ..Default::default()
+            })
+        };
         let mut dernier_rangee = true;
         for (i, rangee) in projets.chunks(colonnes).enumerate() {
             let mut cartes = row![].spacing(16);

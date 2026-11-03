@@ -49,9 +49,15 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 
     corps = corps.push(
         row![
-            pick_list(noms, Some(fichier.meta.name.clone()), Message::ThemeEditeurChoisir)
-                .width(Length::Fixed(200.0)),
-            palette.label("le thème à éditer").size(theme::jetons::DETAIL),
+            pick_list(
+                noms,
+                Some(fichier.meta.name.clone()),
+                Message::ThemeEditeurChoisir
+            )
+            .width(Length::Fixed(200.0)),
+            palette
+                .label("le thème à éditer")
+                .size(theme::jetons::DETAIL),
         ]
         .spacing(10)
         .align_y(iced::Alignment::Center),
@@ -101,19 +107,25 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         // THEME-06-02 : la pastille est cliquable et ouvre le color picker.
         // THEME-06-01 : les pastilles redondantes et le bouton "…" sont
         // supprimés — la pastille suffit.
-        let teinte = crate::theming::HexColor::parse(valeur.trim()).ok().map(|c| c.0);
+        let teinte = crate::theming::HexColor::parse(valeur.trim())
+            .ok()
+            .map(|c| c.0);
 
         let pastille = button(
-            container(Space::new().width(Length::Fixed(18.0)).height(Length::Fixed(18.0)))
-                .style(move |_theme| container::Style {
-                    background: teinte.map(iced::Background::from),
-                    border: iced::Border {
-                        width: 1.0,
-                        color: palette.border,
-                        ..Default::default()
-                    },
+            container(
+                Space::new()
+                    .width(Length::Fixed(18.0))
+                    .height(Length::Fixed(18.0)),
+            )
+            .style(move |_theme| container::Style {
+                background: teinte.map(iced::Background::from),
+                border: iced::Border {
+                    width: 1.0,
+                    color: palette.border,
                     ..Default::default()
-                }),
+                },
+                ..Default::default()
+            }),
         )
         .on_press(Message::ThemeEditeurColorPicker(champ))
         .padding(2)
@@ -164,7 +176,9 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     );
 
     let fenetre = container(column![
-        palette.label("L'éditeur de thème").size(theme::jetons::SAILLANT),
+        palette
+            .label("L'éditeur de thème")
+            .size(theme::jetons::SAILLANT),
         Space::new().height(6),
         corps,
     ])
@@ -182,15 +196,12 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 
     // THEME-EDITOR-04-01 : le picker RVB intégré, par-dessus l'éditeur.
     match state.color_picker.as_ref() {
-        Some(picker) => iced::widget::container(
-            column![
-                base,
-                color_picker_overlay(picker, palette),
-            ]
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into(),
+        Some(picker) => {
+            iced::widget::container(column![base, color_picker_overlay(picker, palette),])
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        }
         None => base,
     }
 }
@@ -202,12 +213,9 @@ fn color_picker_overlay(
 ) -> Element<'static, Message> {
     let preview_color = iced::Color::from_rgb8(picker.r, picker.g, picker.b);
 
-    let slider_r = iced::widget::slider(0..=255, picker.r, Message::ColorPickerR)
-        .step(1u8);
-    let slider_g = iced::widget::slider(0..=255, picker.g, Message::ColorPickerG)
-        .step(1u8);
-    let slider_b = iced::widget::slider(0..=255, picker.b, Message::ColorPickerB)
-        .step(1u8);
+    let slider_r = iced::widget::slider(0..=255, picker.r, Message::ColorPickerR).step(1u8);
+    let slider_g = iced::widget::slider(0..=255, picker.g, Message::ColorPickerG).step(1u8);
+    let slider_b = iced::widget::slider(0..=255, picker.b, Message::ColorPickerB).step(1u8);
 
     let preview = iced::widget::container(
         iced::widget::Space::new()
@@ -227,16 +235,26 @@ fn color_picker_overlay(
     container(
         column![
             row![
-                palette.label("Choisir une couleur").size(theme::jetons::SAILLANT),
+                palette
+                    .label("Choisir une couleur")
+                    .size(theme::jetons::SAILLANT),
                 Space::new().width(Length::Fill),
                 preview,
-                palette.label(format!("#{:02x}{:02x}{:02x}", picker.r, picker.g, picker.b)).size(theme::jetons::DETAIL),
+                palette
+                    .label(format!("#{:02x}{:02x}{:02x}", picker.r, picker.g, picker.b))
+                    .size(theme::jetons::DETAIL),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center),
-            row![palette.label("R").size(11), slider_r].spacing(6).align_y(iced::Alignment::Center),
-            row![palette.label("G").size(11), slider_g].spacing(6).align_y(iced::Alignment::Center),
-            row![palette.label("B").size(11), slider_b].spacing(6).align_y(iced::Alignment::Center),
+            row![palette.label("R").size(11), slider_r]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            row![palette.label("G").size(11), slider_g]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            row![palette.label("B").size(11), slider_b]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
             row![
                 Space::new().width(Length::Fill),
                 button(palette.label("Annuler").size(theme::jetons::DETAIL))

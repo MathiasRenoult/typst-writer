@@ -47,6 +47,8 @@ fn main() -> iced::Result {
         // Sans minimum, la fenêtre pouvait être réduite à rien, et la
         // disposition n'a plus de sens dès que la mesure ne tient plus.
         min_size: Some(iced::Size::new(820.0, 540.0)),
+        // La fermeture attend que l'application ait sauvé ses documents.
+        exit_on_close_request: false,
         ..Default::default()
     })
     // Police Lucide embarquée : les icônes s'affichent sans dépendre des

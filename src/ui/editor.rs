@@ -391,7 +391,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
     vue(state, &state.editor, true)
 }
 
-pub fn vue<'a>(state: &'a State, source: &'a crate::editor::EditorState, active: bool) -> Element<'a, Message> {
+pub fn vue<'a>(
+    state: &'a State,
+    source: &'a crate::editor::EditorState,
+    active: bool,
+) -> Element<'a, Message> {
     let palette = state.resolved.palette;
     let editor = source.editor.view().map(Message::Editor);
     let bulle = if active { bulle(state, palette) } else { None };

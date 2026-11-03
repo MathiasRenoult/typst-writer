@@ -31,7 +31,6 @@ const COULEURS: [(&str, &str, &str); 7] = [
     ("Gris", "gray", "#7f8c8d"),
 ];
 
-
 /// La barre d'outils : des icônes, pas des mots.
 ///
 /// Chaque bouton porte une infobulle — sans elle une icône seule est une
@@ -40,7 +39,10 @@ const COULEURS: [(&str, &str, &str); 7] = [
 pub fn view(state: &State) -> Element<'_, Message> {
     let palette = state.resolved.palette;
 
-    let mut bar = row![].spacing(SPACING).align_y(Alignment::Center).width(Length::Fill);
+    let mut bar = row![]
+        .spacing(SPACING)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
 
     // TOPBAR-06-01 : le bouton de fermeture de l'onglet actif, à gauche.
     bar = bar.push(icon_button(
@@ -165,7 +167,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
         // TOPBAR-06 : la pastille applique la dernière couleur choisie,
         // le picker ouvre le choix. La pastille mémorise la couleur courante.
-        let derniere = state.derniere_couleur.clone().unwrap_or_else(|| "red".to_string());
+        let derniere = state
+            .derniere_couleur
+            .clone()
+            .unwrap_or_else(|| "red".to_string());
         // TOPBAR-04-06 : la pastille montre la vraie couleur, pas un nom.
         let couleur_actuelle = COULEURS
             .iter()
@@ -195,9 +200,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .padding(4)
         .style(move |_, s| button_style(s, palette));
 
-        bar = bar.push(iced::widget::tooltip(
-            pastille,
-            container(palette.label("Appliquer la dernière couleur choisie").size(12).color(palette.text))
+        bar = bar.push(
+            iced::widget::tooltip(
+                pastille,
+                container(
+                    palette
+                        .label("Appliquer la dernière couleur choisie")
+                        .size(12)
+                        .color(palette.text),
+                )
                 .padding([4, 8])
                 .style(move |_| container::Style {
                     background: Some(palette.surface_hover.into()),
@@ -208,8 +219,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     },
                     ..Default::default()
                 }),
-            iced::widget::tooltip::Position::Bottom,
-        ).gap(6));
+                iced::widget::tooltip::Position::Bottom,
+            )
+            .gap(6),
+        );
 
         // TOPBAR-04-08 : le picker de l'éditeur — palette de base.
         // Le choix libre passe par l'éditeur de thème (picker RVB).
@@ -409,7 +422,6 @@ fn couleur_typst(label: &str) -> Option<&'static str> {
         .find(|(libelle, _, _)| *libelle == label)
         .map(|(_, nom, _)| *nom)
 }
-
 
 /// Le menu des niveaux de titre : un `pick_list`, pas un `tooltip`.
 ///

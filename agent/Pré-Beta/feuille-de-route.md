@@ -1,5 +1,10 @@
 # Feuille de route — de la version 0.2 à la beta
 
+> Document historique. Les états « fait » ci-dessous correspondent aux
+> déclarations de l'époque, pas à une validation actuelle. Pour l'audit et
+> le nouveau plan, voir [audit avant bêta](audit-avant-beta-2026-11.md) et
+> [roadmap vers la bêta](roadmap-vers-beta-2026-11.md).
+
 Trois arbitrages la fondent, posés le 28 octobre 2026 :
 
 - **la beta s'adresse à des thésards et écrivains volontaires**, quelques-

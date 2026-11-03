@@ -275,7 +275,13 @@ fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) 
     )
 }
 
-pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, editor: &'a crate::editor::EditorState, lsp: &'a crate::app::state::LspState, id: Option<u64>) -> Element<'a, Message> {
+pub fn vue<'a>(
+    state: &'a State,
+    render: &'a crate::app::state::RenderState,
+    editor: &'a crate::editor::EditorState,
+    lsp: &'a crate::app::state::LspState,
+    id: Option<u64>,
+) -> Element<'a, Message> {
     let sizes = page_sizes(render);
     let palette = state.resolved.palette;
 
@@ -322,10 +328,14 @@ pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, edi
             .on_press(Message::PreviewZoomStep(1))
             .padding([3, 7]),
         iced::widget::button(iced::widget::text("W").size(11))
-            .on_press(Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth))
+            .on_press(Message::PreviewZoom(
+                crate::app::state::PreviewZoomMode::FitWidth
+            ))
             .padding([3, 7]),
         iced::widget::button(iced::widget::text("H").size(11))
-            .on_press(Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitHeight))
+            .on_press(Message::PreviewZoom(
+                crate::app::state::PreviewZoomMode::FitHeight
+            ))
             .padding([3, 7]),
     ]
     .spacing(4)
@@ -335,6 +345,20 @@ pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, edi
     // Diagnostics du compilateur, en tête du panneau.
     if !render.errors.is_empty() {
         content = content.push(diagnostics_panel(&render.errors, true, open, palette));
+    }
+
+    // Un aperçu affiché sous des erreurs est un aperçu **ancien** : le
+    // texte courant ne ressemble pas à ces pages, et il faut le dire.
+    if render.apercu_perime() {
+        content = content.push(
+            container(
+                palette
+                    .label("Aperçu ancien — la compilation actuelle a échoué.")
+                    .size(11),
+            )
+            .padding([4, 8])
+            .width(iced::Length::Fill),
+        );
     }
 
     if !render.warnings.is_empty() {
@@ -361,7 +385,10 @@ pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, edi
         content = content.push(palette.label(message).size(BODY_SIZE));
 
         return scrollable(content)
-            .id(id.map_or_else(|| iced::widget::Id::from(SCROLL_ID), |id| iced::widget::Id::from(format!("apercu-{id}"))))
+            .id(id.map_or_else(
+                || iced::widget::Id::from(SCROLL_ID),
+                |id| iced::widget::Id::from(format!("apercu-{id}")),
+            ))
             .direction(iced::widget::scrollable::Direction::Both {
                 vertical: iced::widget::scrollable::Scrollbar::default(),
                 horizontal: iced::widget::scrollable::Scrollbar::default(),
@@ -416,7 +443,10 @@ pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, edi
     }
 
     scrollable(content)
-        .id(id.map_or_else(|| iced::widget::Id::from(SCROLL_ID), |id| iced::widget::Id::from(format!("apercu-{id}"))))
+        .id(id.map_or_else(
+            || iced::widget::Id::from(SCROLL_ID),
+            |id| iced::widget::Id::from(format!("apercu-{id}")),
+        ))
         .direction(iced::widget::scrollable::Direction::Both {
             vertical: iced::widget::scrollable::Scrollbar::default(),
             horizontal: iced::widget::scrollable::Scrollbar::default(),
@@ -443,7 +473,12 @@ pub fn vue<'a>(state: &'a State, render: &'a crate::app::state::RenderState, edi
 
 /// Une page : l'image si elle est rasterisée, sinon un cadre de la même
 /// taille (la géométrie du document est connue avant tout rendu).
-fn page_view(render: &crate::app::state::RenderState, palette: Palette, index: usize, size: (f32, f32)) -> Element<'_, Message> {
+fn page_view(
+    render: &crate::app::state::RenderState,
+    palette: Palette,
+    index: usize,
+    size: (f32, f32),
+) -> Element<'_, Message> {
     let (width, height) = size;
 
     // Double tampon : l'image de la page est affichée dès qu'elle existe,

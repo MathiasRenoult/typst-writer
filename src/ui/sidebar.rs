@@ -2,7 +2,9 @@ use crate::app::state::ChapterRename;
 use crate::app::{Message, State};
 use crate::project::{BibliographyEntry, Chapter};
 use crate::ui::theme::{self, Palette};
-use iced::widget::{mouse_area, Space, button, column, container, row, scrollable, text, text_input, tooltip};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, scrollable, text, text_input, tooltip,
+};
 use iced::{Alignment, Element, Fill, Length, Theme};
 
 /// Hauteur d'une ligne.
@@ -56,7 +58,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .unwrap_or(true);
                 label.push_str(if parent_dernier { "    " } else { "│   " });
             }
-            label.push_str(if est_dernier { "└── " } else { "├── " });
+            label.push_str(if est_dernier {
+                "└── "
+            } else {
+                "├── "
+            });
             label.push_str(entry.text.trim());
 
             content = content.push(
@@ -187,9 +193,57 @@ pub fn view(state: &State) -> Element<'_, Message> {
             button(
                 palette
                     .label("Créer la bibliographie locale")
-                    .size(theme::jetons::DETAIL)
+                    .size(theme::jetons::DETAIL),
             )
             .on_press(Message::BibliographieCreer)
+            .padding([5, 10])
+            .width(Fill),
+        );
+    }
+
+    // L'alternative sans plugin : un `.bib` exporté par Zotero lui-même
+    // rejoint la bibliothèque locale, sans rien écraser.
+    content = content.push(
+        button(
+            palette
+                .label("Importer un fichier .bib…")
+                .size(theme::jetons::DETAIL),
+        )
+        .on_press(Message::BibliographieImporter)
+        .padding([5, 10])
+        .width(Fill),
+    );
+
+    // Les gestes d'insertion de R5 : le gabarit entre au curseur, et le
+    // curseur se pose là où l'on doit écrire.
+    content = content.push(
+        row![
+            button(palette.label("Note").size(theme::jetons::DETAIL))
+                .on_press(Message::NoteInserer)
+                .padding([5, 8]),
+            button(palette.label("Figure").size(theme::jetons::DETAIL))
+                .on_press(Message::FigureInserer)
+                .padding([5, 8]),
+            button(palette.label("Étiquette").size(theme::jetons::DETAIL))
+                .on_press(Message::EtiquetteInserer)
+                .padding([5, 8]),
+            button(palette.label("Renvoi").size(theme::jetons::DETAIL))
+                .on_press(Message::RenvoiInserer)
+                .padding([5, 8]),
+        ]
+        .spacing(4),
+    );
+
+    // La dernière notice supprimée se ravise d'un geste : sa copie est à
+    // la corbeille, et c'est elle qu'on remet.
+    if let Some(copie) = state.derniere_notice_supprimee.clone() {
+        content = content.push(
+            button(
+                palette
+                    .label("Restaurer la dernière notice supprimée")
+                    .size(theme::jetons::DETAIL),
+            )
+            .on_press(Message::ReferenceRestaurer(copie))
             .padding([5, 10])
             .width(Fill),
         );
@@ -317,7 +371,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         filtre.is_empty()
             || entry.key.to_lowercase().contains(&filtre)
             || entry.titre.to_lowercase().contains(&filtre)
-            || entry.annee.as_deref().map(|a| a.to_lowercase().contains(&filtre)).unwrap_or(false)
+            || entry
+                .annee
+                .as_deref()
+                .map(|a| a.to_lowercase().contains(&filtre))
+                .unwrap_or(false)
             || entry
                 .auteurs
                 .iter()
@@ -336,8 +394,29 @@ pub fn view(state: &State) -> Element<'_, Message> {
     }
 
     // ---- Les projets ----
+
     content = content.push(Space::new().height(18));
     content = content.push(section_title("Projets", palette));
+
+    // Les modèles de R5, en un geste : le devoir court et le travail long
+    // naissent complets — page de titre, sommaire, bibliographie.
+    for (modele, libelle) in [
+        (
+            crate::project::model::Modele::DevoirCourt,
+            "Nouveau devoir court…",
+        ),
+        (
+            crate::project::model::Modele::TravailLong,
+            "Nouveau travail long…",
+        ),
+    ] {
+        content = content.push(
+            button(palette.label(libelle).size(theme::jetons::DETAIL))
+                .on_press(Message::ProjetCreerAvecModele(modele))
+                .padding([5, 10])
+                .width(Fill),
+        );
+    }
 
     // Le projet courant en tête : la liste sert à en changer, pas à se repérer.
     for (rang, other) in state.projects.iter().enumerate() {
@@ -654,7 +733,11 @@ fn info_row<'a>(
 
 /// Une référence citable : un clic insère `@clé`, l'icône l'ouvre pour la
 /// modifier — dans une bibliothèque locale seulement.
-fn citation_row<'a>(entry: &'a BibliographyEntry, palette: Palette, survolee: bool) -> Element<'a, Message> {
+fn citation_row<'a>(
+    entry: &'a BibliographyEntry,
+    palette: Palette,
+    survolee: bool,
+) -> Element<'a, Message> {
     // Deux registres plutôt qu'une ligne coupée : l'auteur au premier,
     // l'ouvrage au second en retrait — l'œil suit, au lieu de deviner ce
     // que les trois points ont emporté. La clé reste dans l'infobulle,

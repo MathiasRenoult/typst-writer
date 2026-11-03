@@ -1,7 +1,7 @@
 # iced-code-editor — copie vendorisée
 
 Ce dossier est une copie de `iced-code-editor` 0.5.2, dans laquelle ce projet
-apporte **dix modifications**. Le reste du fichier est la version amont.
+apporte **dix-sept modifications**. Le reste du fichier est la version amont.
 
 Le raccordement se fait par `[patch.crates-io]` dans le `Cargo.toml` racine :
 
@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les treize modifications
+## Les dix-sept modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -281,12 +281,15 @@ unité à égaliser.
 `editing/cursor.rs` (`selectionner`).
 
 
-## La recherche du crate est désactivée
+## La recherche du crate est désactivée par l'application
 
-`search_replace_enabled` passe à `false` à la construction : la recherche
-propre au crate — sans expressions régulières ni rappel de groupes —
-laissait `Ctrl+F` sans emploi pour celle de l'application, qui en a. Le
-raccourci est donc libre, et la recherche de l'application le reprend.
+Ce n'est plus un correctif de la copie : le défaut de `search_replace_enabled`
+reste celui de l'amont, et c'est l'application qui le pose à `false` à la
+construction de chaque éditeur (`src/editor/mod.rs`), par l'API publique. La
+recherche propre au crate — sans expressions régulières ni rappel de groupes —
+laissait `Ctrl+F` sans emploi pour celle de l'application, qui en a ; le
+raccourci est donc libre. Un défaut modifié dans la copie cassait deux tests
+amont de la ligne de commande vim, qui comptent sur la recherche activée.
 
 ### 15. La sélection qui coupe une note l'emporte entière
 

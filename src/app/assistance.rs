@@ -396,7 +396,20 @@ pub(super) fn ouvrir_composeur(
     let cles = state
         .bibliography
         .iter()
-        .map(|entry| (entry.key.clone(), entry.kind.clone()))
+        .map(|entry| {
+            let auteurs = entry
+                .auteurs
+                .iter()
+                .map(|(nom, prenom)| format!("{nom} {prenom}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let recherche = format!(
+                "{auteurs} {} {}",
+                entry.titre,
+                entry.annee.clone().unwrap_or_default()
+            );
+            (entry.key.clone(), entry.kind.clone(), recherche)
+        })
         .collect();
 
     // L'ancre est celle du `@` déclencheur : le mot tapé commence juste après.
@@ -430,7 +443,20 @@ pub(super) fn ouvrir_edition(
     let cles = state
         .bibliography
         .iter()
-        .map(|entry| (entry.key.clone(), entry.kind.clone()))
+        .map(|entry| {
+            let auteurs = entry
+                .auteurs
+                .iter()
+                .map(|(nom, prenom)| format!("{nom} {prenom}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let recherche = format!(
+                "{auteurs} {} {}",
+                entry.titre,
+                entry.annee.clone().unwrap_or_default()
+            );
+            (entry.key.clone(), entry.kind.clone(), recherche)
+        })
         .collect();
 
     // Toute réponse tinymist encore en vol n'a plus lieu d'être.

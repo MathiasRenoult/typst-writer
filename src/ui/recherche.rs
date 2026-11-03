@@ -26,14 +26,18 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     // elle remplace l'occurrence courante. Les deux gestes sont ceux qu'on
     // attend en tapant — ils ne se cherchent pas.
     let motif = text_input(
-        if etat.mode_regex { "motif — expression régulière" } else { "motif — texte littéral" },
+        if etat.mode_regex {
+            "motif — expression régulière"
+        } else {
+            "motif — texte littéral"
+        },
         &etat.motif,
     )
-        .on_submit(Message::RechercheSuivant)
-        .id(id_du_motif())
-        .on_input(Message::RechercheMotif)
-        .padding(6)
-        .width(Length::Fill);
+    .on_submit(Message::RechercheSuivant)
+    .id(id_du_motif())
+    .on_input(Message::RechercheMotif)
+    .padding(6)
+    .width(Length::Fill);
 
     // Le mode de recherche : littéral ou regex — FIND-01.
     let mode_btn = button(text(if etat.mode_regex { ".*" } else { "Aa" }).size(11))
@@ -89,6 +93,17 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     );
 
     let mut corps = column![haut, actions].spacing(8);
+
+    // L'aperçu des changements : ce que l'occurrence courante devient —
+    // voir avant de remplacer (R6).
+    if let Some((avant, apres)) = etat.apercu.get(etat.courante) {
+        corps = corps.push(
+            palette
+                .label(format!("« {avant} » devient « {apres} »"))
+                .size(theme::jetons::DETAIL)
+                .color(palette.text_muted),
+        );
+    }
 
     if let Some(erreur) = etat.erreur.as_ref() {
         corps = corps.push(

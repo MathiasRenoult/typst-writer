@@ -31,9 +31,10 @@ pub struct Composeur {
     /// L'étape courante.
     pub etape: Etape,
 
-    /// Les clés citables du projet, avec leur genre, telles qu'elles étaient
-    /// à l'ouverture : le composeur n'écoute personne, il filtre sa liste.
-    pub cles: Vec<(String, String)>,
+    /// Les clés citables du projet, avec leur genre et leur texte de
+    /// recherche (auteurs, titre, année), telles qu'elles étaient à
+    /// l'ouverture : le composeur n'écoute personne, il filtre sa liste.
+    pub cles: Vec<(String, String, String)>,
 
     /// La note, entière, dans l'ordre où elle s'écrira.
     pub references: Vec<Reference>,
@@ -85,7 +86,7 @@ impl Composeur {
     }
 
     /// Ouvre le composeur sur la liste entière des clés du projet.
-    pub fn ouvert(cles: Vec<(String, String)>, ancre: usize) -> Self {
+    pub fn ouvert(cles: Vec<(String, String, String)>, ancre: usize) -> Self {
         Self {
             etape: Etape::Reference,
             cles,
@@ -141,8 +142,11 @@ impl Composeur {
 
     /// Les indices des clés qui correspondent à ce qui est tapé.
     ///
-    /// Deux passes, comme la liste de complétion : d'abord ce qui *commence*
-    /// par le filtre, puis ce qui le *contient*.
+    /// La recherche est celle de la bibliothèque : auteur, titre, année,
+    /// clé — pas seulement la clé, sinon la moitié des notices serait
+    /// injouable au composeur (R3). Deux passes, comme la liste de
+    /// complétion : d'abord ce qui *commence* par le filtre, puis ce qui le
+    /// *contient*.
     pub fn visibles(&self) -> Vec<usize> {
         if self.saisie.is_empty() {
             return (0..self.cles.len()).collect();
@@ -152,8 +156,8 @@ impl Composeur {
         let mut debuts = Vec::new();
         let mut contient = Vec::new();
 
-        for (index, (cle, _)) in self.cles.iter().enumerate() {
-            let candidate = cle.to_lowercase();
+        for (index, (cle, _, recherche)) in self.cles.iter().enumerate() {
+            let candidate = format!("{cle} {recherche}").to_lowercase();
 
             if candidate.starts_with(&voulu) {
                 debuts.push(index);
@@ -340,15 +344,48 @@ mod tests {
     use super::*;
 
     /// Un composeur sur trois clés, ouvert au déclencheur.
+    ///
+    /// Chaque clé porte son genre et son texte de recherche (auteurs, titre,
+    /// année) — comme le construit l'application.
     fn composeur() -> Composeur {
         Composeur::ouvert(
             vec![
-                ("dupont2023".to_string(), "article".to_string()),
-                ("martin2020".to_string(), "book".to_string()),
-                ("bernard2021".to_string(), "article".to_string()),
+                (
+                    "dupont2023".to_string(),
+                    "article".to_string(),
+                    "dupont jean théologie 2023".to_string(),
+                ),
+                (
+                    "martin2020".to_string(),
+                    "book".to_string(),
+                    "martin marie histoire 2020".to_string(),
+                ),
+                (
+                    "bernard2021".to_string(),
+                    "article".to_string(),
+                    "bernard paul droit 2021".to_string(),
+                ),
             ],
             4,
         )
+    }
+
+    /// La recherche trouve un auteur, un titre ou une année — pas seulement
+    /// la clé (R3 : « recherche auteur/titre/année/clé »).
+    #[test]
+    fn le_filtre_cherche_auteur_titre_et_annee() {
+        let mut note = composeur();
+
+        note.saisir("théologie".to_string());
+        assert_eq!(note.visibles(), vec![0], "le titre se trouve");
+        note.saisir("marie".to_string());
+        assert_eq!(note.visibles(), vec![1], "l'auteur se trouve");
+        note.saisir("2021".to_string());
+        assert_eq!(note.visibles(), vec![2], "l'année se trouve");
+        note.saisir("martin2020".to_string());
+        assert_eq!(note.visibles(), vec![1], "la clé se trouve");
+        note.saisir("nulle part".to_string());
+        assert!(note.visibles().is_empty(), "rien d'autre ne ment");
     }
 
     /// La boucle complète : Tab donne la page, Tab propose une autre

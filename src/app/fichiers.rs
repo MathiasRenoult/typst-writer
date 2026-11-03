@@ -49,9 +49,36 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             };
 
             if path.extension().is_some_and(|extension| extension == "tw") {
+                // Le tampon ouvert n'est jamais remplacé sans préavis : ses
+                // changements non sauvegardés sont du texte vivant.
+                if state.editor.is_modified() {
+                    if state
+                        .editor
+                        .path
+                        .as_ref()
+                        .is_some_and(|ouvert| crate::project::same_file(&path, ouvert))
+                    {
+                        // C'est déjà lui : rien à faire, surtout pas à perdre.
+                        state.export_status = Some(
+                            "Ce document est déjà ouvert, avec vos changements non sauvegardés."
+                                .to_string(),
+                        );
+                        return Task::none();
+                    }
+                    // Sinon, le `.tw` rejoint le tampon ouvert, prévisualisé.
+                    preparer_import_tw(state, path, &content);
+                    return Task::none();
+                }
+
                 let document = match crate::project::import_writing_document(&state.project, &path)
                 {
                     Ok(document) => document,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // Le projet a déjà son document : le `.tw` rejoint le
+                        // tampon ouvert, après prévisualisation.
+                        preparer_import_tw(state, path, &content);
+                        return Task::none();
+                    }
                     Err(error) => {
                         state.export_status = Some(format!("Ouverture du document : {error}"));
                         return Task::none();
@@ -100,53 +127,38 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .map(|chapter| chapter.included);
 
             if let Some(included) = archived_chapter_included {
-                let document = if included {
-                    crate::project::migrate_to_document(&state.project)
-                } else {
-                    crate::project::append_typst_to_document(&state.project, &content)
-                };
-                let document = match document {
-                    Ok(document) => document,
-                    Err(error) => {
-                        state.export_status = Some(format!("Import du chapitre : {error}"));
-                        return Task::none();
-                    }
-                };
+                if included {
+                    // Chapitre inclus : déjà migré, le document unique s'ouvre.
+                    let document = match crate::project::migrate_to_document(&state.project) {
+                        Ok(document) => document,
+                        Err(error) => {
+                            state.export_status = Some(format!("Import du chapitre : {error}"));
+                            return Task::none();
+                        }
+                    };
 
-                match std::fs::read_to_string(&document) {
-                    Ok(content) => state.open_document(document, content, false),
-                    Err(error) => {
-                        state.export_status = Some(format!("Ouverture de document.tw : {error}"));
-                        return Task::none();
+                    match std::fs::read_to_string(&document) {
+                        Ok(content) => state.open_document(document, content, false),
+                        Err(error) => {
+                            state.export_status =
+                                Some(format!("Ouverture de document.tw : {error}"));
+                            return Task::none();
+                        }
                     }
+
+                    state.export_status =
+                        Some("Ce chapitre est archivé ; éditez le document unique.".to_string());
+                } else {
+                    // Chapitre hors assemblage : il rejoint le tampon ouvert,
+                    // après prévisualisation de la conversion.
+                    preparer_import(state, path, &content);
                 }
-
-                state.export_status = Some(if included {
-                    "Ce chapitre est archivé ; éditez le document unique.".to_string()
-                } else {
-                    "Chapitre hors assemblage ajouté à document.tw.".to_string()
-                });
                 return Task::none();
             }
 
-            // Tout autre `.typ` est importé comme fragment dans le document
-            // unique ; il ne devient plus un chapitre parallèle.
-            let document = match crate::project::append_typst_to_document(&state.project, &content)
-            {
-                Ok(document) => document,
-                Err(error) => {
-                    state.export_status = Some(format!("Import Typst : {error}"));
-                    return Task::none();
-                }
-            };
-            match std::fs::read_to_string(&document) {
-                Ok(content) => state.open_document(document, content, false),
-                Err(error) => {
-                    state.export_status = Some(format!("Ouverture de document.tw : {error}"));
-                    return Task::none();
-                }
-            }
-            state.export_status = Some("Fragment Typst converti dans document.tw.".to_string());
+            // Tout autre `.typ` rejoint le tampon ouvert comme fragment, après
+            // prévisualisation de la conversion.
+            preparer_import(state, path, &content);
 
             Task::none()
         }
@@ -304,6 +316,178 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Message::ImageChoisie,
         ),
 
+        Message::StyleCslImporter => Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Style CSL", &["csl"])
+                    .pick_file()
+                    .await
+                    .map(|fichier| fichier.path().to_path_buf())
+            },
+            Message::StyleCslChoisi,
+        ),
+
+        Message::StyleCslChoisi(result) => {
+            let Some(chemin) = result else {
+                return Task::none();
+            };
+
+            // Entrée non fiable : la taille est bornée avant tout le reste,
+            // et le texte doit être de l'UTF-8 lisible.
+            let octets = std::fs::read(&chemin).unwrap_or_default();
+
+            if octets.len() > 2 * 1024 * 1024 {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Fichier CSL trop grand : 2 Mo au plus.",
+                ));
+
+                return Task::none();
+            }
+
+            let Ok(texte) = std::str::from_utf8(&octets) else {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Fichier CSL illisible : il n'est pas en UTF-8.",
+                ));
+
+                return Task::none();
+            };
+
+            let nom = chemin
+                .file_name()
+                .map(|nom| nom.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "style.csl".to_string());
+
+            let resultat = crate::project::importer_style_csl(
+                &state.project.dir,
+                &nom,
+                texte,
+                crate::zotero::data_dir()
+                    .map(|dir| dir.join("styles"))
+                    .as_deref(),
+            );
+
+            match resultat {
+                Ok(resultat) => appliquer_style(state, resultat),
+                Err(probleme) => {
+                    // Rien ne change : le choix précédent reste.
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::StyleZoteroChoisi(id) => {
+            // La troisième porte : un style installé dans Zotero, copié
+            // dans le projet comme les autres — Zotero n'est jamais modifié.
+            let Some(dialogue) = state.mise_en_page.as_ref() else {
+                return Task::none();
+            };
+            let Some(style) = dialogue
+                .styles_zotero
+                .iter()
+                .find(|style| style.id == id)
+                .cloned()
+            else {
+                // Style manquant : un diagnostic, jamais un remplacement
+                // discret.
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Le style Zotero demandé n'est plus installé : rien n'a changé.",
+                ));
+
+                return Task::none();
+            };
+
+            let Ok(texte) = std::fs::read_to_string(&style.path) else {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "Le style « {} » est illisible : rien n'a changé.",
+                    style.title
+                )));
+
+                return Task::none();
+            };
+
+            let nom = style
+                .path
+                .file_name()
+                .map(|nom| nom.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "style.csl".to_string());
+            let fratrie = style.path.parent().map(|parent| parent.to_path_buf());
+
+            match crate::project::importer_style_csl(
+                &state.project.dir,
+                &nom,
+                &texte,
+                fratrie.as_deref(),
+            ) {
+                Ok(resultat) => appliquer_style(state, resultat),
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                }
+            }
+
+            Task::none()
+        }
+
+        Message::StyleParentTelecharger => {
+            let Some((titre, parent)) = state.style_dependant_en_attente.clone() else {
+                return Task::none();
+            };
+            state.style_dependant_en_attente = None;
+
+            // Le consentement vient d'être donné par la question. Le
+            // téléchargement se dit, et un échec n'empêche rien d'autre.
+            state.note = Some(crate::app::state::Note::info(format!(
+                "Téléchargement du style parent ({parent})…"
+            )));
+
+            match crate::zotero::styles::telecharger_style(&parent) {
+                Ok(texte) => {
+                    match crate::project::importer_style_csl(
+                        &state.project.dir,
+                        "parent.csl",
+                        &texte,
+                        crate::zotero::data_dir()
+                            .map(|dir| dir.join("styles"))
+                            .as_deref(),
+                    ) {
+                        Ok(crate::project::ImportationStyle::Choisi {
+                            chemin,
+                            avertissement: _,
+                        }) => {
+                            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                                dialogue.reglages.modifier(
+                                    crate::mise_en_page::modele::Champ::BibliographieStyle,
+                                    chemin.display().to_string(),
+                                );
+                                dialogue.modifie = true;
+                            }
+
+                            state.note = Some(crate::app::state::Note::info(format!(
+                                "Style dépendant « {titre} » : le moteur utilise son parent, importé ({}) — écart connu : la locale du style dépendant n'est pas appliquée, c'est celle du document qui sert.",
+                                chemin.display()
+                            )));
+                        }
+                        Ok(crate::project::ImportationStyle::ParentManquant { .. }) => {
+                            state.note = Some(crate::app::state::Note::erreur(
+                                "Le parent téléchargé est lui-même dépendant : importez son parent à la main.",
+                            ));
+                        }
+                        Err(probleme) => {
+                            state.note = Some(crate::app::state::Note::erreur(probleme));
+                        }
+                    }
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "{probleme} Le choix précédent reste ; récupérez le parent ({parent}) et importez-le avec « Importer un fichier .csl… »."
+                    )));
+                }
+            }
+
+            Task::none()
+        }
+
         Message::ImageChoisie(result) => {
             let Some(chemin) = result else {
                 return Task::none();
@@ -315,26 +499,15 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // rapport 2). Une image déjà dans le projet ne se copie pas.
             let relatif = match chemin.strip_prefix(&state.project.dir) {
                 Ok(reste) => reste.to_path_buf(),
-                Err(_) => {
-                    let dossier = state.project.dir.join("images");
-                    let _ = std::fs::create_dir_all(&dossier);
-
-                    let nom = chemin
-                        .file_name()
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| std::path::PathBuf::from("image"));
-
-                    let destination = dossier.join(&nom);
-
-                    if let Err(erreur) = std::fs::copy(&chemin, &destination) {
+                Err(_) => match copier_image_dans_projet(&state.project.dir, &chemin) {
+                    Ok(relatif) => relatif,
+                    Err(erreur) => {
                         state.note = Some(crate::app::state::Note::erreur(format!(
                             "L'image n'a pas pu entrer dans le projet : {erreur}"
                         )));
                         return Task::none();
                     }
-
-                    std::path::PathBuf::from("images").join(nom)
-                }
+                },
             };
 
             let legende = chemin
@@ -353,23 +526,164 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             .insert_at_cursor(&format!("@{key}"))
             .map(Message::Editor),
 
+        // Les gestes d'insertion de R5 : le gabarit entre au curseur, le
+        // curseur se pose là où l'on doit écrire — et le dialecte est celui
+        // du tampon : le `.tw` écrit ses notes `^[…]`, un chapitre `.typ`
+        // parle Typst.
+        Message::NoteInserer => {
+            if sur_typst(&state.editor) {
+                state
+                    .editor
+                    .insert_avec_curseur("#footnote[]", "]".len())
+                    .map(Message::Editor)
+            } else {
+                state
+                    .editor
+                    .insert_avec_curseur("^[]", "]".len())
+                    .map(Message::Editor)
+            }
+        }
+
+        Message::FigureInserer => {
+            if sur_typst(&state.editor) {
+                let suffixe = "],\n) <fig:>\n";
+
+                state
+                    .editor
+                    .insert_avec_curseur(
+                        "#figure(\n  rect(width: 100%),\n  caption: [],\n) <fig:>\n",
+                        suffixe.len(),
+                    )
+                    .map(Message::Editor)
+            } else {
+                // Sur un `.tw`, une figure est une image légendée : c'est le
+                // sélecteur qui la choisit, jamais un gabarit cassé.
+                Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "svg", "webp"])
+                            .pick_file()
+                            .await
+                            .map(|fichier| fichier.path().to_path_buf())
+                    },
+                    Message::ImageChoisie,
+                )
+            }
+        }
+
+        Message::EtiquetteInserer => {
+            if sur_typst(&state.editor) {
+                state
+                    .editor
+                    .insert_avec_curseur(" <>", ">".len())
+                    .map(Message::Editor)
+            } else {
+                // Le `.tw` n'a pas encore de syntaxe d'étiquette : le geste
+                // le dit au lieu d'insérer du texte mort (R5).
+                state.note = Some(crate::app::state::Note::info(
+                    "Les étiquettes de renvoi s'écrivent dans les chapitres .typ : <nom>.                     Le document .tw en sera doté plus tard.",
+                ));
+
+                Task::none()
+            }
+        }
+
+        Message::RenvoiInserer => state.editor.insert_at_cursor("@").map(Message::Editor),
+
         Message::SaveFile => {
+            // Une demande explicite remet la question sur le tapis : un refus
+            // antérieur ne condamne pas le texte à rester en mémoire.
+            state.conflit_refuse = None;
             state.persist();
             state.refresh_context();
 
             Task::none()
         }
 
-        Message::SaveAs => save_as_task(state),
+        Message::SauvegardeForcee(_) => {
+            let Some(chemin) = state.editor.path.clone() else {
+                return Task::none();
+            };
+            match state.sauvegarder_document(&chemin, true) {
+                Ok(()) => {
+                    state.save_session();
+                    state.note = Some(crate::app::state::Note::info(
+                        "Enregistré ; la version remplacée reste dans « sauvegardes/ »."
+                            .to_string(),
+                    ));
+                }
+                Err(crate::app::SauvegardeRefusee::Echec(probleme)) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Sauvegarde impossible : {probleme}"
+                    )));
+                }
+                Err(crate::app::SauvegardeRefusee::Conflit(empreinte)) => {
+                    // Le disque a encore changé depuis la question : elle se
+                    // repose pour ce changement-ci.
+                    state.poser_la_question_du_conflit(empreinte);
+                }
+            }
+            Task::none()
+        }
+
+        Message::ImportAppliquer => {
+            let Some(importation) = state.importation.take() else {
+                return Task::none();
+            };
+
+            // Le fichier d'origine a pu changer entre l'aperçu et la
+            // décision : la conversion montrée n'est plus celle qu'on
+            // appliquerait. On ne colle jamais un texte périmé.
+            let actuel = std::fs::read(&importation.chemin)
+                .map(|octets| crate::project::empreinte_contenu(&octets))
+                .ok();
+            if actuel != Some(importation.empreinte) {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "« {} » a changé depuis l'aperçu : l'import est annulé. Relancez-le pour le voir à jour.",
+                    importation.chemin.display()
+                )));
+                return Task::none();
+            }
+            // Le fragment rejoint la fin du tampon ouvert, d'un seul geste :
+            // l'annulation l'emportera d'un seul coup, l'original n'est jamais
+            // touché, et rien ne s'écrit qu'à la sauvegarde.
+            let taches = vec![
+                super::update(state, Message::Editor(iced_code_editor::Message::CtrlEnd)),
+                super::update(
+                    state,
+                    Message::Editor(iced_code_editor::Message::Paste(importation.texte)),
+                ),
+            ];
+            state.export_status = Some(format!(
+                "« {} » importé dans votre texte.",
+                importation.chemin.display()
+            ));
+            Task::batch(taches)
+        }
+
+        Message::SaveAs => save_as_task(state.editor.is_intermediate()),
 
         Message::FileSaved(path) => {
-            if let Some(path) = path {
-                state.editor.set_path(path);
-                state.editor.editor.mark_saved();
+            let Some(path) = path else {
+                return Task::none();
+            };
+            if let Err(erreur) = verifier_destination_copie(state, &path) {
+                state.note = Some(crate::app::state::Note::erreur(erreur));
+                return Task::none();
             }
-
-            state.refresh_context();
-
+            // La copie ne devient pas la source du projet et ne marque pas
+            // son tampon comme sauvé. On capture les dernières frappes après
+            // le dialogue, jamais avant son ouverture.
+            match crate::project::ecrire_atomique(&path, &state.editor.content()) {
+                Ok(()) => {
+                    state.export_status = Some(format!("Copie enregistrée : {}", path.display()))
+                }
+                Err(erreur) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Copie impossible : {erreur}"
+                    )))
+                }
+            }
             Task::none()
         }
 
@@ -396,14 +710,20 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                         return Err("Export annulé".to_string());
                     };
 
-                    let path = file.path().to_path_buf();
-
-                    crate::project::ecrire_atomique_octets(&path, &bytes)
-                        .map(|_| path.display().to_string())
-                        .map_err(|error| format!("Écriture du PDF : {error}"))
+                    Ok((file.path().to_path_buf(), bytes))
                 },
-                Message::PdfExported,
+                Message::PdfDestination,
             )
+        }
+
+        Message::PdfDestination(result) => {
+            let resultat = result.and_then(|(path, bytes)| {
+                verifier_destination_export(state, &path)?;
+                crate::project::ecrire_atomique_octets(&path, &bytes)
+                    .map(|_| path.display().to_string())
+                    .map_err(|error| format!("Écriture du PDF : {error}"))
+            });
+            update(state, Message::PdfExported(resultat))
         }
 
         Message::PdfExported(result) => {
@@ -538,26 +858,259 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
     }
 }
 
-fn save_as_task(state: &State) -> Task<Message> {
-    let content = state.editor.content();
+/// Prévisualise l'import d'un fragment : la conversion est calculée d'avance
+/// et montrée — ce qui s'est converti, ce qui reste brut — avant d'entrer
+/// dans le tampon. Le fichier d'origine ne se touche jamais.
+fn preparer_import(
+    state: &mut crate::app::state::State,
+    chemin: std::path::PathBuf,
+    contenu: &str,
+) {
+    let (document, rapport) = crate::langage::migration::importer_typst_avec_rapport(contenu);
+    let texte = crate::langage::serialiser(&document);
+    let nom = chemin
+        .file_name()
+        .map(|nom| nom.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "le fragment".to_string());
+    let mut question = format!(
+        "Importer « {nom} » à la fin de votre texte ? {} convertis, {} restés en Typst brut.",
+        rapport.elements_convertis, rapport.blocs_bruts
+    );
+    if !rapport.avertissements.is_empty() {
+        question.push(' ');
+        question.push_str(&rapport.avertissements.join(" "));
+    }
+    let empreinte = crate::project::empreinte_contenu(&std::fs::read(&chemin).unwrap_or_default());
+    state.importation = Some(crate::app::state::Importation {
+        chemin,
+        texte,
+        empreinte,
+    });
+    state.confirmation = Some(crate::app::state::Confirmation {
+        question,
+        action: Message::ImportAppliquer,
+    });
+}
 
+/// Le même aperçu pour un fichier `.tw` : la transformation est la
+/// normalisation — lecture puis écriture — et aucune pièce n'y perd rien.
+fn preparer_import_tw(
+    state: &mut crate::app::state::State,
+    chemin: std::path::PathBuf,
+    contenu: &str,
+) {
+    let document = crate::langage::parse(contenu);
+    let texte = crate::langage::serialiser(&document);
+    let nom = chemin
+        .file_name()
+        .map(|nom| nom.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "le fichier".to_string());
+    let question = format!(
+        "Importer « {nom} » à la fin de votre texte ? {} éléments.",
+        document.blocs.len()
+    );
+    let empreinte = crate::project::empreinte_contenu(&std::fs::read(&chemin).unwrap_or_default());
+    state.importation = Some(crate::app::state::Importation {
+        chemin,
+        texte,
+        empreinte,
+    });
+    state.confirmation = Some(crate::app::state::Confirmation {
+        question,
+        action: Message::ImportAppliquer,
+    });
+}
+
+/// Importe une image sans remplacer une image homonyme déjà présente.
+fn copier_image_dans_projet(
+    projet: &std::path::Path,
+    chemin: &std::path::Path,
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::{Error, ErrorKind};
+
+    let dossier = projet.join("images");
+    std::fs::create_dir_all(&dossier)?;
+    let racine = projet.canonicalize()?;
+    let images = dossier.canonicalize()?;
+    if images.parent() != Some(racine.as_path()) {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "Le dossier images se trouve hors du projet.",
+        ));
+    }
+    let nom = chemin
+        .file_name()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "Nom d'image absent"))?;
+    let base = chemin.file_stem().unwrap_or(nom);
+    let extension = chemin.extension();
+    let mut source = std::fs::File::open(chemin)?;
+    for indice in 1u64.. {
+        let nom = if indice == 1 {
+            nom.to_os_string()
+        } else {
+            let mut nom = base.to_os_string();
+            nom.push(format!("-{indice}"));
+            if let Some(extension) = extension {
+                nom.push(".");
+                nom.push(extension);
+            }
+            nom
+        };
+        let destination = dossier.join(&nom);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(mut copie) => {
+                std::io::copy(&mut source, &mut copie)
+                    .and_then(|_| copie.sync_all())
+                    .map_err(|erreur| {
+                        Error::new(
+                            erreur.kind(),
+                            format!(
+                                "{erreur}. Copie éventuellement incomplète : {}",
+                                destination.display()
+                            ),
+                        )
+                    })?;
+                return Ok(std::path::PathBuf::from("images").join(nom));
+            }
+            Err(erreur) if erreur.kind() == ErrorKind::AlreadyExists => continue,
+            Err(erreur) => return Err(erreur),
+        }
+    }
+    Err(Error::other("Aucun nom disponible pour l'image."))
+}
+
+/// Empêche un export d'écraser un document ouvert ou un projet sans verrou.
+pub(super) fn verifier_destination_export(
+    state: &State,
+    chemin: &std::path::Path,
+) -> Result<(), String> {
+    let parent = chemin
+        .parent()
+        .ok_or("Destination sans dossier parent")?
+        .canonicalize()
+        .map_err(|e| format!("Dossier de destination inaccessible : {e}"))?;
+    let nom = chemin.file_name().ok_or("Nom de destination absent")?;
+    let destination = parent.join(nom);
+    let est_ouvert = state
+        .editor
+        .path
+        .as_ref()
+        .is_some_and(|p| crate::project::same_file(p, &destination))
+        || state.espace.vues.values().any(|v| {
+            v.editor
+                .path
+                .as_ref()
+                .is_some_and(|p| crate::project::same_file(p, &destination))
+        });
+    if est_ouvert {
+        return Err(
+            "La copie remplacerait un document ouvert. Choisissez un autre nom.".to_string(),
+        );
+    }
+    let mut racines: Vec<_> = crate::project::list_projects()
+        .into_iter()
+        .map(|p| p.dir)
+        .collect();
+    racines.push(state.project.dir.clone());
+    racines.extend(state.espace.vues.values().map(|v| v.project.dir.clone()));
+    for ancetre in parent.ancestors() {
+        let marqueur = ancetre
+            .join(".verrou-natif")
+            .try_exists()
+            .map_err(|e| format!("Destination inaccessible : {e}"))?
+            || ancetre
+                .join(".verrou")
+                .try_exists()
+                .map_err(|e| format!("Destination inaccessible : {e}"))?;
+        // Un dossier qui porte la signature de l'appli (`document.tw`) est un
+        // de ses projets, même sans verrou : elle ne le détient pas, elle
+        // n'écrit pas dedans. Un dossier Typst ordinaire, lui, reste libre :
+        // `main.typ` seul n'est pas notre marque.
+        let structure_projet = ancetre
+            .join("document.tw")
+            .try_exists()
+            .map_err(|e| format!("Destination inaccessible : {e}"))?;
+        if marqueur || structure_projet {
+            racines.push(ancetre.to_path_buf());
+        }
+    }
+    for racine in racines {
+        let Ok(resolue) = racine.canonicalize() else {
+            if chemin.starts_with(&racine) {
+                return Err("Le projet de destination est inaccessible.".to_string());
+            }
+            continue;
+        };
+        if !destination.starts_with(&resolue) {
+            continue;
+        }
+        let possede_verrou = state
+            .espace
+            .verrous
+            .keys()
+            .any(|p| p.canonicalize().is_ok_and(|p| p == resolue))
+            || (state.verrou.is_some()
+                && state.project.dir.canonicalize().is_ok_and(|p| p == resolue));
+        if !possede_verrou {
+            return Err("Le projet de destination n'est pas ouvert en écriture. Choisissez un autre dossier ou ouvrez d'abord ce projet.".to_string());
+        }
+        let existe = match std::fs::symlink_metadata(&destination) {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(format!("Destination inaccessible : {e}")),
+        };
+        if existe
+            && (destination.extension().is_some_and(|e| {
+                ["tw", "typ", "bib", "toml", "json"]
+                    .iter()
+                    .any(|x| e.eq_ignore_ascii_case(x))
+            }) || nom == ".verrou"
+                || nom == ".verrou-natif")
+        {
+            return Err(
+                "Cette copie remplacerait un fichier du projet. Choisissez un autre nom."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn verifier_destination_copie(state: &State, chemin: &std::path::Path) -> Result<(), String> {
+    let extension_attendue = if state.editor.is_intermediate() {
+        "tw"
+    } else {
+        "typ"
+    };
+    if chemin
+        .extension()
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case(extension_attendue))
+    {
+        return Err(format!(
+            "La copie de cette source doit porter l'extension .{extension_attendue}. Choisissez un autre nom."
+        ));
+    }
+    verifier_destination_export(state, chemin)
+}
+
+fn save_as_task(intermediaire: bool) -> Task<Message> {
+    let (filtre, extension, nom) = if intermediaire {
+        ("Typst Writer", "tw", "copie.tw")
+    } else {
+        ("Typst", "typ", "copie.typ")
+    };
     Task::perform(
         async move {
-            let file = rfd::AsyncFileDialog::new()
-                .add_filter("Typst", &["typ"])
-                .set_file_name("export.typ")
+            rfd::AsyncFileDialog::new()
+                .add_filter(filtre, &[extension])
+                .set_file_name(nom)
                 .save_file()
-                .await?;
-
-            let path = file.path().to_path_buf();
-
-            match crate::project::ecrire_atomique(&path, &content) {
-                Ok(_) => Some(path),
-                Err(error) => {
-                    eprintln!("Erreur lors de l'export : {error}");
-                    None
-                }
-            }
+                .await
+                .map(|file| file.path().to_path_buf())
         },
         Message::FileSaved,
     )
@@ -583,29 +1136,97 @@ fn appliquer_renommage(state: &mut State) -> Task<Message> {
         return Task::none();
     };
 
+    // Valider toutes les cibles avant la première écriture. Le serveur peut
+    // renvoyer un fichier étranger ou un lien sortant du projet courant : le
+    // verrou détenu pour ce projet ne protège pas ces autres emplacements.
+    let racine = state.project.dir.canonicalize();
+    let toutes_dans_le_projet = racine.as_ref().is_ok_and(|racine| {
+        changements.iter().all(|fichier| {
+            fichier
+                .path
+                .canonicalize()
+                .is_ok_and(|chemin| chemin.starts_with(racine))
+        })
+    });
+    if !toutes_dans_le_projet {
+        state.renommage = Some(crate::app::state::Renommage {
+            nom: renommage.nom,
+            changements: Some(changements),
+        });
+        state.note = Some(crate::app::state::Note::erreur(
+            "Renommage annulé : un fichier est absent ou extérieur au projet. Relancez le renommage dans le bon projet.",
+        ));
+        return Task::none();
+    }
+
+    // Ne jamais recharger depuis le disque par-dessus une projection qui
+    // contient des frappes non sauvegardées, y compris dans un autre onglet.
+    let touche_un_tampon_modifie = changements.iter().any(|fichier| {
+        (state.editor.is_modified()
+            && state
+                .editor
+                .path
+                .as_ref()
+                .is_some_and(|path| crate::project::same_file(path, &fichier.path)))
+            || state.espace.vues.values().any(|vue| {
+                vue.editor.is_modified()
+                    && vue
+                        .editor
+                        .path
+                        .as_ref()
+                        .is_some_and(|path| crate::project::same_file(path, &fichier.path))
+            })
+    });
+    if touche_un_tampon_modifie {
+        state.renommage = Some(crate::app::state::Renommage {
+            nom: renommage.nom,
+            changements: None,
+        });
+        state.note = Some(crate::app::state::Note::erreur(
+            "Renommage annulé : un document concerné contient des modifications non sauvegardées. Enregistrez-le puis redemandez le renommage.",
+        ));
+        return Task::none();
+    }
+
     let mut fichiers = 0usize;
     let mut modifications = 0usize;
+    let mut touches = Vec::new();
 
     for fichier in &changements {
-        let Ok(texte) = std::fs::read_to_string(&fichier.path) else {
-            continue;
+        let texte = match std::fs::read_to_string(&fichier.path) {
+            Ok(texte) => texte,
+            Err(erreur) => {
+                // Un fichier qu'on ne peut pas lire est un renommage
+                // incomplet : il s'arrête là, et le dit — glisser ce fichier
+                // en silence laisserait un renommage « appliqué » qui ne
+                // l'est pas tout à fait.
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "Renommage interrompu : {} est illisible ({erreur}). {fichiers} fichier(s) déjà modifié(s).",
+                    fichier.path.display()
+                )));
+                return Task::none();
+            }
         };
 
         let nouveau = crate::lsp::messages::apply_edits(&texte, &fichier.edits);
-        let temp = fichier.path.with_file_name(".typst-writer-tmp");
-
-        if std::fs::write(&temp, &nouveau).is_err() {
-            continue;
-        }
-
-        if std::fs::rename(&temp, &fichier.path).is_err() {
-            let _ = std::fs::remove_file(&temp);
-
-            continue;
+        if let Err(erreur) = crate::project::ecrire_atomique(&fichier.path, &nouveau) {
+            state.note = Some(crate::app::state::Note::erreur(format!(
+                "Renommage interrompu à {} : {erreur}. {fichiers} fichier(s) déjà modifié(s).",
+                fichier.path.display()
+            )));
+            return Task::none();
         }
 
         fichiers += 1;
         modifications += fichier.edits.len();
+        touches.push(
+            fichier
+                .path
+                .strip_prefix(&state.project.dir)
+                .unwrap_or(&fichier.path)
+                .display()
+                .to_string(),
+        );
 
         if state.editor.path.as_deref() == Some(fichier.path.as_path()) {
             state.editor = crate::editor::EditorState::new_file(fichier.path.clone(), nouveau);
@@ -616,8 +1237,68 @@ fn appliquer_renommage(state: &mut State) -> Task<Message> {
     }
 
     state.export_status = Some(format!(
-        "Renommage appliqué : {fichiers} fichier(s), {modifications} modification(s)"
+        "Renommage appliqué : {} — {fichiers} fichier(s), {modifications} modification(s)",
+        touches.join(", ")
     ));
 
     Task::none()
+}
+
+/// Les trois issues d'un import de style, tenues en un seul endroit :
+/// choisi (avec l'écart éventuel à dire), parent manquant (le geste se
+/// propose), ou refusé (rien ne change).
+fn appliquer_style(state: &mut State, resultat: crate::project::ImportationStyle) {
+    match resultat {
+        crate::project::ImportationStyle::Choisi {
+            chemin,
+            avertissement,
+        } => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.reglages.modifier(
+                    crate::mise_en_page::modele::Champ::BibliographieStyle,
+                    chemin.display().to_string(),
+                );
+                dialogue.modifie = true;
+            }
+
+            let message = match avertissement {
+                Some(ecart) => format!("Style importé : {} — {ecart}", chemin.display()),
+                None => format!(
+                    "Style importé : {} est une copie du projet, l'original n'a pas bougé.",
+                    chemin.display()
+                ),
+            };
+            state.note = Some(crate::app::state::Note::info(message));
+        }
+        crate::project::ImportationStyle::ParentManquant {
+            chemin,
+            titre,
+            parent,
+        } => {
+            // Le style dépendant est conservé, mais rien n'est choisi : le
+            // parent manque, et le geste se propose — jamais un
+            // téléchargement silencieux.
+            state.style_dependant_en_attente = Some((titre.clone(), parent.clone()));
+            state.note = Some(crate::app::state::Note::info(format!(
+                "« {titre} » est conservé ({}) mais son parent ({parent}) n'est pas sur cette machine : le choix précédent reste.",
+                chemin.display()
+            )));
+            state.confirmation = Some(crate::app::state::Confirmation {
+                question: format!(
+                    "Le style « {titre} » a besoin de son parent ({parent}). Le télécharger depuis le dépôt des styles ?"
+                ),
+                action: Message::StyleParentTelecharger,
+            });
+        }
+    }
+}
+
+/// Le tampon est-il un chapitre `.typ` (Typst brut) plutôt qu'un document
+/// `.tw` ? Le dialecte des gestes d'insertion en dépend (R5).
+fn sur_typst(editor: &crate::editor::EditorState) -> bool {
+    editor
+        .path
+        .as_deref()
+        .and_then(|chemin| chemin.extension())
+        .is_some_and(|extension| extension == "typ")
 }

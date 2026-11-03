@@ -12,7 +12,9 @@ Le bouton `Aa` / `.*` à gauche du motif bascule entre les deux modes :
 - **Expression régulière** (`.*`) : le motif est une regex —
   `chapitre \d+`, `^# `, `\bthéologie\b`.
 
-Les occurrences sont **surlignées** dans l'éditeur à chaque frappe.
+La barre compte les occurrences trouvées. La mise en évidence dans l'éditeur
+utilise un mécanisme distinct et peut ne pas correspondre au motif,
+notamment en mode regex : vérifiez la sélection courante.
 
 ## Les champs
 
@@ -32,8 +34,11 @@ groupes. Le remplacement les rappelle au dollar : `$1-$2`. Tout se fait
 du dernier au premier — **Tout remplacer** ne décale jamais les
 occurrences restantes.
 
-En mode littéral, le remplacement est également littéral — `$1` reste
-`$1`, sans interprétation.
+Attention : dans cette version, le remplacement réinterprète le motif comme
+une expression régulière même si la recherche est en mode littéral ; les
+métacaractères du motif et les `$` dans le remplacement peuvent donc produire
+un résultat inattendu. Vérifiez le résultat sur une copie avant d'utiliser
+« Tout remplacer ».
 
 Un motif fautif se dit dans la barre, en rouge, sans jamais effacer ce
 qui est cherché.

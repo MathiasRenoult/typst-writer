@@ -154,6 +154,9 @@ impl Default for EditorState {
             document: None,
         };
 
+        // La recherche propre au crate — sans expressions régulières ni rappel
+        // de groupes — laisse `Ctrl+F` à celle de l'application, qui en a.
+        state.editor.set_search_replace_enabled(false);
         state.apply_prose_profile();
 
         state
@@ -173,6 +176,9 @@ impl EditorState {
             document,
         };
 
+        // La recherche propre au crate — sans expressions régulières ni rappel
+        // de groupes — laisse `Ctrl+F` à celle de l'application, qui en a.
+        state.editor.set_search_replace_enabled(false);
         state.apply_prose_profile();
         if state.is_intermediate() {
             state.apply_markdown_profile();
@@ -217,29 +223,93 @@ impl EditorState {
     }
 
     /// Le message peut-il modifier le texte ou sa sérialisation ?
+    /// Le match exhaustif impose de classer toute nouvelle commande de l'éditeur.
     pub fn message_may_change_content(message: &EditorMessage) -> bool {
-        matches!(
-            message,
+        match message {
             EditorMessage::CharacterInput(_)
-                | EditorMessage::VimKey(_)
-                | EditorMessage::Backspace
-                | EditorMessage::Delete
-                | EditorMessage::Enter
-                | EditorMessage::Tab
-                | EditorMessage::Cut
-                | EditorMessage::Paste(_)
-                | EditorMessage::DeleteSelection
-                | EditorMessage::Undo
-                | EditorMessage::Redo
-                | EditorMessage::ImeCommit(_)
-                | EditorMessage::ReplaceNext
-                | EditorMessage::ReplaceAll
-                | EditorMessage::ToggleComment
-                | EditorMessage::MoveLineUp
-                | EditorMessage::MoveLineDown
-                | EditorMessage::DuplicateLineUp
-                | EditorMessage::DuplicateLineDown
-        )
+            | EditorMessage::VimKey(_)
+            | EditorMessage::Backspace
+            | EditorMessage::Delete
+            | EditorMessage::Enter
+            | EditorMessage::Tab
+            | EditorMessage::Cut
+            | EditorMessage::Paste(_)
+            | EditorMessage::DeleteSelection
+            | EditorMessage::DeleteWord
+            | EditorMessage::Undo
+            | EditorMessage::Redo
+            | EditorMessage::ImeCommit(_)
+            | EditorMessage::ReplaceNext
+            | EditorMessage::ReplaceAll
+            | EditorMessage::ToggleComment
+            | EditorMessage::MoveLineUp
+            | EditorMessage::MoveLineDown
+            | EditorMessage::DuplicateLineUp
+            | EditorMessage::DuplicateLineDown => true,
+            EditorMessage::ToggleVimMode
+            | EditorMessage::WriteRequested
+            | EditorMessage::ArrowKey(..)
+            | EditorMessage::MouseClick(_)
+            | EditorMessage::MouseDrag(_)
+            | EditorMessage::MouseHover(_)
+            | EditorMessage::MouseRelease
+            | EditorMessage::DoubleClick(_)
+            | EditorMessage::TripleClick(_)
+            | EditorMessage::ContextMenuRequested(_)
+            | EditorMessage::CustomContextMenuAction(_)
+            | EditorMessage::RevealInFileManager
+            | EditorMessage::Copy
+            | EditorMessage::SelectAll
+            | EditorMessage::Tick
+            | EditorMessage::PageUp(_)
+            | EditorMessage::PageDown(_)
+            | EditorMessage::Home(_)
+            | EditorMessage::End(_)
+            | EditorMessage::CtrlHome
+            | EditorMessage::CtrlEnd
+            | EditorMessage::GotoPosition(..)
+            | EditorMessage::OpenGotoLine
+            | EditorMessage::CloseGotoLine
+            | EditorMessage::GotoLineChanged(_)
+            | EditorMessage::SubmitGotoLine
+            | EditorMessage::OpenCommandPalette
+            | EditorMessage::CloseCommandPalette
+            | EditorMessage::CommandPaletteChanged(_)
+            | EditorMessage::CommandPaletteNavigate(_)
+            | EditorMessage::CommandPaletteSelected(_)
+            | EditorMessage::SubmitCommandPalette
+            | EditorMessage::CommandPaletteAction(_)
+            | EditorMessage::Scrolled(_)
+            | EditorMessage::HorizontalScrolled(_)
+            | EditorMessage::OpenSearch
+            | EditorMessage::OpenSearchReplace
+            | EditorMessage::CloseSearch
+            | EditorMessage::SearchQueryChanged(_)
+            | EditorMessage::ReplaceQueryChanged(_)
+            | EditorMessage::ToggleCaseSensitive
+            | EditorMessage::FindNext
+            | EditorMessage::FindPrevious
+            | EditorMessage::SearchDialogTab
+            | EditorMessage::SearchDialogShiftTab
+            | EditorMessage::FocusNavigationShiftTab
+            | EditorMessage::CanvasFocusGained
+            | EditorMessage::CanvasFocusLost
+            | EditorMessage::JumpClick(_)
+            | EditorMessage::ImeOpened
+            | EditorMessage::ImePreedit(..)
+            | EditorMessage::ImeClosed
+            | EditorMessage::AltClick(_)
+            | EditorMessage::AddCursorAbove
+            | EditorMessage::AddCursorBelow
+            | EditorMessage::SelectNextOccurrence
+            | EditorMessage::ToggleFold(_)
+            | EditorMessage::ToggleFoldAtCursor
+            | EditorMessage::FoldAll
+            | EditorMessage::UnfoldAll
+            | EditorMessage::ToggleLineNumbers
+            | EditorMessage::ToggleWhitespace
+            | EditorMessage::StickyScrollJump(_) => false,
+        }
     }
 
     pub fn update(&mut self, message: EditorMessage) -> Task<EditorMessage> {
@@ -370,6 +440,16 @@ impl EditorState {
         }
 
         self.update(EditorMessage::Paste(text.to_string()))
+    }
+
+    /// Insère un gabarit au curseur et pose le curseur **à l'intérieur** :
+    /// `recul` octets avant la fin du texte inséré — entre les crochets
+    /// d'une note, sur la légende d'une figure (R5, gestes d'insertion).
+    pub fn insert_avec_curseur(&mut self, texte: &str, recul: usize) -> Task<EditorMessage> {
+        let insertion = self.insert_at_cursor(texte);
+        let placement = self.set_cursor_offset(self.cursor_offset().saturating_sub(recul));
+
+        Task::batch([insertion, placement])
     }
 
     /// Remplace ce qui précède le curseur, puis écrit à sa place.
