@@ -2657,6 +2657,16 @@ mod epreuves_de_mise_en_page {
         root
     }
 
+    /// L' + q + 'outil de lecture du PDF est-il là ? Un test qui dépend d' + q + 'un outil
+    /// externe **saute** proprement quand il manque, il ne faillit pas —
+    /// en CI comme ailleurs (règle des épreuves).
+    fn pdftotext_disponible() -> bool {
+        std::process::Command::new("pdftotext")
+            .arg("-v")
+            .output()
+            .is_ok()
+    }
+
     fn texte_extrait(root: &std::path::Path, source: &str) -> String {
         let pdf = crate::typst::render::render_pdf(root, source, &[]).expect("PDF");
         let fichier = root.join("sortie.pdf");
@@ -2680,6 +2690,11 @@ mod epreuves_de_mise_en_page {
     /// la casse elle-même qui est éprouvée.
     #[test]
     fn la_casse_par_niveau_s_applique_au_rendu() {
+        if !pdftotext_disponible() {
+            println!("pdftotext absent : test sauté");
+            return;
+        }
+
         let root = racine("casse");
         let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
         normes.titres.casse_1 = Some("majuscules".to_string());
@@ -2828,6 +2843,11 @@ mod epreuves_de_mise_en_page {
     /// place, à la hauteur réglée (bug-report-8, T4.4).
     #[test]
     fn les_quick_parts_et_les_images_vivent_dans_l_entete() {
+        if !pdftotext_disponible() {
+            println!("pdftotext absent : test sauté");
+            return;
+        }
+
         let root = racine("quickparts");
         let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
         normes.entete_pied.entete.gauche = "![logo](logo.png) {titre}".to_string();
@@ -2935,6 +2955,11 @@ mod epreuves_de_mise_en_page {
     /// imités, jamais laissés en clair (R5).
     #[test]
     fn les_champs_dynamiques_se_resolvent_par_le_moteur() {
+        if !pdftotext_disponible() {
+            println!("pdftotext absent : test sauté");
+            return;
+        }
+
         let root = racine("champs");
         let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
         normes.entete_pied.pied.centre = "p. {page} — {pages} pages".to_string();
