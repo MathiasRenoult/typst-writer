@@ -83,6 +83,110 @@ pub fn view(state: &State) -> Element<'_, Message> {
         state.projets_vue,
     ));
 
+    // TOPBAR-07 : le menu « Projet » — les gestes du projet réunis dans
+    // un menu déroulant de la barre supérieure (bug-report-7, point 14).
+    bar = bar.push(iced_aw::menu::MenuBar::new(vec![
+        iced_aw::menu::Item::with_menu(
+            palette.label("Projet").size(theme::jetons::DETAIL),
+            iced_aw::menu::Menu::new(vec![
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Nouveau devoir court…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ProjetCreerAvecModele(
+                        crate::project::model::Modele::DevoirCourt,
+                    ))
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Nouveau travail long…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ProjetCreerAvecModele(
+                        crate::project::model::Modele::TravailLong,
+                    ))
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Insérer une extension…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ExtensionOuvrir)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Exporter en .tw unique…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ProjetExportTw)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Importer un .tw unique…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ProjetImportTw)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Exporter le projet (archive)…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ProjetExportPortable)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Importer une sauvegarde…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ProjetImportSauvegarde)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Exporter en Markdown…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ExportMarkdown)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Exporter en DOCX…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ExportDocx)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+            ]),
+        ),
+    ]));
+
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_download::<Theme>(),
         "Exporter en PDF (Ctrl+E)",
@@ -90,6 +194,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         palette,
         false,
     ));
+
+    // TOPBAR-08 : la barre suit le mode (bug-report-7, point 1). Le zoom
+    // n'a de sens que sur un rendu, les outils d'éditent que sur le
+    // texte — les communs (normes, recherche, projet) restent partout.
+    let sur_rendu = matches!(state.mode, crate::app::state::ModeVue::Rendu);
 
     // TOPBAR-06-02 : les commandes de panneau et focus vont dans le
     // groupe général à gauche — elles ne relèvent ni de l'édition ni du thème.
@@ -132,7 +241,49 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // TOPBAR-06-02 : le format est centré entre deux espacements flexibles.
     bar = bar.push(spacer());
 
-    if state.editor.is_intermediate() {
+    // Le zoom se centre avec le format (bug-report-9, T2.1) : les
+    // quatre commandes et leur pourcentage, dans le segment central —
+    // la fenêtre de rendu ne porte plus les siennes (T2.2).
+    if sur_rendu {
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_zoom_out::<Theme>(),
+            "Réduire le zoom",
+            Message::PreviewZoomStep(-1),
+            palette,
+            false,
+        ));
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_scan::<Theme>(),
+            "Ajuster à la largeur",
+            Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitWidth),
+            palette,
+            false,
+        ));
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_maximize::<Theme>(),
+            "Ajuster à la hauteur",
+            Message::PreviewZoom(crate::app::state::PreviewZoomMode::FitHeight),
+            palette,
+            false,
+        ));
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_zoom_in::<Theme>(),
+            "Augmenter le zoom",
+            Message::PreviewZoomStep(1),
+            palette,
+            false,
+        ));
+        bar = bar.push(
+            palette
+                .label(crate::ui::preview::zoom_percent(state).unwrap_or_else(|| "—".to_string()))
+                .size(11)
+                .color(palette.text_muted),
+        );
+    }
+
+    // Les outils d'édition : sur le texte seulement — jamais sur un rendu
+    // (bug-report-7, point 1).
+    if state.editor.is_intermediate() && !sur_rendu {
         bar = bar.push(format_button(
             "B",
             "Gras : formater la sélection",
@@ -165,6 +316,42 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::CitationBloc,
             palette,
         ));
+
+        // TOPBAR-09 : les sections de fin s'insèrent au curseur — la
+        // bibliographie, le glossaire, et un mot du glossaire déjà
+        // référencé (bug-report-9).
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_list::<Theme>(),
+            "Insérer une table des matières",
+            Message::SommaireInserer,
+            palette,
+            false,
+        ));
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_library::<Theme>(),
+            "Insérer une section bibliographie",
+            Message::BibliographieSectionInserer,
+            palette,
+            false,
+        ));
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_book_a::<Theme>(),
+            "Insérer une section glossaire",
+            Message::GlossaireSectionInserer,
+            palette,
+            false,
+        ));
+
+        // TOPBAR-10 : une icône ouvre la fenêtre du glossaire — la
+        // liste déroulante ne permettait que d'insérer (bug-report-10, 5.3).
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_book_marked::<Theme>(),
+            "Glossaire : consulter et gérer les termes",
+            Message::GlossaireFenetreOuvrir,
+            palette,
+            state.glossaire_fenetre,
+        ));
+
         // TOPBAR-06 : la pastille applique la dernière couleur choisie,
         // le picker ouvre le choix. La pastille mémorise la couleur courante.
         let derniere = state
@@ -224,21 +411,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .gap(6),
         );
 
-        // TOPBAR-04-08 : le picker de l'éditeur — palette de base.
-        // Le choix libre passe par l'éditeur de thème (picker RVB).
-        bar = bar.push(format_picker(
-            COULEURS
-                .iter()
-                .map(|(libelle, _, _)| (*libelle).to_string())
-                .collect(),
-            "Couleur",
-            |choisi| {
-                let nom = couleur_typst(&choisi).unwrap_or("red").to_string();
-                Message::Format(crate::app::message::FormatAction::Couleur(nom))
-            },
-            palette,
-            80.0,
-        ));
+        // Le sélecteur de couleur : une roue, centrée dans la fenêtre —
+        // le choix se fait en regardant, pas en cherchant un nom de couleur.
+        bar = bar.push(
+            button(palette.label("Couleur…").size(theme::jetons::DETAIL))
+                .on_press(Message::PickerCouleurOuvrir)
+                .padding([4, 8])
+                .style(move |_, s| button_style(s, palette)),
+        );
         bar = bar.push(format_button(
             "N",
             "Note de bas de page sur la sélection",
@@ -415,54 +595,40 @@ fn format_button<'a>(
     toolbar_text_button(label, help, Message::Format(action), palette)
 }
 
-/// Le nom Typst de la couleur désignée par son libellé français.
-fn couleur_typst(label: &str) -> Option<&'static str> {
-    COULEURS
-        .iter()
-        .find(|(libelle, _, _)| *libelle == label)
-        .map(|(_, nom, _)| *nom)
-}
-
 /// Le menu des niveaux de titre : un `pick_list`, pas un `tooltip`.
 ///
 /// Un `tooltip` se ferme dès que la souris quitte le bouton — impossible
 /// de choisir un niveau. Un `pick_list` reste ouvert jusqu'au choix ou au
 /// clic extérieur, et se conduit au clavier. TOPBAR-04-04.
 fn titre_menu(palette: Palette) -> Element<'static, Message> {
-    let niveaux: Vec<String> = (1..=6).map(|n| format!("H{n}")).collect();
+    // TOPBAR-10 : une icône ouvre le menu des styles de titre — la
+    // liste déroulante prenait la place d'un geste (bug-report-10, 5.2).
+    let mut choix = Vec::new();
 
-    pick_list(niveaux, None::<String>, |choisi: String| {
-        let niveau: u8 = choisi
-            .strip_prefix('H')
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        Message::Format(crate::app::message::FormatAction::Titre(niveau))
-    })
-    .placeholder("Titre")
-    .text_size(12)
-    .font(palette.interface)
-    .padding([4, 8])
-    .width(Length::Fixed(56.0))
+    for niveau in 1..=6u8 {
+        choix.push(iced_aw::menu::Item::new(
+            button(
+                palette
+                    .label(format!("Titre {niveau}"))
+                    .size(theme::jetons::DETAIL),
+            )
+            .on_press(Message::Format(crate::app::message::FormatAction::Titre(
+                niveau,
+            )))
+            .padding([4, 10])
+            .width(Length::Fill),
+        ));
+    }
+
+    iced_aw::menu::MenuBar::new(vec![iced_aw::menu::Item::with_menu(
+        theme::icon(
+            lucide_icons::iced::icon_heading::<Theme>(),
+            15.0,
+            palette.text_muted,
+        ),
+        iced_aw::menu::Menu::new(choix),
+    )])
     .into()
-}
-
-/// c'est ce qui rend le choix d'un niveau de titre ou d'une couleur immédiat,
-/// au lieu d'une suite de clics à l'aveugle. Comme c'est une action et non un
-/// état, rien n'y est présélectionné : le libellé vide dit ce qu'elle propose.
-fn format_picker<'a>(
-    options: Vec<String>,
-    placeholder: &'static str,
-    map: impl Fn(String) -> Message + 'a,
-    palette: Palette,
-    width: f32,
-) -> Element<'a, Message> {
-    pick_list(options, None::<String>, map)
-        .placeholder(placeholder)
-        .text_size(12)
-        .font(palette.interface)
-        .padding([4, 8])
-        .width(Length::Fixed(width))
-        .into()
 }
 
 /// Bouton compact avec infobulle, partagé par les commandes de texte et zoom.
@@ -549,18 +715,5 @@ fn theme_icon(mode: theme::ThemeMode) -> iced::widget::Text<'static, Theme> {
         theme::ThemeMode::System => lucide_icons::iced::icon_sun_moon::<Theme>(),
         theme::ThemeMode::Light => lucide_icons::iced::icon_sun::<Theme>(),
         theme::ThemeMode::Dark => lucide_icons::iced::icon_moon::<Theme>(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Chaque libellé de couleur donne son nom Typst, et rien d'autre.
-    #[test]
-    fn colour_labels_map_to_typst_names() {
-        assert_eq!(couleur_typst("Rouge"), Some("red"));
-        assert_eq!(couleur_typst("Violet"), Some("purple"));
-        assert_eq!(couleur_typst("Inexistant"), None);
     }
 }

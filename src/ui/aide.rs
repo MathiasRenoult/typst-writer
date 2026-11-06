@@ -85,9 +85,93 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         colonnes = colonnes.push(groupe);
     }
 
+    // Le parcours de première utilisation : quatre gestes, du projet à
+    // l'export — c'est toute la promesse du premier quart d'heure.
+    let premiers_pas = column![
+        palette.label("Premiers pas").size(theme::jetons::TITRE),
+        palette
+            .label("1. Créer un projet — les boutons du panneau Projets.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        palette
+            .label("2. Écrire — le document s'enregistre sans y penser.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        palette
+            .label("3. Ajouter une source — elle rejoint la bibliographie du projet.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        palette
+            .label("4. Exporter — PDF, Markdown ou DOCX.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    ]
+    .spacing(6);
+
+    // Où vivent les documents : visible, et ouvrable d'un geste.
+    let donnees = column![
+        palette.label("Vos données").size(theme::jetons::TITRE),
+        palette
+            .label(crate::project::work_dir().display().to_string())
+            .size(theme::jetons::DETAIL)
+            .color(palette.accent),
+        row![
+            button(
+                palette
+                    .label("Ouvrir le dossier des données")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::OuvrirDossierDonnees)
+            .padding([4, 10]),
+        ],
+    ]
+    .spacing(6);
+
+    // Le diagnostic : l'état du poste, dit avec ses remèdes.
+    let diagnostic = column![
+        palette.label("Diagnostic").size(theme::jetons::TITRE),
+        palette
+            .label(diagnostic_resume(state))
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    ]
+    .spacing(6);
+
+    // La récupération : ce qui a été retiré se retrouve, ce qui a été
+    // remplacé se relit, et les temporaires perdus reviennent seuls.
+    let recuperation = column![
+        palette.label("Récupération").size(theme::jetons::TITRE),
+        palette
+            .label("Les temporaires perdus sont récupérés à l'ouverture du projet.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        row![
+            button(
+                palette
+                    .label("Ouvrir la corbeille")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::OuvrirCorbeille)
+            .padding([4, 10]),
+            button(
+                palette
+                    .label("Ouvrir les sauvegardes du projet")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::OuvrirSauvegardes)
+            .padding([4, 10]),
+        ]
+        .spacing(8),
+    ]
+    .spacing(6);
+
     let corps = column![
         palette.label("Les raccourcis").size(theme::jetons::TITRE),
         colonnes,
+        premiers_pas,
+        donnees,
+        diagnostic,
+        recuperation,
         row![
             button(palette.label("Fermer").size(theme::jetons::DETAIL))
                 .on_press(Message::AideBasculer)
@@ -104,5 +188,26 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill),
+    )
+}
+
+/// L'état du poste en une ligne — la même pour la vue et les épreuves.
+///
+/// Chaque état dit son remède : un diagnostic qui n'explique pas quoi
+/// faire n'est qu'une inquiétude de plus.
+pub fn diagnostic_resume(state: &crate::app::State) -> String {
+    let serveur = if state.lsp.session.is_some() {
+        "présent".to_string()
+    } else {
+        "absent — la complétion dort, l'écriture reste entière".to_string()
+    };
+    let bibliotheque = match state.zotero.source {
+        crate::zotero::Source::Locale => "locale",
+        crate::zotero::Source::Zotero => "Zotero (lecture seule)",
+    };
+    format!(
+        "Version {} — serveur de langage : {serveur} — {} diagnostic(s) — bibliothèque : {bibliotheque}",
+        env!("CARGO_PKG_VERSION"),
+        state.lsp.diagnostics.len()
     )
 }

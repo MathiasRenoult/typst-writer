@@ -35,15 +35,17 @@
 <a href="prise-en-main.html">Prise en main</a>
 <a href="ecrire.html">Écrire</a>
 <a href="bibliographie.html">La bibliographie</a>
+<a href="glossaire.html">Le glossaire</a>
 <a href="normes.html">Les normes</a>
 <a href="recherche.html">Rechercher et remplacer</a>
 <a href="raccourcis.html">Les raccourcis</a>
 <a href="fichiers.html" class="courant">Les fichiers</a>
+<a href="installation-linux.html">Installer sous Linux</a>
 </nav>
 <main>
 <h1>Les fichiers</h1>
 <h2>Le projet</h2>
-<p>Chaque projet vit dans son dossier, sous <code>~/.typst-writer/projets/</code> :</p>
+<p>Chaque projet vit dans son dossier, sous <code>~/.typst-writer/projets/</code> (sous Windows : <code>%APPDATA%\typst-writer\projets\</code>) :</p>
 <pre><code>mon-travail/
 ├── document.tw            ce que vous écrivez
 ├── main.typ               l&#x27;assemblage, et ses réglages Typst
@@ -65,9 +67,35 @@
 </code></pre>
 <p>Les thèmes sont des fichiers TOML, modifiables à la main ou depuis l&#x27;application ; une mise à jour ne réécrit jamais un thème à vous. Les suppressions partent à la <strong>corbeille</strong> — les projets comme les thèmes — et un geste qui défait quelque chose <strong>demande son mot</strong> avant de partir : <code>Échap</code> est toujours « Annuler ».</p>
 <p>Les projets se classent sur des <strong>étagères</strong> — glisser une carte de projet d&#x27;une étagère à l&#x27;autre. Le classement vit dans <code>etageres.json</code>.</p>
-<p>Une seule instance travaille sur un projet à la fois : la seconde s&#x27;ouvre <strong>en lecture seule</strong>, et la raison s&#x27;affiche en barre d&#x27;état. Deux écritures ne se dévorent jamais leur texte.</p>
+<p>Les instances récentes utilisent une ancre de verrouillage <code>.verrou-natif</code>, qui reste dans le projet même après fermeture. Ne la supprimez pas pendant que l&#x27;application est ouverte. Si le projet est déjà utilisé, une autre instance l&#x27;ouvre en lecture seule.</p>
+<p>Ne travaillez pas simultanément sur un projet avec une ancienne version de Typst Writer : elle ne respecte pas le verrou natif. La protection a été éprouvée sous Linux ; Windows et macOS restent à vérifier. Après un arrêt brutal, un ancien marqueur <code>.verrou</code> peut demander une intervention : fermez toutes les instances avant de retirer ce marqueur, jamais l&#x27;ancre native. Conservez des copies de vos travaux importants.</p>
 <h2>Exporter</h2>
-<p><code>Ctrl+E</code> écrit le PDF à côté du projet. L&#x27;export suit les normes du document — papier, marges, typographie, décor — et la bibliographie s&#x27;y imprime selon le style du projet.</p>
+<p><code>Ctrl+E</code> écrit le PDF à côté du projet. L&#x27;export suit les normes du document — papier, marges, typographie, décor — et la bibliographie s&#x27;y imprime selon le style du projet. Le panneau Projets porte aussi :</p>
+<ul>
+<li><strong>Exporter en Markdown…</strong> : le document au canonique — les notes</li>
+</ul>
+<p>  <code>^[…]</code> et citations <code>@clé[…]</code> y restent lisibles, quoique non   standard ;</p>
+<ul>
+<li><strong>Exporter en DOCX…</strong> : par LibreOffice. Titres, tableaux, citations et</li>
+</ul>
+<p>  images y survivent ; **les notes deviennent du texte <code>[note: …]</code>** —   c&#x27;est la limite annoncée. Sans LibreOffice, le geste dit son remède   (installer LibreOffice, ou exporter en Markdown).</p>
+<h2>Faire voyager un projet</h2>
+<p><strong>Exporter le projet (archive)…</strong> écrit une archive unique : la source, les normes, les styles, les bibliographies et les ressources, avec un manifeste qui dit l&#x27;inventaire — et <strong>ce qui manque déjà</strong> (les images appelées mais absentes, par exemple).</p>
+<p><strong>Importer une sauvegarde…</strong> restitue le projet, octet pour octet. Rien n&#x27;est jamais écrasé sans choix : la moindre collision pose la question, et ce qui est remplacé part à la corbeille — d&#x27;où il se retrouve. Un import interrompu laisse la destination exactement comme avant.</p>
+<h2>Versions et changements extérieurs</h2>
+<p>Avant chaque remplacement, la version qui se trouvait sur le disque est conservée dans le dossier <code>sauvegardes/</code> du projet, à côté du document. Une copie porte le nom du document suivi de son heure (<code>document.tw.1762000000</code>) ; les copies d&#x27;un même document sont espacées d&#x27;au moins une minute et les vingt dernières sont gardées. Le gestionnaire de fichiers y affiche la date lisible de chacune.</p>
+<p><strong>Restaurer une version</strong> :</p>
+<ol>
+<li>Fermez Typst Writer — le projet ne doit pas être ouvert.</li>
+<li>Ouvrez <code>sauvegardes/</code> à côté de votre document.</li>
+<li>Choisissez la copie voulue, d&#x27;après sa date, et copiez-la à la place du</li>
+</ol>
+<p>   document : <code>document.tw.1762000000</code> devient <code>document.tw</code>.</p>
+<ol>
+<li>Rouvrez le projet.</li>
+</ol>
+<p>Si le fichier a été modifié <strong>hors de l&#x27;application</strong> — synchronisation, autre éditeur — l&#x27;application ne l&#x27;écrase jamais en silence : elle le dit, garde vos frappes en mémoire, et demande votre décision. Confirmer écrit votre texte et conserve la version du disque dans <code>sauvegardes/</code> ; <code>Échap</code> laisse tout en place. Une sauvegarde impossible — permission refusée, disque plein — n&#x27;écrit rien non plus : le texte reste dans l&#x27;application, et la version précédente est déjà conservée.</p>
+<p>Si l&#x27;application a été <strong>interrompue en pleine écriture</strong> — panne, plantage — la version en cours se retrouve elle aussi dans <code>sauvegardes/</code> à la réouverture du document, datée de son écriture : elle se restaure comme les autres.</p>
 </main>
 </div>
 </body>

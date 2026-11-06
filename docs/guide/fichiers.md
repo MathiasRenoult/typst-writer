@@ -2,7 +2,8 @@
 
 ## Le projet
 
-Chaque projet vit dans son dossier, sous `~/.typst-writer/projets/` :
+Chaque projet vit dans son dossier, sous `~/.typst-writer/projets/`
+(sous Windows : `%APPDATA%\typst-writer\projets\`) :
 
     mon-travail/
     ├── document.tw            ce que vous écrivez
@@ -52,7 +53,27 @@ native. Conservez des copies de vos travaux importants.
 
 `Ctrl+E` écrit le PDF à côté du projet. L'export suit les normes du
 document — papier, marges, typographie, décor — et la bibliographie s'y
-imprime selon le style du projet.
+imprime selon le style du projet. Le panneau Projets porte aussi :
+
+- **Exporter en Markdown…** : le document au canonique — les notes
+  `^[…]` et citations `@clé[…]` y restent lisibles, quoique non
+  standard ;
+- **Exporter en DOCX…** : par LibreOffice. Titres, tableaux, citations et
+  images y survivent ; **les notes deviennent du texte `[note: …]`** —
+  c'est la limite annoncée. Sans LibreOffice, le geste dit son remède
+  (installer LibreOffice, ou exporter en Markdown).
+
+## Faire voyager un projet
+
+**Exporter le projet (archive)…** écrit une archive unique : la source,
+les normes, les styles, les bibliographies et les ressources, avec un
+manifeste qui dit l'inventaire — et **ce qui manque déjà** (les images
+appelées mais absentes, par exemple).
+
+**Importer une sauvegarde…** restitue le projet, octet pour octet. Rien
+n'est jamais écrasé sans choix : la moindre collision pose la question,
+et ce qui est remplacé part à la corbeille — d'où il se retrouve. Un
+import interrompu laisse la destination exactement comme avant.
 
 ## Versions et changements extérieurs
 

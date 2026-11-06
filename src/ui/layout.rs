@@ -21,8 +21,22 @@ pub fn view(state: &State) -> Element<'_, Message> {
                         &state.lsp,
                         None,
                     ))
-                    .on_show(move |size| Message::ViewportChanged(first, last, size))
-                    .on_resize(move |size| Message::ViewportChanged(first, last, size)),
+                    .on_show(move |size| {
+                        Message::ViewportChanged(
+                            first,
+                            last,
+                            iced::Rectangle::new(iced::Point::ORIGIN, size),
+                            None,
+                        )
+                    })
+                    .on_resize(move |size| {
+                        Message::ViewportChanged(
+                            first,
+                            last,
+                            iced::Rectangle::new(iced::Point::ORIGIN, size),
+                            None,
+                        )
+                    }),
                 )
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
@@ -36,10 +50,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let grille = pane_grid::PaneGrid::new(&state.espace.grille, |pane, panneau, _| {
         pane_grid::Content::new(panneau_vue(state, pane, panneau))
     })
-    .spacing(6)
+    // TOPBAR-10 : une fine ligne de séparation entre les fenêtres —
+    // l'espacement du réseau la laisse voir (bug-report-10, 5.5).
+    .spacing(1)
     .min_size(120)
     .on_click(Message::PanneauChoisir)
     .on_resize(8, Message::PanneauRedimensionner);
+    let grille = iced::widget::container(grille).style(move |_| iced::widget::container::Style {
+        background: Some(state.resolved.palette.border.into()),
+        ..Default::default()
+    });
     let mut ligne = row![].spacing(0);
     if state.layout.sidebar_visible {
         ligne = ligne.push(
@@ -284,8 +304,22 @@ fn contenu_vue(state: &State, id: VueId) -> Element<'_, Message> {
                 Some(id),
             ))
             .key(id)
-            .on_show(move |size| Message::ViewportChanged(first, last, size))
-            .on_resize(move |size| Message::ViewportChanged(first, last, size))
+            .on_show(move |size| {
+                Message::ViewportChanged(
+                    first,
+                    last,
+                    iced::Rectangle::new(iced::Point::ORIGIN, size),
+                    None,
+                )
+            })
+            .on_resize(move |size| {
+                Message::ViewportChanged(
+                    first,
+                    last,
+                    iced::Rectangle::new(iced::Point::ORIGIN, size),
+                    None,
+                )
+            })
             .into()
         }
         ModeVue::Typst => super::onglets::source_typst(state.resolved.palette, genere),

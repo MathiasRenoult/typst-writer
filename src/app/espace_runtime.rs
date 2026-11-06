@@ -510,7 +510,7 @@ impl State {
         self.save_session();
     }
 
-    fn ouvrir_projet_espace(&mut self, dir: PathBuf, ouverture: Ouverture) {
+    pub(super) fn ouvrir_projet_espace(&mut self, dir: PathBuf, ouverture: Ouverture) {
         let projet = crate::project::load(&dir);
         if !self.espace.verrous.contains_key(&dir) {
             match crate::project::Verrou::prendre(&dir) {
@@ -702,7 +702,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             if !state.changer_contexte(id) {
                 return Task::none();
             }
-            let task = update(state, *message);
+            // Les résultats des tâches reviennent à la vue qui les a
+            // lancées : étiquetés, ils ne se perdent pas dans la vue
+            // active (bug-report-9).
+            let task = update(state, *message).map(move |m| etiqueter(id, m));
             state.changer_contexte(ancien);
             task
         }

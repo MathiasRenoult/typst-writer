@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 ///
 /// C'est le réglage qui gouverne tout le coût du rendu : deux secondes sans
 /// écrire déclenchent la compilation, la frappe ne la déclenche jamais.
-pub const IDLE_DELAY_MS: u64 = 2000;
+pub const IDLE_DELAY_MS: u64 = 1500;
 
 use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
@@ -62,9 +62,44 @@ pub struct ProjetDialogue {
     pub etagere: String,
     /// Le nom en cours de frappe.
     pub nom: String,
+    /// Les métadonnées choisies à la création (bug-report-7, point 9).
+    pub titre: String,
+    pub auteur: String,
 
     /// `None` pour créer ; le dossier pour renommer.
     pub cible: Option<std::path::PathBuf>,
+}
+
+/// Le sélecteur de couleur : une teinte, une saturation, une valeur.
+///
+/// C'est la roue entière, en trois nombres — les conversions vivent dans
+/// `crate::ui::picker_couleur`, pures et testées.
+/// Le composeur d'extension : quelle extension, et quels paramètres.
+#[derive(Debug, Clone, Default)]
+pub struct ExtensionDialogue {
+    /// Le rang de l'extension au registre.
+    pub choix: usize,
+    /// Les valeurs saisies, par nom de paramètre.
+    pub valeurs: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PickerCouleur {
+    /// La teinte, en degrés (0..=360).
+    pub teinte: f32,
+    /// La saturation (0..=1).
+    pub saturation: f32,
+    /// La valeur (0..=1).
+    pub valeur: f32,
+    /// Le code hex en cours de saisie : tant qu'il est là, c'est lui que
+    /// le champ montre — la roue ne l'écrase pas sous les doigts.
+    pub hex_saisi: Option<String>,
+    /// La cible : `None` = la sélection du texte ; `Some(champ)` = un champ
+    /// de couleur de l'éditeur de thème. La même roue sert aux deux.
+    pub champ: Option<&'static str>,
+    /// Une cible de normes : le champ des normes qui reçoit le hex — la
+    /// vignette d'une couleur ouvre la roue pour cette couleur-là.
+    pub reglage: Option<crate::mise_en_page::modele::Champ>,
 }
 
 /// Un geste qui défait quelque chose, en attente de son mot.
@@ -103,7 +138,14 @@ pub struct Importation {
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
 /// la séquence de démarrage sait établir.
 pub struct State {
+    /// Les rendus partagés par empreinte de texte : un seul PDF par
+    /// fichier, quelle que soit la fenêtre qui le montre (bug-report-10).
+    pub rendus_partages: std::collections::HashMap<String, RenduPartage>,
+
     pub espace: crate::app::espace::Espace,
+    /// L'état du sélecteur de polices : sa liste complète, pour le
+    /// vrai menu déroulant rechercheable (bug-report-9, T1.3).
+    pub police_combo: iced::widget::combo_box::State<String>,
     pub typst_genere: String,
     pub editor: EditorState,
 
@@ -146,7 +188,6 @@ pub struct State {
 
     /// La liste des références est-elle repliée ?
     pub references_repliees: bool,
-
     /// Le filtre de la liste des références — elle se cherche.
     pub references_filtre: String,
 
@@ -178,10 +219,31 @@ pub struct State {
     pub editeur_theme_textes: std::collections::HashMap<String, String>,
 
     /// Le picker RVB intégré : le champ édité et les composantes RGB.
-    pub color_picker: Option<ColorPicker>,
 
     /// Le nom de l'étagère à poser sur un projet — la vue des projets.
     pub etagere_brouillon: String,
+    /// La liste des projets montre tous les projets (sinon : l'étagère
+    /// du projet courant — bug-report-7, point 18).
+    pub projets_tous: bool,
+    /// La recherche dans la liste des projets.
+    pub projets_recherche: String,
+    /// La recherche des références ne se montre que sur son icône
+    /// (bug-report 2026-11-03).
+    pub references_recherche_visible: bool,
+    /// La recherche des projets idem.
+    pub projets_recherche_visible: bool,
+    /// L'entrée de sommaire survolée : le texte se teinte sous la main.
+    pub survol_sommaire: Option<usize>,
+    /// L'étagère choisie à la liste des projets — « Mon étagère »,
+    /// « Tous », ou le nom d'une étagère : un menu, pas une bascule.
+    pub projets_etage: String,
+    /// Le panneau de la note de bas de page : on y écrit la note, et la
+    /// seule marque vient dans la ligne (bug-report-7, point 15).
+    pub note_dialogue: Option<String>,
+
+    /// Le composeur d'extension (bug-report-7, point 4) : l'extension
+    /// choisie et ses paramètres — ses champs naissent de `parametres()`.
+    pub extension: Option<ExtensionDialogue>,
 
     /// Les vignettes des projets : nom → pixels RGBA.
     pub vignettes: Vec<(String, Vec<u8>, u32, u32)>,
@@ -289,6 +351,30 @@ pub struct State {
     /// Zotero, et la synchronisation la reprendrait de toute façon.
     pub edition_reference: Option<EditionReference>,
 
+    /// Les entrées du glossaire du projet (`glossaire.toml`), dans
+    /// l'ordre de l'auteur.
+    pub glossaire: Vec<crate::project::glossaire::EntreeGlossaire>,
+
+    /// La recherche du glossaire est-elle visible ? (Elle ne se montre
+    /// que sur son icône — bug-report 2026-11-03.)
+    pub glossaire_recherche_visible: bool,
+
+    /// La liste du glossaire est-elle repliée ?
+    pub glossaire_replie: bool,
+
+    /// Le filtre de la liste du glossaire — elle se cherche.
+    pub glossaire_filtre: String,
+
+    /// L'entrée survolée — ses gestes ne paraissent qu'alors.
+    pub survol_glossaire: Option<String>,
+
+    /// La fiche d'édition d'une entrée, ouverte ou non.
+    /// La fenêtre du glossaire est-elle ouverte ? Sa liste, ses gestes
+    /// (bug-report-10, 5.3).
+    pub glossaire_fenetre: bool,
+
+    pub edition_glossaire: Option<EditionGlossaire>,
+
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 
@@ -307,6 +393,9 @@ pub struct State {
 
     /// La dernière couleur choisie dans la barre — TOPBAR-06.
     pub derniere_couleur: Option<String>,
+
+    /// Le sélecteur de couleur : la roue, quand il est ouvert.
+    pub picker_couleur: Option<PickerCouleur>,
 
     /// Les fichiers de thème qui n'ont pas pu être lus.
     ///
@@ -339,11 +428,18 @@ pub struct State {
 /// n'est touchée qu'à l'application. Fermer la fenêtre sans appliquer laisse
 /// le document exactement ce qu'il était — la règle de tout dialogue.
 pub struct DialogueMiseEnPage {
+    /// Les métadonnées du document (bug-report-7, point 9) : elles se
+    /// règlent ici, au premier onglet, et alimentent les quick parts.
+    pub metadonnees: crate::project::metadonnees::Metadonnees,
+
     /// Les réglages en cours de réglage.
     pub reglages: crate::mise_en_page::modele::MiseEnPage,
 
     /// Le nom de la norme de la bibliothèque — appliquer, ou enregistrer.
     pub norme: String,
+
+    /// Le nom du profil de métadonnées à enregistrer (bug-report-10, 4.1).
+    pub profil_nom: String,
 
     /// Le panneau ouvert : 0 la mise en page, 1 la typographie.
     pub panneau: usize,
@@ -370,7 +466,6 @@ pub struct DialogueMiseEnPage {
 
     /// L'aperçu des titres : les six niveaux rendus par le moteur avec les
     /// normes du dialogue — jamais une imitation (R5).
-    pub apercu_titres: Option<crate::typst::render::PageImage>,
 
     /// Les styles installés dans Zotero, tels qu'ils étaient à l'ouverture
     /// de la fenêtre : la troisième porte du choix (R4).
@@ -414,17 +509,6 @@ pub struct NoteOverlay {
     pub fin: usize,
 }
 
-/// Le picker RVB intégré — THEME-EDITOR-04-01.
-#[derive(Debug, Clone)]
-pub struct ColorPicker {
-    /// Le champ de thème édité.
-    pub champ: &'static str,
-    /// Les composantes RGB.
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
 /// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
 /// bouge pas : elle est citée dans les documents, la changer les casserait.
 #[derive(Debug, Clone)]
@@ -456,6 +540,27 @@ pub struct EditionReference {
     /// La bibliographie est-elle locale ? Seule une bibliothèque locale
     /// s'écrit ; une notice Zotero se lit, jamais.
     pub locale: bool,
+}
+
+/// L'édition d'une entrée de glossaire : la fiche du panneau gauche.
+#[derive(Debug, Clone)]
+pub struct EditionGlossaire {
+    /// La clé — identifiant, appelée par `{glo:clé}`. Immuable en
+    /// édition : elle est déjà citée dans les textes.
+    pub cle: String,
+    /// La forme courte : sigle, abréviation.
+    pub court: String,
+    /// La forme longue — développée à la première occurrence.
+    pub long: String,
+    /// La définition, après le terme dans la liste finale.
+    pub description: String,
+    /// Les formes plurielles.
+    pub pluriel_court: String,
+    pub pluriel_long: String,
+    /// Le groupe : la rubrique de la liste finale.
+    pub groupe: String,
+    /// Une entrée neuve, pas encore écrite : la clé se choisit.
+    pub creation: bool,
 }
 
 /// Ce que l'application vient de dire.
@@ -877,6 +982,61 @@ impl Completion {
 }
 
 /// État du rendu fidèle : compilation Typst + rasterisation à la demande.
+/// Ce qu'un rendu de page montre : le morceau rasterisé — la fenêtre
+/// visible, élargie d'une marge — et où il se place dans la page (bug-report-9,
+/// fluidité : la page hors écran n'est jamais rasterisée).
+///
+/// La position et la taille sont des **fractions de la page** (0..1) : la
+/// tranche s'étire donc avec le zoom — retour visuel immédiat pendant le
+/// geste — au lieu de rester à la taille qu'elle avait au rendu.
+pub struct Tranche {
+    /// Position du morceau, en fraction de la page.
+    pub gauche: f32,
+    pub haut: f32,
+    /// Taille du morceau, en fraction de la page.
+    pub largeur: f32,
+    pub hauteur: f32,
+    /// Les pixels, tels que le backend les montre.
+    pub image: Handle,
+}
+
+impl Default for Tranche {
+    fn default() -> Self {
+        Self {
+            gauche: 0.0,
+            haut: 0.0,
+            largeur: 0.0,
+            hauteur: 0.0,
+            image: Handle::from_rgba(1, 1, vec![0, 0, 0, 0]),
+        }
+    }
+}
+
+/// Le rendu d'un texte, partagé par **toutes** les fenêtres qui le
+/// montrent : un seul PDF pour un seul fichier, jamais un par fenêtre
+/// (bug-report-10). Les deux pièces sont des `Arc` : chacune avance à
+/// son rythme — la compilation pose le document, l'export pose le
+/// lecteur — et tous les états de fenêtre qui les tiennent montrent la
+/// même chose.
+#[derive(Default, Clone)]
+pub struct RenduPartage {
+    pub document: Option<std::sync::Arc<PagedDocument>>,
+    pub lecteur: Option<std::sync::Arc<crate::typst::render::DocumentPdf>>,
+}
+
+impl RenduPartage {
+    /// Une pièce de plus, sans rien perdre de ce qui était déjà là.
+    pub fn completant(&mut self, autre: &Self) {
+        if autre.document.is_some() {
+            self.document.clone_from(&autre.document);
+        }
+
+        if autre.lecteur.is_some() {
+            self.lecteur.clone_from(&autre.lecteur);
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct RenderState {
     /// Contenu du dernier rendu terminé.
@@ -897,6 +1057,21 @@ pub struct RenderState {
     /// Document compilé : rasteriser une page est alors instantané à
     /// déclencher.
     pub document: Option<Arc<PagedDocument>>,
+
+    /// Le PDF exporté, source de l'affichage (bug-report-9, T4) : le
+    /// lecteur le rasterise, et c'est exactement le fichier livré.
+    pub lecteur: Option<Arc<crate::typst::render::DocumentPdf>>,
+
+    /// Un export PDF est en cours — la bascule vers la vue rendu le
+    /// déclenche systématiquement (bug-report-9).
+    /// L'empreinte du texte exporté, pour nourrir le registre à sa
+    /// place (bug-report-10).
+    pub export_empreinte: Option<String>,
+
+    pub export_en_cours: bool,
+    /// Le PDF a été demandé pour cette compilation : une tentative par
+    /// compilation, pour qu'un export qui échoue ne boucle pas.
+    pub export_tente: bool,
 
     /// Le sommaire du document : titres, sources, pages.
     ///
@@ -924,7 +1099,7 @@ pub struct RenderState {
     ///
     /// `view()` se contente donc de cloner le `Handle` d'ici : même
     /// identifiant, texture retrouvée, aucun travail graphique.
-    pub page_cache: HashMap<usize, Handle>,
+    pub page_cache: HashMap<usize, Tranche>,
 
     /// Pages dont la rasterisation est demandée mais pas terminée.
     ///
@@ -960,6 +1135,21 @@ pub struct RenderState {
 
     /// Mode de zoom actuellement appliqué à toutes les pages.
     pub zoom: PreviewZoomMode,
+
+    /// Le défilement courant, en pixels logiques du contenu (marge du
+    /// panneau déjà retirée). C'est lui qui désigne la région visible —
+    /// la seule qu'il faut rasteriser.
+    pub scroll: (f32, f32),
+
+    /// La fenêtre du scrollable, dans les coordonnées de la fenêtre :
+    /// c'est elle qui convertit la position du curseur en position de
+    /// défilement — l'ancre du zoom (bug-report-9).
+    pub fenetre: Option<iced::Rectangle>,
+
+    /// Le geste de zoom est en cours : le rendu net attend la fin du geste
+    /// (bug-report-9, « geste différé ») plutôt que de relancer un rendu
+    /// par cran de molette.
+    pub zoom_depuis: Option<std::time::Instant>,
 
     /// Nombre de rasterisations demandées depuis l'ouverture du document.
     ///
@@ -1276,6 +1466,12 @@ impl RenderState {
     }
 
     pub fn reset(&mut self) {
+        // Le lecteur montre le PDF du projet quitté : il part avec lui.
+        self.lecteur = None;
+        self.export_en_cours = false;
+        self.export_tente = false;
+        self.scroll = (0.0, 0.0);
+        self.zoom_depuis = None;
         self.content.clear();
         self.pending = false;
         self.done = false;
@@ -1507,6 +1703,13 @@ mod tests {
     }
 
     /// Une image quelconque : seule son identité compte pour ces tests.
+    fn tranche() -> Tranche {
+        Tranche {
+            image: handle(),
+            ..Default::default()
+        }
+    }
+
     fn handle() -> Handle {
         Handle::from_rgba(2, 2, vec![0u8; 16])
     }
@@ -1519,18 +1722,22 @@ mod tests {
     #[test]
     fn cached_handles_keep_a_stable_identity() {
         let mut render = RenderState::default();
-        render.page_cache.insert(0, handle());
+        render.page_cache.insert(0, tranche());
 
-        let first = render.page_cache.get(&0).expect("image en cache").clone();
-        let second = render.page_cache.get(&0).expect("image en cache").clone();
+        let first = render.page_cache.get(&0).expect("image en cache");
+        let second = render.page_cache.get(&0).expect("image en cache");
 
-        assert_eq!(first.id(), second.id(), "l'identifiant doit être stable");
+        assert_eq!(
+            first.image.id(),
+            second.image.id(),
+            "l'identifiant doit être stable"
+        );
 
         // À l'inverse, une image recréée de toutes pièces porte un
         // identifiant neuf : c'est ce que l'ancien code faisait à chaque
         // frame, forçant le backend à retéléverser la texture.
         assert_ne!(
-            first.id(),
+            first.image.id(),
             handle().id(),
             "une image neuve a une identité neuve"
         );
@@ -1550,7 +1757,7 @@ mod tests {
         };
 
         for index in 0..50 {
-            render.page_cache.insert(index, handle());
+            render.page_cache.insert(index, tranche());
             render.image_hashes.insert(index, index as u64);
         }
 
@@ -1641,7 +1848,7 @@ mod tests {
         let mut render = RenderState {
             content: "ancien document".to_string(),
             done: true,
-            page_cache: [(0, handle())].into_iter().collect(),
+            page_cache: [(0, tranche())].into_iter().collect(),
             rendering: [(0, 1)].into_iter().collect(),
             stale: [2].into_iter().collect(),
             visible: Some((0, 4)),
@@ -1968,8 +2175,9 @@ mod tests {
 
     /// Tant qu'on tape, rien ne compile.
     ///
-    /// Dix frappes par seconde pendant trois secondes : c'est exactement la
-    /// situation qui produisait « plusieurs clignotements par seconde ».
+    /// Dix frappes par seconde pendant trois secondes : la frappe ne
+    /// déclenche jamais le rendu — seuls l'arrêt de frappe de 1,5 s,
+    /// `Entrée` et le basculement de mode le font (bug-report-10, 6.2).
     #[test]
     fn typing_never_triggers_a_compile() {
         let mut render = RenderState::default();
@@ -1977,8 +2185,6 @@ mod tests {
         let start = Instant::now();
 
         for keystroke in 0..30u64 {
-            // Le tick de 300 ms voit plusieurs frappes : l'empreinte change
-            // donc à chaque tick.
             let now = start + Duration::from_millis(keystroke * 100);
             let fingerprint = format!("texte au caractère {keystroke}");
 
@@ -2116,5 +2322,43 @@ mod tests {
 
         // Le repos complet depuis la dernière frappe : on compile.
         assert!(render.compile_due("ab", 0, almost + Duration::from_millis(IDLE_DELAY_MS)));
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod tests_du_rendu_partage {
+    use super::*;
+
+    /// Les pièces se complètent sans s'écraser : le partage garde
+    /// toujours le même document (bug-report-10).
+    #[test]
+    fn les_pieces_du_rendu_se_partagent() {
+        let root = std::env::temp_dir().join(format!("partage-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let outcome = crate::typst::render::compile(&root, "Bonjour.", &[]);
+        let document = outcome.document.expect("le document compile");
+        std::fs::remove_dir_all(&root).ok();
+
+        let mut partage = RenduPartage::default();
+        partage.completant(&RenduPartage {
+            document: Some(document.clone()),
+            lecteur: None,
+        });
+        assert!(partage.document.is_some(), "le document arrive");
+        assert!(partage.lecteur.is_none(), "le lecteur attend encore");
+
+        partage.completant(&RenduPartage {
+            document: None,
+            lecteur: None,
+        });
+        assert!(
+            partage.document.is_some(),
+            "rien ne doit faire perdre le document"
+        );
+        assert!(
+            std::sync::Arc::ptr_eq(partage.document.as_ref().unwrap(), &document),
+            "c'est bien le même document partagé"
+        );
     }
 }

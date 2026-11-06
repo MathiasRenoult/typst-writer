@@ -38,7 +38,7 @@
 //! - **Une ligne qui commence par une barre oblique est du texte**, jamais un
 //!   bloc : c'est ainsi qu'un paragraphe peut commencer par `-` ou `#`.
 
-use super::schema::{Bloc, Document, Inline, Reference};
+use super::schema::{Bloc, Document, ElementListe, Inline, Reference};
 
 /// Analyse un texte en Document structuré.
 ///
@@ -124,6 +124,28 @@ pub fn parse(texte: &str) -> Document {
         {
             blocs.push(habiller(graphique, &mut en_attente));
             index = suivant;
+            continue;
+        }
+
+        // La liste du glossaire : `{glossaire}`, ou `{glossaire: tout}`
+        // pour y montrer aussi les termes jamais référencés.
+        if !echappee && let Some(tout) = glossaire_ligne(ligne) {
+            blocs.push(habiller(Bloc::Glossaire { tout }, &mut en_attente));
+            index += 1;
+            continue;
+        }
+
+        // La section bibliographie : `{bibliographie}` (bug-report-9).
+        if !echappee && bibliographie_ligne(ligne) {
+            blocs.push(habiller(Bloc::Bibliographie, &mut en_attente));
+            index += 1;
+            continue;
+        }
+
+        // La table des matières : `[[TOC]]` (bug-report-10, 1.3).
+        if !echappee && sommaire_ligne(ligne) {
+            blocs.push(habiller(Bloc::Sommaire, &mut en_attente));
+            index += 1;
             continue;
         }
 
@@ -681,12 +703,16 @@ fn lire_brut(lignes: &[&str], index: usize) -> (String, usize) {
 /// Lit une liste (à puces ou numérotée), jusqu'à une ligne qui n'en est plus.
 ///
 /// Renvoie les éléments et l'index de la ligne suivante.
-fn lire_liste(lignes: &[&str], index: usize, prefixe: &str) -> (Vec<Vec<Inline>>, usize) {
+fn lire_liste(lignes: &[&str], index: usize, prefixe: &str) -> (Vec<ElementListe>, usize) {
     let mut items = Vec::new();
     let mut suivant = index;
 
     while suivant < lignes.len() {
         let ligne = lignes[suivant];
+
+        // Le niveau d'imbrication : deux espaces de retrait par niveau
+        // (bug-report-10, 3.1).
+        let niveau = (ligne.len() - ligne.trim_start().len()) / 2;
 
         let contenu = if ligne.trim_start().starts_with('\\') {
             None
@@ -707,7 +733,10 @@ fn lire_liste(lignes: &[&str], index: usize, prefixe: &str) -> (Vec<Vec<Inline>>
 
         match contenu {
             Some(texte) => {
-                items.push(parse_inline(texte.trim()));
+                items.push(ElementListe {
+                    niveau,
+                    contenu: parse_inline(texte.trim()),
+                });
                 suivant += 1;
             }
             None => break,
@@ -896,6 +925,28 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
                 texte: parse_inline(&texte_lien),
                 cible,
             });
+            reste = apres;
+            continue;
+        }
+
+        // Terme du glossaire : `{glo:clé}`, `{glo:clé pluriel}`… — avant
+        // la couleur, qui prendrait `glo` pour un nom de teinte.
+        if let Some((cle, majuscule, pluriel, apres)) = glo(reste) {
+            vider!();
+            elements.push(Inline::Glo {
+                cle,
+                majuscule,
+                pluriel,
+            });
+            reste = apres;
+            continue;
+        }
+
+        // Date : `{date:...}` — avant la couleur, qui prendrait `date`
+        // pour un nom de teinte.
+        if let Some((spec, apres)) = date(reste) {
+            vider!();
+            elements.push(Inline::Date(spec.to_string()));
             reste = apres;
             continue;
         }
@@ -1221,6 +1272,61 @@ fn lien(texte: &str) -> Option<(String, String, &str)> {
     Some((texte_lien.to_string(), cible, reste))
 }
 
+/// Une date : `{date:...}` — la spécification jusqu'à la `}` qui ferme.
+fn date(texte: &str) -> Option<(&str, &str)> {
+    let reste = texte.strip_prefix("{date:")?;
+    let (spec, reste) = jusqu_a_l_accolade_fermante(reste)?;
+    Some((spec, reste))
+}
+
+/// La ligne `{bibliographie}` — et rien d'autre.
+fn bibliographie_ligne(ligne: &str) -> bool {
+    ligne.trim() == "{bibliographie}"
+}
+
+/// La ligne `[[TOC]]` — et rien d'autre.
+fn sommaire_ligne(ligne: &str) -> bool {
+    ligne.trim() == "[[TOC]]"
+}
+
+/// La ligne `{glossaire}` ou `{glossaire: tout}` — et rien d'autre.
+fn glossaire_ligne(ligne: &str) -> Option<bool> {
+    match ligne.trim() {
+        "{glossaire}" => Some(false),
+        "{glossaire: tout}" => Some(true),
+        _ => None,
+    }
+}
+
+/// Un terme du glossaire : `{glo:clé}` avec ses mots-clés facultatifs
+/// `majuscule` et `pluriel`.
+///
+/// La clé est un identifiant ([`crate::project::glossaire::EntreeGlossaire::cle_valide`]) :
+/// ce qui ne l'est pas n'est pas un terme — la couleur s'en occupera,
+/// comme avant.
+fn glo(texte: &str) -> Option<(String, bool, bool, &str)> {
+    let reste = texte.strip_prefix("{glo:")?;
+    let (spec, reste) = jusqu_a_l_accolade_fermante(reste)?;
+
+    let mut mots = spec.split_whitespace();
+    let cle = mots.next()?;
+    if !crate::project::glossaire::EntreeGlossaire::cle_valide(cle) {
+        return None;
+    }
+
+    let mut majuscule = false;
+    let mut pluriel = false;
+    for mot in mots {
+        match mot {
+            "majuscule" => majuscule = true,
+            "pluriel" => pluriel = true,
+            _ => return None,
+        }
+    }
+
+    Some((cle.to_string(), majuscule, pluriel, reste))
+}
+
 /// Une couleur : `{couleur:texte}`.
 ///
 /// Le nom va jusqu'au premier deux-points — il n'en contient pas —, et le
@@ -1383,7 +1489,10 @@ mod tests {
                     contenu: vec![Inline::Texte("Titre".to_string())],
                 },
                 Bloc::Paragraphe(vec![Inline::Texte("Texte".to_string())]),
-                Bloc::ListePuce(vec![vec![Inline::Texte("puce".to_string())]]),
+                Bloc::ListePuce(vec![ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("puce".to_string())],
+                }]),
             ]
         );
     }
@@ -1714,12 +1823,44 @@ mod tests {
         assert_eq!(
             doc.blocs,
             vec![Bloc::ListePuce(vec![
-                vec![Inline::Texte("un".to_string())],
-                vec![Inline::Texte("deux".to_string())],
+                ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("un".to_string())],
+                },
+                ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("deux".to_string())],
+                },
             ])]
         );
     }
 
+    /// Une liste multiniveau se lit — deux espaces de retrait par
+    /// niveau (bug-report-10, 3.1).
+    #[test]
+    fn une_liste_multiniveau_se_lit() {
+        let saut = &char::from(10).to_string();
+        let source = ["- un", "  - sous", "- deux", ""].join(saut);
+        let doc = parse(&source);
+
+        assert_eq!(
+            doc.blocs,
+            vec![Bloc::ListePuce(vec![
+                ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("un".to_string())],
+                },
+                ElementListe {
+                    niveau: 1,
+                    contenu: vec![Inline::Texte("sous".to_string())],
+                },
+                ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("deux".to_string())],
+                },
+            ])]
+        );
+    }
     /// Une liste numérotée se lit.
     #[test]
     fn une_liste_numerotee_se_lit() {
@@ -1728,8 +1869,14 @@ mod tests {
         assert_eq!(
             doc.blocs,
             vec![Bloc::ListeNumero(vec![
-                vec![Inline::Texte("un".to_string())],
-                vec![Inline::Texte("deux".to_string())],
+                ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("un".to_string())],
+                },
+                ElementListe {
+                    niveau: 0,
+                    contenu: vec![Inline::Texte("deux".to_string())],
+                },
             ])]
         );
     }
@@ -1777,6 +1924,53 @@ mod tests {
                     text: "Suite".to_string(),
                     line: 11,
                 },
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_de_la_section_bibliographie {
+    use super::super::schema::{Bloc, Inline};
+
+    /// La ligne `{bibliographie}` est une section — et rien d'autre.
+    #[test]
+    fn la_ligne_bibliographie_est_un_bloc() {
+        let doc = super::parse("Du texte.\n\n{bibliographie}\n");
+
+        assert_eq!(
+            doc.blocs,
+            vec![
+                Bloc::Paragraphe(vec![Inline::Texte("Du texte.".to_string())]),
+                Bloc::Bibliographie,
+            ]
+        );
+
+        // Une ligne habillée de plus n'en est pas une.
+        let doc = super::parse("{bibliographie} de trop\n");
+        assert!(
+            !doc.blocs
+                .iter()
+                .any(|bloc| matches!(bloc, Bloc::Bibliographie)),
+            "seule la ligne nue compte : {doc:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_du_sommaire {
+    use super::super::schema::{Bloc, Inline};
+
+    /// La table des matières : `[[TOC]]` est une section (bug-report-10).
+    #[test]
+    fn la_ligne_toc_est_un_bloc() {
+        let doc = super::parse("Du texte.\n\n[[TOC]]\n");
+
+        assert_eq!(
+            doc.blocs,
+            vec![
+                Bloc::Paragraphe(vec![Inline::Texte("Du texte.".to_string())]),
+                Bloc::Sommaire,
             ]
         );
     }

@@ -409,7 +409,7 @@ mod tests {
         assert!(typst.contains("des mots reconnaissables"), "{typst}");
     }
 
-    use crate::langage::schema::{Bloc, Document, Inline};
+    use crate::langage::schema::{Bloc, Document, ElementListe, Inline};
 
     #[test]
     fn importe_les_titres_paragraphes_gras_italiques_et_listes_simples() {
@@ -432,10 +432,14 @@ mod tests {
                         Inline::Italique(vec![Inline::Texte("italique".to_string())]),
                         Inline::Texte(".".to_string()),
                     ]),
-                    Bloc::ListePuce(vec![vec![Inline::Texte("une puce".to_string())]]),
-                    Bloc::ListeNumero(vec![vec![
-                        Inline::Texte("un élément numéroté".to_string(),)
-                    ]]),
+                    Bloc::ListePuce(vec![ElementListe {
+                        niveau: 0,
+                        contenu: vec![Inline::Texte("une puce".to_string())],
+                    }]),
+                    Bloc::ListeNumero(vec![ElementListe {
+                        niveau: 0,
+                        contenu: vec![Inline::Texte("un élément numéroté".to_string())],
+                    }]),
                 ],
             }
         );

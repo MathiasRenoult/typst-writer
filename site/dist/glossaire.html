@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le glossaire — Typst Writer</title>
+<style>
+  :root { --texte: #2c2b28; --adouci: #7a766c; --lisiere: #e3ded2; --fond: #faf8f3; --bois: #f2eee5; --accent: #5f7d55; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.65 Georgia, "Times New Roman", serif; color: var(--texte); background: var(--fond); }
+  .page { display: flex; min-height: 100vh; }
+  nav { width: 250px; padding: 2rem 1.5rem; background: var(--bois); border-right: 1px solid var(--lisiere); }
+  nav h1 { font-size: 1.05rem; margin: 0 0 1.25rem; }
+  nav a { display: block; padding: .35rem 0; color: var(--texte); text-decoration: none; border-bottom: 1px solid var(--lisiere); }
+  nav a:hover { color: var(--accent); }
+  nav a.courant { color: var(--accent); font-weight: bold; }
+  main { flex: 1; padding: 3rem clamp(1.5rem, 6vw, 5rem); max-width: 46rem; }
+  h1, h2, h3 { line-height: 1.25; }
+  h2 { margin-top: 2.25rem; border-bottom: 1px solid var(--lisiere); padding-bottom: .35rem; }
+  a { color: var(--accent); }
+  code { background: var(--bois); padding: .1em .35em; border-radius: 4px; font: .9em ui-monospace, monospace; }
+  pre { background: var(--bois); padding: 1rem; border-radius: 8px; overflow-x: auto; border: 1px solid var(--lisiere); }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--lisiere); padding: .45rem .65rem; text-align: left; }
+  th { background: var(--bois); }
+  blockquote { margin: 1rem 0; padding: .25rem 1rem; border-left: 3px solid var(--accent); background: var(--bois); }
+</style>
+</head>
+<body>
+<div class="page">
+<nav>
+<h1>Typst Writer</h1>
+<a href="index.html">Le manuel</a>
+<a href="prise-en-main.html">Prise en main</a>
+<a href="ecrire.html">Écrire</a>
+<a href="bibliographie.html">La bibliographie</a>
+<a href="glossaire.html" class="courant">Le glossaire</a>
+<a href="normes.html">Les normes</a>
+<a href="recherche.html">Rechercher et remplacer</a>
+<a href="raccourcis.html">Les raccourcis</a>
+<a href="fichiers.html">Les fichiers</a>
+<a href="installation-linux.html">Installer sous Linux</a>
+</nav>
+<main>
+<h1>Le glossaire</h1>
+<p>Un glossaire porte les termes du document — sigles, concepts, noms propres — avec leurs formes et leur définition. Il se gère entièrement du panneau gauche, et le paquet <a href="https://typst.app/universe/package/glossarium">glossarium</a> s&#x27;occupe du rendu : première occurrence développée, reprises serrées, liste finale avec renvoi aux pages.</p>
+<h2>Gérer les termes</h2>
+<p>La section <strong>Glossaire</strong> du panneau gauche, sous la bibliographie :</p>
+<ul>
+<li><strong>Nouveau terme</strong> (l&#x27;icône <code>+</code>) ouvre la fiche : clé, forme courte</li>
+</ul>
+<p>  (sigle), forme longue, définition, formes plurielles, groupe.</p>
+<ul>
+<li>Un <strong>clic sur un terme</strong> de la liste insère sa référence au curseur.</li>
+<li>Au survol, le <strong>crayon</strong> corrige le terme, la <strong>corbeille</strong> le</li>
+</ul>
+<p>  supprime.</p>
+<ul>
+<li>La <strong>loupe</strong> cherche un terme — par sa clé, ses formes ou sa</li>
+</ul>
+<p>  définition.</p>
+<p>Les termes vivent dans <code>glossaire.toml</code>, à la racine du projet, dans l&#x27;ordre où vous les avez posés. Ils voyagent avec le projet — archive portable et <code>.tw</code> unique.</p>
+<p><strong>La clé est un identifiant</strong> : lettres, chiffres, <code>-</code>, <code>_</code>, <code>.</code> — sans espace ni deux-points. Elle ne bouge plus une fois citée : pour une autre clé, créez un terme neuf et supprimez l&#x27;ancien.</p>
+<h2>Référencer un terme</h2>
+<p>Dans le texte :</p>
+<table><thead><tr>
+<th>Ce que vous écrivez</th>
+<th>Ce que le document rend</th>
+</tr></thead><tbody>
+<tr><td><code>{glo:sdo}</code></td><td>la forme du terme, développée à la première occurrence</td></tr>
+<tr><td><code>{glo:sdo pluriel}</code></td><td>la forme plurielle</td></tr>
+<tr><td><code>{glo:sdo majuscule}</code></td><td>la même, avec majuscule — en début de phrase</td></tr>
+<tr><td><code>{glo:sdo majuscule pluriel}</code></td><td>la majuscule et le pluriel</td></tr>
+</tbody></table>
+<p>Sur un chapitre <code>.typ</code> brut, l&#x27;insertion au curseur écrit la forme Typst équivalente : <code>#gls(&quot;sdo&quot;)</code>.</p>
+<h2>La liste finale</h2>
+<p>Là où vous la voulez — en général à la fin :</p>
+<pre><code>{glossaire}</code></pre>
+<p>Par défaut, la liste ne montre que les termes <strong>référencés</strong> dans le document. <code>{glossaire: tout}</code> y ajoute ceux que vous avez définis sans les citer.</p>
+<p>Sans <code>{glossaire}</code>, les termes se composent sans lien : il n&#x27;y a pas de liste où pointer. Un terme dont la clé n&#x27;existe pas se compose en <code>[clé]</code> et se signale dans les diagnostics — le document compile toujours.</p>
+<h2>Les formes</h2>
+<p>À la première occurrence, le terme développe sa <strong>forme longue</strong>, et la reprise garde la <strong>forme courte</strong>. Dans la fiche :</p>
+<ul>
+<li><em>Forme courte</em> — le sigle : « sdo » ;</li>
+<li><em>Forme longue</em> — le développement : « docteur scolastique » ;</li>
+<li><em>Pluriels</em> — les formes plurielles ; sans elles, glossarium</li>
+</ul>
+<p>  improvise ;</p>
+<ul>
+<li><em>Définition</em> — la glose, dans la liste finale ;</li>
+<li><em>Groupe</em> — la rubrique de la liste finale.</li>
+</ul>
+</main>
+</div>
+</body>
+</html>

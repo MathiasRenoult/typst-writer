@@ -93,11 +93,14 @@ impl Fonts {
                 continue;
             }
 
-            let Some(bytes) = installed_font(&family) else {
+            let fichiers = installed_fonts(&family);
+            if fichiers.is_empty() {
                 continue;
-            };
+            }
 
-            added.push((family, bytes));
+            for bytes in fichiers {
+                added.push((family.clone(), bytes));
+            }
         }
 
         if added.is_empty() {
@@ -143,6 +146,64 @@ impl Fonts {
     pub fn recognised(&self) -> Vec<String> {
         self.extra.iter().map(|(name, _)| name.clone()).collect()
     }
+}
+
+/// Toutes les familles que le système annonce — la liste **complète** du
+/// sélecteur de polices (bug-report-8, T1.1).
+///
+/// Le jeu de composition ne charge les octets qu'à la demande ; c'est ici
+/// que le sélecteur trouve tous les noms, sans dépendre de ce qui a déjà
+/// été chargé : la liste ne varie ni avec l'ordre de chargement, ni avec
+/// le document ouvert.
+pub fn familles_systeme() -> Vec<String> {
+    static CACHE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+    CACHE
+        .get_or_init(|| {
+            let sortie = std::process::Command::new("fc-list")
+                .args([":", "family"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            familles_depuis_fc_list(&sortie)
+        })
+        .clone()
+}
+
+/// Les familles à proposer dans un sélecteur : ce que le système annonce,
+/// plus ce que le jeu embarque — dédoublonnées par leur nom réel, jamais
+/// deux fois la même famille sous deux graphies.
+pub fn familles_pour_choisir() -> Vec<String> {
+    let mut vues: Vec<String> = Vec::new();
+    let mut familles: Vec<String> = Vec::new();
+
+    for famille in familles_systeme().into_iter().chain(shared().familles()) {
+        let cle = family_key(&famille);
+        if vues.contains(&cle) {
+            continue;
+        }
+        vues.push(cle);
+        familles.push(famille);
+    }
+
+    familles.sort();
+    familles
+}
+
+/// Les familles listées par `fc-list : family` — une par ligne, plusieurs
+/// quand un fichier porte plusieurs noms (séparés par des virgules).
+fn familles_depuis_fc_list(sortie: &str) -> Vec<String> {
+    let mut familles: Vec<String> = sortie
+        .lines()
+        .flat_map(|ligne| ligne.split(','))
+        .map(str::trim)
+        .filter(|nom| !nom.is_empty())
+        .map(str::to_string)
+        .collect();
+    familles.sort();
+    familles.dedup();
+    familles
 }
 
 /// Les familles de polices qu'un ensemble de textes nomme.
@@ -237,26 +298,28 @@ fn quoted(text: &str) -> Vec<String> {
     names
 }
 
-/// Les octets d'une famille installée, si le système la possède vraiment.
+/// Les octets de **tous** les fichiers d'une famille installée, si le
+/// système la possède vraiment — Regular, Bold, Italic, et les autres
+/// styles (bug-report-8, T1.1).
 ///
-/// `fc-match` rend **toujours** quelque chose : pour un nom inconnu, la police
-/// par défaut. C'est donc la famille **rendue** qui est comparée au nom
-/// demandé ; c'est ce qui distingue « cette famille est installée » de
-/// « fontconfig a fait au mieux ».
-fn installed_font(family: &str) -> Option<Vec<u8>> {
-    let output = std::process::Command::new("fc-match")
-        .args(["-f", "%{family}\t%{file}", family])
+/// `fc-list :family=…` ne rend que les polices réellement installées :
+/// pas de secours fantôme à comparer — une famille inconnue rend rien.
+/// Les noms se comparent sans la casse (« galatia sil » trouve
+/// « Galatia SIL »), et chaque fichier porte un visage de la famille.
+fn installed_fonts(family: &str) -> Vec<Vec<u8>> {
+    let Ok(output) = std::process::Command::new("fc-list")
+        .args(["-f", "%{file}\\n", &format!(":family={family}")])
         .output()
-        .ok()?;
+    else {
+        return Vec::new();
+    };
 
-    let answer = String::from_utf8_lossy(&output.stdout);
-    let (rendered, file) = answer.split_once('\t')?;
-
-    if family_key(rendered) != family_key(family) {
-        return None;
-    }
-
-    std::fs::read(file.trim()).ok()
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|file| !file.is_empty())
+        .filter_map(|file| std::fs::read(file).ok())
+        .collect()
 }
 
 /// La forme d'un nom de famille, pour les comparer : la casse, les espaces et
@@ -297,6 +360,25 @@ fn typ_files(root: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `fc-list : family` : une famille par ligne, plusieurs quand le
+    /// fichier porte plusieurs noms — la liste est complète, triée,
+    /// dédoublonnée, et ne dépend d'aucun ordre de chargement (T1.1).
+    #[test]
+    fn la_liste_systeme_est_complete_et_triee() {
+        let sortie =
+            "ZedMono Nerd Font Mono,ZedMono NFM\nEzra SIL SR\nNoto Sans Gurmukhi\nEzra SIL SR\n";
+        assert_eq!(
+            familles_depuis_fc_list(sortie),
+            vec![
+                "Ezra SIL SR".to_string(),
+                "Noto Sans Gurmukhi".to_string(),
+                "ZedMono NFM".to_string(),
+                "ZedMono Nerd Font Mono".to_string(),
+            ]
+        );
+        assert!(familles_depuis_fc_list("").is_empty());
+    }
 
     /// Les chaînes citées sont des noms candidats, et rien de plus.
     #[test]

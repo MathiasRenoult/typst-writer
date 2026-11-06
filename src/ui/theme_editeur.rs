@@ -186,90 +186,13 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     .width(Length::Fixed(430.0))
     .style(theme::panneau(palette));
 
-    let base = crate::ui::voile(
+    // La roue de couleur du texte sert aussi aux champs du thème : elle
+    // s'ouvre par-dessus, via `ThemeEditeurColorPicker` (bug-report-7).
+    crate::ui::voile(
         container(fenetre)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill),
-    );
-
-    // THEME-EDITOR-04-01 : le picker RVB intégré, par-dessus l'éditeur.
-    match state.color_picker.as_ref() {
-        Some(picker) => {
-            iced::widget::container(column![base, color_picker_overlay(picker, palette),])
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        }
-        None => base,
-    }
-}
-
-/// Le picker RVB intégré — des sliders, un aperçu, Valider / Annuler.
-fn color_picker_overlay(
-    picker: &crate::app::state::ColorPicker,
-    palette: crate::ui::theme::Palette,
-) -> Element<'static, Message> {
-    let preview_color = iced::Color::from_rgb8(picker.r, picker.g, picker.b);
-
-    let slider_r = iced::widget::slider(0..=255, picker.r, Message::ColorPickerR).step(1u8);
-    let slider_g = iced::widget::slider(0..=255, picker.g, Message::ColorPickerG).step(1u8);
-    let slider_b = iced::widget::slider(0..=255, picker.b, Message::ColorPickerB).step(1u8);
-
-    let preview = iced::widget::container(
-        iced::widget::Space::new()
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0)),
     )
-    .style(move |_| iced::widget::container::Style {
-        background: Some(preview_color.into()),
-        border: iced::Border {
-            width: 1.0,
-            color: palette.border,
-            radius: 6.0.into(),
-        },
-        ..Default::default()
-    });
-
-    container(
-        column![
-            row![
-                palette
-                    .label("Choisir une couleur")
-                    .size(theme::jetons::SAILLANT),
-                Space::new().width(Length::Fill),
-                preview,
-                palette
-                    .label(format!("#{:02x}{:02x}{:02x}", picker.r, picker.g, picker.b))
-                    .size(theme::jetons::DETAIL),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-            row![palette.label("R").size(11), slider_r]
-                .spacing(6)
-                .align_y(iced::Alignment::Center),
-            row![palette.label("G").size(11), slider_g]
-                .spacing(6)
-                .align_y(iced::Alignment::Center),
-            row![palette.label("B").size(11), slider_b]
-                .spacing(6)
-                .align_y(iced::Alignment::Center),
-            row![
-                Space::new().width(Length::Fill),
-                button(palette.label("Annuler").size(theme::jetons::DETAIL))
-                    .on_press(Message::ColorPickerFermer)
-                    .padding([5, 12]),
-                button(palette.label("Valider").size(theme::jetons::DETAIL))
-                    .on_press(Message::ColorPickerValider)
-                    .padding([5, 12]),
-            ]
-            .spacing(theme::jetons::PAS),
-        ]
-        .spacing(8),
-    )
-    .padding(14)
-    .width(Length::Fixed(320.0))
-    .style(theme::panneau(palette))
-    .into()
 }

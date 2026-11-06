@@ -47,7 +47,33 @@ pub fn generer(mise_en_page: &MiseEnPage) -> String {
     out.push_str(&texte(mise_en_page));
     out.push_str(&paragraphes(mise_en_page));
     out.push_str(&titres(mise_en_page));
+    out.push_str(&figures(mise_en_page));
     out.push_str(&liens(mise_en_page));
+
+    // La page de titre : une norme, née des métadonnées du document —
+    // jamais du Typst caché dans `main.typ` (bug-report-7, point 8).
+    if mise_en_page.page_de_titre {
+        out.push_str(
+            "  // La page de titre : les métadonnées du document.\n\
+  page(header: none, footer: none)[\n\
+    #v(1fr)\n\
+    #text(size: 1.5em, weight: \"bold\")[#sys.inputs.at(\"titre\", default: \"\")]\n\
+    #v(0.5cm)\n\
+    #text(size: 1.1em)[#sys.inputs.at(\"matiere\", default: \"\")]\n\
+    #v(2cm)\n\
+    #sys.inputs.at(\"auteur\", default: \"\")\n\
+    #linebreak()\n\
+    #sys.inputs.at(\"date\", default: \"\")\n\
+    #v(1fr)\n\
+  ]\n\
+  pagebreak()\n",
+        );
+    }
+
+    // Le sommaire : une norme comme le reste (bug-report-7, point 8).
+    if mise_en_page.sommaire {
+        out.push_str("  outline()\n  pagebreak()\n");
+    }
 
     out.push_str("  doc\n}\n");
     out
@@ -128,24 +154,24 @@ fn page(mise_en_page: &MiseEnPage) -> String {
 
 /// Le texte courant : police, corps, langue, couleur.
 fn texte(mise_en_page: &MiseEnPage) -> String {
-    let mut lignes = vec!["  set text(".to_string()];
+    let mut proprietes = Vec::new();
 
     if let Some(police) = police_typst(&mise_en_page.texte.police) {
-        lignes.push(format!("    font: {police},"));
+        proprietes.push(format!("    font: {police},"));
     }
 
     if super::modele::longueur_valide(&mise_en_page.texte.taille) {
-        lignes.push(format!("    size: {},", mise_en_page.texte.taille));
+        proprietes.push(format!("    size: {},", mise_en_page.texte.taille));
     }
 
     if !mise_en_page.texte.langue.is_empty() {
-        lignes.push(format!(
+        proprietes.push(format!(
             "    lang: \"{}\",",
             echapper(&mise_en_page.texte.langue)
         ));
     }
 
-    lignes.push(format!(
+    proprietes.push(format!(
         "    hyphenate: {},",
         if mise_en_page.texte.coupure {
             "true"
@@ -155,14 +181,26 @@ fn texte(mise_en_page: &MiseEnPage) -> String {
     ));
 
     if super::modele::couleur_valide(&mise_en_page.couleurs.texte) {
-        lignes.push(format!(
+        proprietes.push(format!(
             "    fill: rgb(\"{}\"),",
             mise_en_page.couleurs.texte
         ));
     }
 
-    lignes.push("  )\n".to_string());
-    lignes.join("\n")
+    let proprietes = proprietes.join("\n");
+
+    // La même typographie, posée deux fois et pour deux raisons.
+    //
+    // Le `set text` simple se lit à la portée d'élément : le moteur y
+    // puise la langue de ses propres chaînes — le sommaire, la
+    // bibliographie — que la portée de trame ne leur rend pas (elles
+    // revenaient en anglais : bug-report-9, T1.2).
+    //
+    // Le `show text: set text` se lit sur les trames : c'est la seule
+    // place qui l'emporte sur un `#set text` de l'assemblage (le
+    // gabarit d'origine en portait un, la police ne changeait
+    // jamais : bug-report-9, T1.4).
+    format!("  set text(\n{proprietes}\n  )\n  show text: set text(\n{proprietes}\n  )\n",)
 }
 
 /// Les paragraphes : justification, interligne, espacement, retrait.
@@ -192,6 +230,40 @@ fn paragraphes(mise_en_page: &MiseEnPage) -> String {
     lignes.join("\n")
 }
 
+/// Les figures : le libellé de la légende, sa numérotation, son style.
+///
+/// C'est la demande 23 de `bug-report-7.md` : « fig., Figure, ou autre
+/// chose », le type de numérotation, gras ou italique. Vide partout =
+/// les défauts de Typst, rien ne bouge pour qui ne règle rien.
+fn figures(mise_en_page: &MiseEnPage) -> String {
+    let mut out = String::new();
+    let mut regles = Vec::new();
+
+    if !mise_en_page.numerotation_figures.trim().is_empty() {
+        regles.push(format!(
+            "numbering: \"{}\"",
+            echapper(mise_en_page.numerotation_figures.trim())
+        ));
+    }
+    if !mise_en_page.legende_prefixe.trim().is_empty() {
+        regles.push(format!(
+            "supplement: [{}]",
+            mise_en_page.legende_prefixe.trim()
+        ));
+    }
+    if !regles.is_empty() {
+        out.push_str(&format!("  set figure({})\n", regles.join(", ")));
+    }
+
+    match mise_en_page.legende_style.trim() {
+        "gras" => out.push_str("  show figure.caption: set text(weight: \"bold\")\n"),
+        "italique" => out.push_str("  show figure.caption: set text(style: \"italic\")\n"),
+        _ => {}
+    }
+
+    out
+}
+
 /// Les titres : numérotation, casse, corps par niveau, police, gras.
 fn titres(mise_en_page: &MiseEnPage) -> String {
     let mut out = String::new();
@@ -213,10 +285,6 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
             "  show heading: set block(above: {}, below: {})\n",
             titres.espacement, titres.espacement
         ));
-    }
-
-    if let Some(police) = police_typst(&titres.police) {
-        out.push_str(&format!("  show heading: set text(font: {police})\n"));
     }
 
     // NORMS-04-02 : chaque niveau porte ses réglages, s'ils existent.
@@ -243,9 +311,39 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
             5 => titres.gras_5,
             _ => titres.gras_6,
         };
+        // Le gras s'écrit **dans les deux sens** : sans `weight:
+        // "regular"`, le gras par défaut des titres Typst survit à sa
+        // désactivation (bug-report-9, T1.2).
         let gras = gras_niveau.unwrap_or(titres.gras);
-        if gras {
-            regles.push("weight: \"bold\"".to_string());
+        regles.push(format!(
+            "weight: \"{}\"",
+            if gras { "bold" } else { "regular" }
+        ));
+
+        // L'italique et le souligné par niveau.
+        let italique_niveau = match niveau {
+            1 => titres.italique_1,
+            2 => titres.italique_2,
+            3 => titres.italique_3,
+            4 => titres.italique_4,
+            5 => titres.italique_5,
+            _ => titres.italique_6,
+        };
+        if italique_niveau.unwrap_or(false) {
+            regles.push("style: \"italic\"".to_string());
+        }
+        let souligne_niveau = match niveau {
+            1 => titres.souligne_1,
+            2 => titres.souligne_2,
+            3 => titres.souligne_3,
+            4 => titres.souligne_4,
+            5 => titres.souligne_5,
+            _ => titres.souligne_6,
+        };
+        if souligne_niveau.unwrap_or(false) {
+            out.push_str(&format!(
+                "  show heading.where(level: {niveau}): it => underline(it)\n"
+            ));
         }
 
         // La couleur par niveau gagne sur la couleur globale de titres.
@@ -265,8 +363,12 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
         }
 
         if !regles.is_empty() {
+            // Le réglage se pose **sur les trames de texte** du titre, en
+            // dedans de la typographie générale : c'est la seule place qui
+            // l'emporte — la taille comme la couleur, sans quoi la
+            // typographie du texte les écrasait (bug-report-9, T1.2).
             out.push_str(&format!(
-                "  show heading.where(level: {niveau}): set text({})\n",
+                "  show heading.where(level: {niveau}): it => {{\n    show text: set text({})\n    it\n  }}\n",
                 regles.join(", ")
             ));
         }
@@ -341,6 +443,74 @@ fn titres(mise_en_page: &MiseEnPage) -> String {
 /// celles que Typst sait composer). Le texte du voisinage est du texte :
 /// « p. {page} » donne « p. 3 », « page {page} sur {pages} » donne
 /// « page 3 sur 12 ».
+/// Les images d'un lieu : `![…](chemin)` sort en marqueurs, et les
+/// chemins sont gardés à part — l'échappement les défigurerait.
+fn extraire_images(texte: &str, images: &mut Vec<String>) -> String {
+    let mut out = String::new();
+    let mut reste = texte;
+    while let Some(ouvrante) = reste.find("![") {
+        out.push_str(&reste[..ouvrante]);
+        reste = &reste[ouvrante + 2..];
+        let Some(fermante) = reste.find("](") else {
+            out.push_str("![");
+            continue;
+        };
+        let legende = &reste[..fermante].to_string();
+        reste = &reste[fermante + 2..];
+        let Some(fin) = reste.find(')') else {
+            out.push_str("![");
+            out.push_str(legende);
+            out.push_str("](");
+            continue;
+        };
+        let chemin = reste[..fin].trim().to_string();
+        reste = &reste[fin + 1..];
+        // Un chemin vide n'est rien : pas de marqueur, pas d'image — et
+        // surtout pas un `#image("")` qui casserait tout le document.
+        if chemin.is_empty() {
+            continue;
+        }
+        let rang = images.len();
+        images.push(chemin);
+        out.push_str(&format!("\u{5}{rang}\u{5}"));
+    }
+    out.push_str(reste);
+    out
+}
+
+/// Les clés de quick parts qui restent — `{directeur}`, `{matiere}` —
+/// deviennent des lectures `sys.inputs` (bug-report-8, T4.1) : toute
+/// métadonnée de l'auteur se rend, pas seulement les quelques noms que la
+/// maison connaissait par cœur.
+fn traduire_les_cles(texte: &str) -> String {
+    let mut out = String::new();
+    let mut reste = texte;
+
+    while let Some(debut) = reste.find('{') {
+        let apres = &reste[debut + 1..];
+        let Some(fin) = apres.find('}') else {
+            break;
+        };
+        let cle = &apres[..fin];
+
+        // Une clé tient en un mot : autre chose est du texte, qui garde
+        // ses accolades.
+        if cle.is_empty() || cle.contains(['{', ' ', '\n', '\t']) {
+            out.push_str(&reste[..debut + 1]);
+            reste = apres;
+            continue;
+        }
+
+        let echappee = cle.replace('\\', "\\\\").replace('"', "\\\"");
+        out.push_str(&reste[..debut]);
+        out.push_str(&format!("#sys.inputs.at(\"{echappee}\", default: \"\")"));
+        reste = &apres[fin + 1..];
+    }
+
+    out.push_str(reste);
+    out
+}
+
 fn entete_pied(mise_en_page: &MiseEnPage) -> String {
     let entete_pied = &mise_en_page.entete_pied;
 
@@ -351,9 +521,20 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
     let forme = entete_pied.numerotation.trim();
     let forme = if forme.is_empty() { "1" } else { forme };
 
+    // La hauteur des images, en % de la zone : bornée pour qu'une image
+    // ne déborde jamais de sa place (bug-report-8, T4.4).
+    let hauteur = entete_pied
+        .images_hauteur
+        .trim()
+        .trim_end_matches('%')
+        .parse::<u32>()
+        .ok()
+        .map(|n| n.clamp(1, 100))
+        .unwrap_or(80);
+
     /// Un lieu — gauche, centre, droite — composé : `{page}` et `{pages}`
     /// prennent leur place dans le texte, le reste est du texte.
-    fn lieu(texte: &str, forme: &str) -> String {
+    fn lieu(texte: &str, forme: &str, hauteur: u32) -> String {
         /// Le texte d'un lieu est du texte : les caractères qui signifient
         /// quelque chose pour Typst s'échappent, le reste ne bouge pas.
         fn echapper(texte: &str) -> String {
@@ -380,10 +561,17 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
             let morceau = morceau.replace("{pages}", "\\x00");
             // Les Quick Parts — NORMS-11 : des marqueurs que l'échappement
             // ne touche pas, remplacés après coup par du code Typst.
-            let morceau = morceau.replace("{document}", "\\x01");
-            let morceau = morceau.replace("{date}", "\\x02");
-            let morceau = morceau.replace("{auteur}", "\\x03");
-            let morceau = morceau.replace("{projet}", "\\x04");
+            let morceau = morceau.replace("{document}", "\u{1}");
+            let morceau = morceau.replace("{date}", "\u{2}");
+            let morceau = morceau.replace("{auteur}", "\u{3}");
+            let morceau = morceau.replace("{projet}", "\u{4}");
+            let morceau = morceau.replace("{titre}", "\u{7}");
+
+            // Les images de l'en-tête — `![…](chemin)`, à l'échelle d'un
+            // logo. Le chemin est tiré AVANT l'échappement, qui le
+            // défigurerait.
+            let mut images = Vec::new();
+            let morceau = extraire_images(&morceau, &mut images);
 
             for (rang, morceau) in morceau.split("\\x00").enumerate() {
                 if rang > 0 {
@@ -393,15 +581,38 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
                 }
 
                 // On échappe le texte, puis on replace les marqueurs par
-                // leur code Typst — non échappé, c'est du code.
+                // leur code Typst — non échappé, c'est du code. Chaque
+                // quick part lit `sys.inputs` : les clés de métadonnées de
+                // l'auteur rendent comme les nôtres (bug-report-8, T4.1).
                 let texte_echappe = echapper(morceau);
                 let texte_echappe =
-                    texte_echappe.replace("\\x01", "#sys.inputs.at(\"document\", default: \"\")");
-                let texte_echappe = texte_echappe.replace("\\x02", "#datetime.today().display()");
+                    texte_echappe.replace("\u{1}", "#sys.inputs.at(\"document\", default: \"\")");
+                let texte_echappe = texte_echappe.replace(
+                    "\u{2}",
+                    "#sys.inputs.at(\"date\", default: datetime.today().display())",
+                );
                 let texte_echappe =
-                    texte_echappe.replace("\\x03", "#sys.inputs.at(\"auteur\", default: \"\")");
+                    texte_echappe.replace("\u{3}", "#sys.inputs.at(\"auteur\", default: \"\")");
                 let texte_echappe =
-                    texte_echappe.replace("\\x04", "#sys.inputs.at(\"projet\", default: \"\")");
+                    texte_echappe.replace("\u{4}", "#sys.inputs.at(\"projet\", default: \"\")");
+                let texte_echappe = texte_echappe.replace(
+                    "\u{7}",
+                    "#context { let t = sys.inputs.at(\"titre\", default: none); \
+                     if t != none { t } else { \
+                     let q = query(heading.where(level: 1)); \
+                     if q.len() > 0 { q.first().body } } }",
+                );
+                let texte_echappe = traduire_les_cles(&texte_echappe);
+                let mut texte_echappe = texte_echappe;
+                for (rang, chemin) in images.iter().enumerate() {
+                    texte_echappe = texte_echappe.replace(
+                        &format!("\u{5}{rang}\u{5}"),
+                        &format!(
+                            "#image(\"{}\", height: {hauteur}%)",
+                            chemin.replace('\\', "\\\\").replace('"', "\\\"")
+                        ),
+                    );
+                }
 
                 out.push_str(&texte_echappe);
             }
@@ -413,9 +624,9 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
     let grille = |empl: &crate::mise_en_page::modele::Emplacement| -> String {
         format!(
             "grid(columns: (1fr, 1fr, 1fr), align: (left, center, right), [{gauche}], [{centre}], [{droite}])",
-            gauche = lieu(&empl.gauche, forme),
-            centre = lieu(&empl.centre, forme),
-            droite = lieu(&empl.droite, forme),
+            gauche = lieu(&empl.gauche, forme, hauteur),
+            centre = lieu(&empl.centre, forme, hauteur),
+            droite = lieu(&empl.droite, forme, hauteur),
         )
     };
 
@@ -442,27 +653,23 @@ fn entete_pied(mise_en_page: &MiseEnPage) -> String {
 fn liens(mise_en_page: &MiseEnPage) -> String {
     let mut out = String::new();
 
-    // Le gras et l'italique ont leur couleur quand elle est dite ; vides,
-    // ils gardent celle du texte.
-    if super::modele::couleur_valide(&mise_en_page.couleurs.gras) {
-        out.push_str(&format!(
-            "  show strong: set text(fill: rgb(\"{}\"))\n",
-            mise_en_page.couleurs.gras
-        ));
-    }
-
-    if super::modele::couleur_valide(&mise_en_page.couleurs.italique) {
-        out.push_str(&format!(
-            "  show emph: set text(fill: rgb(\"{}\"))\n",
-            mise_en_page.couleurs.italique
-        ));
-    }
-
-    if super::modele::couleur_valide(&mise_en_page.couleurs.liens) {
-        out.push_str(&format!(
-            "  show link: set text(fill: rgb(\"{}\"))\n",
-            mise_en_page.couleurs.liens
-        ));
+    // Le gras, l'italique et les liens ont leur couleur quand elle est
+    // dite ; vides, ils gardent celle du texte.
+    //
+    // Les règles sont **imbriquées** dans le contenu, comme les styles de
+    // titres : un `show text: set` intérieur l'emporte sur celui du corps,
+    // posé par `fn texte` — à plat, la couleur du texte écrasait la leur
+    // et les couleurs de style ne changeaient rien au rendu.
+    for (selecteur, couleur) in [
+        ("strong", &mise_en_page.couleurs.gras),
+        ("emph", &mise_en_page.couleurs.italique),
+        ("link", &mise_en_page.couleurs.liens),
+    ] {
+        if super::modele::couleur_valide(couleur) {
+            out.push_str(&format!(
+                "  show {selecteur}: it => {{ show text: set text(fill: rgb(\"{couleur}\")); it }}\n"
+            ));
+        }
     }
 
     out
@@ -480,12 +687,15 @@ fn papier_typst(format: &str) -> Option<String> {
 
 /// La forme de numérotation, dans les mots de Typst.
 fn forme_numerotation(forme: &str) -> String {
-    match forme {
-        "I" => "I".to_string(),
-        "i" => "i".to_string(),
-        "A" => "A".to_string(),
-        "a" => "a".to_string(),
-        _ => "1".to_string(),
+    // Un schéma libre se passe tel quel — « 1 », « I », « 1.1 », « 1) » —
+    // c'est Typst qui compose (bug-report-9 : la liste blanche écrasait
+    // tout schéma libre en « 1 »).
+    let forme = forme.trim();
+
+    if forme.is_empty() {
+        "1".to_string()
+    } else {
+        forme.to_string()
     }
 }
 
@@ -746,4 +956,191 @@ fn un_document_ne_compile_jamais_mal() {
         "le document compile toujours : {}",
         String::from_utf8_lossy(&sortie.stderr)
     );
+}
+
+#[cfg(test)]
+/// **Toutes** les quick parts se traduisent en code Typst — les nôtres
+/// comme les clés de métadonnées de l'auteur — et aucune accolade nue ne
+/// survit (bug-report-8, T4.1).
+#[test]
+fn les_quick_parts_se_traduisent_toutes() {
+    let mut mise = MiseEnPage::default();
+    mise.entete_pied.entete.gauche =
+        "{document}|{date}|{auteur}|{projet}|{titre}|{directeur}".to_string();
+
+    let sortie = generer(&mise);
+    assert!(
+        sortie.contains("#sys.inputs.at(\"document\", default: \"\")"),
+        "document se lit dans sys.inputs : {sortie}"
+    );
+    assert!(
+        sortie.contains("#sys.inputs.at(\"date\", default: datetime.today().display())"),
+        "date : la valeur du jour ou celle des entrées : {sortie}"
+    );
+    assert!(
+        sortie.contains("#sys.inputs.at(\"auteur\", default: \"\")"),
+        "auteur : {sortie}"
+    );
+    assert!(
+        sortie.contains("#sys.inputs.at(\"projet\", default: \"\")"),
+        "projet : {sortie}"
+    );
+    assert!(
+        sortie.contains("query(heading.where(level: 1))"),
+        "titre : le premier titre de niveau 1 : {sortie}"
+    );
+    assert!(
+        sortie.contains("#sys.inputs.at(\"directeur\", default: \"\")"),
+        "une clé de métadonnée quelconque passe comme les autres : {sortie}"
+    );
+    assert!(
+        !sortie.contains("{directeur}") && !sortie.contains("{auteur}"),
+        "aucune quick part nue ne survit : {sortie}"
+    );
+}
+
+/// Les styles des titres se transmettent au moteur (bug-report-8,
+/// T8.3) : gras, italique, souligné — par niveau.
+#[test]
+fn les_styles_des_titres_se_transmettent() {
+    let mut mise = MiseEnPage::default();
+    mise.titres.gras_1 = Some(false);
+    mise.titres.italique_2 = Some(true);
+    mise.titres.souligne_3 = Some(true);
+
+    let sortie = generer(&mise);
+    assert!(
+        !sortie.contains("heading.where(level: 1): set text(size: 16pt, weight: \"bold\""),
+        "le niveau 1 n'est plus gras : {sortie}"
+    );
+    assert!(
+        sortie.contains("style: \"italic\""),
+        "le niveau 2 est en italique : {sortie}"
+    );
+    assert!(
+        sortie.contains("heading.where(level: 3): it => underline(it)"),
+        "le niveau 3 est souligné : {sortie}"
+    );
+}
+
+/// Les images : un chemin vide n'est rien — surtout pas un `#image("")`
+/// qui casserait le document entier (bug-report-8, T4.1).
+#[test]
+fn une_image_sans_chemin_ne_casse_rien() {
+    let mut mise = MiseEnPage::default();
+    mise.entete_pied.entete.gauche = "Avant ![logo]() après".to_string();
+
+    let sortie = generer(&mise);
+    assert!(
+        !sortie.contains("#image(\"\""),
+        "pas d'image sans chemin : {sortie}"
+    );
+    assert!(sortie.contains("Avant"), "le texte reste : {sortie}");
+    assert!(sortie.contains("après"), "le texte reste : {sortie}");
+}
+
+/// **Le rendu réel** : les quick parts montrent les valeurs des entrées —
+/// éprouvé au vrai Typst, texte extrait du PDF. Saute si `typst` ou
+/// `pdftotext` manquent de la machine (bug-report-8, T4.1).
+#[test]
+fn les_quick_parts_rendent_leurs_valeurs() {
+    for binaire in ["typst", "pdftotext"] {
+        if std::process::Command::new(binaire)
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            println!("{binaire} n'est pas installé : test sauté");
+            return;
+        }
+    }
+
+    let mut mise = MiseEnPage::default();
+    mise.entete_pied.pied.gauche = "{auteur} / {projet} / {document} / {directeur}".to_string();
+
+    let gabarit = generer(&mise);
+    let dossier = std::env::temp_dir().join("typst-writer-epreuve-quick-parts");
+    let _ = std::fs::create_dir_all(&dossier);
+    let chemin = dossier.join("le-document.typ");
+    std::fs::write(
+        &chemin,
+        format!("{gabarit}\n#show: mise-en-page\nUn texte.\n"),
+    )
+    .expect("le document s'écrit");
+
+    let sortie = std::process::Command::new("typst")
+        .args([
+            "compile",
+            chemin.to_str().unwrap(),
+            "--input",
+            "auteur=Alice",
+            "--input",
+            "directeur=M. X",
+            "--input",
+            "document=le-document",
+        ])
+        .output()
+        .expect("typst s'exécute");
+    assert!(
+        sortie.status.success(),
+        "le document compile : {}",
+        String::from_utf8_lossy(&sortie.stderr)
+    );
+
+    let texte = std::process::Command::new("pdftotext")
+        .arg(dossier.join("le-document.pdf"))
+        .arg("-")
+        .output()
+        .expect("pdftotext s'exécute");
+    let texte = String::from_utf8_lossy(&texte.stdout).to_string();
+
+    assert!(texte.contains("Alice"), "l'auteur se rend : {texte}");
+    assert!(
+        texte.contains("M. X"),
+        "la clé de métadonnée se rend : {texte}"
+    );
+    assert!(
+        texte.contains("le-document"),
+        "le nom du document se rend : {texte}"
+    );
+}
+
+#[cfg(test)]
+mod tests_legendes {
+    use super::super::modele::MiseEnPage;
+
+    /// La demande 23 : le libellé, la numérotation et le style de la
+    /// légende se règlent, et rien ne bouge pour qui ne règle rien.
+    #[test]
+    fn la_legende_se_regle_et_se_genere() {
+        let mut page = MiseEnPage::default();
+
+        // Rien de réglé : aucune règle de figure — les défauts de Typst.
+        let gabarit = super::generer(&page);
+        assert!(
+            !gabarit.contains("set figure("),
+            "rien de réglé, rien de forcé : {gabarit}"
+        );
+
+        page.legende_prefixe = "Figure".to_string();
+        page.numerotation_figures = "A".to_string();
+        page.legende_style = "italique".to_string();
+        let gabarit = super::generer(&page);
+        assert!(
+            gabarit.contains("set figure(numbering: \"A\", supplement: [Figure])"),
+            "le libellé et la numérotation viennent : {gabarit}"
+        );
+        assert!(
+            gabarit.contains("show figure.caption: set text(style: \"italic\")"),
+            "le style vient : {gabarit}"
+        );
+
+        // Le gras suit aussi.
+        page.legende_style = "gras".to_string();
+        let gabarit = super::generer(&page);
+        assert!(
+            gabarit.contains("show figure.caption: set text(weight: \"bold\")"),
+            "le gras vient : {gabarit}"
+        );
+    }
 }

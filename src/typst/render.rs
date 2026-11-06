@@ -1,22 +1,22 @@
-//! Compilation Typst en bibliothèque et rendu raster des pages.
+//! Compilation Typst en bibliothèque, et rendu des pages par le PDF.
 //!
-//! Deux temps, volontairement séparés :
+//! Trois temps, volontairement séparés :
 //!
 //! 1. **Compilation** (`compile`) : le document est compilé par le moteur
 //!    Typst complet (polices embarquées, layout identique à `typst compile`).
 //!    C'est rapide (~15 ms même pour un gros document) et ne produit aucun
 //!    bitmap. Les diagnostics (erreurs, avertissements) en sortent aussi.
 //!
-//! 2. **Rendu raster** (`render_page`) : une seule page à la fois est
-//!    rasterisée en pixels RGBA par `typst-render` (le moteur d'export du CLI,
-//!    qui dessine les glyphes directement — pas de SVG, donc pas de bug
-//!    d'exposant). Seules les pages visibles à l'écran sont rendues, ce qui
-//!    rend l'aperçu d'un document de 5500 mots aussi léger que celui d'une
-//!    page.
+//! 2. **Export PDF** (`render_pdf`) : les octets du vrai PDF, celui que
+//!    l'application livre. C'est désormais **la source d'affichage** : ce
+//!    que l'aperçu montre est exactement ce que l'export écrit.
 //!
-//!    Les pixels partent bruts vers `Handle::from_rgba`, sans passage par un
-//!    PNG : l'encodage puis le décodage coûtaient la moitié du temps de rendu
-//!    pour rien, et le backend rechargeait une texture à chaque fois.
+//! 3. **Rendu raster** (`render_page`) : une seule page à la fois est
+//!    rasterisée en pixels RGBA par `pdf-render` — le lecteur PDF pur Rust,
+//!    qui interprète le PDF exporté et dessine les glyphes directement.
+//!    La densité est celle de l'affichage, sans plafond : la qualité suit
+//!    le zoom à chaque fois, et la mémoire reste tenue par le cache de
+//!    pages (visibles seulement, borné — voir `RenderState`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -43,12 +43,6 @@ const CHAPTER_MARKER: &str = "#metadata(none) <tw-chapitre>";
 /// Nom du label du repère, tel qu'on le redemande à l'introspection.
 const CHAPTER_LABEL: &str = "tw-chapitre";
 
-/// Densité de rendu maximale : elle borne la mémoire d'une page.
-///
-/// Une page A4 à 2 px/pt pèse 8 Mo de pixels, dont le backend graphique fait
-/// une texture d'environ 14 Mio. C'est un plafond, jamais une cible.
-pub const MAX_PIXEL_PER_PT: f64 = 2.0;
-
 /// Échelle d'écran minimale supposée.
 ///
 /// L'échelle que la fenêtre déclare n'est pas toujours la vérité. Sous Wayland,
@@ -70,16 +64,18 @@ pub const MIN_PIXEL_PER_PT: f64 = 0.4;
 /// logiques par point, qui dépend de la place que le panneau lui laisse — et
 /// `scale_factor` la finesse physique annoncée par la fenêtre. Le rendu n'a
 /// besoin que de leur produit : rasteriser plus fin ne se voit pas — l'écran ne
-/// peut pas montrer des pixels qu'il n'a pas — et coûte la mémoire au **carré**
-/// du rapport.
+/// peut pas montrer des pixels qu'il n'a pas.
 ///
-/// C'est ce rapport qui fait qu'un aperçu est léger : une page montrée à 0,65
-/// pixel par point sur un écran à 1,5 ne demande que 0,98 px/pt, soit quatre
-/// fois moins de pixels qu'une page rendue à 2,0 « par sécurité ».
+/// **Aucun plafond** : la qualité suit le zoom et l'écran à chaque fois
+/// (bug-report-9 — « toujours une qualité optimale »). L'ancien plafond à
+/// 2 px/pt étirait l'image au-delà : c'est la pixellisation observée aux
+/// forts zooms. La mémoire, elle, se tient ailleurs : seules les pages
+/// visibles sont rasterisées, le cache est borné, et quatre rendus filent
+/// au plus en même temps.
 pub fn pixel_per_pt(display_ratio: f64, scale_factor: f32) -> f64 {
     let screen_scale = f64::from(scale_factor).max(MIN_SCREEN_SCALE);
 
-    (display_ratio * screen_scale).clamp(MIN_PIXEL_PER_PT, MAX_PIXEL_PER_PT)
+    (display_ratio * screen_scale).max(MIN_PIXEL_PER_PT)
 }
 
 /// Un diagnostic (erreur ou avertissement) positionné dans le document.
@@ -262,11 +258,42 @@ pub struct PageImage {
 /// retard sur la frappe, puisque l'assemblage `#include` les chapitres depuis
 /// le disque.
 pub fn compile(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> CompileOutcome {
+    // Les métadonnées du projet voyagent dans **toutes** les voies —
+    // aperçu, export, vignettes : une quick part ne rend pas différemment
+    // selon le chemin qui compile (bug-report-8, T4.1).
+    let entrees = crate::project::metadonnees::Metadonnees::charger(root).entrees();
+    compile_avec_entrees(root, entry, overrides, &entrees)
+}
+
+/// Compile avec les entrées `sys.inputs` que l'app connaît — le nom du
+/// document ouvert, l'auteur — par-dessus celles que la racine donne déjà
+/// (`projet`). Ce sont elles que les quick parts de l'en-tête appellent.
+/// Le nom du document compilé — ce que `{document}` montre : la tige du
+/// fichier d'entrée, sans son extension.
+fn nom_du_document(entry: &str) -> String {
+    std::path::Path::new(entry)
+        .file_stem()
+        .map(|nom| nom.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+pub fn compile_avec_entrees(
+    root: &Path,
+    entry: &str,
+    overrides: &[(PathBuf, String)],
+    entrees: &[(String, String)],
+) -> CompileOutcome {
     let marked = marked_entry(root, entry, overrides);
 
     let compiled_entry = marked.as_deref().unwrap_or(entry);
 
-    let world = PreviewWorld::new(root, compiled_entry, overrides);
+    // `{document}` : le nom du document compilé — la racine donne
+    // `projet`, l'appelant peut en savoir plus et passe par-dessus.
+    let nom_document = nom_du_document(entry);
+    let mut toutes: Vec<(String, String)> = vec![("document".to_string(), nom_document)];
+    toutes.extend(entrees.iter().cloned());
+
+    let world = PreviewWorld::new(root, compiled_entry, overrides, &toutes);
 
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
 
@@ -412,23 +439,46 @@ pub fn fingerprint(entry: &str, overrides: &[(PathBuf, String)]) -> String {
 /// C'est la seule opération coûteuse de l'aperçu (~30 ms pour une page A4) :
 /// elle ne doit donc être déclenchée que pour les pages réellement
 /// nécessaires, et jamais depuis le thread d'affichage.
-pub fn render_page(document: &PagedDocument, index: usize, density: f64) -> Option<PageImage> {
-    let page = document.pages().get(index)?;
+/// Le PDF ouvert par le lecteur d'affichage (bug-report-9, T4).
+pub type DocumentPdf = pdf_render::pdf_syntax::Pdf;
 
-    let options = typst_render::RenderOptions {
-        pixel_per_pt: typst_utils::Scalar::new(density),
-        render_bleed: false,
+/// Ouvre le PDF exporté : la source unique de l'aperçu.
+///
+/// `None` si les octets ne sont pas un PDF lisible — le montrer plutôt
+/// qu'échouer en silence.
+pub fn ouvrir_pdf(octets: Vec<u8>) -> Option<DocumentPdf> {
+    pdf_render::pdf_syntax::Pdf::new(octets).ok()
+}
+
+/// Rasterise une page du **PDF exporté** en pixels RGBA, à la densité
+/// exacte de l'affichage.
+///
+/// Renvoie `None` si l'index dépasse le nombre de pages.
+///
+/// C'est la seule opération coûteuse de l'aperçu (~30 ms pour une page A4) :
+/// elle ne doit donc être déclenchée que pour les pages réellement
+/// nécessaires, et jamais depuis le thread d'affichage.
+pub fn render_page(pdf: &DocumentPdf, index: usize, density: f64) -> Option<PageImage> {
+    let page = pdf.pages().get(index)?;
+
+    let settings = pdf_render::RenderSettings {
+        x_scale: density as f32,
+        y_scale: density as f32,
+        width: None,
+        height: None,
+        bg_color: pdf_render::vello_cpu::color::palette::css::WHITE,
+        quality: pdf_render::RasterQuality::Quality,
+        origin: (0.0, 0.0),
     };
 
-    let pixmap = typst_render::render(page, &options);
+    let pixmap = pdf_render::render(
+        page,
+        &pdf_render::pdf_interpret::InterpreterSettings::default(),
+        &settings,
+    );
 
-    // Les dimensions se lisent **avant** `take`, qui vide le tampon.
-    let (width, height) = (pixmap.width(), pixmap.height());
-
-    // `take` cède le tampon sans le recopier : les pixels partent tels quels
-    // vers le Handle, sans repasser par un PNG.
-    let pixels = pixmap.take();
-
+    let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+    let pixels = pixmap.data_as_u8_slice().to_vec();
     let hash = pixels_hash(&pixels);
 
     Some(PageImage {
@@ -439,6 +489,51 @@ pub fn render_page(document: &PagedDocument, index: usize, density: f64) -> Opti
     })
 }
 
+/// Rasterise une **région** de la page — la fenêtre visible d'un
+/// lecteur — en pixels RGBA, à la densité exacte de l'affichage.
+///
+/// `x0`, `y0` : le coin de la région, en pixels de sortie ; `largeur`,
+/// `hauteur` : sa taille. Le coût ne dépend que de la région : la page
+/// hors écran n'est jamais rasterisée (bug-report-9, fluidité — le
+/// rendu par région, `vendor/pdf-render-1.3.0/PATCHES.md`).
+pub fn render_region(
+    pdf: &DocumentPdf,
+    index: usize,
+    density: f64,
+    x0: u32,
+    y0: u32,
+    largeur: u32,
+    hauteur: u32,
+) -> Option<PageImage> {
+    let page = pdf.pages().get(index)?;
+
+    let settings = pdf_render::RenderSettings {
+        x_scale: density as f32,
+        y_scale: density as f32,
+        width: Some(largeur.min(u32::from(u16::MAX)) as u16),
+        height: Some(hauteur.min(u32::from(u16::MAX)) as u16),
+        bg_color: pdf_render::vello_cpu::color::palette::css::WHITE,
+        quality: pdf_render::RasterQuality::Quality,
+        origin: (x0 as f32, y0 as f32),
+    };
+
+    let pixmap = pdf_render::render(
+        page,
+        &pdf_render::pdf_interpret::InterpreterSettings::default(),
+        &settings,
+    );
+
+    let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+    let pixels = pixmap.data_as_u8_slice().to_vec();
+    let hash = pixels_hash(&pixels);
+
+    Some(PageImage {
+        width,
+        height,
+        pixels,
+        hash,
+    })
+}
 /// Empreinte d'un tampon de pixels.
 ///
 /// Sert à reconnaître deux rendus **identiques** de la même page. Ce n'est pas
@@ -477,7 +572,7 @@ pub fn page_count(document: &PagedDocument) -> usize {
 /// Renvoie `None` si le document ne compile pas (les erreurs sont alors
 /// disponibles via [`compile`]).
 pub fn render_pdf(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Option<Vec<u8>> {
-    let world = PreviewWorld::new(root, entry, overrides);
+    let world = PreviewWorld::new(root, entry, overrides, &[]);
 
     let document = typst::compile::<PagedDocument>(&world).output.ok()?;
 
@@ -553,7 +648,12 @@ pub struct PreviewWorld {
 }
 
 impl PreviewWorld {
-    pub fn new(root: &Path, content: &str, overrides: &[(PathBuf, String)]) -> Self {
+    pub fn new(
+        root: &Path,
+        content: &str,
+        overrides: &[(PathBuf, String)],
+        entrees: &[(String, String)],
+    ) -> Self {
         // Les polices : les embarquées de Typst, **plus celles que le document
         // nomme** et que le système possède. Sans les secondes, un texte qui
         // demande une police hébraïque se compose avec une autre, et l'aperçu
@@ -577,8 +677,25 @@ impl PreviewWorld {
 
         let source = Source::new(main_id, content.to_string());
 
+        // Les entrées `sys.inputs` : ce que les quick parts de l'en-tête
+        // (`{projet}`, `{document}`, `{auteur}`) appellent. Le projet vient
+        // de la racine ; ce que l'appelant sait de mieux passe par-dessus.
+        let mut inputs = typst_library::foundations::Dict::new();
+        if let Some(nom) = root.file_name() {
+            inputs.insert(
+                "projet".into(),
+                typst_library::foundations::Value::Str(nom.to_string_lossy().into_owned().into()),
+            );
+        }
+        for (cle, valeur) in entrees {
+            inputs.insert(
+                cle.clone().into(),
+                typst_library::foundations::Value::Str(valeur.clone().into()),
+            );
+        }
+
         Self {
-            library: LazyHash::new(Library::default()),
+            library: LazyHash::new(Library::builder().with_inputs(inputs).build()),
             book: LazyHash::new(book),
             fonts,
             main_id,
@@ -590,6 +707,16 @@ impl PreviewWorld {
 
     /// Chemin sur disque d'un fichier référencé par un FileId.
     fn path_of(&self, id: FileId) -> PathBuf {
+        // Un fichier de paquet (`@preview/cetz:…`) vit dans le dossier
+        // local des paquets — jamais au hasard du projet, jamais au
+        // réseau (bug-report-7, point 4).
+        if let VirtualRoot::Package(paquet) = id.root() {
+            return crate::project::packages_dir()
+                .join(paquet.namespace.as_str())
+                .join(paquet.name.as_str())
+                .join(paquet.version.to_string())
+                .join(id.vpath().get_without_slash());
+        }
         self.root.join(id.vpath().get_without_slash())
     }
 
@@ -690,22 +817,31 @@ mod tests {
     fn le_moteur_typst_est_verrouille() {
         let manifeste = include_str!("../../Cargo.toml");
 
-        for brique in [
-            "typst =",
-            "typst-assets =",
-            "typst-layout =",
-            "typst-pdf =",
-            "typst-render =",
+        for (brique, version) in [
+            ("typst =", "=0.15.1"),
+            ("typst-assets =", "=0.15.1"),
+            ("typst-layout =", "=0.15.1"),
+            ("typst-pdf =", "=0.15.1"),
+            ("pdf-render =", "=1.3.0"),
         ] {
             let ligne = manifeste
                 .lines()
                 .find(|ligne| ligne.trim_start().starts_with(brique))
                 .unwrap_or_else(|| panic!("{brique} absente du manifeste"));
             assert!(
-                ligne.contains("=0.15.1"),
-                "{brique} n'est pas épinglée exactement : {ligne}"
+                ligne.contains(version),
+                "{brique} n'est pas épinglée à {version} : {ligne}"
             );
         }
+    }
+
+    /// La densité des tests de rendu — une demande, jamais un cap.
+    const DENSITE_TEST: f64 = 2.0;
+
+    /// Le PDF d'un document de test : la source passe par le vrai export.
+    fn pdf_de_test(dir: &std::path::Path, source: &str) -> crate::typst::render::DocumentPdf {
+        let octets = crate::typst::render::render_pdf(dir, source, &[]).expect("PDF exporté");
+        crate::typst::render::ouvrir_pdf(octets).expect("PDF lisible")
     }
 
     /// Un sommaire, pour éprouver les sauts de titre.
@@ -901,6 +1037,7 @@ mod tests {
         let compile_time = start.elapsed();
 
         let document = outcome.document.expect("document compilé");
+        let pdf = pdf_de_test(&dir, &content);
 
         println!(
             "Compilation        : {compile_time:>10.2?}  ({} page(s))",
@@ -912,7 +1049,7 @@ mod tests {
         let mut rendered = 0;
 
         for index in 0..2.min(page_count(&document)) {
-            if render_page(&document, index, MAX_PIXEL_PER_PT).is_some() {
+            if render_page(&pdf, index, DENSITE_TEST).is_some() {
                 rendered += 1;
             }
         }
@@ -946,6 +1083,98 @@ mod tests {
             "Budget frame 60 Hz : 16.00 ms  —  compilation = {:.0}% du budget",
             compile_time.as_secs_f64() / 0.016 * 100.0
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Banc de mesure : stabilité du long document, bibliothèque
+    /// volumineuse, mémoire — le frère du banc ci-dessus, qui couvre déjà
+    /// compilation, rasterisation et incrémentalité.
+    ///
+    /// Ignoré par défaut (quelques secondes) :
+    /// `cargo test --release -- --ignored bench_bibliotheque_et_stabilite`
+    #[test]
+    #[ignore = "banc de mesure manuel"]
+    fn bench_bibliotheque_et_stabilite() {
+        use crate::langage::{parse::parse, serialiser::serialiser};
+
+        // 1. Stabilité : un long document .tw se relit au même document.
+        let mut tw = String::new();
+        for rang in 0..300 {
+            tw.push_str(&format!("## Titre {rang}\n\n"));
+            tw.push_str(&format!(
+                "Un paragraphe de prose avec une note^[la note {rang}] et une citation @notice{rang}[p. {rang}].\n\n"
+            ));
+        }
+        let start = Instant::now();
+        let document = parse(&tw);
+        let temps_parse = start.elapsed();
+        let start = Instant::now();
+        let texte = serialiser(&document);
+        let temps_serialisation = start.elapsed();
+        let relu = parse(&texte);
+        println!(
+            "Parse .tw long ({:>5} o) : {:>10.2?}  ({} blocs)",
+            tw.len(),
+            temps_parse,
+            document.blocs.len()
+        );
+        println!("Sérialisation          : {temps_serialisation:>10.2?}");
+        assert_eq!(document, relu, "le long document se relit au même document");
+
+        // 2. Bibliothèque volumineuse : mille notices, dites puis rendues.
+        let dir = std::env::temp_dir().join(format!("tw-banc-biblio-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut bibliotheque = String::new();
+        for rang in 0..1000 {
+            bibliotheque.push_str(&format!(
+                "@book{{notice{rang}, title = {{Titre {rang}}}, author = {{Auteur, Prénom {rang}}}, year = {{2020}}}}\n"
+            ));
+        }
+        fs::write(dir.join("references.bib"), &bibliotheque).unwrap();
+
+        let start = Instant::now();
+        let entrees = crate::project::parse_bibliography(&dir.join("references.bib"));
+        let temps_biblio = start.elapsed();
+        println!(
+            "Bibliographie 1000     : {temps_biblio:>10.2?}  ({} notices)",
+            entrees.len()
+        );
+        assert_eq!(entrees.len(), 1000, "les mille notices sont lues");
+
+        // 3. Le rendu porte-t-il la bibliothèque entière ? C'est là que se
+        //    cachent les goulets : le style bibliographique traite chaque
+        //    notice.
+        let mut avec_biblio = String::from("= Un document\n\nDu texte. @notice1 @notice2\n\n");
+        avec_biblio.push_str("#bibliography(\"references.bib\", style: \"apa\")\n");
+        let start = Instant::now();
+        let outcome = compile(&dir, &avec_biblio, &[]);
+        let temps_compile = start.elapsed();
+        let Some(document) = outcome.document else {
+            panic!(
+                "le document à bibliothèque ne compile pas : {:?}",
+                outcome.errors
+            );
+        };
+        println!(
+            "Compilation + 1000    : {temps_compile:>10.2?}  ({} page(s))",
+            page_count(&document)
+        );
+        let pdf = pdf_de_test(&dir, &avec_biblio);
+        let start = Instant::now();
+        let rendu = render_page(&pdf, 0, DENSITE_TEST);
+        println!("Rasterisation page 0  : {:>10.2?}", start.elapsed());
+        assert!(rendu.is_some(), "la première page se rasterise");
+
+        // 4. Mémoire : le pic du processus, quand le système le dit.
+        if let Ok(statut) = fs::read_to_string("/proc/self/status") {
+            for ligne in statut.lines() {
+                if ligne.starts_with("VmHWM") {
+                    println!("Mémoire (pic)          : {}", ligne.trim());
+                }
+            }
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1015,8 +1244,10 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
-        let outcome = compile(&dir, "= Titre\n\nDu contenu.\n", &[]);
+        let source = "= Titre\n\nDu contenu.\n";
+        let outcome = compile(&dir, source, &[]);
         let document = outcome.document.expect("document compilé");
+        let pdf = pdf_de_test(&dir, source);
 
         // La géométrie est en points : A4, 210 × 297 mm, soit ≈ 595 × 842 pt.
         // Elle ne dépend donc pas de la densité du rendu, ce qui est tout
@@ -1032,20 +1263,31 @@ mod tests {
             "hauteur A4 attendue en points, eu {point_height}"
         );
 
-        let page = render_page(&document, 0, MAX_PIXEL_PER_PT).expect("rendu de la page");
+        let page = render_page(&pdf, 0, DENSITE_TEST).expect("rendu de la page");
 
         // Les pixels suivent la densité demandée, au pixel près.
         assert!(
-            (page.width as f64 - point_width * MAX_PIXEL_PER_PT).abs() <= 1.0,
-            "largeur cohérente avec la densité : {} vs {} pt × {MAX_PIXEL_PER_PT}",
+            (page.width as f64 - point_width * DENSITE_TEST).abs() <= 1.0,
+            "largeur cohérente avec la densité : {} vs {} pt × {DENSITE_TEST}",
             page.width,
             point_width
         );
         assert!(
-            (page.height as f64 - point_height * MAX_PIXEL_PER_PT).abs() <= 1.0,
-            "hauteur cohérente avec la densité : {} vs {} pt × {MAX_PIXEL_PER_PT}",
+            (page.height as f64 - point_height * DENSITE_TEST).abs() <= 1.0,
+            "hauteur cohérente avec la densité : {} vs {} pt × {DENSITE_TEST}",
             page.height,
             point_height
+        );
+
+        // Au-delà de l'ancien plafond : la densité demandée est la densité
+        // rendue, sans étirement — c'est la qualité optimale, à tout zoom
+        // (bug-report-9).
+        let fine = render_page(&pdf, 0, 3.5).expect("rendu fin");
+        assert!(
+            (fine.width as f64 - point_width * 3.5).abs() <= 1.0,
+            "la densité 3,5 est rendue telle quelle : {} vs {} pt × 3,5",
+            fine.width,
+            point_width
         );
 
         // Le tampon doit être exactement un RGBA par pixel : `from_rgba`
@@ -1059,7 +1301,7 @@ mod tests {
         // Une densité plus grossière doit coûter **moins de mémoire** : c'est
         // exactement ce qu'on vient chercher. 2,0 → 1,6, c'est 2,0²/1,6² ≈ 1,56
         // fois moins de pixels pour la même page.
-        let coarser = render_page(&document, 0, pixel_per_pt(1.0, 1.6)).expect("rendu à 1,6");
+        let coarser = render_page(&pdf, 0, pixel_per_pt(1.0, 1.6)).expect("rendu à 1,6");
 
         let ratio = page.pixels.len() as f64 / coarser.pixels.len() as f64;
 
@@ -1069,7 +1311,7 @@ mod tests {
         );
 
         // Index hors bornes : pas de page.
-        assert!(render_page(&document, 99, MAX_PIXEL_PER_PT).is_none());
+        assert!(render_page(&pdf, 99, DENSITE_TEST).is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1086,8 +1328,8 @@ mod tests {
 
         assert!(outcome.errors.is_empty(), "maths valides attendues");
 
-        let document = outcome.document.expect("document compilé");
-        let page = render_page(&document, 0, MAX_PIXEL_PER_PT).expect("rendu");
+        let pdf = pdf_de_test(&dir, "Inline $x_1^2$ et display $ sum_(i=1)^n i $");
+        let page = render_page(&pdf, 0, DENSITE_TEST).expect("rendu");
 
         assert_eq!(
             page.pixels.len(),
@@ -1158,8 +1400,9 @@ mod tests {
 
     /// La densité de rendu suit l'écran, et rien d'autre.
     ///
-    /// C'est elle qui règle la mémoire d'une page — 8 Mo de pixels pour une A4
-    /// à 2 px/pt — donc la seule fonction qui doit décider de sa valeur.
+    /// C'est la seule fonction qui décide de la densité : elle suit
+    /// l'affichage, **sans plafond** — la mémoire se tient dans le cache de
+    /// pages (visibles seulement, borné), pas dans un cap qui étire.
     #[test]
     fn the_rendering_density_follows_the_screen() {
         // Une page montrée à sa taille naturelle sur un écran à 1,6 : 1,6 px/pt.
@@ -1178,8 +1421,8 @@ mod tests {
         assert!((pixel_per_pt(1.0, 1.0) - MIN_SCREEN_SCALE).abs() < 1e-9);
         assert!((pixel_per_pt(1.0, 0.5) - MIN_SCREEN_SCALE).abs() < 1e-9);
 
-        // Le plein écran d'un portable dense, au-delà du plafond.
-        assert!((pixel_per_pt(1.0, 3.0) - MAX_PIXEL_PER_PT).abs() < 1e-9);
+        // Le plein écran d'un portable dense : la qualité suit, sans plafond.
+        assert!((pixel_per_pt(1.0, 3.0) - 3.0).abs() < 1e-9);
 
         // Une vignette reste une vignette : jamais zéro.
         assert!((pixel_per_pt(0.01, 1.0) - MIN_PIXEL_PER_PT).abs() < 1e-9);
@@ -1767,37 +2010,43 @@ mod tests {
         let assembly = fs::read_to_string(dir.join("main.typ")).unwrap();
         let outcome = compile(&dir, &assembly, &[]);
 
-        let Some(document) = outcome.document else {
+        if outcome.document.is_none() {
             println!("pas de document");
             return;
-        };
+        }
 
-        let Some(page) = document.pages().get(page_wanted) else {
+        // La plus fine des densités : ce diagnostic existe pour regarder les
+        // pixels, pas pour mesurer l'aperçu.
+        let octets = match crate::typst::render::render_pdf(&dir, &assembly, &[]) {
+            Some(octets) => octets,
+            None => {
+                println!("pas de PDF");
+                return;
+            }
+        };
+        let Some(pdf) = crate::typst::render::ouvrir_pdf(octets) else {
+            println!("PDF illisible");
+            return;
+        };
+        let Some(page) = crate::typst::render::render_page(&pdf, page_wanted, 4.0) else {
             println!("pas de page {page_wanted}");
             return;
         };
 
-        // La plus fine des densités : ce diagnostic existe pour regarder les
-        // pixels, pas pour mesurer l'aperçu.
-        let options = typst_render::RenderOptions {
-            pixel_per_pt: typst_utils::Scalar::new(MAX_PIXEL_PER_PT),
-            render_bleed: false,
-        };
-
-        let pixmap = typst_render::render(page, &options);
-
         let out = std::env::temp_dir().join(format!("typst-writer-page-{page_wanted}.png"));
 
-        match pixmap.save_png(&out) {
+        match image::save_buffer(
+            &out,
+            &page.pixels,
+            page.width,
+            page.height,
+            image::ColorType::Rgba8,
+        ) {
             Ok(()) => println!("écrit : {}", out.display()),
             Err(error) => println!("échec de l'écriture : {error}"),
         }
 
-        println!(
-            "taille : {} × {} px, à {MAX_PIXEL_PER_PT} px/pt",
-            pixmap.width(),
-            pixmap.height()
-        );
+        println!("taille : {} × {} px, à 4 px/pt", page.width, page.height);
     }
 
     /// Ce qui est **réellement composé**, famille par famille.
@@ -1973,22 +2222,37 @@ mod tests {
 
         println!("erreurs : {:?}", outcome.errors.len());
 
-        let Some(document) = outcome.document else {
+        if outcome.document.is_none() {
             println!("pas de document");
             return;
-        };
+        }
 
-        let options = typst_render::RenderOptions {
-            pixel_per_pt: typst_utils::Scalar::new(MAX_PIXEL_PER_PT),
-            render_bleed: false,
+        let octets = match crate::typst::render::render_pdf(&dir, content, &[]) {
+            Some(octets) => octets,
+            None => {
+                println!("pas de PDF");
+                return;
+            }
         };
-
-        let pixmap = typst_render::render(&document.pages()[0], &options);
+        let Some(pdf) = crate::typst::render::ouvrir_pdf(octets) else {
+            println!("PDF illisible");
+            return;
+        };
+        let Some(page) = crate::typst::render::render_page(&pdf, 0, 4.0) else {
+            println!("pas de page");
+            return;
+        };
 
         // Recadrage sur le haut de la page : c'est là qu'est le texte.
         let out = std::env::temp_dir().join("typst-writer-fractions.png");
 
-        match pixmap.save_png(&out) {
+        match image::save_buffer(
+            &out,
+            &page.pixels,
+            page.width,
+            page.height,
+            image::ColorType::Rgba8,
+        ) {
             Ok(()) => println!("écrit : {}", out.display()),
             Err(error) => println!("échec : {error}"),
         }
@@ -2152,5 +2416,109 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod sonde_fluidite {
+    /// SONDE (temporaire, bug-report-9 fluidité) : coût du rendu d'une page
+    /// de thèse selon la densité — les étapes du crate sont tracées par
+    /// `PDF_RENDER_TRACE=1` (interprétation vs rasterisation).
+    #[test]
+    #[ignore]
+    fn cout_du_rendu_selon_la_densite() {
+        let dir = std::env::temp_dir().join(format!("tw-fluidite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("racine");
+
+        let mut source = String::from("= Chapitre\n\n");
+        for _ in 0..40 {
+            source.push_str(
+                "Un paragraphe de thèse, avec des mots et des espaces, pour occuper la page. ",
+            );
+            source.push_str("\n\n");
+        }
+
+        let octets = super::render_pdf(&dir, &source, &[]).expect("PDF");
+        let pdf = super::ouvrir_pdf(octets).expect("PDF lisible");
+
+        for densite in [1.5_f64, 3.0, 5.0, 7.5, 10.0] {
+            let debut = std::time::Instant::now();
+            let page = super::render_page(&pdf, 0, densite).expect("page");
+            println!(
+                "DENSITE {densite} : {:>8.2?} pour {} × {} px",
+                debut.elapsed(),
+                page.width,
+                page.height
+            );
+        }
+
+        println!("-- région visible : fenêtre 1200 × 900 px --");
+        for densite in [1.5_f64, 3.0, 5.0, 7.5, 10.0] {
+            let debut = std::time::Instant::now();
+            let page = super::render_region(&pdf, 0, densite, 100, 300, 1200, 900).expect("région");
+            println!(
+                "DENSITE {densite} : {:>8.2?} pour {} × {} px (fenêtre)",
+                debut.elapsed(),
+                page.width,
+                page.height
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod tests_du_rendu_par_region {
+    use super::*;
+
+    /// La région est le **recadrage exact** du rendu plein : le garde-fou
+    /// de la recette rejouée (`vendor/pdf-render-1.3.0/PATCHES.md`). Les
+    /// deux pixels près du bord de la région sont écartés de la comparaison :
+    /// l'anti-crénelage au clip de la toile n'est pas concerné par la
+    /// promesse, le contenu l'est. La comparaison tolère 2 crans sur 255 :
+    /// l'anti-crénelage arrondit selon les tuiles de rasterisation.
+    #[test]
+    fn la_region_est_le_rendu_plein_recadre() {
+        let dir = std::env::temp_dir().join(format!("tw-region-identite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("racine");
+
+        let source = "= Chapitre\n\nDu texte reconnaissable, sur plusieurs lignes, \
+pour que la page porte du contenu jusqu'au bas.\n\nUn second paragraphe, \
+avec des mots encore, et encore, jusqu'à remplir la page.\n";
+        let octets = render_pdf(&dir, source, &[]).expect("PDF");
+        let pdf = ouvrir_pdf(octets).expect("PDF lisible");
+
+        let densite = 2.0;
+        let plein = render_page(&pdf, 0, densite).expect("page entière");
+
+        let (x0, y0, largeur, hauteur) = (120, 200, 300, 250);
+        let region = render_region(&pdf, 0, densite, x0, y0, largeur, hauteur).expect("région");
+        assert_eq!(
+            (region.width, region.height),
+            (largeur, hauteur),
+            "la toile a la taille demandée"
+        );
+
+        for y in 2..hauteur - 2 {
+            for x in 2..largeur - 2 {
+                let i = ((y * largeur + x) * 4) as usize;
+                let j = (((y0 + y) * plein.width + (x0 + x)) * 4) as usize;
+                for canal in 0..4 {
+                    let ecart =
+                        (region.pixels[i + canal] as i16 - plein.pixels[j + canal] as i16).abs();
+                    assert!(
+                        ecart <= 2,
+                        "le pixel ({x}, {y}) canal {canal} : {} vs {} — la région est le recadrage du plein",
+                        region.pixels[i + canal],
+                        plein.pixels[j + canal]
+                    );
+                }
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

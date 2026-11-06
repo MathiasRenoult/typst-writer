@@ -100,6 +100,10 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             | Inline::Couleur { contenu, .. } => premier_caractere(contenu),
             Inline::Lien { texte, .. } => premier_caractere(texte),
             Inline::Citation(_) => Some('\u{2039}'),
+            // Une date vaut un mot : ce qui la suit mérite l'espace d'un.
+            Inline::Date(_) => Some('1'),
+            // Un terme du glossaire rend un mot — sa forme courte.
+            Inline::Glo { .. } => Some('t'),
         };
 
         if trouve.is_some() {
@@ -137,8 +141,9 @@ fn generer_bloc(
         }
         Bloc::ListePuce(items) => {
             for item in items {
+                out.push_str(&"  ".repeat(item.niveau));
                 out.push_str("- ");
-                generer_inline(item, out, false, regles, &mut contexte);
+                generer_inline(&item.contenu, out, false, regles, &mut contexte);
                 out.push('\n');
             }
 
@@ -148,8 +153,9 @@ fn generer_bloc(
             // Typst numérote avec `+`, et non avec un chiffre : il suit l'ordre
             // autant que l'usure des listes réordonnées.
             for item in items {
+                out.push_str(&"  ".repeat(item.niveau));
                 out.push_str("+ ");
-                generer_inline(item, out, false, regles, &mut contexte);
+                generer_inline(&item.contenu, out, false, regles, &mut contexte);
                 out.push('\n');
             }
 
@@ -263,6 +269,28 @@ fn generer_bloc(
 
             out.push_str("\n]\n\n");
         }
+        Bloc::Glossaire { tout } => {
+            // La liste finale : glossarium ne montre que les termes
+            // référencés, sauf `{glossaire: tout}`. Le registre
+            // `tw-glossaire` est posé en tête du document généré par
+            // l'assemblage.
+            if *tout {
+                out.push_str("#print-glossary(tw-glossaire, show-all: true)\n\n");
+            } else {
+                out.push_str("#print-glossary(tw-glossaire)\n\n");
+            }
+        }
+        Bloc::Sommaire => {
+            // La table des matières : Typst la compose, avec son titre
+            // dans la langue du document (bug-report-10, 1.3).
+            out.push_str("#outline()\n\n");
+        }
+        Bloc::Bibliographie => {
+            // La section bibliographie : la liste entière du projet, à
+            // cette place — le branchement du pipeline y pose les vrais
+            // fichiers (bug-report-9).
+            out.push_str("#bibliography(\"references.bib\", full: true)\n\n");
+        }
         Bloc::Graphique {
             type_,
             titre,
@@ -323,10 +351,15 @@ fn generer_inline(
                 // ensuite — et l'insécable devient `~`. Un tilde tapé, lui,
                 // a été échappé : il reste un tilde.
                 let compose = appliquer_dans(texte, regles, contexte);
-                let compose = super::typographie::petites_capitales_siecles(&compose);
+                // Les siècles se **déclarent** maintenant (`{date:XIXs}`) —
+                // la recherche hasardeuse est partie (2026-11-03).
                 let mut echappe = String::new();
                 echapper_texte(&compose, &mut echappe, en_tete);
-                out.push_str(&echappe.replace('\u{A0}', "~"));
+                // Les marqueurs de siècles deviennent leur code APRÈS
+                // l'échappement — avant, le `#` mourait dans le texte.
+                out.push_str(&super::typographie::substituer_siecles(
+                    &echappe.replace('\u{A0}', "~"),
+                ));
 
                 if compose.chars().any(|c| !c.is_whitespace()) {
                     en_tete = false;
@@ -379,6 +412,36 @@ fn generer_inline(
                 out.push('`');
                 en_tete = false;
                 contexte.precedent = texte.chars().last().or(contexte.precedent);
+                contexte.venant_du_guillemet = false;
+            }
+            Inline::Date(spec) => {
+                // La date se compose avec les mots des normes, puis
+                // traverse l'échappement comme le texte — les marqueurs de
+                // petite capitale et d'exposant y survivent.
+                let compose = crate::langage::dates::analyser(spec)
+                    .map(|date| crate::langage::dates::rendre(&date, &regles.dates))
+                    .unwrap_or_default();
+                let mut echappe = String::new();
+                echapper_texte(&compose, &mut echappe, false);
+                out.push_str(&super::typographie::substituer_siecles(&echappe));
+            }
+            Inline::Glo {
+                cle,
+                majuscule,
+                pluriel,
+            } => {
+                // Le terme du glossaire appelle glossarium — la fonction
+                // porte la majuscule et le pluriel. La clé est un
+                // identifiant (le parseur l'a dit), elle ne s'échappe pas.
+                let fonction = match (*majuscule, *pluriel) {
+                    (false, false) => "gls",
+                    (false, true) => "glspl",
+                    (true, false) => "Gls",
+                    (true, true) => "Glspl",
+                };
+                out.push_str(&format!("#{fonction}(\"{cle}\")"));
+                en_tete = false;
+                contexte.precedent = None;
                 contexte.venant_du_guillemet = false;
             }
             Inline::Couleur { couleur, contenu } => {
@@ -459,7 +522,7 @@ pub fn generer_citation(references: &[Reference], out: &mut String) {
 }
 
 /// Écrit du texte en échappant ce que Typst lirait comme du balisage.
-fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
+pub(crate) fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool) {
     // La tête de ligne tient jusqu'au premier caractère utile : un
     // marqueur après un blanc l'est tout autant qu'au premier rang, et
     // Typst en ferait une liste ou un titre.
@@ -990,5 +1053,352 @@ mod tests {
         }
 
         texte
+    }
+}
+
+// ==================== EXPÉRIENCE DOCX/MARKDOWN (R8) ====================
+// Une sonde, pas du code livré : elle mesure ce que la chaîne
+// DOCX/LibreOffice rend vraiment — titres, tableaux, notes, citations,
+// images, aller-retour — avant toute décision de livraison. Le PDF reste
+// la référence de rendu.
+
+#[cfg(test)]
+mod experience_docx {
+    use crate::langage::parse::parse;
+    use std::process::Command;
+
+    const PNG: [u8; 70] = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 100, 96, 248, 95, 15,
+        0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
+    const FIXTURE: &str = "\
+# Titre un\n\
+\n\
+Un paragraphe avec du texte et une note^[la note attachée] et une citation @dupont2023[p. 45].\n\
+\n\
+## Titre deux\n\
+\n\
+| Colonne A | Colonne B |\n\
+| --- | --- |\n\
+| cellule A1 | cellule B1 |\n\
+| cellule A2 | cellule B2 |\n\
+\n\
+![la légende de la figure](images/fig.png)\n";
+
+    /// La fixture devient le HTML que la chaîne DOCX mangera. Ce mapping est
+    /// volontairement simple : ce qui se perd ici se perd pour de bon.
+    fn vers_html(source: &str) -> String {
+        let mut html = String::from("<html><body>\n<meta charset=\"utf-8\">\n");
+        let mut lignes = source.lines().peekable();
+        while let Some(ligne) = lignes.next() {
+            let nu = ligne.trim();
+            if nu.is_empty() {
+                continue;
+            }
+            if let Some(reste) = nu.strip_prefix("## ") {
+                html.push_str(&format!("<h2>{reste}</h2>\n"));
+            } else if let Some(reste) = nu.strip_prefix("# ") {
+                html.push_str(&format!("<h1>{reste}</h1>\n"));
+            } else if nu.starts_with('|') {
+                // Le tableau, entier.
+                html.push_str("<table>\n");
+                let rangee = |ligne: &str, entete: bool| {
+                    let cellules: Vec<&str> =
+                        ligne.trim_matches('|').split('|').map(str::trim).collect();
+                    let ouvrant = if entete { "th" } else { "td" };
+                    let mut r = String::from("<tr>");
+                    for cellule in &cellules {
+                        r.push_str(&format!("<{ouvrant}>{cellule}</{ouvrant}>"));
+                    }
+                    r.push_str("</tr>\n");
+                    r
+                };
+                html.push_str(&rangee(nu, true));
+                while let Some(suite) = lignes.peek() {
+                    let s = suite.trim();
+                    if !s.starts_with('|') {
+                        break;
+                    }
+                    if !s.contains("---") {
+                        html.push_str(&rangee(s, false));
+                    }
+                    lignes.next();
+                }
+                html.push_str("</table>\n");
+            } else if nu.starts_with("![") {
+                let (legende, cible) = decouper_image(nu);
+                html.push_str(&format!(
+                    "<figure><img src=\"{cible}\"/><figcaption>{legende}</figcaption></figure>\n"
+                ));
+            } else {
+                // Le paragraphe, ses notes en texte marqué.
+                let avec_notes = remplacer_notes(nu);
+                html.push_str(&format!("<p>{avec_notes}</p>\n"));
+            }
+        }
+        html.push_str("</body></html>\n");
+        html
+    }
+
+    fn decouper_image(ligne: &str) -> (String, String) {
+        let sans = ligne.trim_start_matches("![").trim_end_matches(']');
+        if let Some(ouvrante) = sans.find("](") {
+            (
+                sans[..ouvrante].to_string(),
+                sans[ouvrante + 2..].to_string(),
+            )
+        } else {
+            (String::new(), sans.to_string())
+        }
+    }
+
+    fn remplacer_notes(paragraphe: &str) -> String {
+        let mut sorti = String::new();
+        let mut reste = paragraphe;
+        while let Some(ouvrante) = reste.find("^[") {
+            sorti.push_str(&reste[..ouvrante]);
+            reste = &reste[ouvrante + 2..];
+            match reste.find(']') {
+                Some(fermante) => {
+                    sorti.push_str("<span class=\"note\">[note: ");
+                    sorti.push_str(&reste[..fermante]);
+                    sorti.push_str("]</span>");
+                    reste = &reste[fermante + 1..];
+                }
+                None => break,
+            }
+        }
+        sorti.push_str(reste);
+        sorti
+    }
+
+    /// LibreOffice, d'un format à l'autre — profil jetable, sinon deux
+    /// conversions parallèles se marchent dessus.
+    fn soffice(
+        entree: &std::path::Path,
+        conversion: &str,
+        entree_filtre: Option<&str>,
+        sortie: &std::path::Path,
+    ) -> Result<(), String> {
+        let profil = sortie.join("profil");
+        std::fs::create_dir_all(&profil).map_err(|e| e.to_string())?;
+        let mut commande = Command::new("soffice");
+        commande
+            .arg(format!("-env:UserInstallation=file://{}", profil.display()))
+            .arg("--headless");
+        if let Some(filtre) = entree_filtre {
+            commande.arg(format!("--infilter={filtre}"));
+        }
+        let resultat = commande
+            .arg("--convert-to")
+            .arg(conversion)
+            .arg("--outdir")
+            .arg(sortie)
+            .arg(entree)
+            .output()
+            .map_err(|e| format!("soffice: {e}"))?;
+        if !resultat.status.success() {
+            return Err(format!(
+                "soffice a refusé : {}",
+                String::from_utf8_lossy(&resultat.stderr)
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "expérience DOCX : LibreOffice exigé, mesures à la sonde"]
+    fn experience_docx_aller_retour() {
+        if Command::new("soffice").arg("--version").output().is_err() {
+            println!("expérience DOCX : LibreOffice absent, test sauté");
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("tw-experience-docx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("images")).expect("dossier");
+        std::fs::write(dir.join("images/fig.png"), PNG).expect("image");
+
+        // La vérité de départ, dans le document structuré.
+        let document = parse(FIXTURE);
+        let mut titres = 0;
+        let mut cellules = 0;
+        let mut notes = 0;
+        let mut citations = 0;
+        let mut images = 0;
+        for bloc in &document.blocs {
+            match bloc {
+                crate::langage::schema::Bloc::Titre { .. } => titres += 1,
+                crate::langage::schema::Bloc::Tableau { entete, lignes, .. } => {
+                    cellules += entete.len() + lignes.iter().map(|l| l.len()).sum::<usize>();
+                }
+                crate::langage::schema::Bloc::Image { .. } => images += 1,
+                crate::langage::schema::Bloc::Paragraphe(inlines) => {
+                    for inline in inlines {
+                        match inline {
+                            crate::langage::schema::Inline::Note(_) => notes += 1,
+                            crate::langage::schema::Inline::Citation(_) => citations += 1,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        println!(
+            "SOURCE : {titres} titres, {cellules} cellules, {notes} note(s), {citations} citation(s), {images} image(s)"
+        );
+
+        // L'aller : .tw → HTML → DOCX. Chaque étape a SON dossier : le HTML
+        // de retour ne doit jamais écraser celui du départ — sinon le relevé
+        // se lit lui-même.
+        let html = vers_html(FIXTURE);
+        std::fs::create_dir_all(dir.join("aller")).expect("aller");
+        let fichier_html = dir.join("aller/fixture.html");
+        std::fs::write(&fichier_html, &html).expect("html");
+        if let Err(e) = soffice(
+            &fichier_html,
+            "docx:Office Open XML Text",
+            Some("HTML (StarWriter)"),
+            &dir.join("aller"),
+        ) {
+            println!("aller html→docx impossible : {e}");
+            return;
+        }
+        let docx = dir.join("aller/fixture.docx");
+        println!("ALLER : docx écrit = {}", docx.is_file());
+
+        // Le retour : DOCX → HTML, et ce qu'il en reste.
+        std::fs::create_dir_all(dir.join("retour")).expect("retour");
+        if let Err(e) = soffice(&docx, "html:HTML (StarWriter)", None, &dir.join("retour")) {
+            println!("retour docx→html impossible : {e}");
+            return;
+        }
+        let retour = std::fs::read_to_string(dir.join("retour/fixture.html")).unwrap_or_default();
+        println!("RETOUR : lu {} octets de fixture.html", retour.len());
+
+        // Le relevé des pertes, axe par axe.
+        let presente = |aiguille: &str| retour.contains(aiguille);
+        println!("RETOUR DOCX→HTML :");
+        println!(
+            "  titres : texte présent = {}, balises de titre = {}",
+            presente("Titre un") && presente("Titre deux"),
+            retour.matches("<h1").count() + retour.matches("<h2").count()
+        );
+        println!(
+            "  tableau : cellules A1/B2 présentes = {}, <table> = {}, <td>/<th> = {}",
+            presente("cellule A1") && presente("cellule B2"),
+            retour.matches("<table").count(),
+            retour.matches("<td").count() + retour.matches("<th").count()
+        );
+        // Aiguilles sans diacritiques ni blancs : le HTML revenu peut
+        // ré-encoder les accents et couper les lignes au milieu d'une
+        // phrase, et une mesure qui les porterait confondrait habillage et
+        // perte.
+        let replat = retour.split_whitespace().collect::<String>();
+        let present_sans_blancs =
+            |aiguille: &str| replat.contains(&aiguille.split_whitespace().collect::<String>());
+        println!(
+            "  note : texte pr\u{e9}sent = {}, marqu\u{e9}e comme note = {}",
+            present_sans_blancs("la note attachée"),
+            retour.contains("class=\"note\"") || retour.contains("footnote")
+        );
+        println!(
+            "  citation : chaîne intacte = {}",
+            presente("@dupont2023[p. 45]")
+        );
+        println!(
+            "  image : <img> pr\u{e9}sent = {}, l\u{e9}gende pr\u{e9}sente = {}",
+            retour.contains("<img"),
+            presente("gende de la figure")
+        );
+
+        // Et l'aller inverse : le HTML revenu redonne-t-il un .tw lisible ?
+        let revu = retour
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('<') || l.contains("<p") || l.contains("<h"))
+            .count();
+        println!(
+            "HTML revenu : {} lignes de contenu, {} octets",
+            revu,
+            retour.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_dates_generees {
+    use super::*;
+
+    /// La balise `{date:...}` traverse le parse et la génération, avec les
+    /// mots des normes (2026-11-03) — la nouvelle méthode, déclarée.
+    #[test]
+    fn une_date_se_declare_et_se_genere() {
+        let document = crate::langage::parse(
+            "En {date:XIXs?}, la révolution du {date:1789.07.14 \"dd/MM/yyyy\"}.",
+        );
+        let mut regles = Regles::aucune();
+        regles.dates.epoque_apres = "EC".to_string();
+        let sortie = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        assert!(
+            sortie.contains("#smallcaps[XIX]#super[e] siècle EC"),
+            "la période longue : {sortie}"
+        );
+        assert!(sortie.contains("14/07/1789"), "la date pleine : {sortie}");
+
+        // Le court : le romain seul, en petite capitale et exposant.
+        let document = crate::langage::parse("Le {date:XIXs} siècle.");
+        let sortie = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        assert!(
+            sortie.contains("#smallcaps[XIX]#super[e]"),
+            "la période courte : {sortie}"
+        );
+    }
+}
+
+/// Le glossaire rendu : les appels glossarium, et la liste à sa place.
+#[cfg(test)]
+mod tests_glossaire {
+    use super::super::parse::parse;
+    use super::generer;
+
+    /// Chaque forme de terme appelle la fonction glossarium qui lui
+    /// répond — jamais une imitation.
+    #[test]
+    fn un_terme_du_glossaire_devient_un_appel_glossarium() {
+        let document = parse(
+            "Les {glo:sdo}, les {glo:sdo pluriel}, {glo:sdo majuscule} et {glo:sdo majuscule pluriel}.\n",
+        );
+        let typst = generer(&document);
+        assert!(typst.contains("#gls(\"sdo\")"), "{typst}");
+        assert!(typst.contains("#glspl(\"sdo\")"), "{typst}");
+        assert!(typst.contains("#Gls(\"sdo\")"), "{typst}");
+        assert!(typst.contains("#Glspl(\"sdo\")"), "{typst}");
+    }
+
+    /// La liste finale se pose où l'auteur l'a posée, dans sa variante.
+    #[test]
+    fn la_liste_du_glossaire_se_place_ou_l_auteur_l_a_mise() {
+        let document = parse("{glossaire}\n");
+        let typst = generer(&document);
+        assert!(typst.contains("#print-glossary(tw-glossaire)"), "{typst}");
+        assert!(!typst.contains("show-all"), "{typst}");
+
+        let document = parse("{glossaire: tout}\n");
+        let typst = generer(&document);
+        assert!(
+            typst.contains("#print-glossary(tw-glossaire, show-all: true)"),
+            "{typst}"
+        );
     }
 }

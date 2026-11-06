@@ -53,6 +53,24 @@ pub struct MiseEnPage {
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
 
+    /// Le libellé de la légende : "fig.", "Figure", ou autre chose.
+    /// Vide = le libellé de Typst.
+    pub legende_prefixe: String,
+
+    /// Le style de la légende : "gras", "italique", ou rien.
+    pub legende_style: String,
+
+    /// La page de titre : née des métadonnées du document (titre,
+    /// auteur, date) — une norme, pas du Typst caché dans `main.typ`
+    /// (bug-report-7, point 8).
+    pub page_de_titre: bool,
+
+    /// Le sommaire : composé par le moteur, une norme comme le reste.
+    pub sommaire: bool,
+
+    /// Les mots de la balise `{date:...}`.
+    pub dates: Dates,
+
     /// La bibliographie : le style des citations et de la liste finale.
     pub bibliographie: Bibliographie,
 }
@@ -68,6 +86,14 @@ pub struct Bibliographie {
     /// style de base du moteur. Un nom refusé par le moteur n'est jamais
     /// appliqué — il se dit (R4).
     pub style: Option<String>,
+
+    /// Un saut de page avant la bibliographie (bug-report-10, 1.1).
+    #[serde(default)]
+    pub saut_de_page: bool,
+
+    /// La bibliographie en titre de niveau 1 (bug-report-10, 1.2).
+    #[serde(default)]
+    pub titre_un: bool,
 }
 
 /// Les défauts du décor d'un document.
@@ -206,6 +232,11 @@ pub struct EntetePiedDePage {
 
     /// La forme du numéro : `1`, `a`, `A`, `i`, `I`, `α`, `א`.
     pub numerotation: String,
+
+    /// La hauteur des images, en pourcentage de la hauteur disponible de
+    /// la zone qui les porte (bug-report-8, T4.4). Les proportions se
+    /// gardent : seule la hauteur se règle.
+    pub images_hauteur: String,
 }
 
 /// Les trois places d'un en-tête ou d'un pied de page : ce qui va à
@@ -231,6 +262,7 @@ impl Default for EntetePiedDePage {
             entete: Emplacement::default(),
             pied: Emplacement::default(),
             numerotation: "1".to_string(),
+            images_hauteur: "80".to_string(),
         }
     }
 }
@@ -291,9 +323,6 @@ impl Default for Texte {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Titres {
-    /// La police des titres — vide : celle du texte.
-    pub police: String,
-
     /// Le corps d'un titre de chaque niveau, du premier au sixième.
     pub taille_1: String,
     pub taille_2: String,
@@ -332,6 +361,20 @@ pub struct Titres {
     pub gras_4: Option<bool>,
     pub gras_5: Option<bool>,
     pub gras_6: Option<bool>,
+    /// L'italique par niveau — absent : le texte courant.
+    pub italique_1: Option<bool>,
+    pub italique_2: Option<bool>,
+    pub italique_3: Option<bool>,
+    pub italique_4: Option<bool>,
+    pub italique_5: Option<bool>,
+    pub italique_6: Option<bool>,
+    /// Le souligné par niveau — absent : le texte courant.
+    pub souligne_1: Option<bool>,
+    pub souligne_2: Option<bool>,
+    pub souligne_3: Option<bool>,
+    pub souligne_4: Option<bool>,
+    pub souligne_5: Option<bool>,
+    pub souligne_6: Option<bool>,
 
     /// L'espacement avant/après par niveau — si présent, il gagne sur `espacement`.
     pub espacement_1: Option<String>,
@@ -351,7 +394,6 @@ pub struct Titres {
 impl Default for Titres {
     fn default() -> Self {
         Self {
-            police: String::new(),
             taille_1: "16pt".to_string(),
             taille_2: "14pt".to_string(),
             taille_3: "12pt".to_string(),
@@ -378,6 +420,18 @@ impl Default for Titres {
             gras_4: None,
             gras_5: None,
             gras_6: None,
+            italique_1: None,
+            italique_2: None,
+            italique_3: None,
+            italique_4: None,
+            italique_5: None,
+            italique_6: None,
+            souligne_1: None,
+            souligne_2: None,
+            souligne_3: None,
+            souligne_4: None,
+            souligne_5: None,
+            souligne_6: None,
             espacement_1: None,
             espacement_2: None,
             espacement_3: None,
@@ -437,6 +491,41 @@ impl Default for Typographie {
     }
 }
 
+/// Les mots de la balise `{date:...}` — siècles, millénaires, époques,
+/// format des dates pleines. Personnalisation de la demande du
+/// 2026-11-03 : « tout cela soit customisable dans le panneau des
+/// normes ».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Dates {
+    /// Le mot du siècle (« siècle », « s. »…).
+    pub siecle: String,
+    /// Le mot du millénaire.
+    pub millenaire: String,
+    /// L'époque après (« ap. J.-C. », « EC »…).
+    pub epoque_apres: String,
+    /// L'époque avant (« av. J.-C. », « AEC »…).
+    pub epoque_avant: String,
+    /// Le format par défaut des dates pleines (« jj/mm/aaaa »).
+    pub format: String,
+    /// La langue des dates — noms de mois et de jours (bug-report-8,
+    /// T3.2). Indépendante de la langue de l'interface.
+    pub langue: String,
+}
+
+impl Default for Dates {
+    fn default() -> Self {
+        Self {
+            siecle: "siècle".to_string(),
+            millenaire: "millénaire".to_string(),
+            epoque_apres: "ap. J.-C.".to_string(),
+            epoque_avant: "av. J.-C.".to_string(),
+            format: "dd/MM/yyyy".to_string(),
+            langue: "fr".to_string(),
+        }
+    }
+}
+
 impl Typographie {
     /// Les règles de composition de ces normes.
     pub fn regles(&self) -> crate::langage::typographie::Regles {
@@ -449,6 +538,7 @@ impl Typographie {
             espace_guillemets: crate::langage::typographie::Espace::depuis(&self.espace_guillemets),
             guillemets: paires_depuis(&self.guillemets),
             numerotation_figures: String::new(),
+            dates: crate::langage::dates::Regles::default(),
         }
     }
 
@@ -768,7 +858,20 @@ pub enum Champ {
     PiedCentre,
     PiedDroite,
     EntetePiedNumerotation,
+    ImagesHauteur,
     NumerotationFigures,
+    BiblioSautDePage,
+    BiblioTitreUn,
+    LegendePrefixe,
+    LegendeStyle,
+    PageDeTitre,
+    Sommaire,
+    DatesSiecle,
+    DatesMillenaire,
+    DatesEpoqueApres,
+    DatesEpoqueAvant,
+    DatesFormat,
+    DatesLangue,
     TextePolice,
     TexteTaille,
     TexteInterligne,
@@ -792,7 +895,6 @@ pub enum Champ {
     DecorRemplissage,
     DecorSeparateurCouleur,
     DecorSeparateurEpaisseur,
-    TitresPolice,
     TitresTaille1,
     TitresTaille2,
     TitresTaille3,
@@ -819,6 +921,18 @@ pub enum Champ {
     TitresGras4,
     TitresGras5,
     TitresGras6,
+    TitresItalique1,
+    TitresItalique2,
+    TitresItalique3,
+    TitresItalique4,
+    TitresItalique5,
+    TitresItalique6,
+    TitresSouligne1,
+    TitresSouligne2,
+    TitresSouligne3,
+    TitresSouligne4,
+    TitresSouligne5,
+    TitresSouligne6,
     TitresEspacement1,
     TitresEspacement2,
     TitresEspacement3,
@@ -857,7 +971,20 @@ impl MiseEnPage {
             Champ::PiedCentre => self.entete_pied.pied.centre.clone(),
             Champ::PiedDroite => self.entete_pied.pied.droite.clone(),
             Champ::EntetePiedNumerotation => self.entete_pied.numerotation.clone(),
+            Champ::ImagesHauteur => self.entete_pied.images_hauteur.clone(),
             Champ::NumerotationFigures => self.numerotation_figures.clone(),
+            Champ::BiblioSautDePage => self.bibliographie.saut_de_page.to_string(),
+            Champ::BiblioTitreUn => self.bibliographie.titre_un.to_string(),
+            Champ::LegendePrefixe => self.legende_prefixe.clone(),
+            Champ::LegendeStyle => self.legende_style.clone(),
+            Champ::PageDeTitre => self.page_de_titre.to_string(),
+            Champ::Sommaire => self.sommaire.to_string(),
+            Champ::DatesSiecle => self.dates.siecle.clone(),
+            Champ::DatesMillenaire => self.dates.millenaire.clone(),
+            Champ::DatesEpoqueApres => self.dates.epoque_apres.clone(),
+            Champ::DatesEpoqueAvant => self.dates.epoque_avant.clone(),
+            Champ::DatesFormat => self.dates.format.clone(),
+            Champ::DatesLangue => self.dates.langue.clone(),
             Champ::TextePolice => self.texte.police.clone(),
             Champ::TexteTaille => self.texte.taille.clone(),
             Champ::TexteInterligne => self.texte.interligne.clone(),
@@ -881,7 +1008,6 @@ impl MiseEnPage {
             Champ::TypoGuillemets1 => paire_lue(&self.typographie.guillemets, 0),
             Champ::TypoGuillemets2 => paire_lue(&self.typographie.guillemets, 1),
             Champ::TypoGuillemets3 => paire_lue(&self.typographie.guillemets, 2),
-            Champ::TitresPolice => self.titres.police.clone(),
             Champ::TitresTaille1 => self.titres.taille_1.clone(),
             Champ::TitresTaille2 => self.titres.taille_2.clone(),
             Champ::TitresTaille3 => self.titres.taille_3.clone(),
@@ -932,6 +1058,66 @@ impl MiseEnPage {
                 .gras_6
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
+            Champ::TitresItalique1 => self
+                .titres
+                .italique_1
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresItalique2 => self
+                .titres
+                .italique_2
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresItalique3 => self
+                .titres
+                .italique_3
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresItalique4 => self
+                .titres
+                .italique_4
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresItalique5 => self
+                .titres
+                .italique_5
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresItalique6 => self
+                .titres
+                .italique_6
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresSouligne1 => self
+                .titres
+                .souligne_1
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresSouligne2 => self
+                .titres
+                .souligne_2
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresSouligne3 => self
+                .titres
+                .souligne_3
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresSouligne4 => self
+                .titres
+                .souligne_4
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresSouligne5 => self
+                .titres
+                .souligne_5
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            Champ::TitresSouligne6 => self
+                .titres
+                .souligne_6
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             Champ::TitresEspacement1 => self.titres.espacement_1.clone().unwrap_or_default(),
             Champ::TitresEspacement2 => self.titres.espacement_2.clone().unwrap_or_default(),
             Champ::TitresEspacement3 => self.titres.espacement_3.clone().unwrap_or_default(),
@@ -970,7 +1156,24 @@ impl MiseEnPage {
             Champ::PiedCentre => self.entete_pied.pied.centre = valeur,
             Champ::PiedDroite => self.entete_pied.pied.droite = valeur,
             Champ::EntetePiedNumerotation => self.entete_pied.numerotation = valeur,
+            Champ::ImagesHauteur => self.entete_pied.images_hauteur = valeur,
             Champ::NumerotationFigures => self.numerotation_figures = valeur,
+            Champ::BiblioSautDePage => self.bibliographie.saut_de_page = valeur == "true",
+            Champ::BiblioTitreUn => self.bibliographie.titre_un = valeur == "true",
+            Champ::LegendePrefixe => self.legende_prefixe = valeur,
+            Champ::LegendeStyle => self.legende_style = valeur,
+            Champ::PageDeTitre => {
+                self.page_de_titre = matches!(valeur.trim(), "oui" | "true" | "1" | "vrai")
+            }
+            Champ::Sommaire => {
+                self.sommaire = matches!(valeur.trim(), "oui" | "true" | "1" | "vrai")
+            }
+            Champ::DatesSiecle => self.dates.siecle = valeur,
+            Champ::DatesMillenaire => self.dates.millenaire = valeur,
+            Champ::DatesEpoqueApres => self.dates.epoque_apres = valeur,
+            Champ::DatesEpoqueAvant => self.dates.epoque_avant = valeur,
+            Champ::DatesFormat => self.dates.format = valeur,
+            Champ::DatesLangue => self.dates.langue = valeur,
             Champ::TextePolice => self.texte.police = valeur,
             Champ::TexteTaille => self.texte.taille = valeur,
             Champ::TexteInterligne => self.texte.interligne = valeur,
@@ -994,7 +1197,6 @@ impl MiseEnPage {
             Champ::TypoGuillemets1 => ecrire_paire(&mut self.typographie.guillemets, 0, valeur),
             Champ::TypoGuillemets2 => ecrire_paire(&mut self.typographie.guillemets, 1, valeur),
             Champ::TypoGuillemets3 => ecrire_paire(&mut self.typographie.guillemets, 2, valeur),
-            Champ::TitresPolice => self.titres.police = valeur,
             Champ::TitresTaille1 => self.titres.taille_1 = valeur,
             Champ::TitresTaille2 => self.titres.taille_2 = valeur,
             Champ::TitresTaille3 => self.titres.taille_3 = valeur,
@@ -1033,6 +1235,42 @@ impl MiseEnPage {
             Champ::TitresGras6 => {
                 self.titres.gras_6 = (!valeur.is_empty()).then_some(valeur == "true")
             }
+            Champ::TitresItalique1 => {
+                self.titres.italique_1 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresItalique2 => {
+                self.titres.italique_2 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresItalique3 => {
+                self.titres.italique_3 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresItalique4 => {
+                self.titres.italique_4 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresItalique5 => {
+                self.titres.italique_5 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresItalique6 => {
+                self.titres.italique_6 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresSouligne1 => {
+                self.titres.souligne_1 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresSouligne2 => {
+                self.titres.souligne_2 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresSouligne3 => {
+                self.titres.souligne_3 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresSouligne4 => {
+                self.titres.souligne_4 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresSouligne5 => {
+                self.titres.souligne_5 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
+            Champ::TitresSouligne6 => {
+                self.titres.souligne_6 = (!valeur.is_empty()).then_some(valeur == "true")
+            }
             Champ::TitresEspacement1 => {
                 self.titres.espacement_1 = (!valeur.is_empty()).then_some(valeur)
             }
@@ -1070,10 +1308,263 @@ impl MiseEnPage {
         let actuel = self.valeur(champ) == "true";
         self.modifier(champ, (!actuel).to_string());
     }
+
+    /// Les champs de mesure : un nombre nu se lit en `em`, et rien de
+    /// négatif ne s'y pose (demande du 2026-11-04).
+    pub fn est_mesure(champ: Champ) -> bool {
+        matches!(
+            champ,
+            Champ::MargeHaut
+                | Champ::MargeBas
+                | Champ::MargeGauche
+                | Champ::MargeDroite
+                | Champ::TexteTaille
+                | Champ::TexteInterligne
+                | Champ::TexteEspacement
+                | Champ::TexteRetrait
+                | Champ::DecorEpaisseur
+                | Champ::DecorRayon
+                | Champ::DecorMarge
+                | Champ::TitresEspacement
+                | Champ::TitresEspacement1
+                | Champ::TitresEspacement2
+                | Champ::TitresEspacement3
+                | Champ::TitresEspacement4
+                | Champ::TitresEspacement5
+                | Champ::TitresEspacement6
+                | Champ::TitresTaille1
+                | Champ::TitresTaille2
+                | Champ::TitresTaille3
+                | Champ::TitresTaille4
+                | Champ::TitresTaille5
+                | Champ::TitresTaille6
+        )
+    }
+}
+
+/// L'aperçu des guillemets : l'imbrication réelle des trois niveaux
+/// configurés (bug-report-8, T5.2) — « un « deux « trois » suite » fin ».
+pub fn apercu_guillemets(guillemets: &[String]) -> String {
+    /// Les deux caractères d'une paire : l'ouvrant, puis le fermant — les
+    /// défauts français servent de secours.
+    fn paire(paires: &[String], niveau: usize, defaut: (char, char)) -> (char, char) {
+        let paire = paires.get(niveau).cloned().unwrap_or_default();
+        let mut caracteres = paire.chars();
+        (
+            caracteres.next().unwrap_or(defaut.0),
+            caracteres.next().unwrap_or(defaut.1),
+        )
+    }
+
+    let (o1, f1) = paire(guillemets, 0, ('«', '»'));
+    let (o2, f2) = paire(guillemets, 1, ('"', '"'));
+    let (o3, f3) = paire(guillemets, 2, ('\'', '\''));
+
+    format!("{o1} un {o2}deux {o3}trois{f3} suite{f2} fin {f1}")
+}
+
+/// L'aperçu d'un format de numérotation personnalisé (bug-report-8,
+/// T2.3) : « 1.1 » montre « 1. Introduction — 1.2 Une partie — 1.2.3 Un
+/// détail », un échantillon par niveau.
+///
+/// La syntaxe est celle de Typst : `1` chiffre arabe, `a`/`A` lettre,
+/// `i`/`I` romain — tout le reste s'écrit tel quel (points, parenthèses,
+/// tirets).
+pub fn apercu_numerotation(format: &str) -> String {
+    /// Un nombre, dans la forme du jeton.
+    fn chiffre(jeton: char, n: usize) -> String {
+        match jeton {
+            'a' | 'A' => {
+                let mut reste = n;
+                let mut out = String::new();
+                while reste > 0 {
+                    reste -= 1;
+                    out.insert(0, (b'a' + (reste % 26) as u8) as char);
+                    reste /= 26;
+                }
+                if jeton == 'A' {
+                    out.to_uppercase()
+                } else {
+                    out
+                }
+            }
+            'i' | 'I' => {
+                let romains = [
+                    (1000, "m"),
+                    (900, "cm"),
+                    (500, "d"),
+                    (400, "cd"),
+                    (100, "c"),
+                    (90, "xc"),
+                    (50, "l"),
+                    (40, "xl"),
+                    (10, "x"),
+                    (9, "ix"),
+                    (5, "v"),
+                    (4, "iv"),
+                    (1, "i"),
+                ];
+                let mut reste = n;
+                let mut out = String::new();
+                for (valeur, symbole) in romains {
+                    while reste >= valeur {
+                        out.push_str(symbole);
+                        reste -= valeur;
+                    }
+                }
+                if jeton == 'I' {
+                    out.to_uppercase()
+                } else {
+                    out
+                }
+            }
+            _ => n.to_string(),
+        }
+    }
+
+    // Le motif : des jetons de numérotation (1 a A i I) et du texte. Le
+    // texte qui précède un jeton est son littéral, le texte final reste
+    // le suffixe — la règle est sondée au vrai Typst, pas devinée.
+    let mut paires: Vec<(String, char)> = Vec::new();
+    let mut litteral = String::new();
+    for caractere in format.chars() {
+        if "1aAiI".contains(caractere) {
+            paires.push((std::mem::take(&mut litteral), caractere));
+        } else {
+            litteral.push(caractere);
+        }
+    }
+    if paires.is_empty() {
+        return String::new();
+    }
+    let suffixe = litteral;
+
+    // Le séparateur entre deux nombres : le texte du deuxième jeton, ou
+    // le suffixe quand le motif n'a qu'un jeton (« 1) » donne « 1)2) »).
+    let separateur = if paires.len() >= 2 {
+        paires[1].0.clone()
+    } else {
+        suffixe.clone()
+    };
+
+    let echantillons: Vec<String> = (1..=3)
+        .map(|niveau| {
+            let mut out = paires[0].0.clone();
+            for rang in 0..niveau {
+                if rang > 0 {
+                    out.push_str(&separateur);
+                }
+                // Le dernier jeton se répète au-delà du motif.
+                let jeton = paires[rang.min(paires.len() - 1)].1;
+                out.push_str(&chiffre(jeton, rang + 1));
+            }
+            out.push_str(&suffixe);
+            out
+        })
+        .collect();
+
+    echantillons.join(" — ")
+}
+
+/// Une mesure saisie : un nombre nu se lit en `em`, et rien de négatif ne
+/// passe — `None` refuse la valeur.
+pub fn normaliser_mesure(valeur: &str) -> Option<String> {
+    let valeur = valeur.trim();
+    if valeur.starts_with('-') {
+        return None;
+    }
+    if valeur.is_empty() {
+        return Some(String::new());
+    }
+    let nombre = valeur
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .count();
+    if nombre == valeur.len() {
+        return Some(format!("{valeur}em"));
+    }
+    Some(valeur.to_string())
 }
 
 #[cfg(test)]
 mod tests {
+
+    use super::normaliser_mesure;
+
+    /// Une mesure : un nombre nu devient des `em`, l'unité se garde, et
+    /// le négatif est refusé.
+    #[test]
+    fn une_mesure_se_lit_en_em_et_refuse_le_negatif() {
+        assert_eq!(normaliser_mesure("12").as_deref(), Some("12em"));
+        assert_eq!(normaliser_mesure("0.65").as_deref(), Some("0.65em"));
+        assert_eq!(normaliser_mesure("12pt").as_deref(), Some("12pt"));
+        assert_eq!(normaliser_mesure(" 2cm ").as_deref(), Some("2cm"));
+        assert_eq!(normaliser_mesure("").as_deref(), Some(""));
+        assert_eq!(normaliser_mesure("-1"), None, "pas de négatif");
+        assert_eq!(normaliser_mesure("-0.5em"), None, "pas de négatif");
+    }
+
+    /// L'aperçu des guillemets montre les **trois** niveaux imbriqués,
+    /// chacun dans sa propre paire (bug-report-8, T5.2).
+    #[test]
+    fn l_apercu_des_guillemets_imbrique_trois_niveaux() {
+        use super::apercu_guillemets;
+
+        // Le français, tel que la table du rapport le décrit.
+        let paires = vec!["«»".to_string(), "“”".to_string(), "‘’".to_string()];
+        assert_eq!(
+            apercu_guillemets(&paires),
+            "« un “deux ‘trois’ suite” fin »"
+        );
+
+        // Un niveau non réglé garde ses défauts — jamais un aperçu vide.
+        assert_eq!(apercu_guillemets(&[]), "« un \"deux 'trois' suite\" fin »");
+    }
+
+    /// L'aperçu du format de numérotation : les jetons donnent des
+    /// nombres, le reste s'écrit tel quel (bug-report-8, T2.3).
+    #[test]
+    fn un_format_de_numerotation_se_prevoit() {
+        use super::apercu_numerotation;
+
+        assert_eq!(apercu_numerotation("1.1"), "1 — 1.2 — 1.2.3");
+        assert_eq!(apercu_numerotation("A.a"), "A — A.b — A.b.c");
+        assert_eq!(apercu_numerotation("I.i"), "I — I.ii — I.ii.iii");
+        assert_eq!(apercu_numerotation("1)"), "1) — 1)2) — 1)2)3)");
+        assert_eq!(apercu_numerotation("(1.1)"), "(1) — (1.2) — (1.2.3)");
+    }
+
+    /// **La persistance (bug-report-8, T8.3)** : chaque paramètre neuf
+    /// s'écrit, se relit, et un ancien document — qui les ignore — reçoit
+    /// leurs défauts sans rien perdre.
+    #[test]
+    fn les_reglages_neufs_se_persistent_et_les_anciens_chargent() {
+        let mut mise = MiseEnPage::default();
+        mise.entete_pied.images_hauteur = "60".to_string();
+        mise.dates.langue = "de".to_string();
+        mise.titres.italique_2 = Some(true);
+        mise.titres.souligne_3 = Some(true);
+        mise.titres.couleur_1 = Some("#123456".to_string());
+
+        // L'aller-retour par le fichier.
+        let texte = mise.ecrire().expect("écriture");
+        let relu = MiseEnPage::lire(&texte).expect("lecture");
+        assert_eq!(relu.entete_pied.images_hauteur, "60");
+        assert_eq!(relu.dates.langue, "de");
+        assert_eq!(relu.titres.italique_2, Some(true));
+        assert_eq!(relu.titres.souligne_3, Some(true));
+        assert_eq!(relu.titres.couleur_1.as_deref(), Some("#123456"));
+
+        // Un ancien fichier, sans aucun de ces champs : les défauts
+        // viennent, et rien ne casse.
+        let ancien = "page_de_titre = true\n";
+        let relu = MiseEnPage::lire(ancien).expect("lecture de l'ancien");
+        assert!(relu.page_de_titre, "l'ancien réglage se lit");
+        assert_eq!(relu.entete_pied.images_hauteur, "80", "le défaut vient");
+        assert_eq!(relu.dates.langue, "fr", "le défaut vient");
+        assert_eq!(relu.titres.italique_2, None, "rien de forcé");
+        assert_eq!(relu.titres.souligne_3, None, "rien de forcé");
+    }
 
     /// La typographie d'avant la section dédiée se porte dans sa section :
     /// un réglage ne se perd pas à la lecture.

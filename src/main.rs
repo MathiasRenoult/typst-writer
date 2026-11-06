@@ -1,5 +1,9 @@
 mod app;
 mod editor;
+// L'architecture des extensions (bug-report-7, point 4) : le registre
+// attend sa GUI (jalon 3 — le composeur cetz).
+#[allow(dead_code)]
+mod extensions;
 mod langage;
 mod lsp;
 mod mise_en_page;

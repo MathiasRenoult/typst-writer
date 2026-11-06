@@ -1,3 +1,4 @@
 /target
 /dist
 .typst-writer/
+vendor/*/target/

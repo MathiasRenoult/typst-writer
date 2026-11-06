@@ -580,6 +580,16 @@ impl EditorState {
         task
     }
 
+    /// La marque d'un genre, quand le bloc n'a rien à transformer : elle
+    /// s'écrit au curseur — un bouton ne se tait jamais. Sans marque (les
+    /// genres qui n'en ont pas), rien ne bouge.
+    fn ecrire_la_marque(&mut self, marque: &str) -> Task<EditorMessage> {
+        if marque.is_empty() {
+            return Task::none();
+        }
+        self.insert_at_cursor(marque)
+    }
+
     /// Entoure la sélection ; sans sélection, insère deux marqueurs et place le
     /// curseur entre eux pour que l'écriture puisse continuer directement.
     fn wrap_selection(&mut self, prefix: &str, suffix: &str) -> Task<EditorMessage> {
@@ -621,20 +631,31 @@ impl EditorState {
     pub fn formater_le_bloc(&mut self, genre: crate::langage::blocs::Genre) -> Task<EditorMessage> {
         use crate::langage::blocs;
 
+        // Un bloc qui n'a rien à transformer — un document neuf, une ligne
+        // vide — reçoit la marque du genre : le bouton écrit, il ne se
+        // tait jamais.
+        let marque = match genre {
+            blocs::Genre::Titre(niveau) => format!("{} ", "#".repeat(niveau as usize)),
+            blocs::Genre::Puce => "- ".to_string(),
+            blocs::Genre::Numero => "1. ".to_string(),
+            blocs::Genre::Citation => "> ".to_string(),
+            _ => String::new(),
+        };
+
         let (ligne, colonne) = self.editor.cursor_position();
         let contenu = self.editor.content();
 
         let Some(index) = blocs::bloc_a(&contenu, ligne) else {
-            return Task::none();
+            return self.ecrire_la_marque(&marque);
         };
 
         let tous = blocs::blocs(&contenu);
         let Some(bloc) = tous.get(index) else {
-            return Task::none();
+            return self.ecrire_la_marque(&marque);
         };
 
         let Some((plage, texte)) = blocs::remplacement(&contenu, bloc, genre) else {
-            return Task::none();
+            return self.ecrire_la_marque(&marque);
         };
 
         // Le curseur garde sa place dans le bloc : sa ligne survit (au

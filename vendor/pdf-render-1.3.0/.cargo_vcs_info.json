@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "d0dd0b73df700ff5be5cdab04af043ccaf293372"
+  },
+  "path_in_vcs": "crates/pdf-render"
+}

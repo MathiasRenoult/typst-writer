@@ -19,6 +19,17 @@ pub struct Document {
     pub blocs: Vec<Bloc>,
 }
 
+/// Un élément de liste : son niveau d'imbrication (0 = racine) et son
+/// contenu (bug-report-10, 3.1) — deux espaces de retrait par niveau.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementListe {
+    /// Le niveau d'imbrication.
+    pub niveau: usize,
+
+    /// Le contenu de l'élément.
+    pub contenu: Vec<Inline>,
+}
+
 /// Un bloc de niveau document.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bloc {
@@ -33,9 +44,9 @@ pub enum Bloc {
     /// Une citation (bloc de citation).
     Citation(Vec<Inline>),
     /// Une liste à puces.
-    ListePuce(Vec<Vec<Inline>>),
+    ListePuce(Vec<ElementListe>),
     /// Une liste numérotée.
-    ListeNumero(Vec<Vec<Inline>>),
+    ListeNumero(Vec<ElementListe>),
     /// Un bloc brut Typst, inséré tel quel dans le document généré.
     Brut(String),
     /// Une formule mathématique : `$$ … $$`, du Typst math brut.
@@ -82,6 +93,16 @@ pub enum Bloc {
         /// Les données : (libellé, valeur) par ligne.
         donnees: Vec<(String, f64)>,
     },
+    /// La liste finale du glossaire : `{glossaire}`.
+    Glossaire {
+        /// `true` quand `{glossaire: tout}` montre aussi les termes jamais
+        /// référencés.
+        tout: bool,
+    },
+    /// La table des matières : `[[TOC]]` (bug-report-10, 1.3).
+    Sommaire,
+    /// La section bibliographie : `{bibliographie}` (bug-report-9).
+    Bibliographie,
 }
 
 /// L'alignement d'une colonne de tableau, écrit dans sa ligne de
@@ -210,6 +231,23 @@ pub enum Inline {
     Italique(Vec<Inline>),
     /// Du texte en gras et en italique.
     GrasItalique(Vec<Inline>),
+    /// Une date déclarée : `{date:XIXs}`, `{date:2026.11.03 jj/mm/aaaa}`.
+    ///
+    /// Une feuille — le contenu est sa spécification, analysée par
+    /// [`crate::langage::dates`].
+    Date(String),
+
+    /// Un terme du glossaire : `{glo:clé}`, `{glo:clé pluriel}`,
+    /// `{glo:clé majuscule}`, `{glo:clé majuscule pluriel}`.
+    Glo {
+        /// La clé de l'entrée dans `glossaire.toml`.
+        cle: String,
+        /// Le terme prend la majuscule — en début de phrase.
+        majuscule: bool,
+        /// Le terme au pluriel.
+        pluriel: bool,
+    },
+
     /// Du texte souligné : `__texte__`.
     Souligne(Vec<Inline>),
     /// Du texte barré : `~~texte~~`.
@@ -347,7 +385,7 @@ impl Bloc {
             }
             Bloc::Citation(contenu) => !contenu.is_empty() && inline_canonique(contenu),
             Bloc::ListePuce(items) | Bloc::ListeNumero(items) => {
-                !items.is_empty() && items.iter().all(|item| inline_canonique(item))
+                !items.is_empty() && items.iter().all(|item| inline_canonique(&item.contenu))
             }
             // Un bloc brut est pris tel quel : son délimiteur s'adapte à son
             // contenu, tout lui est permis.
@@ -378,6 +416,10 @@ impl Bloc {
                 !cible.is_empty() && !cible.contains('\n') && inline_canonique(légende)
             }
             Bloc::Graphique { type_, donnees, .. } => !donnees.is_empty() && !type_.is_empty(),
+            // La liste du glossaire a deux formes, toutes deux canoniques.
+            Bloc::Glossaire { .. } => true,
+            Bloc::Sommaire => true,
+            Bloc::Bibliographie => true,
             Bloc::Décor { proprietes, bloc } => {
                 // Un seul manteau, jamais deux : un décor dans un décor se
                 // rassemble à l'écriture.
@@ -430,6 +472,10 @@ impl Inline {
                 !references.is_empty() && references.iter().all(Reference::est_canonique)
             }
             Inline::Note(contenu) => inline_canonique(contenu),
+            Inline::Date(spec) => crate::langage::dates::analyser(spec).is_some(),
+            // La clé est un identifiant — c'est ce qui rend l'écriture
+            // `{glo:clé majuscule pluriel}` univoque.
+            Inline::Glo { cle, .. } => crate::project::glossaire::EntreeGlossaire::cle_valide(cle),
             Inline::Lien { texte, cible } => inline_canonique(texte) && !cible.contains('\n'),
         }
     }
@@ -653,11 +699,15 @@ impl Bloc {
             }
             Bloc::ListePuce(items) | Bloc::ListeNumero(items) => items
                 .iter()
-                .map(|item| inline_texte_nu(item))
+                .map(|item| inline_texte_nu(&item.contenu))
                 .collect::<Vec<_>>()
                 .join(" "),
             Bloc::Separateur | Bloc::Commentaire(_) | Bloc::SautDePage => String::new(),
-            Bloc::Brut(_) | Bloc::Graphique { .. } => String::new(),
+            Bloc::Brut(_)
+            | Bloc::Graphique { .. }
+            | Bloc::Glossaire { .. }
+            | Bloc::Bibliographie
+            | Bloc::Sommaire => String::new(),
             Bloc::Formule(texte) => texte.clone(),
         }
     }
@@ -678,6 +728,12 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => out.push_str(&inline_texte_nu(contenu)),
             Inline::Code(texte) | Inline::Formule(texte) => out.push_str(texte),
+            // La spécification tient lieu de texte nu : elle se lit, et le
+            // rendu exact dépend des normes.
+            Inline::Date(spec) => out.push_str(spec),
+            // La clé tient lieu de texte : la forme réelle vient du
+            // glossaire, que le schéma ne connaît pas.
+            Inline::Glo { cle, .. } => out.push_str(cle),
             Inline::Citation(references) => {
                 for (index, reference) in references.iter().enumerate() {
                     if index > 0 {

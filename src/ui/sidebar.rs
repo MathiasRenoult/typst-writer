@@ -2,8 +2,10 @@ use crate::app::state::ChapterRename;
 use crate::app::{Message, State};
 use crate::project::{BibliographyEntry, Chapter};
 use crate::ui::theme::{self, Palette};
+use iced::widget::canvas;
 use iced::widget::{
-    Space, button, column, container, mouse_area, row, scrollable, text, text_input, tooltip,
+    Space, button, column, container, mouse_area, pick_list, row, scrollable, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Element, Fill, Length, Theme};
 
@@ -37,6 +39,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // SIDEBAR-06-02 : le sommaire est le premier élément du panneau.
     if !state.render.outline.is_empty() {
         content = content.push(section_title("Sommaire", palette));
+        let mut sommaire = column![].spacing(0);
 
         for (index, entry) in state.render.outline.iter().enumerate() {
             let level = entry.level.saturating_sub(1);
@@ -44,7 +47,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .iter()
                 .all(|e| e.level <= entry.level);
 
-            let mut label = String::new();
+            // Les guides des ancêtres : un trait vertical là où la branche
+            // continue en dessous, rien là où elle s'achève. Les **traits**,
+            // pas les glyphes de boîte — dans une police proportionnelle
+            // ils dérivent, et la liste partait en diagonale
+            // (bug-report-7, point 13).
+            let mut guides = Vec::with_capacity(level);
             for ancetre in 0..level {
                 let parent_dernier = state.render.outline[..index]
                     .iter()
@@ -56,29 +64,39 @@ pub fn view(state: &State) -> Element<'_, Message> {
                             .all(|s| s.level <= e.level || s.level.saturating_sub(1) > ancetre)
                     })
                     .unwrap_or(true);
-                label.push_str(if parent_dernier { "    " } else { "│   " });
+                guides.push(!parent_dernier);
             }
-            label.push_str(if est_dernier {
-                "└── "
-            } else {
-                "├── "
-            });
-            label.push_str(entry.text.trim());
 
-            content = content.push(
-                button(
-                    row![palette.label(label).size(theme::jetons::CORPS)]
-                        .align_y(Alignment::Center)
-                        .height(Length::Fill),
+            // Du **texte cliquable**, pas un bouton : les boutons
+            // s'espacent entre eux et la hiérarchie part en escalier. Les
+            // traits sont dessinés, le texte est nu — et sous la main, il
+            // se teinte, le curseur pointe (bug-report 2026-11-03).
+            let survole = state.survol_sommaire == Some(index);
+            sommaire = sommaire.push(
+                mouse_area(
+                    row![
+                        barres_hiérarchiques(&guides, est_dernier, palette),
+                        palette
+                            .label(entry.text.trim())
+                            .size(theme::jetons::CORPS)
+                            .color(if survole {
+                                palette.accent
+                            } else {
+                                palette.text
+                            }),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .height(Length::Fixed(ENTRY_HEIGHT)),
                 )
                 .on_press(Message::GotoHeading(index))
-                .width(Fill)
-                .height(Length::Fixed(ENTRY_HEIGHT))
-                .padding([4, 8])
-                .style(move |t, status| entry_style(t, status, palette, false)),
+                .on_enter(Message::SommaireSurvol(Some(index)))
+                .on_exit(Message::SommaireSurvol(None))
+                .interaction(iced::mouse::Interaction::Pointer),
             );
         }
 
+        content = content.push(sommaire);
         content = content.push(Space::new().height(12));
     }
 
@@ -187,52 +205,70 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .style(move |t, status| entry_style(t, status, palette, false)),
     );
 
-    // Un projet sans bibliographie la voit naître d'un geste.
+    // Les gestes de la bibliographie, **en icônes** (bug-report
+    // 2026-11-03) : création, import, recherche — et le lien Zotero
+    // rejoint la rangée. Les gestes d'insertion (note, figure, étiquette,
+    // renvoi) sont retirés : ils ne servaient à rien ici.
+    let mut gestes = row![].spacing(2).align_y(Alignment::Center);
     if state.project.bibliography.is_none() {
-        content = content.push(
-            button(
-                palette
-                    .label("Créer la bibliographie locale")
-                    .size(theme::jetons::DETAIL),
-            )
+        gestes = gestes.push(tooltip(
+            button(theme::icon(
+                lucide_icons::iced::icon_file_plus::<Theme>(),
+                13.0,
+                palette.text,
+            ))
             .on_press(Message::BibliographieCreer)
-            .padding([5, 10])
-            .width(Fill),
-        );
-    }
-
-    // L'alternative sans plugin : un `.bib` exporté par Zotero lui-même
-    // rejoint la bibliothèque locale, sans rien écraser.
-    content = content.push(
-        button(
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
             palette
-                .label("Importer un fichier .bib…")
+                .label("Créer la bibliographie locale")
                 .size(theme::jetons::DETAIL),
-        )
+            tooltip::Position::Bottom,
+        ));
+    }
+    gestes = gestes.push(tooltip(
+        button(theme::icon(
+            lucide_icons::iced::icon_upload::<Theme>(),
+            13.0,
+            palette.text,
+        ))
         .on_press(Message::BibliographieImporter)
-        .padding([5, 10])
-        .width(Fill),
-    );
-
-    // Les gestes d'insertion de R5 : le gabarit entre au curseur, et le
-    // curseur se pose là où l'on doit écrire.
-    content = content.push(
-        row![
-            button(palette.label("Note").size(theme::jetons::DETAIL))
-                .on_press(Message::NoteInserer)
-                .padding([5, 8]),
-            button(palette.label("Figure").size(theme::jetons::DETAIL))
-                .on_press(Message::FigureInserer)
-                .padding([5, 8]),
-            button(palette.label("Étiquette").size(theme::jetons::DETAIL))
-                .on_press(Message::EtiquetteInserer)
-                .padding([5, 8]),
-            button(palette.label("Renvoi").size(theme::jetons::DETAIL))
-                .on_press(Message::RenvoiInserer)
-                .padding([5, 8]),
-        ]
-        .spacing(4),
-    );
+        .padding([4, 6])
+        .style(move |t, status| entry_style(t, status, palette, false)),
+        palette
+            .label("Importer un fichier .bib…")
+            .size(theme::jetons::DETAIL),
+        tooltip::Position::Bottom,
+    ));
+    gestes = gestes.push(tooltip(
+        button(theme::icon(
+            lucide_icons::iced::icon_search::<Theme>(),
+            13.0,
+            palette.text,
+        ))
+        .on_press(Message::ReferencesRechercheBascule)
+        .padding([4, 6])
+        .style(move |t, status| entry_style(t, status, palette, false)),
+        palette
+            .label("Chercher une référence")
+            .size(theme::jetons::DETAIL),
+        tooltip::Position::Bottom,
+    ));
+    if state.zotero.source == crate::zotero::Source::Locale {
+        gestes = gestes.push(tooltip(
+            button(theme::icon(
+                lucide_icons::iced::icon_link::<Theme>(),
+                13.0,
+                palette.text,
+            ))
+            .on_press(Message::ZoteroLierOuvrir)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+            palette.label("Lier à Zotero…").size(theme::jetons::DETAIL),
+            tooltip::Position::Bottom,
+        ));
+    }
+    content = content.push(gestes);
 
     // La dernière notice supprimée se ravise d'un geste : sa copie est à
     // la corbeille, et c'est elle qu'on remet.
@@ -249,7 +285,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
         );
     }
 
-    if !state.references_repliees {
+    // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
+    if !state.references_repliees
+        && (state.references_recherche_visible || !state.references_filtre.is_empty())
+    {
         content = content.push(
             text_input("chercher une référence", &state.references_filtre)
                 .on_input(Message::ReferencesFiltrer)
@@ -313,27 +352,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .spacing(6)
             .align_y(Alignment::Center),
         );
-    } else if state.zotero.source == crate::zotero::Source::Locale {
-        content = content.push(Space::new().height(6));
-        content = content.push(
-            button(
-                row![
-                    theme::icon(
-                        lucide_icons::iced::icon_link::<Theme>(),
-                        11.0,
-                        palette.text_muted,
-                    ),
-                    palette.label("Lier à Zotero…").size(theme::jetons::CORPS),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::ZoteroLierOuvrir)
-            .padding([4, 8])
-            .width(Fill)
-            .style(move |t, status| entry_style(t, status, palette, false)),
-        );
     }
+    // Le lien Zotero s'est joint à la rangée de gestes (bug-report
+    // 2026-11-03) — l'icône, comme les autres.
 
     // Une notice s'ajoute quand la bibliothèque est la sienne : seule une
     // bibliothèque locale s'écrit.
@@ -382,7 +403,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .any(|(nom, prenom)| format!("{nom} {prenom}").to_lowercase().contains(&filtre))
     });
 
-    if !state.references_repliees {
+    // La recherche trouve ses résultats même la section repliée
+    // (bug-report-10, 2.2).
+    if !state.references_repliees || !filtre.is_empty() {
         for (rang, entry) in visibles.enumerate() {
             if rang > 0 {
                 content = content.push(separation(palette));
@@ -393,33 +416,219 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
     }
 
+    // ---- Le glossaire ----
+    content = content.push(Space::new().height(18));
+
+    // Le titre replie la liste, et le filtre la cherche.
+    content = content.push(
+        button(
+            row![
+                theme::icon(
+                    if state.glossaire_replie {
+                        lucide_icons::iced::icon_chevron_right::<Theme>()
+                    } else {
+                        lucide_icons::iced::icon_chevron_down::<Theme>()
+                    },
+                    12.0,
+                    palette.text_muted,
+                ),
+                palette.label("Glossaire").size(theme::jetons::SAILLANT),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::GlossaireReplier)
+        .padding([2, 4])
+        .style(move |t, status| entry_style(t, status, palette, false)),
+    );
+
+    // Les gestes : un terme s'ajoute, la liste se cherche — en icônes,
+    // comme la bibliographie.
+    let mut gestes = row![].spacing(2).align_y(Alignment::Center);
+    gestes = gestes.push(tooltip(
+        button(theme::icon(
+            lucide_icons::iced::icon_plus::<Theme>(),
+            13.0,
+            palette.text,
+        ))
+        .on_press(Message::GlossaireCreer)
+        .padding([4, 6])
+        .style(move |t, status| entry_style(t, status, palette, false)),
+        palette.label("Nouveau terme").size(theme::jetons::DETAIL),
+        tooltip::Position::Bottom,
+    ));
+    gestes = gestes.push(tooltip(
+        button(theme::icon(
+            lucide_icons::iced::icon_search::<Theme>(),
+            13.0,
+            palette.text,
+        ))
+        .on_press(Message::GlossaireRechercheBascule)
+        .padding([4, 6])
+        .style(move |t, status| entry_style(t, status, palette, false)),
+        palette
+            .label("Chercher un terme")
+            .size(theme::jetons::DETAIL),
+        tooltip::Position::Bottom,
+    ));
+    content = content.push(gestes);
+
+    // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
+    if !state.glossaire_replie
+        && (state.glossaire_recherche_visible || !state.glossaire_filtre.is_empty())
+    {
+        content = content.push(
+            text_input("chercher un terme", &state.glossaire_filtre)
+                .on_input(Message::GlossaireFiltrer)
+                .padding(5)
+                .size(theme::jetons::DETAIL)
+                .width(Fill),
+        );
+    }
+
+    // L'état : combien de termes — et le vide dit quoi faire.
+    content = content.push(info_row(
+        theme::icon(
+            lucide_icons::iced::icon_book::<Theme>(),
+            14.0,
+            palette.text_muted,
+        ),
+        "Termes du glossaire".to_string(),
+        if state.glossaire.is_empty() {
+            "aucun".to_string()
+        } else {
+            format!("{} terme(s)", state.glossaire.len())
+        },
+        state.glossaire.is_empty(),
+        palette,
+    ));
+
+    if state.glossaire.is_empty() {
+        content = content.push(
+            palette
+                .label(
+                    "Le glossaire se gère ici : un terme porte sa clé, ses formes et sa \
+                     définition. Un clic sur un terme de la liste l'insère au curseur.",
+                )
+                .size(theme::jetons::DETAIL)
+                .color(palette.text_muted),
+        );
+    }
+
+    // Les termes citables : un clic insère `{glo:clé}` (ou `#gls("clé")`,
+    // selon le dialecte du tampon). Le filtre cherche la clé, les formes
+    // ou la définition.
+    let filtre = state.glossaire_filtre.trim().to_lowercase();
+
+    let visibles = state.glossaire.iter().filter(|entree| {
+        filtre.is_empty()
+            || entree.key.to_lowercase().contains(&filtre)
+            || entree
+                .short
+                .as_deref()
+                .map(|forme| forme.to_lowercase().contains(&filtre))
+                .unwrap_or(false)
+            || entree
+                .long
+                .as_deref()
+                .map(|forme| forme.to_lowercase().contains(&filtre))
+                .unwrap_or(false)
+            || entree
+                .description
+                .as_deref()
+                .map(|forme| forme.to_lowercase().contains(&filtre))
+                .unwrap_or(false)
+    });
+
+    if !state.glossaire_replie {
+        for (rang, entree) in visibles.enumerate() {
+            if rang > 0 {
+                content = content.push(separation(palette));
+            }
+
+            let survolee = state.survol_glossaire.as_deref() == Some(entree.key.as_str());
+            content = content.push(glossaire_row(entree, palette, survolee));
+        }
+    }
+
     // ---- Les projets ----
 
     content = content.push(Space::new().height(18));
     content = content.push(section_title("Projets", palette));
 
-    // Les modèles de R5, en un geste : le devoir court et le travail long
-    // naissent complets — page de titre, sommaire, bibliographie.
-    for (modele, libelle) in [
-        (
-            crate::project::model::Modele::DevoirCourt,
-            "Nouveau devoir court…",
-        ),
-        (
-            crate::project::model::Modele::TravailLong,
-            "Nouveau travail long…",
-        ),
-    ] {
+    // La liste des projets : l'étagère se choisit **au menu** (pas une
+    // bascule), et la recherche ne se montre que sur son icône
+    // (bug-report 2026-11-03).
+    let etageres = crate::project::etageres();
+    let mut choix_etages = vec!["Mon étagère".to_string(), "Tous".to_string()];
+    let mut noms: Vec<String> = etageres
+        .values()
+        .filter(|etagere| !etagere.trim().is_empty())
+        .cloned()
+        .collect();
+    noms.sort();
+    noms.dedup();
+    choix_etages.extend(noms);
+
+    content = content.push(
+        row![
+            button(theme::icon(
+                lucide_icons::iced::icon_search::<Theme>(),
+                13.0,
+                palette.text,
+            ))
+            .on_press(Message::ProjetsRechercheBascule)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+            // La bibliothèque, vue étagères — l’accès depuis la
+            // section Projets (bug-report-10, 2.3).
+            tooltip(
+                button(theme::icon(
+                    lucide_icons::iced::icon_library::<Theme>(),
+                    13.0,
+                    if state.projets_vue {
+                        palette.accent
+                    } else {
+                        palette.text
+                    },
+                ))
+                .on_press(Message::ProjetsVue)
+                .padding([4, 6])
+                .style(move |t, status| { entry_style(t, status, palette, state.projets_vue) }),
+                container(palette.label("La bibliothèque, vue étagères").size(12)).padding([4, 8]),
+                tooltip::Position::Bottom,
+            ),
+            pick_list(
+                choix_etages,
+                Some(state.projets_etage.clone()),
+                Message::ProjetsEtageChoisie
+            )
+            .text_size(theme::jetons::DETAIL)
+            .padding([3, 6])
+            .width(Fill),
+        ]
+        .spacing(6),
+    );
+    if state.projets_recherche_visible || !state.projets_recherche.is_empty() {
         content = content.push(
-            button(palette.label(libelle).size(theme::jetons::DETAIL))
-                .on_press(Message::ProjetCreerAvecModele(modele))
-                .padding([5, 10])
+            text_input("chercher un projet…", &state.projets_recherche)
+                .on_input(Message::ProjetsRecherche)
+                .padding([3, 8])
+                .size(theme::jetons::DETAIL)
                 .width(Fill),
         );
     }
 
+    let visibles = projets_visibles(
+        &state.projects,
+        project,
+        &etageres,
+        &state.projets_etage,
+        &state.projets_recherche,
+    );
+
     // Le projet courant en tête : la liste sert à en changer, pas à se repérer.
-    for (rang, other) in state.projects.iter().enumerate() {
+    for (rang, other) in visibles.iter().enumerate() {
         if rang > 0 {
             content = content.push(separation(palette));
         }
@@ -556,12 +765,11 @@ fn chapter_row<'a>(
             .color(palette.text),
     );
 
-    let title = button(label)
+    // Du texte cliquable, pas un bouton : les boutons s'espacent et la
+    // liste part en escalier (bug-report 2026-11-03).
+    let title = mouse_area(label.width(Fill).height(Length::Fixed(ENTRY_HEIGHT)))
         .on_press(Message::OpenChapter(chapter.path.clone()))
-        .width(Fill)
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .padding([4, 8])
-        .style(move |t, status| entry_style(t, status, palette, is_active));
+        .interaction(iced::mouse::Interaction::Pointer);
 
     row![
         tooltip(
@@ -731,6 +939,105 @@ fn info_row<'a>(
     .into()
 }
 
+/// Un terme du glossaire : un clic insère sa référence au curseur,
+/// l'icône l'ouvre pour le corriger.
+fn glossaire_row<'a>(
+    entree: &'a crate::project::glossaire::EntreeGlossaire,
+    palette: Palette,
+    survolee: bool,
+) -> Element<'a, Message> {
+    let info = format!("{{glo:{}}} · glossaire", entree.key);
+
+    let forme_courte = entree
+        .short
+        .as_deref()
+        .map(str::trim)
+        .filter(|forme| !forme.is_empty());
+    let forme_longue = entree
+        .long
+        .as_deref()
+        .map(str::trim)
+        .filter(|forme| !forme.is_empty());
+
+    // Deux registres : la forme courte (ou la clé) d'abord, la forme
+    // longue ensuite en retrait — l'œil suit.
+    let tete = forme_courte.unwrap_or(&entree.key);
+
+    let mut registres = column![palette.label(tete).size(theme::jetons::CORPS)].spacing(1);
+
+    if forme_courte.is_some()
+        && let Some(longue) = forme_longue
+    {
+        registres = registres.push(
+            palette
+                .label(tronquer(longue, 48))
+                .size(theme::jetons::DETAIL)
+                .color(palette.text_muted),
+        );
+    } else if forme_courte.is_some()
+        && let Some(description) = entree
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|texte| !texte.is_empty())
+    {
+        registres = registres.push(
+            palette
+                .label(tronquer(description, 48))
+                .size(theme::jetons::DETAIL)
+                .color(palette.text_muted),
+        );
+    }
+
+    // Les gestes — éditer, supprimer — ne paraissent qu'au survol : une
+    // liste de termes est un texte à lire, pas une barre d'outils.
+    let mut ligne = row![
+        button(registres)
+            .on_press(Message::GlossaireInserer(entree.key.clone()))
+            .width(Fill)
+            .padding([7, 8])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
+
+    if survolee {
+        ligne = ligne.push(
+            button(theme::icon(
+                lucide_icons::iced::icon_pencil::<Theme>(),
+                12.0,
+                palette.text_muted,
+            ))
+            .on_press(Message::GlossaireModifier(entree.key.clone()))
+            .padding(6)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        );
+
+        ligne = ligne.push(
+            button(theme::icon(
+                lucide_icons::iced::icon_trash_2::<Theme>(),
+                12.0,
+                palette.danger,
+            ))
+            .on_press(Message::GlossaireSupprimer(entree.key.clone()))
+            .padding(6)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        );
+    }
+
+    let ligne = mouse_area(ligne)
+        .on_enter(Message::SurvolGlossaire(Some(entree.key.clone())))
+        .on_exit(Message::SurvolGlossaire(None));
+
+    tooltip(
+        ligne,
+        palette.label(info).size(theme::jetons::DETAIL),
+        tooltip::Position::Right,
+    )
+    .gap(6)
+    .into()
+}
+
 /// Une référence citable : un clic insère `@clé`, l'icône l'ouvre pour la
 /// modifier — dans une bibliothèque locale seulement.
 fn citation_row<'a>(
@@ -765,6 +1072,8 @@ fn citation_row<'a>(
 
     let mut registres = column![palette.label(tete).size(theme::jetons::CORPS)].spacing(1);
 
+    // Le titre paraît toujours : le repli est celui de la section
+    // entière, pas celui de chaque entrée (bug-report-10).
     if !entry.titre.trim().is_empty() {
         let titre = if let Some(annee) = entry.annee.as_deref().filter(|a| !a.trim().is_empty()) {
             format!("{} ({})", tronquer(&entry.titre, 48), annee.trim())
@@ -920,6 +1229,133 @@ fn separation(palette: Palette) -> Element<'static, Message> {
         .into()
 }
 
+/// Les projets visibles dans la liste : l'étagère du projet courant par
+/// défaut, tous sur demande, et la recherche filtre par nom.
+///
+/// Fonction pure — c'est la règle du point 18, éprouvée telle quelle.
+pub fn projets_visibles<'a>(
+    projects: &'a [crate::project::Project],
+    projet_courant: &crate::project::Project,
+    etageres: &std::collections::BTreeMap<String, String>,
+    choix: &str,
+    recherche: &str,
+) -> Vec<&'a crate::project::Project> {
+    let etagere_courante = etageres
+        .get(&projet_courant.name)
+        .cloned()
+        .unwrap_or_default();
+    let recherche = recherche.trim().to_lowercase();
+    projects
+        .iter()
+        .filter(|p| {
+            let etagere = etageres.get(&p.name).cloned().unwrap_or_default();
+            // Le menu d'étagère : « Tous », « Mon étagère », ou une
+            // étagère nommée (bug-report 2026-11-03).
+            let ok_etage = match choix {
+                "Tous" => true,
+                "Mon étagère" => etagere == etagere_courante,
+                nom => etagere == nom,
+            };
+            ok_etage && (recherche.is_empty() || p.name.to_lowercase().contains(&recherche))
+        })
+        .collect()
+}
+
+/// La géométrie des barres hiérarchiques — **pure** : un niveau = une
+/// colonne de `PAS` pixels, toujours au même x, quoi que fasse la
+/// police. Chaque segment est `(x1, y1, x2, y2)` dans le canevas.
+///
+/// C'est la réponse au bug-report du 2026-11-03 : les lignes étaient
+/// « pas alignées et difformes » — dessinées dans la marge des widgets,
+/// elles dérivaient. Ici, la position ne dépend que des nombres.
+fn segments(guides: &[bool], est_dernier: bool, hauteur: f32) -> Vec<(f32, f32, f32, f32)> {
+    const PAS: f32 = 14.0;
+    let mut segments = Vec::new();
+
+    // Les guides des ancêtres : pleins là où la branche continue.
+    for (k, guide) in guides.iter().enumerate() {
+        if *guide {
+            let x = k as f32 * PAS + PAS / 2.0;
+            segments.push((x, 0.0, x, hauteur));
+        }
+    }
+
+    // La coude de l'entrée : le vertical — demi pour la dernière
+    // branche — et la barre qui va au texte.
+    let x = guides.len() as f32 * PAS + PAS / 2.0;
+    let fin = if est_dernier { hauteur / 2.0 } else { hauteur };
+    segments.push((x, 0.0, x, fin));
+    segments.push((x, hauteur / 2.0, x + PAS / 2.0 + 4.0, hauteur / 2.0));
+    segments
+}
+
+/// La largeur de la zone de barres, pour un nombre de guides.
+fn largeur_barres(guides: usize) -> f32 {
+    const PAS: f32 = 14.0;
+    guides as f32 * PAS + PAS + 8.0
+}
+
+/// Le canevas des barres : la géométrie, rien d'autre. Il **possède**
+/// ses guides — le widget ne se loue pas à une pile qui meurt.
+struct Barres {
+    guides: Vec<bool>,
+    est_dernier: bool,
+    palette: Palette,
+}
+
+impl canvas::Program<Message> for Barres {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: iced::Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, iced::Size::new(bounds.width, bounds.height));
+        // Des **rectangles pleins** au pixel, pas des traits tracés : un
+        // trait de 1 px à la demi-pixel s'antialiasse et reste flou —
+        // c'est le « pas propre » que l'on voyait.
+        let pinceau = canvas::Fill::from(self.palette.border);
+        for (x1, y1, x2, y2) in segments(&self.guides, self.est_dernier, bounds.height) {
+            let rectangle = if (x1 - x2).abs() < 0.5 {
+                // Vertical : un pixel de large, à l'entier près.
+                canvas::Path::rectangle(
+                    iced::Point::new(x1.floor(), y1.min(y2)),
+                    iced::Size::new(1.0, (y2 - y1).abs()),
+                )
+            } else {
+                // Horizontal : un pixel de haut.
+                canvas::Path::rectangle(
+                    iced::Point::new(x1.min(x2), y1.floor()),
+                    iced::Size::new((x2 - x1).abs(), 1.0),
+                )
+            };
+            frame.fill(&rectangle, pinceau);
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+/// La barre hiérarchique d'une entrée de sommaire — dessinée, jamais
+/// composée de glyphes ni de marge de widgets.
+fn barres_hiérarchiques(
+    guides: &[bool],
+    est_dernier: bool,
+    palette: Palette,
+) -> Element<'static, Message> {
+    canvas::Canvas::new(Barres {
+        guides: guides.to_vec(),
+        est_dernier,
+        palette,
+    })
+    .width(Length::Fixed(largeur_barres(guides.len())))
+    .height(Length::Fill)
+    .into()
+}
+
 fn entry_style(
     _t: &Theme,
     status: button::Status,
@@ -1010,5 +1446,137 @@ mod tests {
         );
 
         assert_eq!(format_path(path), "chapitres/01-intro.typ");
+    }
+}
+
+#[cfg(test)]
+mod tests_filtre {
+    use super::projets_visibles;
+    use crate::project::Project;
+
+    fn projet(nom: &str) -> Project {
+        Project {
+            dir: std::path::PathBuf::from(format!("/p/{nom}")),
+            problemes: Vec::new(),
+            name: nom.to_string(),
+            main: std::path::PathBuf::from(format!("/p/{nom}/main.typ")),
+            document: None,
+            document_words: 0,
+            chapters: Vec::new(),
+            bibliography: None,
+            bibliography_entries: 0,
+            zotero: None,
+        }
+    }
+
+    /// La règle du point 18 : l'étagère courante par défaut, tous sur
+    /// demande, la recherche filtre par nom.
+    #[test]
+    fn la_liste_ne_va_que_son_etagere() {
+        let courant = projet("these");
+        let tous = vec![projet("these"), projet("devoir"), projet("article")];
+        let etageres = std::collections::BTreeMap::from([
+            ("these".to_string(), "travail".to_string()),
+            ("devoir".to_string(), "travail".to_string()),
+            ("article".to_string(), "revue".to_string()),
+        ]);
+
+        // Par défaut : l'étagère du projet courant, rien d'autre.
+        let visibles = projets_visibles(&tous, &courant, &etageres, "Mon étagère", "");
+        assert_eq!(visibles.len(), 2, "l'étagère du courant : {visibles:?}");
+        assert!(visibles.iter().all(|p| p.name != "article"));
+
+        // Sur demande : tous.
+        let visibles = projets_visibles(&tous, &courant, &etageres, "Tous", "");
+        assert_eq!(visibles.len(), 3);
+
+        // La recherche filtre par nom, sur ce qui est montré.
+        let visibles = projets_visibles(&tous, &courant, &etageres, "Tous", "ART");
+        assert_eq!(visibles.len(), 1);
+        assert_eq!(visibles[0].name, "article");
+    }
+
+    /// Un projet sans étagère forme le groupe des non-filés.
+    #[test]
+    fn les_sans_etagere_se_tiennent() {
+        let courant = projet("these");
+        let tous = vec![projet("these"), projet("brouillon")];
+        let etageres = std::collections::BTreeMap::new();
+        let visibles = projets_visibles(&tous, &courant, &etageres, "Mon étagère", "");
+        assert_eq!(visibles.len(), 2, "les non-filés ensemble");
+    }
+}
+
+#[cfg(test)]
+mod tests_menu_etagere {
+    use super::projets_visibles;
+    use crate::project::Project;
+
+    fn projet(nom: &str) -> Project {
+        Project {
+            dir: std::path::PathBuf::from(format!("/p/{nom}")),
+            problemes: Vec::new(),
+            name: nom.to_string(),
+            main: std::path::PathBuf::from(format!("/p/{nom}/main.typ")),
+            document: None,
+            document_words: 0,
+            chapters: Vec::new(),
+            bibliography: None,
+            bibliography_entries: 0,
+            zotero: None,
+        }
+    }
+
+    /// Le menu d'étagère (bug-report 2026-11-03) : une étagère nommée
+    /// montre la sienne, « Tous » montre tout.
+    #[test]
+    fn une_etagore_nomme_montre_la_sienne() {
+        let courant = projet("these");
+        let tous = vec![projet("these"), projet("devoir"), projet("article")];
+        let etageres = std::collections::BTreeMap::from([
+            ("these".to_string(), "travail".to_string()),
+            ("devoir".to_string(), "travail".to_string()),
+            ("article".to_string(), "revue".to_string()),
+        ]);
+
+        let visibles = projets_visibles(&tous, &courant, &etageres, "revue", "");
+        assert_eq!(visibles.len(), 1, "l'étagère nommée : {visibles:?}");
+        assert_eq!(visibles[0].name, "article");
+
+        let visibles = projets_visibles(&tous, &courant, &etageres, "Tous", "");
+        assert_eq!(visibles.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod tests_barres {
+    use super::{largeur_barres, segments};
+
+    /// La géométrie des barres (bug-report 2026-11-03) : un niveau = une
+    /// colonne, tous les verticaux au **même x** d'une ligne à l'autre,
+    /// et la barre part du vertical vers le texte.
+    #[test]
+    fn les_barres_sont_alignees_et_regulieres() {
+        let h = 32.0;
+
+        // Un guide : le vertical d'ancêtre au milieu de sa colonne.
+        let segs = segments(&[true], false, h);
+        assert_eq!(segs[0], (7.0, 0.0, 7.0, h), "le guide occupe sa colonne");
+
+        // La coude : le vertical de l'entrée à la colonne suivante, la
+        // barre part de lui.
+        let coude = segs[1];
+        assert_eq!(coude, (21.0, 0.0, 21.0, h), "la coude est pleine");
+        let barre = segs[2];
+        assert_eq!(barre.0, coude.0, "la barre part du vertical");
+        assert_eq!(barre.1, h / 2.0, "la barre est au milieu");
+
+        // La dernière branche : la coude s'arrête au milieu.
+        let segs = segments(&[], true, h);
+        assert_eq!(segs[0], (7.0, 0.0, 7.0, h / 2.0), "demi-trait");
+
+        // La largeur suit le même pas.
+        assert_eq!(largeur_barres(0), 22.0);
+        assert_eq!(largeur_barres(2), 50.0);
     }
 }

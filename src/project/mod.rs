@@ -8,7 +8,23 @@
 //! `~/.typst-writer/projets/`, avec un fichier par chapitre, sa bibliographie
 //! et son assemblage. Voir [`model`] pour la structure exacte.
 
+pub mod glossaire;
+pub mod metadonnees;
 pub mod model;
+
+/// Le dossier des paquets Typst installés : `<ns>/<nom>/<version>/`.
+///
+/// C'est le premier jalon de l'architecture paquets (bug-report-7,
+/// point 4) : les `#import "@preview/cetz:…"` résolvent **localement**,
+/// sans réseau. `TYPST_WRITER_PAQUETS` détourne la racine (tests,
+/// installation partagée).
+pub fn packages_dir() -> std::path::PathBuf {
+    if let Ok(racine) = std::env::var("TYPST_WRITER_PAQUETS") {
+        return std::path::PathBuf::from(racine);
+    }
+    dossier_donnees().join("paquets")
+}
+pub mod portable;
 
 pub use model::*;
 
@@ -19,14 +35,56 @@ use std::path::{Path, PathBuf};
 
 /// Dossier de travail de l'application : les projets y vivent.
 pub fn work_dir() -> PathBuf {
-    let dir = match std::env::var("HOME") {
-        Ok(home) => PathBuf::from(home).join(".typst-writer"),
-        Err(_) => PathBuf::from(".typst-writer"),
-    };
+    let dir = dossier_donnees();
 
     let _ = std::fs::create_dir_all(&dir);
 
     dir
+}
+
+/// Où vivent les données, selon la plateforme.
+///
+/// Sous Unix — Linux comme macOS — c'est le chemin historique
+/// `~/.typst-writer`, où vivent déjà les projets existants : rien ne
+/// déménage sans qu'on l'ait décidé. Sous Windows, `%APPDATA%\typst-writer`,
+/// avec le profil comme repli.
+fn dossier_donnees() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("typst-writer");
+        }
+        if let Ok(profil) = std::env::var("USERPROFILE") {
+            return PathBuf::from(profil).join(".typst-writer");
+        }
+        PathBuf::from(".typst-writer")
+    }
+    #[cfg(not(windows))]
+    {
+        match std::env::var("HOME") {
+            Ok(home) => PathBuf::from(home).join(".typst-writer"),
+            Err(_) => PathBuf::from(".typst-writer"),
+        }
+    }
+}
+
+/// Ouvre un fichier ou un dossier avec l'outil du système.
+pub fn ouvrir_chemin(cible: &std::path::Path) {
+    let _ = commande_ouverture(cible).spawn();
+}
+
+/// La commande d'ouverture de la plateforme — construite ici, jamais
+/// devinée ailleurs.
+pub fn commande_ouverture(cible: &std::path::Path) -> std::process::Command {
+    #[cfg(target_os = "macos")]
+    let mut commande = std::process::Command::new("open");
+    #[cfg(windows)]
+    let mut commande = std::process::Command::new("explorer");
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    let mut commande = std::process::Command::new("xdg-open");
+
+    commande.arg(cible);
+    commande
 }
 
 /// Le dossier des suppressions, à côté des projets.
@@ -44,7 +102,8 @@ pub fn corbeille() -> std::path::PathBuf {
 /// Déplace un fichier vers la corbeille, et rend où il est allé.
 ///
 /// Le nom y devient unique : deux « document.tw » supprimés ne se
-/// marchent pas dessus.
+/// marchent pas dessus. La place se prend **atomiquement** — deux courses
+/// parallèles ne choisissent jamais le même nom.
 pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     let nom = chemin
         .file_name()
@@ -52,16 +111,44 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
         .unwrap_or("fichier")
         .to_string();
 
-    let mut destination = corbeille().join(&nom);
-    let mut numero = 2;
+    let mut numero = 1;
+    loop {
+        let nom_unique = if numero == 1 {
+            nom.clone()
+        } else {
+            format!("{nom}-{numero}")
+        };
+        let destination = corbeille().join(&nom_unique);
 
-    while destination.exists() {
-        destination = corbeille().join(format!("{nom}-{numero}"));
-        numero += 1;
+        // La place se prend atomiquement — un fichier se marque d'un
+        // fichier, un dossier d'un dossier vide : le renommage passe dans
+        // les deux cas, et deux courses parallèles ne choisissent jamais
+        // le même nom.
+        let pris = if chemin.is_dir() {
+            std::fs::create_dir(&destination).map(|_| ())
+        } else {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)
+                .map(drop)
+        };
+
+        match pris {
+            Ok(()) => {
+                if let Err(erreur) = std::fs::rename(chemin, &destination) {
+                    let _ = std::fs::remove_file(&destination);
+                    let _ = std::fs::remove_dir(&destination);
+                    return Err(erreur);
+                }
+                return Ok(destination);
+            }
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => {
+                numero += 1;
+            }
+            Err(erreur) => return Err(erreur),
+        }
     }
-
-    std::fs::rename(chemin, &destination)?;
-    Ok(destination)
 }
 
 /// Crée un projet au nom choisi — et jamais sur un dossier existant.
@@ -1203,6 +1290,82 @@ fn champ_plage(bloc: &str, nom: &str) -> Option<(usize, usize)> {
 /// Une notice n'est pas un fichier : elle part **avec** son entrée, et le
 /// fichier reste propre. La suppression ne touche jamais à une bibliothèque
 /// Zotero : elle, se lit seulement.
+/// Retire d'un `.bib` les entrées dont la clé est déjà connue ailleurs,
+/// et dit quelles clés ce fichier apporte (bug-report-10, 6.1).
+///
+/// Deux bibliothèques qui partagent une clé cassent la compilation
+/// Typst (« duplicate bibliography keys ») : la première en date garde
+/// son entrée, la seconde la cède — la bibliothèque locale gagne
+/// toujours sur l'export Zotero, qui se lit mais ne se réécrit pas.
+pub fn retirer_les_entrees_dupliquees(
+    contenu: &str,
+    connues: &mut std::collections::BTreeSet<String>,
+) -> String {
+    // Les têtes d'entrée : `@type{clé,` en début de ligne.
+    let mut tetes = Vec::new();
+
+    for (rang, ligne) in contenu.lines().enumerate() {
+        let tete = ligne.trim_start();
+
+        if let Some(reste) = tete.strip_prefix('@')
+            && let Some(ouverture) = reste.find('{')
+        {
+            let apres = &reste[ouverture + 1..];
+
+            if let Some(virgule) = apres.find(',') {
+                let cle = apres[..virgule].trim();
+
+                if !cle.is_empty() {
+                    tetes.push((rang, cle.to_string()));
+                }
+            }
+        }
+    }
+
+    // Les plages : chaque entrée va de sa tête à la suivante.
+    let mut enlevees = std::collections::BTreeSet::new();
+
+    for (_, cle) in &tetes {
+        if !connues.insert(cle.clone()) {
+            enlevees.insert(cle.clone());
+        }
+    }
+
+    if enlevees.is_empty() {
+        return contenu.to_string();
+    }
+
+    let mut out = String::new();
+
+    for (position, (rang, cle)) in tetes.iter().enumerate() {
+        if enlevees.contains(cle) {
+            continue;
+        }
+
+        // La zone de cette entrée : du début de sa ligne de tête — ou du
+        // texte d'avant, pour la première — à la tête suivante.
+        let debut = contenu
+            .lines()
+            .take(*rang)
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
+        let fin = tetes
+            .get(position + 1)
+            .map(|(suivant, _)| {
+                contenu
+                    .lines()
+                    .take(*suivant)
+                    .map(|l| l.len() + 1)
+                    .sum::<usize>()
+            })
+            .unwrap_or(contenu.len());
+
+        out.push_str(&contenu[debut..fin]);
+    }
+
+    out
+}
+
 pub fn supprimer_reference(path: &Path, cle: &str) -> Result<std::path::PathBuf, String> {
     let contenu = std::fs::read_to_string(path).map_err(|e| format!("{e}"))?;
     let (ouverture, fermeture) =
@@ -2969,6 +3132,22 @@ pub fn norme(nom: &str) -> Option<MiseEnPage> {
         .map(|(_, mise)| mise)
 }
 
+/// La norme de la bibliothèque qui est **exactement** ces réglages.
+///
+/// C'est ce qui fait d'un document un porteur de normes connues — ou un
+/// porteur de « Normes personnalisées » (bug-report-9).
+pub fn norme_qui_correspond(reglages: &MiseEnPage) -> Option<String> {
+    correspondance(&normes_sans_connexion().ok()?, reglages)
+}
+
+/// La correspondance, à la bibliothèque près : éprouvable sans disque.
+fn correspondance(normes: &[(String, MiseEnPage)], reglages: &MiseEnPage) -> Option<String> {
+    normes
+        .iter()
+        .find(|(_, mise)| mise == reglages)
+        .map(|(nom, _)| nom.clone())
+}
+
 #[cfg(test)]
 mod tests_de_la_bibliotheque {
     use super::*;
@@ -3118,6 +3297,7 @@ fn semer_normes(chemin: &std::path::Path) -> Result<(), String> {
             droite: "p. {page}".to_string(),
         },
         numerotation: "1".to_string(),
+        ..Default::default()
     };
 
     let mut table: BTreeMap<String, MiseEnPage> = BTreeMap::new();
@@ -3145,13 +3325,30 @@ pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)
             .map(|nom| nom.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let compilation = crate::typst::render::compile(dir, "main.typ", &[]);
+        // Le secours : `main.typ` d'abord, puis le document d'écriture —
+        // un projet dont l'assemblage ne compile pas (une ancienne norme,
+        // un fichier manquant) montre malgré tout sa page de texte
+        // (bug-report-7, point 12). Un échec silencieux laissait toutes
+        // les couvertures à « Aperçu indisponible ».
+        //
+        // L'entrée d'un compilateur est le **contenu** de l'assemblage, pas
+        // son nom : la vignette montrait le texte « main.typ » lui-même,
+        // contre la promesse de cette fonction (bug-report-9, en passant).
+        let principal = std::fs::read_to_string(dir.join("main.typ")).unwrap_or_default();
+        let pdf = crate::typst::render::render_pdf(dir, &principal, &[]).or_else(|| {
+            let document = dir.join("document.tw");
+            let source = std::fs::read_to_string(&document).ok()?;
+            let genere = crate::langage::generer::generer(&crate::langage::parse(&source));
+            crate::typst::render::render_pdf(dir, &genere, &[])
+        });
 
-        let Some(document) = compilation.document else {
+        let Some(octets) = pdf else {
             continue;
         };
 
-        if let Some(image) = crate::typst::render::render_page(&document, 0, 0.35) {
+        if let Some(image) = crate::typst::render::ouvrir_pdf(octets)
+            .and_then(|pdf| crate::typst::render::render_page(&pdf, 0, 0.35))
+        {
             vignettes.push((nom, image.pixels, image.width, image.height));
         }
     }
@@ -3177,5 +3374,221 @@ mod tests_du_parseur_vrai {
         assert_eq!(entrees[0].key, "ouvrage");
         assert_eq!(entrees[0].titre, "Un titre");
         std::fs::remove_dir_all(&racine).expect("nettoyage");
+    }
+}
+
+#[cfg(test)]
+mod epreuves_portabilite {
+    use super::*;
+
+    /// Le dossier des données suit la plateforme — et sous Unix, il reste
+    /// le chemin historique où vivent déjà les projets : rien ne déménage.
+    #[test]
+    fn le_dossier_des_donnees_suit_la_plateforme() {
+        let attendu = if cfg!(windows) {
+            std::env::var("APPDATA")
+                .map(|appdata| PathBuf::from(appdata).join("typst-writer"))
+                .unwrap_or_else(|_| PathBuf::from(".typst-writer"))
+        } else {
+            std::env::var("HOME")
+                .map(|home| PathBuf::from(home).join(".typst-writer"))
+                .unwrap_or_else(|_| PathBuf::from(".typst-writer"))
+        };
+        assert_eq!(dossier_donnees(), attendu);
+    }
+
+    /// La commande d'ouverture est celle de la plateforme — testée, pas
+    /// devinée dans les recoins de l'interface.
+    #[test]
+    fn la_commande_d_ouverture_est_celle_de_la_plateforme() {
+        let cible = std::path::Path::new("quelque-part");
+        let commande = commande_ouverture(cible);
+        #[cfg(target_os = "macos")]
+        let attendu = "open";
+        #[cfg(windows)]
+        let attendu = "explorer";
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        let attendu = "xdg-open";
+        assert_eq!(commande.get_program(), attendu);
+    }
+}
+
+#[cfg(test)]
+mod tests_vignettes {
+    /// Les aperçus de la bibliothèque (bug-report-7, point 12) : une
+    /// vignette doit revenir pour un projet qui compile. Ici la vérité —
+    /// si elle ne revient pas, la sonde dit pourquoi.
+    #[test]
+    fn une_vignette_revient_pour_un_projet_qui_compile() {
+        let racine = std::env::temp_dir().join(format!("tw-vignettes-{}", std::process::id()));
+        let dir = racine.join("mon-projet");
+        std::fs::create_dir_all(&dir).expect("dossier");
+        std::fs::write(dir.join("main.typ"), "= Un titre\n\nDu texte.\n").expect("main");
+
+        let vignettes = crate::project::vignettes(std::slice::from_ref(&dir));
+        if vignettes.is_empty() {
+            let compilation = crate::typst::render::compile(&dir, "main.typ", &[]);
+            eprintln!(
+                "SONDAGE compile document={:?} errors={:?}",
+                compilation.document.is_some(),
+                compilation
+                    .errors
+                    .iter()
+                    .map(|d| format!("{d:?}"))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            !vignettes.is_empty(),
+            "une vignette revient pour un projet qui compile"
+        );
+
+        // Le vrai chemin des projets neufs : un projet de modèle doit lui
+        // aussi porter sa vignette (bug-report-7, point 12).
+        let modele_dir = crate::project::model::create_avec_modele(
+            &racine.join("un-devoir").to_string_lossy(),
+            crate::project::model::Modele::DevoirCourt,
+        )
+        .expect("modèle");
+        let vignettes = crate::project::vignettes(std::slice::from_ref(&modele_dir));
+        if vignettes.is_empty() {
+            let compilation = crate::typst::render::compile(&modele_dir, "main.typ", &[]);
+            eprintln!(
+                "SONDAGE modele document={:?} errors={:?}",
+                compilation.document.is_some(),
+                compilation
+                    .errors
+                    .iter()
+                    .map(|d| format!("{d:?}"))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            !vignettes.is_empty(),
+            "un projet de modèle porte sa vignette"
+        );
+
+        // Le secours : un projet dont `main.typ` est cassé montre
+        // malgré tout sa page de texte (bug-report-7, point 12).
+        let casse = racine.join("un-casse");
+        std::fs::create_dir_all(&casse).expect("dossier");
+        std::fs::write(casse.join("main.typ"), "#import \"manquant.typ\": *\n").expect("main");
+        std::fs::write(casse.join("document.tw"), "= Titre\n\nDu texte.\n").expect("document");
+        let vignettes = crate::project::vignettes(&[casse]);
+        assert!(
+            !vignettes.is_empty(),
+            "le secours document.tw montre une page"
+        );
+
+        std::fs::remove_dir_all(&racine).expect("nettoyage");
+    }
+}
+
+#[cfg(test)]
+mod tests_paquets_locaux {
+    /// Un paquet installé dans le dossier local se résout : l'import
+    /// `@local/demo:1.0.0` compile, sans réseau (bug-report-7, point 4 —
+    /// le premier jalon de l'architecture paquets).
+    #[test]
+    fn un_paquet_local_se_resout() {
+        let racine = std::env::temp_dir().join(format!("tw-paquets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&racine);
+        let paquet = racine.join("local/demo/1.0.0");
+        std::fs::create_dir_all(&paquet).expect("paquet");
+        std::fs::write(
+            paquet.join("lib.typ"),
+            "#let salut(nom) = [Bonjour, #nom !]\n",
+        )
+        .expect("lib");
+        let projet = racine.join("projet");
+        std::fs::create_dir_all(&projet).expect("projet");
+        std::fs::write(
+            projet.join("main.typ"),
+            "#import \"@local/demo:1.0.0\": salut\n#salut[monde]\n",
+        )
+        .expect("main");
+
+        // Rust 2024 : les variables d'environnement sont `unsafe` — le
+        // test est seul maître de la sienne.
+        unsafe {
+            std::env::set_var("TYPST_WRITER_PAQUETS", &racine);
+        }
+        let resultat = crate::typst::render::compile(&projet, "main.typ", &[]);
+        unsafe {
+            std::env::remove_var("TYPST_WRITER_PAQUETS");
+        }
+
+        assert!(
+            resultat.errors.is_empty(),
+            "le paquet local se résout : {:?}",
+            resultat.errors
+        );
+        std::fs::remove_dir_all(&racine).expect("nettoyage");
+    }
+}
+
+#[cfg(test)]
+mod tests_des_vignettes {
+    /// La vignette est la **vraie première page** du projet — jamais le nom
+    /// du fichier (bug-report-9 : l'entrée d'un compilateur est du contenu,
+    /// et la vignette compilait le texte « main.typ » lui-même).
+    #[test]
+    fn la_vignette_est_la_vraie_premiere_page() {
+        let dir =
+            std::env::temp_dir().join(format!("tw-vignette-vraie-page-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("projet de test");
+        let contenu = "= Chapitre\n\nUn texte reconnaissable, longuement étalé sur la page.\n";
+        std::fs::write(dir.join("main.typ"), contenu).expect("assemblage");
+
+        let vignettes = super::vignettes(std::slice::from_ref(&dir));
+        let (_, pixels, width, height) = vignettes.first().expect("une vignette").clone();
+
+        // Le contrôle : la même page rendue directement depuis son contenu.
+        let octets = crate::typst::render::render_pdf(&dir, contenu, &[]).expect("PDF");
+        let pdf = crate::typst::render::ouvrir_pdf(octets).expect("PDF lisible");
+        let page = crate::typst::render::render_page(&pdf, 0, 0.35).expect("page");
+
+        assert_eq!((width, height), (page.width, page.height), "même géométrie");
+        assert_eq!(
+            pixels, page.pixels,
+            "la vignette est la première page réelle"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod tests_de_la_correspondance {
+    use super::*;
+
+    fn marges(gauche: &str) -> MiseEnPage {
+        MiseEnPage {
+            marges: crate::mise_en_page::modele::Marges {
+                gauche: gauche.to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn la_norme_du_document_se_reconnait() {
+        let maison = marges("3cm");
+        let normes = vec![
+            ("maison".to_string(), maison.clone()),
+            ("autre".to_string(), MiseEnPage::default()),
+        ];
+
+        assert_eq!(
+            correspondance(&normes, &maison),
+            Some("maison".to_string()),
+            "les réglages du document désignent leur norme"
+        );
+        assert_eq!(
+            correspondance(&normes, &marges("4,7cm")),
+            None,
+            "des réglages inconnus ne portent aucune norme"
+        );
     }
 }

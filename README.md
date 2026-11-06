@@ -4,9 +4,13 @@ Un éditeur pour écrire des documents en Typst — thèses, mémoires, livres.
 L'aperçu affiché est celui du document final : c'est le vrai compilateur
 Typst qui le compose.
 
-**Version 0.3.0-alpha.3 — coffre-fort des documents.** Utilisable au
-quotidien — c'est avec elle
-qu'elle s'écrit — mais elle change encore.
+**Version 0.3.0-alpha.3 — pré-version.** Utilisable au quotidien — c'est
+avec elle qu'elle s'écrit — mais elle change encore. Elle porte R1 à R8
+de la feuille de route : le coffre-fort des documents (sauvegardes,
+verrou, écritures sûres), les imports sans perte, les références fidèles,
+les styles bibliographiques, le glossaire, les modèles de documents, les
+exports et le paquet Linux. Le détail est dans le
+[CHANGELOG](CHANGELOG.md).
 
 ## Ce qu'elle fait
 
@@ -21,8 +25,10 @@ qu'elle s'écrit — mais elle change encore.
   même document dans plusieurs vues (édition / rendu / Typst), disposition
   restaurée au lancement ;
 - **Citer** : une bibliographie par projet, une fiche complète (éditeur,
-  lieu, titre court, type de document), et un projet lié à une collection
-  **Zotero** — lue, jamais réécrite ;
+  lieu, titre court, type de document), un projet lié à une collection
+  **Zotero** — lue, jamais réécrite — et les **styles bibliographiques
+  CSL** : catalogue du moteur, styles du projet, styles Zotero, import de
+  `.csl` et de `.bib` ;
 - **Mettre en page** par des normes — papier, marges, titres, couleurs,
   typographie par langue, décor, en-tête et pied de page ;
 - **Chercher** en texte littéral ou en expressions régulières, avec
@@ -30,8 +36,17 @@ qu'elle s'écrit — mais elle change encore.
   comportent encore des limites décrites dans le guide ;
 - **Personnaliser** l'apparence : onze thèmes livrés, un éditeur de thème
   intégré, des étagères pour classer les projets ;
-- **Exporter** en PDF, et travailler au clavier d'un bout à l'autre —
-  `F1` montre toutes les touches.
+- **Structurer** un document par les modèles livrés — classique, devoir
+  court, travail long — avec notes de bas de page, renvois et figures
+  résolus par le vrai compilateur ;
+- **Exporter** en PDF, en Markdown (fidèle) et en DOCX (via LibreOffice,
+  les notes y devenant du texte — la limite est dite dans l'application),
+  et **faire voyager un projet** : une archive portable avec l'inventaire
+  de ce qui manque, et un import qui n'écrase jamais sans choix, récupère
+  un import interrompu, et garde ce qui est remplacé dans la corbeille ;
+- **Travailler au clavier d'un bout à l'autre** — `F1` montre les
+  raccourcis, les premiers pas, le **diagnostic** du poste et la
+  **récupération** (corbeille, sauvegardes, temporaires perdus).
 
 ## Écrire
 
@@ -65,9 +80,11 @@ couvertures et étagères.
 
 ## Installation
 
-Les versions se téléchargent dans les **publications** : un binaire Linux
-x86_64, à décompresser et à lancer tel quel. Il faut un Linux avec
-Wayland ou X11, et un pilote graphique offrant Vulkan.
+Sous Linux, le paquet `typst-writer-<version>-linux-x86_64.tar.gz` s'installe
+d'un geste, sans sudo : `./install.sh` — se met à jour en se réexécutant, se
+retire par `./desinstaller.sh`, chaque fichier vérifié par son empreinte.
+Voir [l'installation Linux](docs/guide/installation-linux.md). Il faut un
+Linux avec Wayland ou X11, et un pilote graphique offrant Vulkan.
 
 Ou, avec une chaîne Rust à jour :
 
@@ -75,6 +92,10 @@ Ou, avec une chaîne Rust à jour :
 cargo build --release
 ./target/release/typst-writer
 ```
+
+Sous Windows et macOS, les chemins des données et les ouvertures sont
+prévus (voir le guide des fichiers) ; les paquets natifs restent à
+construire et à éprouver sur leurs machines.
 
 L'assistance à la frappe s'appuie sur
 [tinymist](https://github.com/Myriad-Dreamin/tinymist), qui est
@@ -109,9 +130,16 @@ vérifiez les références ainsi que le PDF avant de remettre un document.
   bibliographie n'est pas un fichier éditable ici ;
 - la connexion Zotero et le rendu des citations doivent être vérifiés dans
   le PDF ; voir les réserves du [guide bibliographique](docs/guide/bibliographie.md) ;
-- les champs dynamiques d'en-tête ne sont pas fiables dans cette version ;
+- les champs dynamiques d'en-tête et de pied (`{projet}`, `{document}`,
+  `{date}`, `{auteur}`, `{titre}`, `{page}`, `{pages}`) sont résolus par
+  le moteur ; leur aspect dans le PDF reste à vérifier dans l'application ;
 - les graphiques utilisent le paquet `cetz` de Typst ; leur disponibilité
-  dépend de la résolution de ce paquet, à vérifier dans l'application.
+  dépend de la résolution de ce paquet, à vérifier dans l'application ;
+- l'export DOCX passe par LibreOffice et porte les notes en texte
+  `[note: …]`, pas en notes de bas de page Word ; sans LibreOffice, le
+  geste dit son remède (installer LibreOffice ou exporter en Markdown) ;
+- l'import DOCX n'est pas livré : les notes perdraient leur identité au
+  retour — l'alternative est documentée dans le rapport d'expérience.
 
 ## Licence
 

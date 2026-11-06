@@ -35,10 +35,12 @@
 <a href="prise-en-main.html">Prise en main</a>
 <a href="ecrire.html" class="courant">Écrire</a>
 <a href="bibliographie.html">La bibliographie</a>
+<a href="glossaire.html">Le glossaire</a>
 <a href="normes.html">Les normes</a>
 <a href="recherche.html">Rechercher et remplacer</a>
 <a href="raccourcis.html">Les raccourcis</a>
 <a href="fichiers.html">Les fichiers</a>
+<a href="installation-linux.html">Installer sous Linux</a>
 </nav>
 <main>
 <h1>Écrire</h1>
@@ -54,6 +56,8 @@
 <tr><td><code>- élément</code></td><td>une liste à puces</td></tr>
 <tr><td><code>1. élément</code></td><td>une liste numérotée</td></tr>
 <tr><td>```<code> </code>`<code>typst </code>``<code> … </code>``<code> </code>`<code> </code>```</td><td>un bloc Typst brut, inséré tel quel</td></tr>
+<tr><td>trois lignes vides consécutives</td><td>un saut de page</td></tr>
+<tr><td><code>// texte</code></td><td>un commentaire — conservé dans le <code>.tw</code>, ignoré au rendu</td></tr>
 </tbody></table>
 <p>Une <strong>ligne vide</strong> sépare les blocs. Ce qui n&#x27;est pas reconnu reste du texte — un fichier abîmé ne bloque jamais l&#x27;ouverture.</p>
 <h2>Le texte</h2>
@@ -64,6 +68,8 @@
 <tr><td><code>**texte**</code></td><td>le gras</td></tr>
 <tr><td><code>*texte*</code> ou <code>_texte_</code></td><td>l&#x27;italique</td></tr>
 <tr><td><code>***texte***</code></td><td>le gras et l&#x27;italique</td></tr>
+<tr><td><code>__texte__</code></td><td>le souligné</td></tr>
+<tr><td><code>~~texte~~</code></td><td>le barré</td></tr>
 <tr><td>`<code> </code>code<code> </code>`</td><td>du code inline — une bande opaque : rien ne s&#x27;y ouvre ni ne s&#x27;y ferme</td></tr>
 <tr><td><code>[texte](https://…)</code></td><td>un lien</td></tr>
 <tr><td><code>^[texte]</code></td><td>une note libre, en bas de page</td></tr>
@@ -72,10 +78,13 @@
 <p><code>@cle</code> appelle une référence de la bibliographie ; <code>@cle[p. 45]</code> porte la page. Plusieurs appels d&#x27;un geste — <code>@dupont[p. 45]; @martin</code> — ne font jamais qu&#x27;<strong>une</strong> note de bas de page, avec les deux mentions.</p>
 <p>L&#x27;appel est un <strong>glyphe numéroté</strong> — ¹, ² — dans le fil du texte, un caractère entier : il se déplace, se sélectionne et se supprime d&#x27;un seul geste. <strong>Cliquer dessus</strong> ouvre le composeur de notes ; les flèches parcourent la note puis les clés, <code>Échap</code> abandonne sans rien écrire.</p>
 <p>Voir <a href="bibliographie.md">La bibliographie</a>.</p>
+<h2>Le glossaire</h2>
+<p><code>{glo:cle}</code> appelle un terme du glossaire : la forme se développe à la première occurrence, les reprises gardent le sigle. Les variantes <code>pluriel</code> et <code>majuscule</code> s&#x27;écrivent après la clé — <code>{glo:sdo pluriel}</code>, <code>{glo:sdo majuscule}</code>. La liste finale se pose d&#x27;une ligne <code>{glossaire}</code>, ou <code>{glossaire: tout}</code> pour y montrer aussi les termes jamais cités.</p>
+<p>Voir <a href="glossaire.md">Le glossaire</a>.</p>
 <h2>Les images</h2>
 <pre><code>![La légende de la planche](figs/planche.png)
 </code></pre>
-<p>Une image avec légende compose une <strong>figure numérotée</strong> ; sans légende — <code>![](planche.png)</code> — c&#x27;est l&#x27;image seule. Le chemin est relatif au projet.</p>
+<p>Une image avec légende compose une <strong>figure numérotée</strong> ; sans légende — <code>![](planche.png)</code> — c&#x27;est l&#x27;image seule. Le chemin est relatif au projet. Lorsqu&#x27;une image extérieure est importée depuis l&#x27;application, elle est copiée dans <code>images/</code> ; si un fichier porte déjà ce nom, la copie reçoit un suffixe (<code>figure-2.png</code>, par exemple) plutôt que de remplacer l&#x27;image existante.</p>
 <p>La légende peut se séparer de l&#x27;alt par une barre :</p>
 <pre><code>![description](figs/planche.png | La vraie légende)
 </code></pre>
@@ -96,6 +105,7 @@ $$
 | b | 2 |
 </code></pre>
 <p><code>---</code> aligne à gauche, <code>:-:</code> au centre, <code>---:</code> à droite. Les cellules portent du texte ordinaire — emphase, code, citations ; une barre dedans s&#x27;échappe : <code>\|</code>. Sans la ligne de séparation, ce n&#x27;est pas un tableau : la ligne reste du texte.</p>
+<p><strong>Attention : dans la version actuelle</strong>, les cellules excédant le nombre de colonnes de l&#x27;en-tête sont ignorées lors de l&#x27;analyse et de la génération. Évitez les lignes irrégulières et vérifiez vos tableaux dans le PDF ; ne comptez pas sur une conservation complète à la conversion.</p>
 <p>Le décor l&#x27;habille comme tout bloc — <code>{encadré}</code> prend sa tenue dans les normes.</p>
 <h2>Les graphiques</h2>
 <p>Un graphique se déclare par un bloc <code>{graphique}</code> suivi de ses données :</p>
@@ -105,7 +115,7 @@ Fév | 20
 Mar | 15
 </code></pre>
 <p>Chaque ligne est <code>libellé | valeur</code>. Le <code>type</code> dit la forme : <code>barre</code> (par défaut), <code>ligne</code> ou <code>secteur</code>. Le <code>titre</code> est facultatif — il devient la légende de la figure.</p>
-<p>Les graphiques sont rendus par le paquet Typst <a href="https://typst.app/universe/package/cetz">cetz</a> — la première compilation le télécharge automatiquement.</p>
+<p>Les graphiques utilisent le paquet Typst <a href="https://typst.app/universe/package/cetz">cetz</a>. Sa résolution dans l&#x27;application doit être vérifiée avant de compter sur ce rendu.</p>
 <h2>Le décor : l&#x27;intention, jamais la mesure</h2>
 <p><strong>La source dit l&#x27;intention, les normes disent la mesure.</strong> Par défaut, un bloc paraît comme les normes du document le disent — rien à écrire.</p>
 <p>Quand un bloc doit paraître autrement, un <strong>nom</strong> le précède :</p>

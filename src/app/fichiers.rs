@@ -16,6 +16,15 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             };
 
+            // Déjà sous les yeux : le bouton le dit — un geste qui ne fait
+            // rien en silence a l'air d'un bouton mort.
+            if state.editor.path.as_ref() == Some(&path) {
+                state.note = Some(crate::app::state::Note::info(
+                    "Le document d'écriture est déjà sous les yeux.".to_string(),
+                ));
+                return Task::none();
+            }
+
             match std::fs::read_to_string(&path) {
                 Ok(content) => state.open_document(path, content, false),
                 Err(error) => {
@@ -526,22 +535,147 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             .insert_at_cursor(&format!("@{key}"))
             .map(Message::Editor),
 
+        // La référence au terme du glossaire : le dialecte du tampon
+        // décide de la forme — `{glo:clé}` en `.tw`, `#gls("clé")` en
+        // `.typ` (bug-report-8 : l'écrivain ne tape jamais le code).
+        // Les sections de fin s'insèrent au curseur, dans le dialecte du
+        // tampon (bug-report-9).
+        Message::BibliographieSectionInserer => {
+            let texte = if sur_typst(&state.editor) {
+                "#bibliography(\"references.bib\", full: true)".to_string()
+            } else {
+                "{bibliographie}".to_string()
+            };
+
+            state.editor.insert_at_cursor(&texte).map(Message::Editor)
+        }
+
+        Message::SommaireInserer => {
+            let texte = if sur_typst(&state.editor) {
+                "#outline()".to_string()
+            } else {
+                "[[TOC]]".to_string()
+            };
+
+            state.editor.insert_at_cursor(&texte).map(Message::Editor)
+        }
+
+        Message::GlossaireSectionInserer => {
+            let texte = if sur_typst(&state.editor) {
+                "#print-glossary(tw-glossaire)".to_string()
+            } else {
+                "{glossaire}".to_string()
+            };
+
+            state.editor.insert_at_cursor(&texte).map(Message::Editor)
+        }
+
+        Message::GlossaireInserer(cle) => {
+            let texte = if sur_typst(&state.editor) {
+                format!("#gls(\"{cle}\")")
+            } else {
+                format!("{{glo:{cle}}}")
+            };
+
+            state.editor.insert_at_cursor(&texte).map(Message::Editor)
+        }
+
         // Les gestes d'insertion de R5 : le gabarit entre au curseur, le
         // curseur se pose là où l'on doit écrire — et le dialecte est celui
         // du tampon : le `.tw` écrit ses notes `^[…]`, un chapitre `.typ`
         // parle Typst.
+        // Le composeur d'extension (bug-report-7, point 4) : les champs
+        // naissent de `parametres()`, et le code se pose au curseur —
+        // l'écrivain ne le tape jamais.
+        Message::ExtensionOuvrir => {
+            let mut valeurs = std::collections::BTreeMap::new();
+            if let Some(ext) = crate::extensions::extensions().into_iter().next() {
+                for (cle, defaut) in ext.parametres() {
+                    valeurs.insert((*cle).to_string(), (*defaut).to_string());
+                }
+            }
+            state.extension = Some(crate::app::state::ExtensionDialogue { choix: 0, valeurs });
+            Task::none()
+        }
+
+        Message::ExtensionChoisir(choix) => {
+            if let Some(dialogue) = state.extension.as_mut() {
+                dialogue.choix = choix;
+                dialogue.valeurs.clear();
+                let exts = crate::extensions::extensions();
+                if let Some(ext) = exts.get(choix) {
+                    for (cle, defaut) in ext.parametres() {
+                        dialogue
+                            .valeurs
+                            .insert((*cle).to_string(), (*defaut).to_string());
+                    }
+                }
+            }
+            Task::none()
+        }
+
+        Message::ExtensionParam(cle, valeur) => {
+            if let Some(dialogue) = state.extension.as_mut() {
+                dialogue.valeurs.insert(cle, valeur);
+            }
+            Task::none()
+        }
+
+        Message::ExtensionInserer => {
+            let Some(dialogue) = state.extension.take() else {
+                return Task::none();
+            };
+            let exts = crate::extensions::extensions();
+            let Some(ext) = exts.get(dialogue.choix) else {
+                return Task::none();
+            };
+            let code = ext.inserer(&dialogue.valeurs);
+            state
+                .editor
+                .insert_avec_curseur(&code, 0)
+                .map(Message::Editor)
+        }
+
+        Message::ExtensionAnnuler => {
+            state.extension = None;
+            Task::none()
+        }
+
+        // La note s'écrit dans son panneau, et la seule marque vient dans
+        // la ligne — jamais le texte de renvoi sous les doigts
+        // (bug-report-7, point 15).
         Message::NoteInserer => {
+            state.note_dialogue = Some(String::new());
+            Task::none()
+        }
+
+        Message::NoteTexte(texte) => {
+            if let Some(note) = state.note_dialogue.as_mut() {
+                *note = texte;
+            }
+            Task::none()
+        }
+
+        Message::NoteValider => {
+            let Some(note) = state.note_dialogue.take() else {
+                return Task::none();
+            };
             if sur_typst(&state.editor) {
                 state
                     .editor
-                    .insert_avec_curseur("#footnote[]", "]".len())
+                    .insert_avec_curseur(&format!("#footnote[{note}]"), 0)
                     .map(Message::Editor)
             } else {
                 state
                     .editor
-                    .insert_avec_curseur("^[]", "]".len())
+                    .insert_avec_curseur(&format!("^[{note}]"), 0)
                     .map(Message::Editor)
             }
+        }
+
+        Message::NoteAnnuler => {
+            state.note_dialogue = None;
+            Task::none()
         }
 
         Message::FigureInserer => {
@@ -572,20 +706,12 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::EtiquetteInserer => {
-            if sur_typst(&state.editor) {
-                state
-                    .editor
-                    .insert_avec_curseur(" <>", ">".len())
-                    .map(Message::Editor)
-            } else {
-                // Le `.tw` n'a pas encore de syntaxe d'étiquette : le geste
-                // le dit au lieu d'insérer du texte mort (R5).
-                state.note = Some(crate::app::state::Note::info(
-                    "Les étiquettes de renvoi s'écrivent dans les chapitres .typ : <nom>.                     Le document .tw en sera doté plus tard.",
-                ));
-
-                Task::none()
-            }
+            // L'étiquette est `<nom>` dans les deux dialectes : le pipeline
+            // lit déjà celles du `.tw`, et un renvoi `@fig:nom` les trouve.
+            state
+                .editor
+                .insert_avec_curseur(" <>", ">".len())
+                .map(Message::Editor)
         }
 
         Message::RenvoiInserer => state.editor.insert_at_cursor("@").map(Message::Editor),
@@ -724,6 +850,289 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     .map_err(|error| format!("Écriture du PDF : {error}"))
             });
             update(state, Message::PdfExported(resultat))
+        }
+
+        // Le projet voyage : une archive, son manifeste, et ce qui manque
+        // déjà dit dans le compte rendu.
+        // Le `.tw` unique : le projet entier dans un fichier (jalon 2 du
+        // format transportable — bug-report-7, point 3).
+        Message::ProjetExportTw => {
+            let dir = state.project.dir.clone();
+            let nom = dir
+                .file_name()
+                .map(|nom| nom.to_string_lossy().to_string())
+                .unwrap_or_else(|| "projet".into());
+
+            Task::perform(
+                async move {
+                    let Some(file) = rfd::AsyncFileDialog::new()
+                        .add_filter("Document transportable", &["tw"])
+                        .set_file_name(format!("{nom}.tw"))
+                        .save_file()
+                        .await
+                    else {
+                        return Err("Export annulé".to_string());
+                    };
+
+                    let texte = crate::project::portable::exporter_tw(&dir)?;
+                    std::fs::write(file.path(), texte).map_err(|e| e.to_string())?;
+                    Ok("Le projet voyage dans un seul fichier .tw.".to_string())
+                },
+                Message::ProjetTwExporte,
+            )
+        }
+
+        Message::ProjetTwExporte(resultat) => {
+            match resultat {
+                Ok(message) => state.note = Some(crate::app::state::Note::info(message)),
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!("Export .tw : {e}")))
+                }
+            }
+            Task::none()
+        }
+
+        Message::ProjetImportTw => Task::perform(
+            async move {
+                let Some(file) = rfd::AsyncFileDialog::new()
+                    .add_filter("Document transportable", &["tw"])
+                    .pick_file()
+                    .await
+                else {
+                    return Err("Import annulé".to_string());
+                };
+
+                let texte = std::fs::read_to_string(file.path()).map_err(|e| e.to_string())?;
+                let nom = file
+                    .path()
+                    .file_stem()
+                    .map(|nom| nom.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "projet".into());
+                let dir = crate::project::projects_dir().join(nom);
+                crate::project::portable::importer_tw(&texte, &dir)?;
+                Ok(dir.to_string_lossy().to_string())
+            },
+            Message::ProjetTwImporte,
+        ),
+
+        Message::ProjetTwImporte(resultat) => {
+            match resultat {
+                Ok(chemin) => {
+                    state.projects = crate::project::list_projects();
+                    let dir = std::path::PathBuf::from(&chemin);
+                    state.ouvrir_projet_espace(dir, crate::app::espace::Ouverture::Remplacer);
+                    state.note = Some(crate::app::state::Note::info(
+                        "Projet reconstruit depuis le .tw unique.".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!("Import .tw : {e}")))
+                }
+            }
+            Task::none()
+        }
+
+        Message::ProjetExportPortable => {
+            let dir = state.project.dir.clone();
+            let nom = dir
+                .file_name()
+                .map(|nom| nom.to_string_lossy().to_string())
+                .unwrap_or_else(|| "projet".into());
+
+            Task::perform(
+                async move {
+                    let Some(file) = rfd::AsyncFileDialog::new()
+                        .add_filter("Sauvegarde de projet", &["zip"])
+                        .set_file_name(format!("{nom}.zip"))
+                        .save_file()
+                        .await
+                    else {
+                        return Err("Export annulé".to_string());
+                    };
+
+                    crate::project::portable::exporter_projet(&dir, file.path()).map(|inventaire| {
+                        let manques = if inventaire.manquantes.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Manque(nt) : {}.", inventaire.manquantes.join(", "))
+                        };
+                        format!(
+                            "Projet exporté : {} fichier(s).{manques}",
+                            inventaire.fichiers().len()
+                        )
+                    })
+                },
+                Message::ProjetPortableExporte,
+            )
+        }
+
+        Message::ProjetPortableExporte(resultat) => {
+            match resultat {
+                Ok(message) => state.note = Some(crate::app::state::Note::info(message)),
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Export portable : {e}"
+                    )))
+                }
+            }
+            Task::none()
+        }
+
+        Message::ProjetImportSauvegarde => Task::perform(
+            async move {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Sauvegarde de projet", &["zip"])
+                    .pick_file()
+                    .await
+                    .map(|fichier| fichier.path().to_path_buf())
+            },
+            Message::ProjetImportChoisi,
+        ),
+
+        Message::ProjetImportChoisi(archive) => {
+            let Some(archive) = archive else {
+                return Task::none();
+            };
+
+            // La destination naît du manifeste : le projet porte son nom.
+            let ouverture = crate::project::portable::lire_manifeste(&archive).map(|manifeste| {
+                let destination = crate::project::projects_dir().join(&manifeste.nom);
+                (manifeste.nom, destination)
+            });
+            let (nom, destination) = match ouverture {
+                Ok(destin) => destin,
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")));
+                    return Task::none();
+                }
+            };
+
+            match crate::project::portable::importer_projet(
+                &archive,
+                &destination,
+                crate::project::portable::PolitiqueCollision::Refuser,
+            ) {
+                Ok(rapport) => {
+                    state.projects = crate::project::list_projects();
+                    state.ouvrir_projet_espace(
+                        destination,
+                        crate::app::espace::Ouverture::Remplacer,
+                    );
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Sauvegarde importée : {} fichier(s).",
+                        rapport.ecrits.len()
+                    )));
+                }
+                Err(crate::project::portable::ErreurImport::Collisions(_)) => {
+                    // La question est la barrière : rien n'a bougé, et la
+                    // réponse se donne en un mot.
+                    state.confirmation = Some(crate::app::state::Confirmation {
+                        question: format!(
+                            "« {nom} » existe déjà. Remplacer ses fichiers en conflit ? Ils resteront dans la corbeille."
+                        ),
+                        action: Message::ProjetImportConfirmer(archive, destination),
+                    });
+                }
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")))
+                }
+            }
+            Task::none()
+        }
+
+        Message::ProjetImportConfirmer(archive, destination) => {
+            state.confirmation = None;
+            match crate::project::portable::importer_projet(
+                &archive,
+                &destination,
+                crate::project::portable::PolitiqueCollision::VersCorbeille,
+            ) {
+                Ok(rapport) => {
+                    state.projects = crate::project::list_projects();
+                    state.ouvrir_projet_espace(
+                        destination,
+                        crate::app::espace::Ouverture::Remplacer,
+                    );
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Sauvegarde importée : {} fichier(s), {} remplacé(s) — dans la corbeille.",
+                        rapport.ecrits.len(),
+                        rapport.remplaces.len()
+                    )));
+                }
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")))
+                }
+            }
+            Task::none()
+        }
+
+        // Les exports décidés par l'expérience DOCX/Markdown : le
+        // Markdown au canonique, le DOCX par LibreOffice avec sa limite
+        // annoncée — les notes deviennent du texte `[note: …]`.
+        Message::ExportMarkdown => Task::perform(
+            async move {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Markdown", &["md", "markdown"])
+                    .set_file_name("document.md")
+                    .save_file()
+                    .await
+                    .map(|fichier| fichier.path().to_path_buf())
+            },
+            Message::ExportMarkdownChoisi,
+        ),
+
+        Message::ExportMarkdownChoisi(cible) => {
+            let Some(cible) = cible else {
+                return Task::none();
+            };
+            let texte = crate::langage::export::vers_markdown(&state.editor.content());
+            match crate::project::ecrire_atomique(&cible, &texte) {
+                Ok(()) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Markdown exporté : {}.",
+                        cible.display()
+                    )))
+                }
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Export Markdown : {e}"
+                    )))
+                }
+            }
+            Task::none()
+        }
+
+        Message::ExportDocx => Task::perform(
+            async move {
+                rfd::AsyncFileDialog::new()
+                    .add_filter("DOCX", &["docx"])
+                    .set_file_name("document.docx")
+                    .save_file()
+                    .await
+                    .map(|fichier| fichier.path().to_path_buf())
+            },
+            Message::ExportDocxChoisi,
+        ),
+
+        Message::ExportDocxChoisi(cible) => {
+            let Some(cible) = cible else {
+                return Task::none();
+            };
+            let source = state.editor.content();
+            match crate::langage::export::vers_docx(&source, &cible) {
+                Ok(()) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "DOCX exporté : {}. Les notes y sont du texte [note: …] — la limite annoncée.",
+                        cible.display()
+                    )))
+                }
+                Err(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Export DOCX : {e}"
+                    )))
+                }
+            }
+            Task::none()
         }
 
         Message::PdfExported(result) => {

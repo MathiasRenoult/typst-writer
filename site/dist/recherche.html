@@ -35,16 +35,29 @@
 <a href="prise-en-main.html">Prise en main</a>
 <a href="ecrire.html">Écrire</a>
 <a href="bibliographie.html">La bibliographie</a>
+<a href="glossaire.html">Le glossaire</a>
 <a href="normes.html">Les normes</a>
 <a href="recherche.html" class="courant">Rechercher et remplacer</a>
 <a href="raccourcis.html">Les raccourcis</a>
 <a href="fichiers.html">Les fichiers</a>
+<a href="installation-linux.html">Installer sous Linux</a>
 </nav>
 <main>
 <h1>Rechercher et remplacer</h1>
 <p><code>Ctrl+F</code> ouvre la barre de recherche ; <code>Échap</code> la ferme. Elle flotte sur le texte, et le reste de l&#x27;éditeur continue de vivre derrière elle.</p>
-<h2>Le motif est une expression régulière</h2>
-<p>Chercher, c&#x27;est écrire une expression régulière — <code>chapitre \d+</code>, <code>^# </code>, <code>\bthéologie\b</code>. Les deux champs — le motif et le remplacement — sont conduits au clavier :</p>
+<h2>Deux modes : littéral ou expression régulière</h2>
+<p>Le bouton <code>Aa</code> / <code>.*</code> à gauche du motif bascule entre les deux modes :</p>
+<ul>
+<li><strong>Littéral</strong> (<code>Aa</code>) : le motif est pris au pied de la lettre. Un point,</li>
+</ul>
+<p>  un dollar, une parenthèse n&#x27;ont aucun sens spécial.</p>
+<ul>
+<li><strong>Expression régulière</strong> (<code>.*</code>) : le motif est une regex —</li>
+</ul>
+<p>  <code>chapitre \d+</code>, <code>^# </code>, <code>\bthéologie\b</code>.</p>
+<p>La barre compte les occurrences trouvées. La mise en évidence dans l&#x27;éditeur utilise un mécanisme distinct et peut ne pas correspondre au motif, notamment en mode regex : vérifiez la sélection courante.</p>
+<h2>Les champs</h2>
+<p>Les deux champs — le motif et le remplacement — sont conduits au clavier :</p>
 <ul>
 <li><code>Entrée</code> dans le motif cherche le <strong>suivant</strong> ;</li>
 <li><code>Entrée</code> dans le remplacement <strong>remplace l&#x27;occurrence courante</strong> ;</li>
@@ -53,7 +66,8 @@
 <p>  — <code>F3</code> la rouvre au besoin.</p>
 <p>Le compte — <code>3/17</code> — suit ce qu&#x27;on visite.</p>
 <h2>Le remplacement rappelle ses groupes</h2>
-<p>Un motif peut <strong>capturer</strong> : <code>(\w+)@(\w+)</code> prend deux groupes. Le remplacement les rappelle au dollar : <code>$1-$2</code>. Tout se fait du dernier au premier — <strong>Tout remplacer</strong> ne décale jamais les occurrences restantes.</p>
+<p>En mode regex, un motif peut <strong>capturer</strong> : <code>(\w+)@(\w+)</code> prend deux groupes. Le remplacement les rappelle au dollar : <code>$1-$2</code>. Tout se fait du dernier au premier — <strong>Tout remplacer</strong> ne décale jamais les occurrences restantes.</p>
+<p>Attention : dans cette version, le remplacement réinterprète le motif comme une expression régulière même si la recherche est en mode littéral ; les métacaractères du motif et les <code>$</code> dans le remplacement peuvent donc produire un résultat inattendu. Vérifiez le résultat sur une copie avant d&#x27;utiliser « Tout remplacer ».</p>
 <p>Un motif fautif se dit dans la barre, en rouge, sans jamais effacer ce qui est cherché.</p>
 </main>
 </div>

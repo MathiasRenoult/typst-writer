@@ -10,10 +10,13 @@ dans `docs/design/`, et ne regardent pas l'usage.
 1. [Prise en main](prise-en-main.md) — lancer, écrire, voir, exporter.
 2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au graphique.
 3. [La bibliographie](bibliographie.md) — les références, la fiche, Zotero.
-4. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied.
-5. [Rechercher et remplacer](recherche.md) — les expressions régulières.
-6. [Les raccourcis](raccourcis.md) — le clavier, entier.
-7. [Les fichiers](fichiers.md) — où tout vit, et ce qu'on en garde.
+4. [Le glossaire](glossaire.md) — les termes, leurs formes, la liste finale.
+5. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied.
+6. [Rechercher et remplacer](recherche.md) — les expressions régulières.
+7. [Les raccourcis](raccourcis.md) — le clavier, entier.
+8. [Les fichiers](fichiers.md) — où tout vit, ce qu'on en garde, ce qui
+   voyage.
+9. [Installer sous Linux](installation-linux.md) — le paquet, d'un geste.
 
 ## Le principe de l'écriture
 

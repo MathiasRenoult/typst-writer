@@ -33,6 +33,12 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         text_input("nom du projet", &dialogue.nom)
             .id(id_du_nom())
             .on_input(Message::ProjetNom)
+            .on_submit(Message::ProjetValider),
+        text_input("titre du document", &dialogue.titre)
+            .on_input(|v| Message::ProjetMeta("titre".to_string(), v))
+            .on_submit(Message::ProjetValider),
+        text_input("auteur", &dialogue.auteur)
+            .on_input(|v| Message::ProjetMeta("auteur".to_string(), v))
             .on_submit(Message::ProjetValider)
             .padding(6)
             .width(Length::Fixed(260.0)),

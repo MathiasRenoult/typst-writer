@@ -81,15 +81,29 @@ pub fn compilation_unit_document_avec_diagnostics(
     let (cles, etiquettes, collisions) = cles_vivantes(root, &entry);
     rapports.extend(collisions);
 
+    // Les clés vivantes du glossaire : une référence à un terme inconnu
+    // ne casse jamais le document — elle se neutralise, et se dit.
+    let glossaire = crate::project::glossaire::Glossaire::charger(root);
+    let cles_glossaire: std::collections::BTreeSet<String> =
+        glossaire.entrees.iter().map(|e| e.key.clone()).collect();
+
     let entry = corriger_le_typst(
         root,
         &entry,
         &cles,
+        &cles_glossaire,
         &etiquettes,
         &root.join("main.typ"),
         &mut rapports,
     );
-    let mut corrections = corriger_les_inclus(root, &entry, &cles, &etiquettes, &mut rapports);
+    let mut corrections = corriger_les_inclus(
+        root,
+        &entry,
+        &cles,
+        &cles_glossaire,
+        &etiquettes,
+        &mut rapports,
+    );
 
     // La typographie et le style se lisent dans les normes du projet : c'est
     // là qu'ils se choisissent, et le générateur les applique.
@@ -100,14 +114,32 @@ pub fn compilation_unit_document_avec_diagnostics(
         &root.join("main.typ"),
         &mut rapports,
     );
-    let entry = ensure_default_bibliography(root, &entry);
+    let entry = ensure_default_bibliography(root, &entry, &normes);
     let mut regles = normes.typographie.regles();
     regles.numerotation_figures = normes.numerotation_figures.clone();
+    // Les mots de la balise `{date:...}` viennent des normes (2026-11-03).
+    regles.dates = crate::langage::dates::Regles {
+        siecle: normes.dates.siecle.clone(),
+        millenaire: normes.dates.millenaire.clone(),
+        epoque_apres: normes.dates.epoque_apres.clone(),
+        epoque_avant: normes.dates.epoque_avant.clone(),
+        format: normes.dates.format.clone(),
+        langue: normes.dates.langue.clone(),
+    };
     let generated = generer_avec(document, &regles, &normes.decor);
 
     // La guérison des `.bib` court enfin : la bibliographie
     // conventionnelle existe déjà, et ses chemins sont vivants.
     corrections.extend(guerir_les_bibliographies(root, &entry, &corrections));
+
+    // La section `{bibliographie}` porte sa propre directive : elle se
+    // branche aux bibliothèques du projet, comme celle du document
+    // (bug-report-9).
+    let generated = if generated.lines().any(is_bibliography_directive) {
+        crate::project::model::brancher_les_bibliographies(root, &generated).unwrap_or(generated)
+    } else {
+        generated
+    };
 
     // Le généré aussi : le document source peut porter sa propre
     // directive, et elle y meurt comme ailleurs.
@@ -115,10 +147,16 @@ pub fn compilation_unit_document_avec_diagnostics(
         root,
         &generated,
         &cles,
+        &cles_glossaire,
         &etiquettes,
         &root.join(GENERATED_FILE),
         &mut rapports,
     );
+
+    // Le glossaire glossarium : le registre dans le généré, le salon dans
+    // l'entrée. Le paquet embarqué se pose localement, sans réseau.
+    let (entry, generated) =
+        assembler_le_glossaire(root, entry, generated, &glossaire, &mut rapports);
 
     corrections.push((root.join(GENERATED_FILE), generated));
 
@@ -263,24 +301,59 @@ fn appliquer_le_style_du_projet(
 /// Ajoute la bibliographie conventionnelle aux anciens assemblages qui ont le
 /// fichier `.bib` sans directive explicite. La version sur disque n'est jamais
 /// modifiée.
-fn ensure_default_bibliography(root: &Path, main: &str) -> String {
-    let main = ensure_default_citation_style(main);
+fn ensure_default_bibliography(
+    root: &Path,
+    main: &str,
+    normes: &crate::mise_en_page::modele::MiseEnPage,
+) -> String {
+    // Le branchement d'abord : les bibliothèques du projet sont citées,
+    // et un fichier manquant ne l'est plus (bug-report-9) — le style
+    // par défaut complète ensuite ce qui en manque.
+    let main = crate::project::model::brancher_les_bibliographies(root, main)
+        .unwrap_or_else(|| main.to_string());
 
-    if main.lines().any(is_bibliography_directive) || !root.join("references.bib").is_file() {
-        return main;
+    let main = ensure_default_citation_style(&main);
+
+    placer_la_bibliographie(&main, normes)
+}
+
+/// Le placement de la bibliographie : le saut de page avant, le titre de
+/// niveau 1 — les normes du document (bug-report-10, 1.1 et 1.2).
+fn placer_la_bibliographie(main: &str, normes: &crate::mise_en_page::modele::MiseEnPage) -> String {
+    if !normes.bibliographie.saut_de_page && !normes.bibliographie.titre_un {
+        return main.to_string();
     }
 
-    let mut entry = main;
+    let mut out = String::new();
 
-    if !entry.is_empty() && !entry.ends_with("\n\n") {
-        if !entry.ends_with('\n') {
-            entry.push('\n');
+    for ligne in main.split_inclusive('\n') {
+        if is_bibliography_directive(ligne) && !out.contains("#bibliography") {
+            if normes.bibliographie.saut_de_page {
+                out.push_str("#pagebreak()\n\n");
+            }
+
+            if normes.bibliographie.titre_un {
+                out.push_str("= Bibliographie\n\n");
+            }
+
+            // La liste ne se donne pas son propre titre quand le
+            // document lui donne le sien.
+            if normes.bibliographie.titre_un
+                && !ligne.contains("title:")
+                && let Some(fermeture) = ligne.rfind(')')
+            {
+                out.push_str(&ligne[..fermeture]);
+                out.push_str(", title: none)");
+                out.push_str(&ligne[fermeture + 1..]);
+
+                continue;
+            }
         }
-        entry.push('\n');
+
+        out.push_str(ligne);
     }
 
-    entry.push_str("#bibliography(\"references.bib\", style: \"chicago-notes\")\n");
-    entry
+    out
 }
 
 /// Applique le style de notes par défaut aux bibliographies sans style explicite.
@@ -486,6 +559,158 @@ mod tests {
         assert_eq!(entry.matches("#bibliography").count(), 1, "{entry}");
     }
 
+    /// La section `{bibliographie}` se branche aux bibliothèques du
+    /// projet (bug-report-9).
+    #[test]
+    fn la_section_bibliographie_se_brance_au_projet() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-section-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references-zotero.bib"),
+            "@book{dupont2023, title = {Un titre}}\n",
+        )
+        .expect("export zotero");
+
+        let (_entry, corrections, _rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#set page(paper: \"a6\")\n",
+            "Avant.\n\n{bibliographie}\n",
+        );
+
+        let genere = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .expect("le généré");
+        assert!(
+            genere.contains("full: true"),
+            "la section liste la bibliothèque entière : {genere}"
+        );
+        assert!(
+            genere.contains("\"references-zotero.bib\""),
+            "elle cite les bibliothèques du projet : {genere}"
+        );
+        assert!(
+            !genere.contains("\"references.bib\""),
+            "le fichier absent n'est pas cité : {genere}"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Les schémas de numérotation libres partent au moteur tels quels
+    /// (bug-report-9 : la liste blanche de `forme_numerotation` les
+    /// écrasait en « 1 »).
+    #[test]
+    fn les_schemas_de_numerotation_se_rendent_au_moteur() {
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.numerotation.actif = true;
+        normes.numerotation.forme = "1)".to_string();
+        normes.numerotation_figures = "A.a".to_string();
+        normes.titres.numerotation = "1.1.".to_string();
+
+        let gabarit = crate::mise_en_page::gabarit::generer(&normes);
+
+        for schema in ["1)", "A.a", "1.1."] {
+            assert!(
+                gabarit.contains(schema),
+                "le schéma {schema:?} part au moteur : {gabarit}"
+            );
+        }
+    }
+
+    /// Le placement de la bibliographie suit les normes (bug-report-10,
+    /// 1.1 et 1.2) : saut de page avant, titre de niveau 1, sans double
+    /// titre.
+    #[test]
+    fn la_bibliographie_se_place_selon_les_normes() {
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.bibliographie.saut_de_page = true;
+        normes.bibliographie.titre_un = true;
+
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-placement-biblio-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        crate::mise_en_page::appliquer(&root, &normes, false).expect("application");
+        std::fs::write(root.join("references.bib"), "").expect("bibliographie");
+
+        let main = format!(
+            "{}\n{}",
+            crate::mise_en_page::gabarit::accroche(),
+            crate::project::model::MAIN_TEMPLATE
+        );
+        let (entry, _corrections, _rapports) =
+            super::compilation_unit_avec_diagnostics(&root, &main, "Du texte.\n");
+
+        assert!(
+            entry.contains("#pagebreak()"),
+            "le saut de page part avant : {entry}"
+        );
+        assert!(
+            entry.contains("= Bibliographie"),
+            "le titre de niveau 1 est là : {entry}"
+        );
+        assert!(
+            entry.contains("title: none"),
+            "la liste ne se double pas de son titre : {entry}"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Le lien Zotero branche la bibliographie : les citations de l’export
+    /// trouvent leurs clés, et le fichier manquant n’est plus cité
+    /// (bug-report-9).
+    #[test]
+    fn les_citations_zotero_trouvent_leur_bibliographie() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-langage-zotero-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(
+            root.join("references-zotero.bib"),
+            "@book{dupont2023, title = {Un titre}}\n",
+        )
+        .expect("export zotero");
+
+        // Le document modèle cite la locale — qui n’existe pas encore.
+        let main = format!(
+            "{}\n\n#bibliography(\"references.bib\", style: \"chicago-notes\")\n",
+            "#set page(paper: \"a6\")"
+        );
+        let (entry, corrections, _rapports) =
+            super::compilation_unit_avec_diagnostics(&root, &main, "Selon @dupont2023.\n");
+
+        assert!(
+            entry.contains("\"references-zotero.bib\""),
+            "l’export Zotero est branché : {entry}"
+        );
+        assert!(
+            !entry.contains("\"references.bib\""),
+            "le fichier manquant n’est plus cité : {entry}"
+        );
+
+        let genere = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .expect("le généré");
+        assert!(
+            !genere.contains("[dupont2023]"),
+            "la citation Zotero est vivante, jamais neutralisée : {genere}"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
     /// Une citation inconnue ne devient jamais une fausse référence — et
     /// désormais, elle ne se cache plus : la neutralisation se dit avec sa
     /// clé, sa ligne et son fichier (R3, fidélité des citations).
@@ -1584,6 +1809,7 @@ fn corriger_le_typst(
     root: &Path,
     main: &str,
     cles: &std::collections::BTreeSet<String>,
+    cles_glossaire: &std::collections::BTreeSet<String>,
     etiquettes: &std::collections::BTreeSet<String>,
     fichier: &Path,
     rapports: &mut Vec<crate::typst::render::Diagnostic>,
@@ -1634,6 +1860,7 @@ fn corriger_le_typst(
 
     main_corrige.push_str(&main[curseur..]);
     let main = main_corrige;
+    let main = guerir_les_termes(&main, cles_glossaire, fichier, rapports);
 
     let mut sortie = String::new();
 
@@ -1764,6 +1991,7 @@ fn corriger_les_inclus(
     root: &Path,
     entry: &str,
     cles: &std::collections::BTreeSet<String>,
+    cles_glossaire: &std::collections::BTreeSet<String>,
     etiquettes: &std::collections::BTreeSet<String>,
     rapports: &mut Vec<crate::typst::render::Diagnostic>,
 ) -> Vec<(PathBuf, String)> {
@@ -1796,7 +2024,15 @@ fn corriger_les_inclus(
         }
 
         let base = chemin.parent().unwrap_or(root).to_path_buf();
-        let corrige = corriger_le_typst(&base, &contenu, cles, etiquettes, &chemin, rapports);
+        let corrige = corriger_le_typst(
+            &base,
+            &contenu,
+            cles,
+            cles_glossaire,
+            etiquettes,
+            &chemin,
+            rapports,
+        );
 
         if corrige != contenu {
             corrections.push((chemin, corrige));
@@ -1861,22 +2097,32 @@ fn guerir_les_bibliographies(
                 continue;
             }
 
-            if let Some(chemin) = ligne.split('"').nth(1) {
+            // **Tous** les chemins entre guillemets : un appel à
+            // plusieurs bibliothèques les cite toutes, et la seconde
+            // porte elle aussi ses entrées à guérir (bug-report-10, 6.1).
+            for chemin in ligne.split('"').skip(1).step_by(2) {
                 citees.push(base.join(chemin));
             }
         }
     }
 
     let mut guerisons = Vec::new();
+    // Les clés déjà prises par une bibliothèque précédente : la première
+    // garde son entrée (bug-report-10, 6.1).
+    let mut connues = std::collections::BTreeSet::new();
 
     for chemin in citees {
         let Ok(contenu) = std::fs::read_to_string(&chemin) else {
             continue;
         };
 
+        let original = contenu;
+        let contenu = crate::project::retirer_les_entrees_dupliquees(&original, &mut connues);
         let gueri = guerir_commentaires(&contenu);
 
-        if gueri != contenu {
+        // Le dédoublonnage compte comme une guérison : la correction
+        // va au moteur même si les commentaires étaient déjà sains.
+        if gueri != original {
             guerisons.push((chemin, gueri));
         }
     }
@@ -1918,6 +2164,239 @@ fn etiquettes_du_texte(texte: &str) -> Vec<String> {
             continue;
         }
         curseur += 1;
+    }
+
+    out
+}
+
+/// La guérison des termes du glossaire : `#gls("clé")` et ses trois
+/// sœurs (`glspl`, `Gls`, `Glspl`).
+///
+/// Une clé inconnue se neutralise en `[clé]` — un texte, jamais une
+/// erreur de compilateur, et le terme manquant se voit (rapport à la
+/// clé, sa ligne, son fichier).
+fn guerir_les_termes(
+    main: &str,
+    cles_glossaire: &std::collections::BTreeSet<String>,
+    fichier: &Path,
+    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+) -> String {
+    let mut sortie = String::new();
+    let mut curseur = 0usize;
+
+    while let Some((position, prefixe)) = appel_glos_suivant(&main[curseur..]) {
+        let position = curseur + position;
+        let ouverture = position + prefixe.len() - 1; // la parenthèse ouvrante
+
+        // L'appel entier, jusqu'à sa parenthèse fermante — le suffixe et
+        // les autres arguments en font partie.
+        let (cle, ok) = chaine_du_glos(main, ouverture + 1);
+        let fin = parenthese_fermante(main, ouverture).unwrap_or(ouverture + 1);
+
+        sortie.push_str(&main[curseur..position]);
+
+        if ok && cles_glossaire.contains(&cle) {
+            sortie.push_str(&main[position..fin]);
+        } else {
+            let ligne = main[..position].matches('\n').count() + 1;
+            rapports.push(crate::typst::render::Diagnostic {
+                message: format!("Terme « {cle} » du glossaire inconnu : neutralisé en [{cle}]."),
+                line: Some(ligne),
+                column: None,
+                file: Some(fichier.to_path_buf()),
+            });
+            sortie.push_str(&format!("[{cle}]"));
+        }
+
+        curseur = fin;
+    }
+
+    sortie.push_str(&main[curseur..]);
+    sortie
+}
+
+/// La position du prochain appel de terme, et son nom de fonction.
+fn appel_glos_suivant(texte: &str) -> Option<(usize, &'static str)> {
+    const PREFIXES: [&str; 4] = ["#glspl(", "#Glspl(", "#gls(", "#Gls("];
+    let mut meilleur: Option<(usize, &'static str)> = None;
+    for prefixe in PREFIXES {
+        if let Some(position) = texte.find(prefixe)
+            && meilleur.is_none_or(|(plus_tot, _)| position < plus_tot)
+        {
+            meilleur = Some((position, prefixe));
+        }
+    }
+    meilleur
+}
+
+/// La première chaîne d'un appel — sa clé. `ok` dit si elle s'y lit.
+fn chaine_du_glos(texte: &str, apres_parenthese: usize) -> (String, bool) {
+    let reste = texte[apres_parenthese..].trim_start();
+    let Some(reste) = reste.strip_prefix('"') else {
+        return (String::new(), false);
+    };
+
+    let fin = reste.find('"').unwrap_or(reste.len());
+    (reste[..fin].to_string(), true)
+}
+
+/// La parenthèse fermante d'un appel ouvert en `ouverture` — chaînes
+/// comprises, parenthèses imbriquées comptées.
+fn parenthese_fermante(texte: &str, ouverture: usize) -> Option<usize> {
+    let mut profondeur = 0usize;
+    let mut chaine = false;
+    let mut echappe = false;
+
+    for (decalage, c) in texte[ouverture..].char_indices() {
+        if echappe {
+            echappe = false;
+            continue;
+        }
+
+        match c {
+            '\\' if chaine => echappe = true,
+            '"' => chaine = !chaine,
+            '(' if !chaine => profondeur += 1,
+            ')' if !chaine => {
+                profondeur = profondeur.checked_sub(1)?;
+                if profondeur == 0 {
+                    return Some(ouverture + decalage + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Le glossaire entre dans l'assemblage : le **registre** dans le document
+/// généré (sa portée est celle du fichier), le **salon** — l'import et
+/// `#show: make-glossary` — dans l'entrée, **après** sa première règle
+/// `#show:` : les règles de figures de la mise en page restent extérieures,
+/// comme glossarium le veut.
+fn assembler_le_glossaire(
+    root: &Path,
+    entry: String,
+    generated: String,
+    glossaire: &crate::project::glossaire::Glossaire,
+    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+) -> (String, String) {
+    let usage = est_glos_utilise(&entry) || est_glos_utilise(&generated);
+    if !usage && glossaire.entrees.is_empty() {
+        return (entry, generated);
+    }
+
+    // Le paquet embarqué se pose dans le dossier local — jamais au réseau.
+    if crate::typst::paquets::assurer_glossarium().is_err() {
+        rapports.push(crate::typst::render::Diagnostic {
+            message: "Le paquet glossarium ne s'est pas installé : les termes du glossaire                       sont neutralisés."
+                .to_string(),
+            line: None,
+            column: None,
+            file: None,
+        });
+        let vides = std::collections::BTreeSet::new();
+        return (
+            guerir_les_termes(&entry, &vides, root, rapports),
+            guerir_les_termes(&generated, &vides, root, rapports),
+        );
+    }
+
+    let mut generated = generated;
+    let mut entete = format!(
+        "#import \"{}\": make-glossary, register-glossary, print-glossary, gls, glspl, \
+         Gls, Glspl\n",
+        crate::typst::paquets::GLOSSARIUM
+    );
+    entete.push_str("#let tw-glossaire = ");
+    entete.push_str(&glossaire.registre_typst());
+    entete.push_str("\n#register-glossary(tw-glossaire)\n\n");
+    generated.insert_str(0, &entete);
+
+    if glossaire.entrees.is_empty() && generated.contains("#print-glossary(") {
+        rapports.push(crate::typst::render::Diagnostic {
+            message: "La liste du glossaire est vide : ajoutez des termes dans le panneau \
+                      Glossaire."
+                .to_string(),
+            line: None,
+            column: None,
+            file: None,
+        });
+    }
+
+    // Sans liste imprimée, les termes n'ont pas d'ancre : ils se
+    // composent sans lien.
+    if !entry.contains("#print-glossary(") && !generated.contains("#print-glossary(") {
+        generated = delier_les_termes(&generated);
+    }
+
+    (injecter_le_salon(&entry), generated)
+}
+
+/// Les termes d'un document **sans liste** `{glossaire}` se composent
+/// sans lien : glossarium pointe chaque terme vers son entrée imprimée,
+/// et sans liste il n'y a pas d'ancre où pointer — un lien mort est une
+/// erreur de compilation, jamais ça.
+fn delier_les_termes(generated: &str) -> String {
+    let mut out = String::new();
+    let mut curseur = 0usize;
+
+    while let Some((position, prefixe)) = appel_glos_suivant(&generated[curseur..]) {
+        let position = curseur + position;
+        let ouverture = position + prefixe.len() - 1;
+        let fin = parenthese_fermante(generated, ouverture).unwrap_or(ouverture + 1);
+
+        let appel = &generated[position..fin];
+        if appel.contains("link:") {
+            // L'appel tranche déjà lui-même.
+            out.push_str(&generated[curseur..fin]);
+        } else {
+            out.push_str(&generated[curseur..fin.saturating_sub(1)]);
+            out.push_str(", link: false)");
+        }
+
+        curseur = fin;
+    }
+
+    out.push_str(&generated[curseur..]);
+    out
+}
+
+/// Le document use-t-il du glossaire ?
+fn est_glos_utilise(texte: &str) -> bool {
+    texte.contains("#gls(")
+        || texte.contains("#glspl(")
+        || texte.contains("#Gls(")
+        || texte.contains("#Glspl(")
+        || texte.contains("#print-glossary(")
+}
+
+/// L'import et `#show: make-glossary` dans l'entrée — après sa première
+/// règle `#show:`, sinon en tête. Idempotent.
+fn injecter_le_salon(entry: &str) -> String {
+    if entry.contains("#show: make-glossary") {
+        return entry.to_string();
+    }
+
+    let salon = format!(
+        "#import \"{}\": make-glossary, register-glossary, print-glossary, gls, glspl, \
+         Gls, Glspl\n#show: make-glossary\n",
+        crate::typst::paquets::GLOSSARIUM
+    );
+
+    let mut out = String::new();
+    let mut pose = false;
+    for ligne in entry.split_inclusive('\n') {
+        out.push_str(ligne);
+        if !pose && ligne.trim_start().starts_with("#show:") {
+            out.push_str(&salon);
+            pose = true;
+        }
+    }
+
+    if !pose {
+        out.insert_str(0, &salon);
     }
 
     out
@@ -2233,6 +2712,174 @@ mod epreuves_de_mise_en_page {
         assert!(texte.contains("Partie"), "le niveau 2 est là : {texte}");
     }
 
+    /// **Bug-report-8, T9.2** : le document de synthèse exploite toutes
+    /// les nouveautés du rapport — image d'en-tête et sa hauteur, quick
+    /// parts, numérotation personnalisée, couleurs de titres, italique et
+    /// souligné, dates localisées — et le tout se compose pour de vrai.
+    /// La vérification visuelle du résultat appartient à l'auteur.
+    #[test]
+    fn le_document_de_synthese_se_compose_pour_de_vrai() {
+        for binaire in ["typst", "pdftotext"] {
+            if std::process::Command::new(binaire)
+                .arg("--version")
+                .output()
+                .is_err()
+            {
+                println!("{binaire} n'est pas installé : test sauté");
+                return;
+            }
+        }
+
+        let root = racine("synthese-8");
+
+        // Les normes : tout ce que le rapport a ajouté.
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.entete_pied.entete.gauche = "![logo](logo.png) — {auteur}".to_string();
+        normes.entete_pied.images_hauteur = "60".to_string();
+        normes.titres.numerotation = "1.1".to_string();
+        normes.titres.italique_2 = Some(true);
+        normes.titres.souligne_3 = Some(true);
+        normes.titres.couleur_1 = Some("#335577".to_string());
+        normes.dates.langue = "en".to_string();
+        normes.couleurs.texte = "#222222".to_string();
+
+        let gabarit = crate::mise_en_page::gabarit::generer(&normes);
+        for attendu in [
+            "height: 60%",
+            "style: \"italic\"",
+            "underline",
+            "sys.inputs.at(\"auteur\"",
+            "numbering: \"1.1\"",
+            "#335577",
+            "#222222",
+        ] {
+            assert!(gabarit.contains(attendu), "{attendu} manque : {gabarit}");
+        }
+
+        // Le corps : la balise date, localisée par les normes.
+        let mut regles = normes.typographie.regles();
+        regles.dates = crate::langage::dates::Regles {
+            siecle: normes.dates.siecle.clone(),
+            millenaire: normes.dates.millenaire.clone(),
+            epoque_apres: normes.dates.epoque_apres.clone(),
+            epoque_avant: normes.dates.epoque_avant.clone(),
+            format: normes.dates.format.clone(),
+            langue: normes.dates.langue.clone(),
+        };
+        let document = crate::langage::parse(
+            "= Le titre\n\nLe {date:1789.07.14 \"dddd d MMMM yyyy\"}, soit le {date:XIXs?}.\n",
+        );
+        let corps = crate::langage::generer::generer_avec(&document, &regles, &normes.decor);
+        assert!(
+            corps.contains("Tuesday 14 July 1789"),
+            "la date se localise : {corps}"
+        );
+        assert!(corps.contains("siècle"), "la période se rend : {corps}");
+
+        // Le tout se compose au vrai Typst, avec les entrées du projet.
+        std::fs::write(root.join(crate::mise_en_page::gabarit::FICHIER), &gabarit)
+            .expect("gabarit");
+        std::fs::write(
+            root.join("logo.png"),
+            [
+                137u8, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0,
+                0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99,
+                100, 96, 248, 95, 15, 0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78,
+                68, 174, 66, 96, 130,
+            ],
+        )
+        .expect("image");
+        let document =
+            format!("#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n{corps}\n");
+        std::fs::write(root.join("le-document.typ"), document).expect("document");
+
+        let sortie = std::process::Command::new("typst")
+            .args([
+                "compile",
+                root.join("le-document.typ").to_str().unwrap(),
+                "--input",
+                "auteur=Alice",
+            ])
+            .output()
+            .expect("typst s'exécute");
+        assert!(
+            sortie.status.success(),
+            "le document de synthèse compile : {}",
+            String::from_utf8_lossy(&sortie.stderr)
+        );
+
+        let texte = std::process::Command::new("pdftotext")
+            .arg(root.join("le-document.pdf"))
+            .arg("-")
+            .output()
+            .expect("pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&texte.stdout).to_string();
+
+        assert!(texte.contains("Alice"), "la quick part se rend : {texte}");
+        assert!(
+            texte.contains("Tuesday 14 July 1789"),
+            "la date localisée se rend : {texte}"
+        );
+        assert!(texte.contains("Le titre"), "le titre se rend : {texte}");
+    }
+
+    /// Les quick parts vivent dans l'en-tête : `{projet}` vient de
+    /// `sys.inputs`, `{titre}` est repris par `query` — et une image y a sa
+    /// place, à la hauteur réglée (bug-report-8, T4.4).
+    #[test]
+    fn les_quick_parts_et_les_images_vivent_dans_l_entete() {
+        let root = racine("quickparts");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.entete_pied.entete.gauche = "![logo](logo.png) {titre}".to_string();
+        normes.entete_pied.pied.droite = "{projet} — p. {page}".to_string();
+        normes.entete_pied.images_hauteur = "50".to_string();
+
+        let code = crate::mise_en_page::gabarit::generer(&normes);
+        assert!(
+            code.contains("#image(\"logo.png\", height: 50%)"),
+            "l'image suit la hauteur réglée : {code}"
+        );
+
+        // La hauteur est bornée : jamais de débordement de la zone.
+        normes.entete_pied.images_hauteur = "500".to_string();
+        let code = crate::mise_en_page::gabarit::generer(&normes);
+        assert!(
+            code.contains("height: 100%"),
+            "la hauteur reste dans la zone : {code}"
+        );
+
+        std::fs::write(root.join(crate::mise_en_page::gabarit::FICHIER), &code).expect("gabarit");
+        // Un vrai petit PNG : l'image doit se poser sans erreur de rendu.
+        std::fs::write(
+            root.join("logo.png"),
+            [
+                137u8, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0,
+                0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99,
+                100, 96, 248, 95, 15, 0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78,
+                68, 174, 66, 96, 130,
+            ],
+        )
+        .expect("logo");
+
+        let source = format!(
+            "{}= Un grand titre\n\nDu texte.\n",
+            crate::mise_en_page::gabarit::accroche()
+        );
+        let texte = texte_extrait(&root, &source);
+        assert!(!texte.is_empty(), "pdftotext présent");
+
+        // {projet} vient de sys.inputs, alimenté par la racine elle-même.
+        assert!(
+            texte.contains("quickparts"),
+            "le nom du projet vit dans l'en-tête : {texte}"
+        );
+        // {titre} est repris par le moteur, via query sur les titres.
+        assert!(
+            texte.contains("Un grand titre"),
+            "le titre du document vit dans l'en-tête : {texte}"
+        );
+    }
+
     /// L'aperçu des titres est un **vrai rendu** : les mêmes normes
     /// donnent les mêmes pixels (le moteur est déterministe), et une norme
     /// différente donne une image différente — les pixels portent les
@@ -2469,5 +3116,488 @@ mod epreuves_de_renvois {
             texte.contains("La légende exacte."),
             "la légende est dans le PDF : {texte}"
         );
+    }
+}
+
+/// Le glossaire glossarium : l'assemblage, la guérison, et le rendu réel.
+#[cfg(test)]
+mod tests_glossaire {
+    use std::path::PathBuf;
+
+    /// Le dossier des paquets de test : **partagé** et posé une seule fois
+    /// — l'environnement est un état partagé, et `Once` est la barrière
+    /// qui rend l'écriture unique et sa lecture postérieure sûre.
+    fn paquets_de_test() -> PathBuf {
+        static UNE_FOIS: std::sync::Once = std::sync::Once::new();
+        let chemin =
+            std::env::temp_dir().join(format!("typst-writer-paquets-tests-{}", std::process::id()));
+        UNE_FOIS.call_once(|| {
+            // SAFETY : une seule écriture du processus, sous `Once`, et
+            // tout lecteur passe par la même barrière avant de lire.
+            unsafe { std::env::set_var("TYPST_WRITER_PAQUETS", &chemin) };
+        });
+        chemin
+    }
+
+    fn racine(nom: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-mep-glo-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du test");
+        root
+    }
+
+    /// Le généré, tiré des corrections de l'assemblage.
+    fn le_genere(corrections: &[(PathBuf, String)]) -> String {
+        corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("document.generated.typ"))
+            .map(|(_, contenu)| contenu.clone())
+            .expect("le généré")
+    }
+
+    const GLOSSAIRE: &str = r#"
+[[entrees]]
+key = "sdo"
+short = "sdo"
+long = "docteur scolastique"
+plural = "sdo"
+longplural = "docteurs scolastiques"
+description = "Un théologien du Moyen Âge."
+"#;
+
+    /// L'assemblage pose le salon dans l'entrée et le registre dans le
+    /// généré — et le document compile **au vrai moteur**.
+    #[test]
+    fn le_glossaire_s_assemble_et_le_document_compile() {
+        let paquets = paquets_de_test();
+        let root = racine("assemble");
+        std::fs::write(root.join(crate::project::glossaire::FICHIER), GLOSSAIRE)
+            .expect("glossaire");
+
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n";
+        std::fs::write(
+            root.join("mise-en-page.typ"),
+            crate::mise_en_page::gabarit::generer(
+                &crate::mise_en_page::modele::MiseEnPage::default(),
+            ),
+        )
+        .expect("gabarit");
+
+        let (entry, corrections, _) = super::compilation_unit_avec_diagnostics(
+            &root,
+            main,
+            "Les {glo:sdo} ici.\n\n{glossaire}\n",
+        );
+
+        // Le salon, dans l'entrée — et **sous** la règle de mise en page :
+        // les règles de figures d'abord, comme glossarium le veut.
+        let pos_mep = entry.find("#show: mise-en-page").expect("mise-en-page");
+        let pos_glo = entry.find("#show: make-glossary").expect("make-glossary");
+        assert!(
+            pos_mep < pos_glo,
+            "le salon vient après la mise en page : {entry}"
+        );
+
+        // Le registre, dans le généré — sa portée est celle du fichier.
+        let genere = le_genere(&corrections);
+        assert!(genere.contains("#let tw-glossaire = "), "{genere}");
+        assert!(
+            genere.contains("#register-glossary(tw-glossaire)"),
+            "{genere}"
+        );
+        assert!(genere.contains("#gls(\"sdo\")"), "{genere}");
+        assert!(genere.contains("#print-glossary(tw-glossaire)"), "{genere}");
+
+        // Le paquet est posé localement — jamais au réseau.
+        assert!(
+            paquets
+                .join("local/glossarium/0.5.10/glossarium.typ")
+                .is_file(),
+            "le paquet s'est installé dans le dossier local"
+        );
+
+        // Le document compile, au moteur embarqué.
+        for (chemin, contenu) in &corrections {
+            std::fs::write(chemin, contenu).expect("fichier assemblé");
+        }
+        let outcome = crate::typst::render::compile(&root, &entry, &[]);
+        assert!(
+            outcome.errors.is_empty(),
+            "le document au glossaire compile : {:?}",
+            outcome.errors
+        );
+    }
+
+    /// Un terme inconnu se neutralise en `[clé]` — le document compile
+    /// toujours, et le manque se dit.
+    #[test]
+    fn un_terme_inconnu_ne_casse_jamais_le_document() {
+        let paquets = paquets_de_test();
+        let _ = &paquets;
+        let root = racine("inconnu");
+        std::fs::write(
+            root.join(crate::project::glossaire::FICHIER),
+            "[[entrees]]\nkey = \"vivant\"\n",
+        )
+        .expect("glossaire");
+        std::fs::write(
+            root.join("mise-en-page.typ"),
+            crate::mise_en_page::gabarit::generer(
+                &crate::mise_en_page::modele::MiseEnPage::default(),
+            ),
+        )
+        .expect("gabarit");
+
+        let (entry, corrections, rapports) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n",
+            "Le {glo:inconnu} et le {glo:vivant} aussi.\n",
+        );
+
+        let genere = le_genere(&corrections);
+        assert!(genere.contains("[inconnu]"), "neutralisé : {genere}");
+        assert!(!genere.contains("#gls(\"inconnu\")"), "{genere}");
+        assert!(
+            genere.contains("#gls(\"vivant\", link: false)"),
+            "le vivant reste, sans lien faute de liste : {genere}"
+        );
+        assert!(
+            rapports.iter().any(|d| d.message.contains("inconnu")),
+            "le manque se dit : {rapports:?}"
+        );
+
+        for (chemin, contenu) in &corrections {
+            std::fs::write(chemin, contenu).expect("fichier assemblé");
+        }
+        let outcome = crate::typst::render::compile(&root, &entry, &[]);
+        assert!(
+            outcome.errors.is_empty(),
+            "le neutralisé compile aussi : {:?}",
+            outcome.errors
+        );
+    }
+
+    /// Le rendu **réel** : le CLI Typst compose le glossaire, pdftotext
+    /// lit ce qui s'est écrit. La sonde d'abord — les assertions sont
+    /// façonnées sur l'observé.
+    #[test]
+    fn le_glossaire_se_rend_pour_de_vrai() {
+        for binaire in ["typst", "pdftotext"] {
+            if std::process::Command::new(binaire)
+                .arg("--version")
+                .output()
+                .is_err()
+            {
+                println!("{binaire} n'est pas installé : test sauté");
+                return;
+            }
+        }
+
+        let paquets = paquets_de_test();
+        let root = racine("rendu");
+        std::fs::write(root.join(crate::project::glossaire::FICHIER), GLOSSAIRE)
+            .expect("glossaire");
+        std::fs::write(
+            root.join("mise-en-page.typ"),
+            crate::mise_en_page::gabarit::generer(
+                &crate::mise_en_page::modele::MiseEnPage::default(),
+            ),
+        )
+        .expect("gabarit");
+
+        let (entry, corrections, _) = super::compilation_unit_avec_diagnostics(
+            &root,
+            "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n",
+            "Le {glo:sdo} d'abord, les {glo:sdo pluriel} ensuite.\n\n{glossaire: tout}\n",
+        );
+        for (chemin, contenu) in &corrections {
+            std::fs::write(chemin, contenu).expect("fichier assemblé");
+        }
+        std::fs::write(root.join("main.typ"), &entry).expect("entrée");
+
+        // Le CLI voit les paquets sous XDG_DATA_HOME/typst/packages.
+        let data = root.join("data");
+        crate::typst::paquets::installer_dans(
+            &data.join("typst/packages"),
+            crate::typst::paquets::GLOSSARIUM,
+            crate::typst::paquets::GLOSSARIUM_FICHIERS,
+        )
+        .expect("installation pour le CLI");
+        assert!(paquets.join("local").exists(), "l'app a posé le sien");
+
+        let sortie = std::process::Command::new("typst")
+            .args(["compile", "main.typ", "sortie.pdf"])
+            .current_dir(&root)
+            .env("XDG_DATA_HOME", &data)
+            .output()
+            .expect("typst s'exécute");
+        assert!(
+            sortie.status.success(),
+            "le CLI compose : {}",
+            String::from_utf8_lossy(&sortie.stderr)
+        );
+
+        let texte = std::process::Command::new("pdftotext")
+            .arg(root.join("sortie.pdf"))
+            .arg("-")
+            .output()
+            .expect("pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&texte.stdout).to_string();
+
+        // Façonné sur le rendu réel (sonde retirée) : la première
+        // occurrence développe la forme longue, la reprise garde le
+        // sigle, la liste nomme le terme.
+        assert!(
+            texte.contains("docteur scolastique (sdo)"),
+            "la première occurrence se développe : {texte}"
+        );
+        assert!(
+            texte.contains("les sdo ensuite"),
+            "le pluriel se rend : {texte}"
+        );
+        assert!(
+            texte.contains("sdo – docteur scolastique"),
+            "la liste nomme le terme : {texte}"
+        );
+        assert!(
+            texte.contains("Un théologien du Moyen Âge."),
+            "la description se lit : {texte}"
+        );
+    }
+}
+
+/// **Bug-report-9, T1.2 et T1.4** : toutes les propriétés configurées
+/// dans les normes correspondent au rendu final — éprouvé au vrai moteur,
+/// sur toute la chaîne : appliquer → assembler → composer. L'assemblage
+/// porte même un `#set text` hostile, comme les projets réels : les
+/// normes doivent l'emporter.
+#[cfg(test)]
+mod les_normes_se_rendent_au_moteur {
+    use std::path::{Path, PathBuf};
+
+    fn racine(nom: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-normes-rendues-{nom}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du test");
+        root
+    }
+
+    /// Une trame de texte, telle que le rendu la dessine.
+    #[derive(Debug)]
+    struct Trame {
+        texte: String,
+        gras: bool,
+        italique: bool,
+        remplissage: String,
+        police: String,
+        traits: usize,
+    }
+
+    fn sonder(frame: &typst::layout::Frame, sortie: &mut Vec<Trame>) {
+        for (_, item) in frame.items() {
+            match item {
+                typst::layout::FrameItem::Text(texte) => {
+                    let variante = texte.font.font().info().variant;
+                    sortie.push(Trame {
+                        texte: texte.text.to_string(),
+                        gras: variante.weight >= typst::text::FontWeight::BOLD,
+                        italique: variante.style != typst::text::FontStyle::Normal,
+                        remplissage: format!("{:?}", texte.fill),
+                        police: texte.font.font().info().family.clone(),
+                        traits: 0,
+                    });
+                }
+                typst::layout::FrameItem::Group(groupe) => sonder(&groupe.frame, sortie),
+                typst::layout::FrameItem::Shape(forme, _) => {
+                    if let Some(trame) = sortie.last_mut()
+                        && matches!(forme.geometry, typst::visualize::Geometry::Line(_))
+                    {
+                        trame.traits += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// La chaîne réelle : la norme s'applique au projet, le projet
+    /// s'assemble avec le gabarit d'origine, et le moteur compose.
+    fn rendu(root: &Path, source: &str) -> Vec<Trame> {
+        // Le vrai assemblage : l'accroche devant le gabarit d'origine —
+        // avec son `#set text` hostile, comme le projet réel.
+        let main = format!(
+            "{}\n{}",
+            crate::mise_en_page::gabarit::accroche(),
+            crate::project::model::MAIN_TEMPLATE
+        );
+        let (entry, corrections, _) = super::compilation_unit_avec_diagnostics(root, &main, source);
+        for (chemin, contenu) in &corrections {
+            std::fs::write(chemin, contenu).expect("fichier assemblé");
+        }
+
+        let outcome = crate::typst::render::compile(root, &entry, &[]);
+        assert!(
+            outcome.errors.is_empty(),
+            "ça compile : {:?}",
+            outcome.errors
+        );
+
+        let mut trames = Vec::new();
+        for page in outcome.document.expect("document").pages() {
+            sonder(&page.frame, &mut trames);
+        }
+        trames
+    }
+
+    fn trame<'a>(trames: &'a [Trame], texte: &str) -> &'a Trame {
+        trames
+            .iter()
+            .find(|trame| trame.texte == texte)
+            .unwrap_or_else(|| panic!("la trame {texte:?} est là"))
+    }
+
+    /// T1.2 : les styles de titres partent au moteur — gras y compris
+    /// dans sa désactivation, que le gras par défaut des titres ne
+    /// devrait pas survivre.
+    #[test]
+    fn les_styles_de_titres_se_rendent_au_moteur() {
+        let root = racine("styles");
+
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.titres.gras_1 = Some(false); // le gras désactivé s'enlève
+        normes.titres.taille_2 = "18pt".to_string();
+        normes.titres.gras_2 = Some(true);
+        normes.titres.italique_2 = Some(true);
+        normes.titres.souligne_2 = Some(true);
+        normes.titres.couleur_2 = Some("#cc0000".to_string());
+        normes.titres.casse_2 = Some("majuscules".to_string());
+
+        crate::mise_en_page::appliquer(&root, &normes, false).expect("application");
+        let trames = rendu(
+            &root,
+            "# Un titre\n\n## Un sous-titre\n\nDu texte courant.\n",
+        );
+
+        // Le niveau 1 : le gras désactivé s'enlève.
+        let titre = trame(&trames, "Un titre");
+        assert!(!titre.gras, "le gras désactivé s'enlève : {titre:?}");
+        assert!(!titre.italique, "le niveau 1 reste nu : {titre:?}");
+
+        // Le niveau 2 : gras, italique, couleur, soulignement, casse.
+        let sous = trame(&trames, "UN SOUS-TITRE");
+        assert!(sous.gras, "le gras s'applique : {sous:?}");
+        assert!(sous.italique, "l'italique s'applique : {sous:?}");
+        assert!(
+            sous.remplissage.contains("0.8, 0, 0"),
+            "la couleur s'applique : {sous:?}"
+        );
+        assert!(sous.traits >= 1, "le soulignement s'applique : {sous:?}");
+    }
+
+    /// T1.4 : la police des normes l'emporte sur le `#set text` de
+    /// l'assemblage — quand le système en donne une, sinon la
+    /// vérification n'a pas de repère.
+    #[test]
+    fn la_police_des_normes_l_emporte_sur_l_assemblage() {
+        let polices = crate::typst::fonts::familles_pour_choisir();
+        let Some(police) = polices.first().cloned() else {
+            println!("pas de police système : test sauté");
+            return;
+        };
+
+        let root = racine("police");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.texte.police = police.clone();
+        crate::mise_en_page::appliquer(&root, &normes, false).expect("application");
+
+        let trames = rendu(&root, "# Un titre\n\nDu texte courant.\n");
+        let corps = trames
+            .iter()
+            .find(|trame| trame.texte.starts_with("Du texte"))
+            .expect("le corps est là");
+        assert_eq!(
+            corps.police, police,
+            "la police des normes l'emporte sur l'assemblage : {corps:?}"
+        );
+    }
+
+    /// Les couleurs de gras, italique et liens arrivent au moteur.
+    #[test]
+    fn les_couleurs_de_style_se_rendent_au_moteur() {
+        let root = racine("couleurs-style");
+
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.couleurs.gras = "#cc0000".to_string();
+        normes.couleurs.italique = "#00cc00".to_string();
+        normes.couleurs.liens = "#0000cc".to_string();
+
+        crate::mise_en_page::appliquer(&root, &normes, false).expect("application");
+        // La langue du document : `**gras**`, `*italique*`, `[texte](cible)`.
+        let trames = rendu(
+            &root,
+            "Du texte **gras**, un *italique* et un [lien](https://example.org).\n",
+        );
+
+        // Observé avant le correctif : Rgb(0, 0, 0, 1) partout — le noir
+        // du texte, les couleurs de style écrasées par `fn texte`.
+        assert_eq!(
+            trame(&trames, "gras").remplissage,
+            "Rgb(0.8, 0, 0, 1)",
+            "le gras porte sa couleur : {:?}",
+            trame(&trames, "gras")
+        );
+        assert_eq!(
+            trame(&trames, "italique").remplissage,
+            "Rgb(0, 0.8, 0, 1)",
+            "l'italique porte sa couleur : {:?}",
+            trame(&trames, "italique")
+        );
+        assert_eq!(
+            trame(&trames, "lien").remplissage,
+            "Rgb(0, 0, 0.8, 1)",
+            "le lien porte sa couleur : {:?}",
+            trame(&trames, "lien")
+        );
+    }
+
+    /// Deux bibliothèques qui partagent une clé ne cassent plus la
+    /// compilation — la première garde son entrée (bug-report-10, 6.1).
+    #[test]
+    fn les_cles_dupliquees_ne_cassent_plus_le_rendu() {
+        let quand = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("cles-dupliquees-{quand}"));
+        std::fs::create_dir_all(root.join("chapitres")).unwrap();
+        std::fs::write(root.join("chapitres/01-chapitre.typ"), "// genere").unwrap();
+        std::fs::write(root.join("locale.bib"), "@book{dup, title = {Local}}").unwrap();
+        std::fs::write(root.join("zotero.bib"), "@book{dup, title = {Export}}").unwrap();
+        let entry = root.join("main.typ");
+        let saut = &char::from(10).to_string();
+        let source = [
+            r#"#include "chapitres/01-chapitre.typ""#,
+            r#"#bibliography(("locale.bib", "zotero.bib"))"#,
+            "",
+        ]
+        .join(saut);
+        std::fs::write(&entry, &source).unwrap();
+
+        let doc = crate::langage::parse::parse("Selon @dup.");
+        let (entry, corrections, _) =
+            super::compilation_unit_document_avec_diagnostics(&root, &source, &doc);
+
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "la clé dupliquée casserait le rendu : {:?}",
+            outcome.errors
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

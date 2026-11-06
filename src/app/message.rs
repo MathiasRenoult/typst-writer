@@ -135,11 +135,15 @@ pub enum Message {
 
     /// Destination choisie et PDF compilé, avant écriture.
     PdfDestination(Result<(PathBuf, Vec<u8>), String>),
+    PdfApercu(Result<Vec<u8>, String>),
 
     /// Résultat de l'export PDF : chemin du fichier ou message d'erreur.
     PdfExported(Result<String, String>),
 
     /// Tic de compilation périodique (relance si le document a changé).
+    /// Une fenêtre de rendu doit montrer son document : compiler si elle
+    /// ne l'a pas encore, fabriquer son lecteur ensuite.
+    RenduInitialiser,
     RenderTick,
 
     /// Résultat de la compilation (document et diagnostics).
@@ -150,7 +154,7 @@ pub enum Message {
     /// Porte le numéro de révision du document pour lequel le rendu a été
     /// demandé : si une compilation est arrivée entre-temps, l'image est
     /// écartée au lieu de remplacer une image plus récente.
-    PageRendered(u64, usize, Option<PageImage>),
+    PageRendered(u64, usize, Option<PageImage>, (f32, f32, f32, f32)),
 
     /// Le viewport de l'aperçu a changé : première page visible, dernière, et
     /// la place que le panneau laisse à une page.
@@ -158,7 +162,7 @@ pub enum Message {
     /// Les bornes viennent de la vue — seule à mesurer la place disponible — et
     /// ne changent qu'au redimensionnement : un défilement les retransmet
     /// identiques, et c'est cette égalité qui permet de ne rien refaire.
-    ViewportChanged(usize, usize, iced::Size),
+    ViewportChanged(usize, usize, iced::Rectangle, Option<(f32, f32)>),
 
     /// Ajuste l'aperçu à la largeur ou à la hauteur, ou choisit un zoom libre.
     PreviewZoom(crate::app::state::PreviewZoomMode),
@@ -233,6 +237,7 @@ pub enum Message {
 
     NormesNom(String),
     NormesAppliquer(String),
+    NormesEcraser,
     NormesEnregistrer(String),
     NormesSupprimer(String),
 
@@ -243,7 +248,32 @@ pub enum Message {
     TableauAnnuler,
 
     ReferencesReplier,
+    /// Replier une entrée de bibliographie (bug-report-10, 2.2).
     ReferencesFiltrer(String),
+
+    /// Le glossaire du projet (panneau gauche).
+    GlossaireReplier,
+    GlossaireRechercheBascule,
+    GlossaireFiltrer(String),
+    /// Insère la référence au terme au curseur — `{glo:clé}` ou
+    /// `#gls("clé")`, selon le dialecte du tampon.
+    /// La section bibliographie, insérée au curseur (bug-report-9).
+    BibliographieSectionInserer,
+    /// La section glossaire, insérée au curseur (bug-report-9).
+    /// La table des matières, insérée au curseur (bug-report-10, 1.3).
+    SommaireInserer,
+    GlossaireSectionInserer,
+    GlossaireInserer(String),
+    /// La fenêtre du glossaire : la liste, ses gestes (bug-report-10, 5.3).
+    GlossaireFenetreOuvrir,
+    GlossaireFenetreFermer,
+    GlossaireCreer,
+    GlossaireModifier(String),
+    GlossaireSupprimer(String),
+    SurvolGlossaire(Option<String>),
+    EditionGlossaireChamp(String, String),
+    EditionGlossaireEnregistrer,
+    EditionGlossaireFermer,
 
     ImageInserer,
     ImageChoisie(Option<std::path::PathBuf>),
@@ -293,6 +323,50 @@ pub enum Message {
     ZoteroRecherche(String),
 
     ProjetsVue,
+    /// Une entrée de sommaire est survolée (ou quittée).
+    SommaireSurvol(Option<usize>),
+    /// La recherche des références se montre ou se cache.
+    ReferencesRechercheBascule,
+    /// La recherche des projets se montre ou se cache.
+    ProjetsRechercheBascule,
+    /// L'étagère choisie à la liste des projets.
+    ProjetsEtageChoisie(String),
+    /// La liste des projets bascule : étagère courante, ou tous.
+    ProjetsFiltreBascule,
+    /// La recherche dans la liste des projets.
+    ProjetsRecherche(String),
+    /// Une métadonnée choisie à la création : champ, valeur.
+    ProjetMeta(String, String),
+    /// Une métadonnée du document change : ancienne clé, nouvelle clé,
+    /// valeur — la clé s'édite comme le reste.
+    MetaChamp(String, String, String),
+    /// Une ligne de métadonnée s'ajoute.
+    MetaAjouter,
+    /// Une ligne de métadonnée se retire, par sa clé.
+    MetaSupprimer(String),
+    /// Les profils de métadonnées (bug-report-10, 4.1–4.3).
+    MetaProfilNom(String),
+    MetaProfilActiver(String),
+    MetaProfilEnregistrer(String),
+    MetaProfilSupprimer(String),
+    /// Les balises `{clé}` du texte remplacées par leurs valeurs (4.4).
+    MetaRemplacer,
+    /// Le composeur d'extension s'ouvre (bug-report-7, point 4).
+    ExtensionOuvrir,
+    /// L'extension choisie, par son rang au registre.
+    ExtensionChoisir(usize),
+    /// Un paramètre d'extension change.
+    ExtensionParam(String, String),
+    /// Le code de l'extension se pose dans le document.
+    ExtensionInserer,
+    /// Le composeur se ferme, rien n'est posé.
+    ExtensionAnnuler,
+    /// Le texte de la note en cours d'écriture dans son panneau.
+    NoteTexte(String),
+    /// La note s'écrit dans la ligne, la marque seule.
+    NoteValider,
+    /// La note est abandonnée — rien n'est écrit.
+    NoteAnnuler,
     ModeBasculer,
     ModeTypst,
     VignettesFaites(Vec<(String, Vec<u8>, u32, u32)>),
@@ -308,11 +382,6 @@ pub enum Message {
     ThemeEditeurChoisir(String),
     ThemeEditeurChamp(&'static str, String),
     ThemeEditeurColorPicker(&'static str),
-    ColorPickerFermer,
-    ColorPickerValider,
-    ColorPickerR(u8),
-    ColorPickerG(u8),
-    ColorPickerB(u8),
     ThemeEditeurEnregistrer,
     ThemeEditeurReset,
     ThemeEditeurFermer,
@@ -322,6 +391,40 @@ pub enum Message {
     ProjetNorme(String),
     ProjetDepuisEtagere(String),
     ProjetCreer,
+
+    /// Exporte le projet en un seul `.tw` transportable.
+    ProjetExportTw,
+    /// Le `.tw` unique est écrit — ou pas.
+    ProjetTwExporte(Result<String, String>),
+    /// Importe un `.tw` unique en projet reconstruit.
+    ProjetImportTw,
+    /// Le projet est reconstruit — ou pas.
+    ProjetTwImporte(Result<String, String>),
+    /// Exporte le projet en archive portable.
+    ProjetExportPortable,
+    /// Résultat de l'export portable : ce qui voyage, ou pourquoi pas.
+    ProjetPortableExporte(Result<String, String>),
+    /// Ouvre le sélecteur d'une sauvegarde à importer.
+    ProjetImportSauvegarde,
+    /// L'archive choisie pour l'import, `None` si le geste est annulé.
+    ProjetImportChoisi(Option<std::path::PathBuf>),
+    /// L'import a reçu son mot : les collisions partent à la corbeille.
+    ProjetImportConfirmer(std::path::PathBuf, std::path::PathBuf),
+
+    /// Exporte le document courant en Markdown.
+    ExportMarkdown,
+    /// La destination choisie pour le Markdown, `None` si annulé.
+    ExportMarkdownChoisi(Option<std::path::PathBuf>),
+    /// Ouvre le dossier des données de l'application.
+    OuvrirDossierDonnees,
+    /// Ouvre la corbeille — ce qui a été retiré s'y retrouve.
+    OuvrirCorbeille,
+    /// Ouvre les sauvegardes du projet — les versions antérieures.
+    OuvrirSauvegardes,
+    /// Exporte le document courant en DOCX (LibreOffice, notes en texte).
+    ExportDocx,
+    /// La destination choisie pour le DOCX, `None` si annulé.
+    ExportDocxChoisi(Option<std::path::PathBuf>),
     ProjetRenommer(std::path::PathBuf),
     ProjetValider,
     ProjetAnnuler,
@@ -345,6 +448,30 @@ pub enum Message {
 
     AideBasculer,
 
+    /// Le sélecteur de couleur s'ouvre sur la couleur courante.
+    PickerCouleurOuvrir,
+    /// Le sélecteur se ferme sans rien appliquer.
+    PickerCouleurFermer,
+    /// La roue a donné une teinte, en degrés.
+    PickerCouleurTeinte(f32),
+    /// Le carré a donné saturation et valeur.
+    PickerCouleurSatVal(f32, f32),
+    /// La couleur choisie s'applique à sa cible (texte ou thème).
+    /// Demande une image pour un lieu d'en-tête ou de pied de page.
+    EntetePiedImage(crate::mise_en_page::modele::Champ),
+    /// Une image choisie : elle se pose dans le champ visé.
+    EntetePiedImageChoisie(crate::mise_en_page::modele::Champ, String),
+    /// Ouvre la roue pour une couleur des normes : la vignette cliquée.
+    PickerCouleurPourReglage(crate::mise_en_page::modele::Champ),
+    /// Le choix : la couleur devient la dernière enregistrée — rien
+    /// n'est inséré tant qu'on ne l'applique pas (bug-report-10, 5.4).
+    PickerCouleurEnregistrer,
+    PickerCouleurAppliquer,
+    /// Le code hex est saisi au clavier — il pilote la roue.
+    PickerCouleurHex(String),
+    /// Une couleur rapide s'applique tout de suite, la roue reste ouverte.
+    PickerCouleurRapide(String),
+
     RechercheFermer,
 
     RechercheMotif(String),
@@ -361,6 +488,13 @@ pub enum Message {
     RechercheRemplacerTout,
 
     BlocMonter,
+    /// Les gestes d'un élément de liste (bug-report-10, 3.2, 3.3, 3.6).
+    ListeIndenter,
+    ListeDesindenter,
+    ListeMonter,
+    ListeDescendre,
+    /// `Entrée` crée l'élément suivant (bug-report-10, 3.4).
+    ListeEnchainer,
 
     BlocDescendre,
 

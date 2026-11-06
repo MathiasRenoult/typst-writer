@@ -115,10 +115,19 @@ pub fn apercu_du_style(projet: &std::path::Path, style: &str) -> Option<String> 
     let entree = format!(
         "#set page(paper: \"a6\", margin: 8pt)\n\
          #bibliography(\"references.bib\", style: \"{style}\")\n\n\
-         Selon @dupont2023[p. 45], la thèse est posée. Voir aussi @martin2020.\n"
+         Selon @dupont2023[p. 45], la thèse est posée. Voir aussi @martin2020, \
+         et @lecointe2021.\n"
     );
-    let notices = "@book{dupont2023, title = {La théologie du lien}, author = {Dupont, Jean}, year = {2023}}\n\
-                   @article{martin2020, title = {L'écriture}, author = {Martin, Marie}, year = {2020}, journal = {Revue des sciences}}\n";
+    // L'échantillon exerce ce que la fidélité veut voir (bug-report-8,
+    // T7.1) : plusieurs auteurs (ordre et « et al. »), un sous-titre, des
+    // dates complètes, des entrées pour les séparateurs.
+    let notices = "@book{dupont2023, title = {La théologie du lien}, \
+                   author = {Dupont, Jean and Martin, Marie and Lecointe, Paul}, \
+                   year = {2023}, month = {7}}\n\
+                   @article{martin2020, title = {L'écriture: geste et sens}, \
+                   author = {Martin, Marie}, year = {2020}, journal = {Revue des sciences}}\n\
+                   @book{lecointe2021, title = {Le lien}, subtitle = {Essai}, \
+                   author = {Lecointe, Paul}, year = {2021}, month = {3}}\n";
 
     // Le jeu est self-contained : sa bibliographie remplace le fichier du
     // projet par un jeu de rôle, sans jamais y toucher.
@@ -137,10 +146,31 @@ pub fn apercu_du_style(projet: &std::path::Path, style: &str) -> Option<String> 
 }
 
 /// Le texte visible d'un cadre, ses groupes dépliés.
-fn extraire_texte(frame: &typst::layout::Frame, sortie: &mut String) {
+/// Le texte d'un cadre, **ses styles compris** : le gras et l'italique
+/// se marquent — sans quoi l'aperçu d'un style CSL cacherait exactement
+/// ce que la fidélité veut voir (bug-report-8, T7.1).
+pub(crate) fn extraire_texte(frame: &typst::layout::Frame, sortie: &mut String) {
     for (_, item) in frame.items() {
         match item {
-            typst::layout::FrameItem::Text(text) => sortie.push_str(&text.text),
+            typst::layout::FrameItem::Text(text) => {
+                let variante = text.font.font().info().variant;
+                let italique = variante.style != typst::text::FontStyle::Normal;
+                let gras = variante.weight >= typst::text::FontWeight::BOLD;
+
+                if gras {
+                    sortie.push('*');
+                }
+                if italique {
+                    sortie.push('_');
+                }
+                sortie.push_str(&text.text);
+                if italique {
+                    sortie.push('_');
+                }
+                if gras {
+                    sortie.push('*');
+                }
+            }
             typst::layout::FrameItem::Group(groupe) => extraire_texte(&groupe.frame, sortie),
             _ => {}
         }
@@ -226,6 +256,35 @@ mod tests {
 
         // Un style refusé par le moteur : pas d'aperçu qui ment.
         assert_eq!(apercu_du_style(&root, "un-style-qui-nexiste-pas"), None);
+    }
+
+    /// L'aperçu montre les **styles** du rendu — le gras et l'italique
+    /// s'y lisent, comme dans le document (bug-report-8, T7.1).
+    #[test]
+    fn l_apercu_montre_le_gras_et_l_italique() {
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-apercu-styles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+
+        let entree = "#set page(paper: \"a6\", margin: 8pt)\n*gras* _italique_ ordinaire\n";
+        let outcome = crate::typst::render::compile(&root, entree, &[]);
+        let document = outcome.document.as_deref().expect("le document se compose");
+
+        let mut texte = String::new();
+        for page in document.pages() {
+            extraire_texte(&page.frame, &mut texte);
+        }
+
+        assert!(texte.contains("*gras*"), "le gras se marque : {texte}");
+        assert!(
+            texte.contains("_italique_"),
+            "l'italique se marque : {texte}"
+        );
+        assert!(
+            texte.contains("ordinaire"),
+            "le texte ordinaire passe : {texte}"
+        );
     }
 
     /// La vitrine ne diverge jamais du moteur embarqué (R4).

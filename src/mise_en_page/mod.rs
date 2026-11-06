@@ -112,9 +112,9 @@ pub fn apercu_titres(
         gabarit::generer(mise_en_page),
     )];
 
-    let compilation = crate::typst::render::compile(projet, &source, &overrides);
-    let document = compilation.document?;
-    crate::typst::render::render_page(&document, 0, 1.0)
+    let octets = crate::typst::render::render_pdf(projet, &source, &overrides)?;
+    let pdf = crate::typst::render::ouvrir_pdf(octets)?;
+    crate::typst::render::render_page(&pdf, 0, 1.0)
 }
 
 /// `main.typ` porte-t-il déjà des règles `#set` écrites à la main ?

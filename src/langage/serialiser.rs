@@ -50,15 +50,17 @@ pub fn serialiser(document: &Document) -> String {
             }
             Bloc::ListePuce(items) => {
                 for item in items {
+                    out.push_str(&"  ".repeat(item.niveau));
                     out.push_str("- ");
-                    ecrire_inline(item, &mut out);
+                    ecrire_inline(&item.contenu, &mut out);
                     out.push('\n');
                 }
             }
             Bloc::ListeNumero(items) => {
                 for (numero, item) in items.iter().enumerate() {
+                    out.push_str(&"  ".repeat(item.niveau));
                     out.push_str(&format!("{}. ", numero + 1));
-                    ecrire_inline(item, &mut out);
+                    ecrire_inline(&item.contenu, &mut out);
                     out.push('\n');
                 }
             }
@@ -147,6 +149,19 @@ pub fn serialiser(document: &Document) -> String {
                     out.push_str(&format!("{label} | {valeur}\n"));
                 }
                 out.push('\n');
+            }
+            Bloc::Glossaire { tout } => {
+                out.push_str("{glossaire");
+                if *tout {
+                    out.push_str(": tout");
+                }
+                out.push_str("}\n");
+            }
+            Bloc::Bibliographie => {
+                out.push_str("{bibliographie}\n");
+            }
+            Bloc::Sommaire => {
+                out.push_str("[[TOC]]\n");
             }
         }
     }
@@ -313,6 +328,26 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 ecrire_inline(contenu, out);
                 out.push('}');
             }
+            Inline::Date(spec) => {
+                out.push_str("{date:");
+                out.push_str(spec);
+                out.push('}');
+            }
+            Inline::Glo {
+                cle,
+                majuscule,
+                pluriel,
+            } => {
+                out.push_str("{glo:");
+                out.push_str(cle);
+                if *majuscule {
+                    out.push_str(" majuscule");
+                }
+                if *pluriel {
+                    out.push_str(" pluriel");
+                }
+                out.push('}');
+            }
             Inline::Citation(references) => {
                 out.push_str(&texte_appel(references));
             }
@@ -391,6 +426,7 @@ pub fn texte_appel(references: &[Reference]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::langage::schema::ElementListe;
     // ---- L'extension : blocs et propriétés ------------------------
 
     /// Un attribut habille le bloc qui suit — et le round-trip est exact.
@@ -1178,12 +1214,18 @@ mod tests {
             2 => Bloc::Citation(inlines_au_hasard(hasard, false)),
             3 => Bloc::ListePuce(
                 (0..1 + hasard.entier(3))
-                    .map(|_| inlines_au_hasard(hasard, false))
+                    .map(|_| ElementListe {
+                        niveau: 0,
+                        contenu: inlines_au_hasard(hasard, false),
+                    })
                     .collect(),
             ),
             4 => Bloc::ListeNumero(
                 (0..1 + hasard.entier(3))
-                    .map(|_| inlines_au_hasard(hasard, false))
+                    .map(|_| ElementListe {
+                        niveau: 0,
+                        contenu: inlines_au_hasard(hasard, false),
+                    })
                     .collect(),
             ),
             5 => Bloc::Brut(
@@ -1281,5 +1323,59 @@ mod tests {
                 "rouvrir puis réécrire reformate sans fin :\n{second}\n→\n{troisieme}"
             );
         }
+    }
+}
+
+/// Les balises du glossaire : le round-trip exact, et la grammaire.
+#[cfg(test)]
+mod tests_glossaire {
+    use super::super::parse::parse;
+    use super::super::schema::{Bloc, Inline};
+    use super::serialiser;
+
+    /// Toutes les formes vont et viennent sans perte — l'invariant du
+    /// schéma, `{glo:}` compris.
+    #[test]
+    fn les_balises_du_glossaire_vont_et_viennent() {
+        let source = "Les {glo:sdo} et {glo:sdo pluriel}, {glo:sdo majuscule} puis {glo:sdo majuscule pluriel}.\n\n{glossaire}\n\n{glossaire: tout}\n";
+        let document = parse(source);
+        assert_eq!(serialiser(&document), source, "le round-trip est exact");
+    }
+
+    /// Une clé qui n'est pas un identifiant n'est pas un terme : la
+    /// balise reste du voisinage de la couleur, comme avant.
+    #[test]
+    fn une_cle_qui_n_est_pas_un_identifiant_n_est_pas_un_terme() {
+        let document = parse("Le {glo:deux mots} ici.\n");
+        let typs = format!("{:?}", document);
+        assert!(!typs.contains("Glo"), "{typs}");
+    }
+
+    /// Les mots-clés se lisent pour ce qu'ils sont.
+    #[test]
+    fn les_mots_cles_se_lisent() {
+        let document = parse("{glo:sdo majuscule pluriel}\n");
+        let (cle, majuscule, pluriel) = match &document.blocs[0] {
+            Bloc::Paragraphe(contenu) => match &contenu[0] {
+                Inline::Glo {
+                    cle,
+                    majuscule,
+                    pluriel,
+                } => (cle.clone(), *majuscule, *pluriel),
+                autre => panic!("pas un terme : {autre:?}"),
+            },
+            autre => panic!("pas un paragraphe : {autre:?}"),
+        };
+        assert_eq!(cle, "sdo");
+        assert!(majuscule);
+        assert!(pluriel);
+
+        // Le bloc de liste, lui, connaît sa variante.
+        let document = parse("{glossaire: tout}\n");
+        assert!(
+            matches!(document.blocs[0], Bloc::Glossaire { tout: true }),
+            "{:?}",
+            document.blocs
+        );
     }
 }

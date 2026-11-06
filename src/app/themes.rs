@@ -194,7 +194,7 @@ pub(super) fn retheme(state: &mut State) {
 /// L'appelant dit le chemin de toute façon, ce qui reste une issue.
 #[cfg(target_os = "linux")]
 fn open_folder(dir: &std::path::Path) {
-    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    crate::project::ouvrir_chemin(dir);
 }
 
 #[cfg(not(target_os = "linux"))]

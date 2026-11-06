@@ -358,8 +358,75 @@ pub(super) fn create_avec_verrou(name: &str) -> std::io::Result<(PathBuf, super:
 }
 
 /// Crée un projet selon l'un des modèles de R5, en un geste.
+/// Le document du modèle classique : le vide accueillant.
+pub const DOCUMENT_CLASSIQUE: &str = "";
+
+/// Le devoir court : sa structure, dans l'éditeur — titre et page de
+/// titre naissent des métadonnées et des normes, pas de Typst caché.
+pub const DOCUMENT_DEVOIR_COURT: &str = r#"= Introduction
+
+Le sujet, en quelques lignes.
+
+= Développement
+
+Le corps du devoir.
+
+= Conclusion
+
+Ce qui en reste.
+
+= Bibliographie
+
+La liste se compose elle-même, d'après vos citations.
+"#;
+
+/// Le travail long : les mêmes bases, pour un document qui grandit.
+pub const DOCUMENT_TRAVAIL_LONG: &str = r#"= Introduction
+
+L'entrée dans le sujet.
+
+= État de la question
+
+Où en est la recherche.
+
+= Développement
+
+Le corps du travail.
+
+= Conclusion
+
+La synthèse.
+
+= Bibliographie
+
+La liste se compose elle-même, d'après vos citations.
+"#;
+
 pub fn create_avec_modele(name: &str, modele: Modele) -> std::io::Result<PathBuf> {
     let (dir, verrou) = creer_avec_modele_verrou(name, modele)?;
+
+    // Le document d'écriture : ce que l'éditeur montre, tout de suite
+    // modifiable (bug-report-7, point 8). Et les normes du modèle : la
+    // page de titre est une norme, née des métadonnées.
+    std::fs::write(dir.join("document.tw"), modele.document())?;
+    let normes = crate::mise_en_page::modele::MiseEnPage {
+        page_de_titre: true,
+        sommaire: true,
+        typographie: crate::mise_en_page::modele::Typographie {
+            base: "francaise".to_string(),
+            ..Default::default()
+        },
+        titres: crate::mise_en_page::modele::Titres {
+            numerotation: "1.1".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // `appliquer` écrit les normes, le gabarit **et l'accroche** de
+    // `main.typ` — sans accroche, les normes ne s'appliquent jamais, et
+    // les renvois aux titres se cassent (bug-report-7, point 8).
+    let _ = crate::mise_en_page::appliquer(&dir, &normes, true).map_err(std::io::Error::other)?;
+
     drop(verrou);
     Ok(dir)
 }
@@ -948,6 +1015,139 @@ fn relative_to_chapters(chapter: &Path) -> PathBuf {
 }
 
 /// Trouve la bibliographie d'un projet.
+/// Branche les bibliothèques du projet dans l'appel `#bibliography` du
+/// document — et renvoie le document corrigé, ou `None` s'il est déjà
+/// branché.
+///
+/// Le lien Zotero écrit `references-zotero.bib` : tant que le document ne
+/// le cite pas, ses citations sont introuvables — et un fichier cité qui
+/// manque casse la compilation (bug-report-9).
+pub fn brancher_les_bibliographies(dir: &Path, main: &str) -> Option<String> {
+    // Les bibliothèques du projet : la locale, puis l'export Zotero.
+    let mut liste: Vec<String> = ["references.bib", "references-zotero.bib"]
+        .into_iter()
+        .filter(|nom| dir.join(nom).is_file())
+        .map(str::to_string)
+        .collect();
+
+    // Ce que le document cite déjà, vivant seulement : un fichier qui
+    // manque casse la compilation, et n'est plus rien à citer.
+    for chemin in noms_bibliographies_cites(main) {
+        if dir.join(&chemin).is_file() && !liste.contains(&chemin) {
+            liste.push(chemin);
+        }
+    }
+
+    if liste.is_empty() {
+        return None;
+    }
+
+    let argument = if liste.len() == 1 {
+        format!("\"{}\"", liste[0])
+    } else {
+        format!(
+            "({})",
+            liste
+                .iter()
+                .map(|nom| format!("\"{nom}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+
+    let Some((debut, fin)) = premier_argument_bibliographie(main) else {
+        // Aucun appel : le document reçoit le sien, à la fin.
+        let mut entry = main.to_string();
+
+        if !entry.is_empty() && !entry.ends_with("\n\n") {
+            if !entry.ends_with('\n') {
+                entry.push('\n');
+            }
+
+            entry.push('\n');
+        }
+
+        entry.push_str(&format!("#bibliography({argument})\n"));
+
+        return Some(entry);
+    };
+
+    // L'appel existe : s'il portait déjà cette liste, rien ne bouge — la
+    // comparaison se fait sur les noms, jamais sur la forme.
+    if noms_dans_le_plage(&main[debut..fin]) == liste {
+        return None;
+    }
+
+    let mut entry = String::with_capacity(main.len() + argument.len());
+    entry.push_str(&main[..debut]);
+    entry.push_str(&argument);
+    entry.push_str(&main[fin..]);
+    Some(entry)
+}
+
+/// Les fichiers `.bib` que le texte cite déjà.
+fn noms_bibliographies_cites(main: &str) -> Vec<String> {
+    premier_argument_bibliographie(main)
+        .map(|(debut, fin)| noms_dans_le_plage(&main[debut..fin]))
+        .unwrap_or_default()
+}
+
+/// Les noms de fichiers écrits dans une plage d'argument.
+fn noms_dans_le_plage(plage: &str) -> Vec<String> {
+    let mut noms = Vec::new();
+    let mut reste = plage;
+
+    while let Some(debut) = reste.find('"') {
+        let Some(fin) = reste[debut + 1..].find('"') else {
+            break;
+        };
+
+        noms.push(reste[debut + 1..debut + 1 + fin].to_string());
+        reste = &reste[debut + 1 + fin + 1..];
+    }
+
+    noms
+}
+
+/// L'appel `#bibliography(...)` du texte : la plage de son premier
+/// argument — celui qui nomme les fichiers.
+fn premier_argument_bibliographie(main: &str) -> Option<(usize, usize)> {
+    let tete = main.find("#bibliography")?;
+    let ouverture = tete + main[tete..].find('(')?;
+    let mut profondeur = 0usize;
+    let mut guillemets = false;
+    let mut echappe = false;
+
+    for (relatif, caractere) in main[ouverture + 1..].char_indices() {
+        if guillemets {
+            if echappe {
+                echappe = false;
+            } else if caractere == '\\' {
+                echappe = true;
+            } else if caractere == '"' {
+                guillemets = false;
+            }
+
+            continue;
+        }
+
+        match caractere {
+            '"' => guillemets = true,
+            '(' | '[' | '{' => profondeur += 1,
+            ')' | ']' | '}' if profondeur == 0 => {
+                return Some((ouverture + 1, ouverture + 1 + relatif));
+            }
+            ')' | ']' | '}' => profondeur -= 1,
+            ',' if profondeur == 0 => {
+                return Some((ouverture + 1, ouverture + 1 + relatif));
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 pub fn find_bibliography(dir: &Path) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
 
@@ -1072,6 +1272,17 @@ impl Modele {
         }
     }
 
+    /// Le document d'écriture du modèle : ce que l'éditeur montre, tout
+    /// de suite modifiable — jamais du Typst caché dans `main.typ`
+    /// (bug-report-7, point 8).
+    pub fn document(&self) -> &'static str {
+        match self {
+            Modele::Classique => DOCUMENT_CLASSIQUE,
+            Modele::DevoirCourt => DOCUMENT_DEVOIR_COURT,
+            Modele::TravailLong => DOCUMENT_TRAVAIL_LONG,
+        }
+    }
+
     /// Son nom, tel qu'il se dit à l'écran.
     pub fn nom(&self) -> &'static str {
         match self {
@@ -1084,87 +1295,16 @@ impl Modele {
 
 /// Le devoir court : quelques pages, mais déjà un vrai document — page de
 /// titre, sommaire, sections et bibliographie.
-pub const MAIN_DEVOIR_COURT: &str = r#"// Métadonnées : les vôtres. Aucune institution n'est imposée — les normes
-// du projet (mise-en-page.toml) s'appliquent par-dessus.
-#let titre = "Titre du devoir"
-#let auteur = "Prénom Nom"
-#let matiere = "Matière"
-#let date = "Date de remise"
-
-#set page(margin: 2.5cm, numbering: "1")
-#set text(font: "New Computer Modern", size: 11pt)
-
-// Page de titre
-#page(header: none, footer: none)[
-  #v(1fr)
-  #text(size: 1.5em, weight: "bold")[#titre]
-  #v(0.5cm)
-  #text(size: 1.1em)[#matiere]
-  #v(2cm)
-  #auteur
-  #linebreak()
-  #date
-  #v(1fr)
-]
-
-// Sommaire
-#outline(title: "Sommaire", depth: 2)
-
-// L'assemblage : les chapitres sont inclus ici, dans l'ordre.
-// Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
-
-= Introduction
-
-= Développement
-
-= Conclusion
-
-// Bibliographie
-#bibliography("references.bib", style: "chicago-notes", title: "Bibliographie")
+/// L'assemblage : le document d'écriture, composé avec les normes du
+/// projet (mise-en-page.toml). Rien de ce qui se lit n'est écrit ici.
+pub const MAIN_DEVOIR_COURT: &str = r#"#bibliography("references.bib", style: "chicago-notes")
 "#;
 
 /// Le travail long : les préliminaires à numérotation romaine, le corps
 /// numéroté avec son en-tête courant — résolu par le moteur, fidèlement.
-pub const MAIN_TRAVAIL_LONG: &str = r#"// Métadonnées : les vôtres. Aucune institution n'est imposée — les normes
-// du projet (mise-en-page.toml) s'appliquent par-dessus.
-#let titre = "Titre du travail"
-#let auteur = "Prénom Nom"
-#let date = "Date de remise"
-
-#set text(font: "New Computer Modern", size: 11pt)
-
-// Page de titre
-#page(margin: 2.5cm, header: none, footer: none)[
-  #v(1fr)
-  #text(size: 1.6em, weight: "bold")[#titre]
-  #v(2cm)
-  #auteur
-  #linebreak()
-  #date
-  #v(1fr)
-]
-
-// Préliminaires : sommaire à numérotation romaine.
-#set page(margin: 2.5cm, numbering: "i", header: none)
-#outline(title: "Sommaire", depth: 3)
-
-// Le corps : numérotation arabe, en-tête courant — le moteur résout titre
-// et auteur à chaque page ; jamais un champ que le moteur ne saurait lire.
-// Les chapitres sont numérotés : un renvoi de titre montre son numéro
-// (Typst refuse de référencer un titre sans numérotation).
-#set heading(numbering: "1.1")
-#counter(page).update(1)
-#set page(numbering: "1", header: context [
-  #titre #h(1fr) #auteur
-])
-
-// L'assemblage : les chapitres sont inclus ici, dans l'ordre.
-// Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
-
-= Introduction
-
-// Bibliographie
-#bibliography("references.bib", style: "chicago-notes", title: "Bibliographie")
+/// L'assemblage : le document d'écriture, composé avec les normes du
+/// projet (mise-en-page.toml). Rien de ce qui se lit n'est écrit ici.
+pub const MAIN_TRAVAIL_LONG: &str = r#"#bibliography("references.bib", style: "chicago-notes")
 "#;
 
 /// Bibliographie d'un nouveau projet.
@@ -2169,6 +2309,21 @@ mod epreuves_de_modele {
         std::fs::create_dir_all(dir.join("chapitres")).expect("dossier");
         std::fs::write(dir.join("main.typ"), modele.gabarit()).expect("assemblage");
         std::fs::write(dir.join("references.bib"), BIBLIOGRAPHY_TEMPLATE).expect("bibliographie");
+        std::fs::write(dir.join("document.tw"), modele.document()).expect("document");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            page_de_titre: true,
+            sommaire: true,
+            typographie: crate::mise_en_page::modele::Typographie {
+                base: "francaise".to_string(),
+                ..Default::default()
+            },
+            titres: crate::mise_en_page::modele::Titres {
+                numerotation: "1.1".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let _ = crate::mise_en_page::appliquer(&dir, &normes, true).expect("normes");
         dir
     }
 
@@ -2189,68 +2344,149 @@ mod epreuves_de_modele {
         }
     }
 
-    /// Le devoir court tient ses promesses dans le PDF même : page de
-    /// titre, sommaire, sections, bibliographie.
+    /// La promesse du modèle est **visible** : le contenu est dans le
+    /// document, la page de titre est dans les normes — la règle neuve de
+    /// `bug-report-7.md` (point 8). L'ancien modèle promettait dans le PDF
+    /// ce que du Typst caché fabriquait : ce n'est plus le contrat.
     #[test]
-    fn le_devoir_promet_page_de_titre_sommaire_et_bibliographie() {
+    fn le_devoir_promet_ce_que_l_editeur_montre() {
         let dir = projet(Modele::DevoirCourt, "devoir");
-        let pdf = crate::typst::render::render_pdf(&dir, Modele::DevoirCourt.gabarit(), &[])
-            .expect("PDF");
-        let fichier = dir.join("sortie.pdf");
-        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
-
-        let extrait = std::process::Command::new("pdftotext")
-            .arg(&fichier)
-            .arg("-")
-            .output();
-        let Ok(sortie) = extrait else {
-            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
-            return;
-        };
-        assert!(sortie.status.success(), "pdftotext s'exécute");
-        let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
-
-        for promesse in [
-            "titre du devoir",
-            "sommaire",
-            "introduction",
-            "bibliographie",
-        ] {
-            assert!(texte.contains(promesse), "« {promesse} » manque : {texte}");
+        let document = std::fs::read_to_string(dir.join("document.tw")).expect("document");
+        for promesse in ["Introduction", "Conclusion", "Bibliographie"] {
+            assert!(
+                document.contains(promesse),
+                "« {promesse} » manque : {document}"
+            );
         }
+        let normes = crate::mise_en_page::charger(&dir);
+        assert!(normes.page_de_titre, "la page de titre est dans les normes");
     }
 
-    /// Le travail long résout ses champs dynamiques **dans le PDF** :
-    /// l'en-tête courant porte réellement le titre et l'auteur à chaque
-    /// page du corps — c'est le moteur qui les écrit, pas une imitation.
+    /// Le travail long aussi — et son document grandit dans l'éditeur.
     #[test]
-    fn le_travail_long_resout_son_entete_courant() {
+    fn le_travail_long_promet_ce_que_l_editeur_montre() {
         let dir = projet(Modele::TravailLong, "long");
-        let pdf = crate::typst::render::render_pdf(&dir, Modele::TravailLong.gabarit(), &[])
-            .expect("PDF");
-        let fichier = dir.join("sortie.pdf");
-        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
-
-        let extrait = std::process::Command::new("pdftotext")
-            .arg(&fichier)
-            .arg("-")
-            .output();
-        let Ok(sortie) = extrait else {
-            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
-            return;
-        };
-        assert!(sortie.status.success(), "pdftotext s'exécute");
-        let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
-
-        for promesse in ["titre du travail", "sommaire", "bibliographie"] {
-            assert!(texte.contains(promesse), "« {promesse} » manque : {texte}");
+        let document = std::fs::read_to_string(dir.join("document.tw")).expect("document");
+        for promesse in ["Introduction", "Développement", "Conclusion"] {
+            assert!(
+                document.contains(promesse),
+                "« {promesse} » manque : {document}"
+            );
         }
+        let normes = crate::mise_en_page::charger(&dir);
+        assert!(normes.page_de_titre, "la page de titre est dans les normes");
+    }
+}
 
-        // Le titre apparaît sur la page de titre **et** dans l'en-tête
-        // courant d'au moins une page du corps : plus d'une fois.
+#[cfg(test)]
+mod tests_modeles_visibles {
+    use crate::project::model::Modele;
+
+    /// La demande 8 : tout ce que le modèle écrit se voit et se modifie
+    /// dans l'éditeur — le document porte le contenu, les normes portent
+    /// la page de titre, et `main.typ` n'est qu'assemblage.
+    #[test]
+    fn un_modele_ecrit_ce_que_l_editeur_montre() {
+        let racine = std::env::temp_dir().join(format!("tw-modele-{}", std::process::id()));
+        std::fs::create_dir_all(&racine).expect("dossier");
+        let _ = std::fs::remove_dir_all(racine.join("un-devoir"));
+        let dir = crate::project::model::create_avec_modele(
+            &racine.join("un-devoir").to_string_lossy(),
+            Modele::DevoirCourt,
+        )
+        .expect("modèle");
+
+        // Le document d'écriture porte le contenu : l'éditeur n'est pas vide.
+        let document = std::fs::read_to_string(dir.join("document.tw")).expect("document");
+        assert!(document.contains("= Introduction"), "le contenu se voit");
+
+        // Les normes portent la page de titre.
+        let normes = crate::mise_en_page::charger(&dir);
+        assert!(normes.page_de_titre, "la page de titre est une norme");
+
+        // Le gabarit la compose depuis les métadonnées — pas de Typst caché.
+        let gabarit = crate::mise_en_page::gabarit::generer(&normes);
         assert!(
-            texte.matches("titre du travail").count() >= 2,
-            "l'en-tête courant est résolu par le moteur : {texte}"
+            gabarit.contains("page(header: none, footer: none)"),
+            "le gabarit compose la page de titre : {gabarit}"
         );
+
+        std::fs::remove_dir_all(&racine).expect("nettoyage");
+    }
+}
+
+#[cfg(test)]
+mod tests_du_branchement {
+    use super::*;
+
+    fn racine(nom: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-branchement-{nom}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du test");
+        root
+    }
+
+    #[test]
+    fn le_lien_zotero_brance_la_bibliographie() {
+        let root = racine("zotero");
+        std::fs::write(root.join("references-zotero.bib"), "@book{dupont2023,}").expect("bib");
+
+        // Le document modèle cite la locale — qui n’existe pas.
+        let main = concat!(
+            "#include \"chapitres/tout.typ\"\n",
+            "#bibliography(\"references.bib\", style: \"chicago-notes\")\n"
+        );
+        let branche = brancher_les_bibliographies(&root, main).expect("branchement attendu");
+        assert!(
+            branche.contains("\"references-zotero.bib\""),
+            "l’export Zotero est cité : {branche}"
+        );
+        assert!(
+            !branche.contains("\"references.bib\""),
+            "le fichier manquant ne l’est plus : {branche}"
+        );
+        assert!(
+            branche.contains("chicago-notes"),
+            "le style est gardé : {branche}"
+        );
+
+        // Déjà branché : rien ne bouge — la compilation ne se réécrit pas.
+        assert!(
+            brancher_les_bibliographies(&root, &branche).is_none(),
+            "le branchement est stable"
+        );
+
+        // Les deux bibliothèques vivent ensemble.
+        std::fs::write(root.join("references.bib"), "@book{durand2020,}").expect("bib");
+        let deux = brancher_les_bibliographies(&root, &branche).expect("la locale rejoint");
+        assert!(
+            deux.contains("\"references.bib\"") && deux.contains("\"references-zotero.bib\""),
+            "les deux sont citées : {deux}"
+        );
+        assert!(
+            brancher_les_bibliographies(&root, &deux).is_none(),
+            "stable une fois pour toutes"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn sans_appel_le_document_recoit_le_sien() {
+        let root = racine("sans-appel");
+        std::fs::write(root.join("references-zotero.bib"), "").expect("bib");
+
+        let branche = brancher_les_bibliographies(&root, "Du texte.\n").expect("branchement");
+        assert!(
+            branche
+                .trim_end()
+                .ends_with("#bibliography(\"references-zotero.bib\")"),
+            "le document reçoit son appel : {branche}"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

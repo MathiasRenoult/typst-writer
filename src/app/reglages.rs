@@ -12,6 +12,21 @@ use iced::Task;
 
 /// Traite les messages de mise en page. L'appelant a déjà vérifié le motif.
 pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message>> {
+    // Toute édition des réglages met la norme en cours de modification —
+    // l'indication du panneau la suit (bug-report-9).
+    if matches!(
+        message,
+        Message::MiseEnPageChamp(..)
+            | Message::MiseEnPageMolette(..)
+            | Message::MiseEnPageBascule(_)
+            | Message::MiseEnPageTypographieDefaut(_)
+            | Message::EntetePiedImage(_)
+            | Message::EntetePiedImageChoisie(_, _)
+    ) && let Some(dialogue) = state.mise_en_page.as_mut()
+    {
+        dialogue.modifie = true;
+    }
+
     match message {
         Message::MiseEnPageOuvrir => {
             let reglages = mise_en_page::charger(&state.project.dir);
@@ -27,11 +42,17 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             let styles_zotero = crate::zotero::data_dir()
                 .map(|dir| crate::zotero::styles::installed(&dir.join("styles")))
                 .unwrap_or_default();
-            let apercu_titres = crate::mise_en_page::apercu_titres(&state.project.dir, &reglages);
+
+            // La norme que le document porte déjà : celle de la bibliothèque
+            // qui lui est exactement égale — sinon « Normes personnalisées »,
+            // et le panneau le dit (bug-report-9).
+            let norme_chargee = crate::project::norme_qui_correspond(&reglages).unwrap_or_default();
 
             state.mise_en_page = Some(DialogueMiseEnPage {
-                norme: String::new(),
-                norme_originale: String::new(),
+                metadonnees: crate::project::metadonnees::Metadonnees::charger(&state.project.dir),
+                norme: norme_chargee.clone(),
+                profil_nom: String::new(),
+                norme_originale: norme_chargee,
                 modifie: false,
                 reglages,
                 panneau: 0,
@@ -39,9 +60,13 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                 accroche_manquante,
                 regles_main: mise_en_page::regles_ecrites_a_la_main(&state.project.dir),
                 apercu_style,
-                apercu_titres,
                 styles_zotero,
             });
+
+            // Le panneau prend les mains : l'éditeur derrière ne reçoit
+            // plus rien du clavier tant que les normes sont ouvertes
+            // (bug-report-9, T1.1).
+            state.editor.editor.lose_focus();
 
             Task::none()
         }
@@ -49,10 +74,136 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageFermer => {
             state.mise_en_page = None;
 
+            // Les mains reviennent à l'écriture.
+            state.editor.editor.request_focus();
+
+            Task::none()
+        }
+
+        // Les métadonnées : une paire par ligne, écrite dès qu'elle change
+        // — des données, pas des réglages : elles ne s'annulent pas, elles
+        // ne se perdent jamais.
+        // Les profils de métadonnées (bug-report-10, 4.1–4.3).
+        Message::MetaProfilNom(nom) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.profil_nom = nom;
+            }
+
+            Task::none()
+        }
+
+        Message::MetaProfilActiver(nom) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.metadonnees.activer_profil(&nom);
+            }
+
+            Task::none()
+        }
+
+        Message::MetaProfilEnregistrer(nom) => {
+            let nom = nom.trim();
+
+            if nom.is_empty() {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Un profil a un nom.".to_string(),
+                ));
+
+                return Some(Task::none());
+            }
+
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.metadonnees.enregistrer_profil(nom);
+                state.note = Some(crate::app::state::Note::info(format!(
+                    "Le profil « {nom} » porte les valeurs courantes."
+                )));
+            }
+
+            Task::none()
+        }
+
+        Message::MetaProfilSupprimer(nom) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.metadonnees.supprimer_profil(&nom);
+            }
+
+            Task::none()
+        }
+
+        // Le remplacement des balises par leurs valeurs (4.4) — le texte
+        // du tampon courant, et rien d'autre.
+        Message::MetaRemplacer => {
+            let Some(dialogue) = state.mise_en_page.as_ref() else {
+                return Some(Task::none());
+            };
+
+            let avant = state.editor.content();
+            let rempli = crate::project::metadonnees::remplacer_les_balises(
+                &avant,
+                &dialogue.metadonnees,
+            );
+
+            if rempli == avant {
+                state.note = Some(crate::app::state::Note::info(
+                    "Aucune balise de métadonnée dans le texte.".to_string(),
+                ));
+
+                return Some(Task::none());
+            }
+
+            let tache = state
+                .editor
+                .replace_span(0, avant.len(), &rempli)
+                .map(Message::Editor);
+            state.note = Some(crate::app::state::Note::info(
+                "Les balises de métadonnées sont remplacées par leurs valeurs."
+                    .to_string(),
+            ));
+
+            tache
+        }
+
+        Message::MetaChamp(ancienne, nouvelle, valeur) => {
+            // Les clés système sont réservées (bug-report-10, 4.5) : une
+            // métadonnée ne s'appelle ni `date` ni `glo` — sa balise
+            // `{clé}` se confondrait avec une balise de la langue.
+            if crate::project::metadonnees::cle_reservee(&nouvelle) {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "« {nouvelle} » est un nom réservé par le langage —                     choisissez-en un autre."
+                )));
+
+                return Some(Task::none());
+            }
+
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.metadonnees.definir(&ancienne, nouvelle, valeur);
+                let _ = dialogue.metadonnees.sauver(&state.project.dir);
+            }
+            Task::none()
+        }
+
+        Message::MetaAjouter => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.metadonnees.ajouter();
+                let _ = dialogue.metadonnees.sauver(&state.project.dir);
+            }
+            Task::none()
+        }
+
+        Message::MetaSupprimer(cle) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.metadonnees.supprimer(&cle);
+                let _ = dialogue.metadonnees.sauver(&state.project.dir);
+            }
             Task::none()
         }
 
         Message::MiseEnPageChamp(champ, valeur) => {
+            // Une mesure : pas de négatif, et un nombre nu se lit en `em`.
+            let valeur = if crate::mise_en_page::modele::MiseEnPage::est_mesure(champ) {
+                crate::mise_en_page::modele::normaliser_mesure(&valeur)?
+            } else {
+                valeur
+            };
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 let concerne_le_style = matches!(
                     champ,
@@ -73,11 +224,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
                         .unwrap_or_else(|| "chicago-notes".to_string());
                     dialogue.apercu_style = crate::typst::styles::apercu_du_style(&dir, &style);
                 }
-
-                // Les titres suivent : leur aperçu est un vrai rendu.
-                let dir = state.project.dir.clone();
-                dialogue.apercu_titres =
-                    crate::mise_en_page::apercu_titres(&dir, &dialogue.reglages);
             }
 
             Task::none()
@@ -87,12 +233,14 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 let actuel = dialogue.reglages.valeur(champ);
                 let nouveau = incrémenter(&actuel, pas);
+                // Une mesure ne descend jamais sous zéro.
+                let nouveau = if crate::mise_en_page::modele::MiseEnPage::est_mesure(champ) {
+                    crate::mise_en_page::modele::normaliser_mesure(&nouveau)?
+                } else {
+                    nouveau
+                };
                 dialogue.reglages.modifier(champ, nouveau);
                 dialogue.modifie = true;
-
-                let dir = state.project.dir.clone();
-                dialogue.apercu_titres =
-                    crate::mise_en_page::apercu_titres(&dir, &dialogue.reglages);
             }
 
             Task::none()
@@ -101,10 +249,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageBascule(champ) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.reglages.basculer(champ);
-
-                let dir = state.project.dir.clone();
-                dialogue.apercu_titres =
-                    crate::mise_en_page::apercu_titres(&dir, &dialogue.reglages);
             }
 
             Task::none()
@@ -135,6 +279,50 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         }
 
         Message::MiseEnPageAppliquer => appliquer(state),
+
+        // L'ajout d'image : le sélecteur natif, les formats que Typst
+        // compose (bug-report-8, T4.2-T4.3).
+        Message::EntetePiedImage(champ) => Task::future(async move {
+            let Some(file) = rfd::AsyncFileDialog::new()
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "svg", "webp"])
+                .pick_file()
+                .await
+            else {
+                return Message::MiseEnPageNote("Ajout d'image annulé".to_string());
+            };
+            Message::EntetePiedImageChoisie(champ, file.path().to_string_lossy().into_owned())
+        }),
+
+        Message::EntetePiedImageChoisie(champ, chemin) => {
+            let extension = std::path::Path::new(&chemin)
+                .extension()
+                .map(|extension| extension.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let autorises = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
+            if !autorises.contains(&extension.as_str()) {
+                state.note = Some(crate::app::state::Note::info(format!(
+                    "Format d'image non pris en charge : {extension}. \
+                     Les formats composables : png, jpg, gif, svg, webp."
+                )));
+                return None;
+            }
+            if !std::path::Path::new(&chemin).is_file() {
+                state.note = Some(crate::app::state::Note::info(
+                    "Cette image est illisible.".to_string(),
+                ));
+                return None;
+            }
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                let mut valeur = dialogue.reglages.valeur(champ);
+                if !valeur.trim().is_empty() {
+                    valeur.push(' ');
+                }
+                valeur.push_str(&format!("![  ]({chemin})"));
+                dialogue.reglages.modifier(champ, valeur);
+                dialogue.modifie = true;
+            }
+            Task::none()
+        }
 
         Message::MiseEnPageImporter => Task::future(async {
             let Some(file) = rfd::AsyncFileDialog::new()
@@ -249,12 +437,14 @@ fn appliquer(state: &mut State) -> Task<Message> {
     match mise_en_page::appliquer(&state.project.dir, &reglages, accrocher) {
         Ok(mise_en_page::Applique::AccrocheAjoutee) => {
             state.mise_en_page = None;
+            state.editor.editor.request_focus();
             state.export_status =
                 Some("Mise en page appliquée — main.typ l'accueille maintenant".to_string());
         }
 
         Ok(mise_en_page::Applique::RienAjoute) => {
             state.mise_en_page = None;
+            state.editor.editor.request_focus();
             state.export_status = Some("Mise en page appliquée".to_string());
         }
 

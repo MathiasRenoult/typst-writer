@@ -46,6 +46,17 @@ parcourent la note puis les clés, `Échap` abandonne sans rien écrire.
 
 Voir [La bibliographie](bibliographie.md).
 
+## Le glossaire
+
+`{glo:cle}` appelle un terme du glossaire : la forme se développe à la
+première occurrence, les reprises gardent le sigle. Les variantes
+`pluriel` et `majuscule` s'écrivent après la clé — `{glo:sdo pluriel}`,
+`{glo:sdo majuscule}`. La liste finale se pose d'une ligne
+`{glossaire}`, ou `{glossaire: tout}` pour y montrer aussi les termes
+jamais cités.
+
+Voir [Le glossaire](glossaire.md).
+
 ## Les images
 
     ![La légende de la planche](figs/planche.png)

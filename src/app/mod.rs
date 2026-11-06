@@ -28,7 +28,27 @@ use iced::{Subscription, Task, time};
 use std::path::PathBuf;
 
 /// Intervalle de recompilation automatique après la dernière frappe.
-const RENDER_INTERVAL_MS: u64 = 300;
+const RENDER_INTERVAL_MS: u64 = 100;
+
+/// Combien de temps le geste de zoom attend avant le rendu net : la
+/// molette dix fois ne relance pas dix rendus, mais un seul (bug-report-9).
+const DUREE_GESTE_ZOOM: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// La marge de rendu autour de la fenêtre visible, en fraction de fenêtre :
+/// défiler dans la marge ne coûte aucun rendu.
+const MARGE_RENDU: f32 = 0.5;
+
+/// L'identifiant du scrollable de l'aperçu : il porte le nom de la vue
+/// qui le montre, et l'identifiant nu en mode focus (bug-report-9 :
+/// cibler l'identifiant nu en vue normale ne trouvait personne — le
+/// zoom s'ancre en haut à gauche, le défilement horizontal ne suit pas).
+fn id_du_scrollable(state: &State) -> iced::widget::Id {
+    if state.layout.focus_mode {
+        crate::ui::preview::SCROLL_ID.into()
+    } else {
+        format!("{}-{}", crate::ui::preview::SCROLL_ID, state.espace.active).into()
+    }
+}
 
 /// Intervalle de sauvegarde automatique différée.
 const SAVE_INTERVAL_MS: u64 = 1000;
@@ -126,6 +146,9 @@ impl State {
 
         let mut state = Self {
             espace: Default::default(),
+            police_combo: iced::widget::combo_box::State::new(
+                crate::typst::fonts::familles_pour_choisir(),
+            ),
             typst_genere: String::new(),
             projet_dialogue: None,
             controle_tenu: false,
@@ -140,13 +163,20 @@ impl State {
             drag_etagere: None,
             editeur_theme: None,
             editeur_theme_textes: std::collections::HashMap::new(),
-            color_picker: None,
             survol_reference: None,
             survol_onglet: None,
             survol_projet: None,
             zotero_recherche: String::new(),
             onglets: Vec::new(),
             etagere_brouillon: String::new(),
+            projets_tous: false,
+            projets_recherche: String::new(),
+            references_recherche_visible: false,
+            projets_recherche_visible: false,
+            survol_sommaire: None,
+            projets_etage: "Mon étagère".to_string(),
+            note_dialogue: None,
+            extension: None,
             geste_confirme: false,
             conflit_refuse: None,
             importation: None,
@@ -170,15 +200,24 @@ impl State {
             composeur: None,
             note_overlay: None,
             edition_reference: None,
+            glossaire: Vec::new(),
+            glossaire_replie: false,
+            glossaire_recherche_visible: false,
+            glossaire_filtre: String::new(),
+            survol_glossaire: None,
+            glossaire_fenetre: false,
+            edition_glossaire: None,
             zotero,
             renaming: None,
             jump: None,
+            rendus_partages: Default::default(),
             render: Default::default(),
             layout: Default::default(),
             lsp: Default::default(),
             system_theme: None,
             themes: Vec::new(),
             derniere_couleur: None,
+            picker_couleur: None,
             theme_problems: Vec::new(),
             // Le thème retenu est restauré **avant** la première lecture du
             // dossier : `refresh_themes` applique le thème, il doit donc savoir
@@ -281,6 +320,8 @@ impl State {
             .as_ref()
             .map(|bib| crate::project::parse_bibliography(bib))
             .unwrap_or_default();
+
+        self.glossaire = crate::project::glossaire::Glossaire::charger(&self.project.dir).entrees;
     }
 
     /// Charge un chapitre dans l'éditeur, rendu vierge.
@@ -681,6 +722,16 @@ enum SauvegardeRefusee {
 /// Nom du projet créé au premier démarrage.
 const FIRST_PROJECT: &str = "mon-travail";
 
+/// Un champ de fiche rempli devient une valeur ; le vide devient l'absence.
+fn champ_renseigne(valeur: &str) -> Option<String> {
+    let valeur = valeur.trim();
+    if valeur.is_empty() {
+        None
+    } else {
+        Some(valeur.to_string())
+    }
+}
+
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     espace_runtime::update(state, message)
 }
@@ -693,6 +744,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ReferenceRestaurer(_)
         | Message::BibliographieCreer
         | Message::EditionReferenceEnregistrer
+        | Message::GlossaireSupprimer(_)
+        | Message::EditionGlossaireEnregistrer
         | Message::ImageChoisie(Some(_))
         | Message::StyleCslChoisi(_)
         | Message::StyleZoteroChoisi(_)
@@ -708,11 +761,18 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ZoteroExport(_, _, _, Ok(_))
         | Message::Format(_)
         | Message::NoteInserer
+        | Message::NoteTexte(_)
+        | Message::NoteValider
+        | Message::NoteAnnuler
         | Message::FigureInserer
         | Message::EtiquetteInserer
         | Message::RenvoiInserer
         | Message::TitreInserer(_)
         | Message::InsertCitation(_)
+        | Message::SommaireInserer
+        | Message::BibliographieSectionInserer
+        | Message::GlossaireSectionInserer
+        | Message::GlossaireInserer(_)
         | Message::TableauInserer
         | Message::BlocMonter
         | Message::BlocDescendre
@@ -834,6 +894,19 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Les métadonnées choisies à la création (bug-report-7, point 9).
+        Message::ProjetMeta(champ, valeur) => {
+            if let Some(dialogue) = state.projet_dialogue.as_mut() {
+                match champ.as_str() {
+                    "titre" => dialogue.titre = valeur,
+                    "auteur" => dialogue.auteur = valeur,
+                    _ => {}
+                }
+            }
+
+            Task::none()
+        }
+
         // Le dialogue s'ouvre sur le vide, ou sur le nom du projet visé.
         // L'éditeur de thème : une copie de travail, et le fichier ne
         // bouge qu'à l'enregistrement — la règle de tout dialogue.
@@ -888,76 +961,21 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         }
 
         Message::ThemeEditeurColorPicker(champ) => {
-            // THEME-EDITOR-04-01 : le picker RVB intégré, pas zenity.
-            let courante = state
-                .editeur_theme_textes
-                .get(champ)
-                .and_then(|v| crate::theming::HexColor::parse(v.trim()).ok())
-                .map(|c| {
-                    let (r, g, b) = (c.0.r * 255.0, c.0.g * 255.0, c.0.b * 255.0);
-                    (r as u8, g as u8, b as u8)
-                })
-                .unwrap_or((128, 128, 128));
-            state.color_picker = Some(crate::app::state::ColorPicker {
-                champ,
-                r: courante.0,
-                g: courante.1,
-                b: courante.2,
+            // La même roue que pour le texte, visée sur le champ du thème
+            // (bug-report-7, point 11). Elle s'ouvre par-dessus l'éditeur.
+            let valeur = state.editeur_theme_textes.get(champ).cloned();
+            let (teinte, saturation, valeur_v) = valeur
+                .as_deref()
+                .and_then(crate::ui::picker_couleur::hex_vers_hsv)
+                .unwrap_or((0.0, 0.0, 0.5));
+            state.picker_couleur = Some(crate::app::state::PickerCouleur {
+                teinte,
+                saturation,
+                valeur: valeur_v,
+                hex_saisi: valeur,
+                champ: Some(champ),
+                reglage: None,
             });
-            Task::none()
-        }
-
-        Message::ColorPickerFermer => {
-            state.color_picker = None;
-            Task::none()
-        }
-
-        Message::ColorPickerValider => {
-            if let Some(picker) = state.color_picker.take() {
-                let hex = format!("#{:02x}{:02x}{:02x}", picker.r, picker.g, picker.b);
-                state
-                    .editeur_theme_textes
-                    .insert(picker.champ.to_string(), hex.clone());
-                if let Some(fichier) = state.editeur_theme.as_mut()
-                    && let Ok(valeur) = crate::theming::HexColor::parse(&hex)
-                {
-                    {
-                        match picker.champ {
-                            "background" => fichier.colors.background = valeur,
-                            "surface" => fichier.colors.surface = valeur,
-                            "text" => fichier.colors.text = valeur,
-                            "accent" => fichier.colors.accent = valeur,
-                            "text_muted" => fichier.colors.text_muted = Some(valeur),
-                            "border" => fichier.colors.border = Some(valeur),
-                            "danger" => fichier.colors.danger = Some(valeur),
-                            "warning" => fichier.colors.warning = Some(valeur),
-                            "success" => fichier.colors.success = Some(valeur),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            Task::none()
-        }
-
-        Message::ColorPickerR(v) => {
-            if let Some(picker) = state.color_picker.as_mut() {
-                picker.r = v;
-            }
-            Task::none()
-        }
-
-        Message::ColorPickerG(v) => {
-            if let Some(picker) = state.color_picker.as_mut() {
-                picker.g = v;
-            }
-            Task::none()
-        }
-
-        Message::ColorPickerB(v) => {
-            if let Some(picker) = state.color_picker.as_mut() {
-                picker.b = v;
-            }
             Task::none()
         }
 
@@ -1208,11 +1226,34 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         // bascule rendu/édition, `Ctrl+Maj+e` ouvre le Typst — et le
         // Typst ne sert que quand quelque chose refuse de se composer.
         Message::ModeBasculer => {
+            let ancien = state.mode;
             state.mode = match state.mode {
                 crate::app::state::ModeVue::Edition => crate::app::state::ModeVue::Rendu,
                 crate::app::state::ModeVue::Rendu => crate::app::state::ModeVue::Edition,
                 crate::app::state::ModeVue::Typst => crate::app::state::ModeVue::Edition,
             };
+
+            // La bascule vers la vue rendu régénère systématiquement le PDF
+            // (bug-report-9) : l'aperçu affiche le fichier livré, il doit
+            // donc être neuf — jamais l'export d'une session précédente.
+            if state.mode == crate::app::state::ModeVue::Rendu
+                && ancien != crate::app::state::ModeVue::Rendu
+            {
+                let pdf = generer_le_pdf_du_rendu(state);
+
+                // Le texte affiché suit l'édition : au basculement, on
+                // compile d'entrée si le rendu est périmé — jamais l'image
+                // d'une frappe d'avant (bug-report-10, 6.2).
+                let frache =
+                    state.render.pending || state.render.content == state.compilation_fingerprint();
+
+                return if frache {
+                    pdf
+                } else {
+                    state.render.pending = true;
+                    Task::batch([pdf, compile_task(state)])
+                };
+            }
 
             Task::none()
         }
@@ -1255,6 +1296,40 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         // poser. Le geste dit où il en est — une ombre suit le projet.
         Message::DragCommencer(nom) => {
             state.drag_projet = Some(nom);
+            Task::none()
+        }
+
+        // Les deux recherches ne se montrent que sur leur icône, et
+        // l'étagère se choisit au menu (bug-report 2026-11-03).
+        Message::SommaireSurvol(rang) => {
+            state.survol_sommaire = rang;
+            Task::none()
+        }
+
+        Message::ReferencesRechercheBascule => {
+            state.references_recherche_visible = !state.references_recherche_visible;
+            Task::none()
+        }
+
+        Message::ProjetsRechercheBascule => {
+            state.projets_recherche_visible = !state.projets_recherche_visible;
+            Task::none()
+        }
+
+        Message::ProjetsEtageChoisie(choix) => {
+            state.projets_etage = choix;
+            Task::none()
+        }
+
+        // La liste des projets : étagère courante par défaut, tous sur
+        // demande — et la recherche filtre par nom (bug-report-7, 18).
+        Message::ProjetsFiltreBascule => {
+            state.projets_tous = !state.projets_tous;
+            Task::none()
+        }
+
+        Message::ProjetsRecherche(valeur) => {
+            state.projets_recherche = valeur;
             Task::none()
         }
 
@@ -1309,6 +1384,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 norme: String::new(),
                 etagere: etagere.clone(),
                 nom: String::new(),
+                titre: String::new(),
+                auteur: String::new(),
                 cible: None,
             });
 
@@ -1332,6 +1409,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 norme: String::new(),
                 etagere: String::new(),
                 nom: String::new(),
+                titre: String::new(),
+                auteur: String::new(),
                 cible: None,
             });
 
@@ -1350,6 +1429,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 norme: String::new(),
                 etagere: String::new(),
                 nom,
+                titre: String::new(),
+                auteur: String::new(),
                 cible: Some(dir),
             });
 
@@ -1409,6 +1490,27 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
             match rendu {
                 Ok(dir) => {
+                    // Les métadonnées choisies à la création : le projet
+                    // naît avec les siennes (bug-report-7, point 9).
+                    if dialogue.cible.is_none() {
+                        let mut meta = crate::project::metadonnees::Metadonnees::base();
+                        if !dialogue.titre.trim().is_empty() {
+                            meta.definir(
+                                "",
+                                "titre".to_string(),
+                                dialogue.titre.trim().to_string(),
+                            );
+                        }
+                        if !dialogue.auteur.trim().is_empty() {
+                            meta.definir(
+                                "",
+                                "auteur".to_string(),
+                                dialogue.auteur.trim().to_string(),
+                            );
+                        }
+                        let _ = meta.sauver(&dir);
+                    }
+
                     if let Some(mut verrou) = verrou_renommage.take() {
                         verrou.suivre_deplacement(&dir);
                         state.espace.verrous.insert(dir.clone(), verrou);
@@ -1615,13 +1717,57 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Écraser la norme chargée : le premier temps de l'enregistrement,
+        // quand le document en porte une (bug-report-9).
+        Message::NormesEcraser => {
+            let Some((nom, reglages)) = state
+                .mise_en_page
+                .as_ref()
+                .filter(|dialogue| !dialogue.norme_originale.trim().is_empty())
+                .map(|dialogue| {
+                    (
+                        dialogue.norme_originale.trim().to_string(),
+                        dialogue.reglages.clone(),
+                    )
+                })
+            else {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "Aucune norme chargée à écraser.".to_string(),
+                ));
+                return Task::none();
+            };
+
+            match crate::project::enregistrer_norme(&nom, &reglages) {
+                Ok(()) => {
+                    if let Some(dialogue) = state.mise_en_page.as_mut() {
+                        dialogue.modifie = false;
+                    }
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "La norme « {nom} » est remplacée."
+                    )));
+                }
+                Err(message) => {
+                    state.note = Some(crate::app::state::Note::erreur(message));
+                }
+            }
+
+            Task::none()
+        }
+
         Message::NormesEnregistrer(nom) => {
             let nom = nom.trim();
 
             if nom.is_empty() {
                 state.note = Some(crate::app::state::Note::erreur(
-                    "Une norme a un nom.".to_string(),
+                    "Une copie a un nom.".to_string(),
                 ));
+                return Task::none();
+            }
+
+            if crate::project::norme(nom).is_some() {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "« {nom} » existe déjà — donnez un autre nom à la copie,                      ou écrasez la norme chargée."
+                )));
                 return Task::none();
             }
 
@@ -1634,8 +1780,13 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                     .unwrap_or_default(),
             ) {
                 Ok(()) => {
+                    if let Some(dialogue) = state.mise_en_page.as_mut() {
+                        dialogue.norme = nom.to_string();
+                        dialogue.norme_originale = nom.to_string();
+                        dialogue.modifie = false;
+                    }
                     state.note = Some(crate::app::state::Note::info(format!(
-                        "La norme « {nom} » est dans la bibliothèque."
+                        "La copie « {nom} » est dans la bibliothèque."
                     )));
                 }
                 Err(message) => {
@@ -1655,6 +1806,15 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
             match crate::project::supprimer_norme(nom) {
                 Ok(()) => {
+                    if let Some(dialogue) = state.mise_en_page.as_mut()
+                        && dialogue.norme_originale.trim() == nom
+                    {
+                        // La norme n'existe plus : le document redevient un
+                        // porteur de normes personnalisées.
+                        dialogue.norme_originale.clear();
+                        dialogue.norme.clear();
+                        dialogue.modifie = true;
+                    }
                     state.note = Some(crate::app::state::Note::info(format!(
                         "La norme « {nom} » a quitté la bibliothèque."
                     )));
@@ -1740,6 +1900,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Shift + molette : le défilement horizontal (bug-report-9).
         Message::Molette(pas) => {
             // Sans `Ctrl`, la molette est au défilement — et elle l'est
             // déjà, prise par ce qui défile.
@@ -1785,9 +1946,38 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Le chemin des données est visible dans l'aide, et s'ouvre d'un
+        // geste : voir où vivent ses documents n'est pas une devinette.
+        Message::OuvrirDossierDonnees => {
+            crate::project::ouvrir_chemin(&crate::project::work_dir());
+            Task::none()
+        }
+
+        // La récupération est à portée de geste : la corbeille garde ce qui
+        // a été retiré, les sauvegardes gardent ce qui a été remplacé.
+        Message::OuvrirCorbeille => {
+            crate::project::ouvrir_chemin(&crate::project::corbeille());
+            Task::none()
+        }
+
+        Message::OuvrirSauvegardes => {
+            let dir = crate::project::sauvegardes_dir(&state.project.dir);
+            let _ = std::fs::create_dir_all(&dir);
+            crate::project::ouvrir_chemin(&dir);
+            Task::none()
+        }
+
         // Le domaine des réglages du document a son module.
         Message::MiseEnPageOuvrir
         | Message::MiseEnPageFermer
+        | Message::MetaChamp(_, _, _)
+        | Message::MetaAjouter
+        | Message::MetaProfilNom(_)
+        | Message::MetaProfilActiver(_)
+        | Message::MetaProfilEnregistrer(_)
+        | Message::MetaProfilSupprimer(_)
+        | Message::MetaRemplacer
+        | Message::MetaSupprimer(_)
         | Message::MiseEnPageChamp(_, _)
         | Message::MiseEnPageMolette(_, _)
         | Message::MiseEnPageBascule(_)
@@ -1799,7 +1989,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::MiseEnPageImportee(_)
         | Message::MiseEnPageExporter
         | Message::MiseEnPageDestination(_, _)
-        | Message::MiseEnPageNote(_) => {
+        | Message::MiseEnPageNote(_)
+        | Message::EntetePiedImage(_)
+        | Message::EntetePiedImageChoisie(_, _) => {
             crate::app::reglages::update(state, message).unwrap_or_else(Task::none)
         }
 
@@ -1824,8 +2016,20 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::StyleCslChoisi(_)
         | Message::StyleZoteroChoisi(_)
         | Message::StyleParentTelecharger
+        | Message::SommaireInserer
+        | Message::BibliographieSectionInserer
+        | Message::GlossaireSectionInserer
         | Message::InsertCitation(_)
+        | Message::GlossaireInserer(_)
+        | Message::ExtensionOuvrir
+        | Message::ExtensionChoisir(_)
+        | Message::ExtensionParam(_, _)
+        | Message::ExtensionInserer
+        | Message::ExtensionAnnuler
         | Message::NoteInserer
+        | Message::NoteTexte(_)
+        | Message::NoteValider
+        | Message::NoteAnnuler
         | Message::FigureInserer
         | Message::EtiquetteInserer
         | Message::RenvoiInserer
@@ -1841,7 +2045,20 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::SymbolRenameApply
         | Message::SymbolRenameCancel
         | Message::PdfDestination(_)
-        | Message::PdfExported(_) => crate::app::fichiers::update(state, message),
+        | Message::PdfExported(_)
+        | Message::ProjetExportTw
+        | Message::ProjetTwExporte(_)
+        | Message::ProjetImportTw
+        | Message::ProjetTwImporte(_)
+        | Message::ProjetExportPortable
+        | Message::ProjetPortableExporte(_)
+        | Message::ProjetImportSauvegarde
+        | Message::ProjetImportChoisi(_)
+        | Message::ProjetImportConfirmer(_, _)
+        | Message::ExportMarkdown
+        | Message::ExportMarkdownChoisi(_)
+        | Message::ExportDocx
+        | Message::ExportDocxChoisi(_) => crate::app::fichiers::update(state, message),
 
         // L'édition d'une référence : une fenêtre, des champs, et une
         // bibliothèque locale à écrire — jamais une notice Zotero.
@@ -1937,6 +2154,160 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::EditionReferenceFermer => {
             state.edition_reference = None;
+
+            Task::none()
+        }
+        // Le glossaire : la fiche, les gestes de la liste, la sauvegarde
+        // du `glossaire.toml`.
+        // La fenêtre du glossaire (bug-report-10, 5.3).
+        Message::GlossaireFenetreOuvrir => {
+            state.glossaire_fenetre = true;
+
+            Task::none()
+        }
+        Message::GlossaireFenetreFermer => {
+            state.glossaire_fenetre = false;
+            state.glossaire_filtre.clear();
+
+            Task::none()
+        }
+        Message::GlossaireCreer => {
+            state.edition_glossaire = Some(crate::app::state::EditionGlossaire {
+                cle: String::new(),
+                court: String::new(),
+                long: String::new(),
+                description: String::new(),
+                pluriel_court: String::new(),
+                pluriel_long: String::new(),
+                groupe: String::new(),
+                creation: true,
+            });
+
+            iced::widget::operation::focus(crate::ui::glossaire::id_premier_champ())
+        }
+        Message::GlossaireModifier(cle) => {
+            let entree = state
+                .glossaire
+                .iter()
+                .find(|entree| entree.key == cle)
+                .cloned();
+
+            let Some(entree) = entree else {
+                return Task::none();
+            };
+
+            state.edition_glossaire = Some(crate::app::state::EditionGlossaire {
+                cle: entree.key,
+                court: entree.short.unwrap_or_default(),
+                long: entree.long.unwrap_or_default(),
+                description: entree.description.unwrap_or_default(),
+                pluriel_court: entree.plural.unwrap_or_default(),
+                pluriel_long: entree.longplural.unwrap_or_default(),
+                groupe: entree.group.unwrap_or_default(),
+                creation: false,
+            });
+
+            iced::widget::operation::focus(crate::ui::glossaire::id_premier_champ())
+        }
+        Message::GlossaireSupprimer(cle) => {
+            let mut glossaire = crate::project::glossaire::Glossaire {
+                entrees: state.glossaire.clone(),
+            };
+
+            if glossaire.supprimer(&cle) {
+                match glossaire.sauver(&state.project.dir) {
+                    Ok(()) => {
+                        state.glossaire = glossaire.entrees;
+                        state.note = Some(crate::app::state::Note::info("Entrée supprimée."));
+                    }
+                    Err(erreur) => {
+                        state.note = Some(crate::app::state::Note::erreur(format!(
+                            "Suppression impossible : {erreur}"
+                        )));
+                    }
+                }
+            }
+
+            Task::none()
+        }
+        Message::SurvolGlossaire(cle) => {
+            state.survol_glossaire = cle;
+            Task::none()
+        }
+        Message::GlossaireRechercheBascule => {
+            state.glossaire_recherche_visible = !state.glossaire_recherche_visible;
+            Task::none()
+        }
+        Message::GlossaireReplier => {
+            state.glossaire_replie = !state.glossaire_replie;
+            Task::none()
+        }
+        Message::GlossaireFiltrer(filtre) => {
+            state.glossaire_filtre = filtre;
+            Task::none()
+        }
+        Message::EditionGlossaireChamp(champ, valeur) => {
+            if let Some(edition) = state.edition_glossaire.as_mut() {
+                match champ.as_str() {
+                    "cle" => edition.cle = valeur,
+                    "court" => edition.court = valeur,
+                    "long" => edition.long = valeur,
+                    "description" => edition.description = valeur,
+                    "pluriel_court" => edition.pluriel_court = valeur,
+                    "pluriel_long" => edition.pluriel_long = valeur,
+                    "groupe" => edition.groupe = valeur,
+                    _ => {}
+                }
+            }
+
+            Task::none()
+        }
+        Message::EditionGlossaireFermer => {
+            state.edition_glossaire = None;
+
+            Task::none()
+        }
+        Message::EditionGlossaireEnregistrer => {
+            let Some(edition) = state.edition_glossaire.clone() else {
+                return Task::none();
+            };
+
+            // La clé est un identifiant : une clé fausse se refuse, la
+            // fiche reste ouverte — elle ne jette jamais le travail.
+            if !crate::project::glossaire::EntreeGlossaire::cle_valide(&edition.cle) {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "La clé d'un terme est un identifiant : lettres, chiffres, - _ . —                      sans espace ni deux-points.",
+                ));
+                return Task::none();
+            }
+
+            let entree = crate::project::glossaire::EntreeGlossaire {
+                key: edition.cle.clone(),
+                short: champ_renseigne(&edition.court),
+                long: champ_renseigne(&edition.long),
+                description: champ_renseigne(&edition.description),
+                plural: champ_renseigne(&edition.pluriel_court),
+                longplural: champ_renseigne(&edition.pluriel_long),
+                group: champ_renseigne(&edition.groupe),
+            };
+
+            let mut glossaire = crate::project::glossaire::Glossaire {
+                entrees: state.glossaire.clone(),
+            };
+            glossaire.definir(entree);
+
+            match glossaire.sauver(&state.project.dir) {
+                Ok(()) => {
+                    state.glossaire = glossaire.entrees;
+                    state.edition_glossaire = None;
+                    state.note = Some(crate::app::state::Note::info("Entrée enregistrée."));
+                }
+                Err(erreur) => {
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Enregistrement impossible : {erreur}"
+                    )));
+                }
+            }
 
             Task::none()
         }
@@ -2136,6 +2507,163 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::batch([edit, completion])
         }
 
+        // Le sélecteur de couleur : la roue, la carte, et la couleur qui
+        // s'applique au texte. La fermeture n'écrit rien — l'annulation est
+        // le droit de changer d'avis.
+        Message::PickerCouleurOuvrir => {
+            let (teinte, saturation, valeur) = state
+                .derniere_couleur
+                .as_deref()
+                .and_then(crate::ui::picker_couleur::hex_vers_hsv)
+                .unwrap_or((0.0, 1.0, 1.0));
+            state.picker_couleur = Some(crate::app::state::PickerCouleur {
+                teinte,
+                saturation,
+                valeur,
+                hex_saisi: None,
+                champ: None,
+                reglage: None,
+            });
+            Task::none()
+        }
+
+        Message::PickerCouleurFermer => {
+            state.picker_couleur = None;
+            Task::none()
+        }
+
+        Message::PickerCouleurTeinte(teinte) => {
+            if let Some(picker) = state.picker_couleur.as_mut() {
+                picker.teinte = teinte;
+            }
+            Task::none()
+        }
+
+        Message::PickerCouleurSatVal(saturation, valeur) => {
+            if let Some(picker) = state.picker_couleur.as_mut() {
+                picker.saturation = saturation;
+                picker.valeur = valeur;
+            }
+            Task::none()
+        }
+
+        // La vignette d'une couleur des normes ouvre la roue, pour ce
+        // champ-là (demande du 2026-11-04).
+        Message::PickerCouleurPourReglage(champ) => {
+            let courante = state
+                .mise_en_page
+                .as_ref()
+                .map(|dialogue| dialogue.reglages.valeur(champ))
+                .unwrap_or_default();
+            // La roue s'ouvre **sur la couleur courante** — un nom (« gray »),
+            // un hex, ce que la pastille sait teindre (bug-report-8, T6.2).
+            let hex = crate::ui::reglages::couleur_depuis(&courante).map(|c| {
+                format!(
+                    "#{:02x}{:02x}{:02x}",
+                    (c.r * 255.0).round() as u8,
+                    (c.g * 255.0).round() as u8,
+                    (c.b * 255.0).round() as u8
+                )
+            });
+            let (teinte, saturation, valeur) = hex
+                .as_deref()
+                .and_then(crate::ui::picker_couleur::hex_vers_hsv)
+                .unwrap_or((0.0, 1.0, 1.0));
+            state.picker_couleur = Some(crate::app::state::PickerCouleur {
+                teinte,
+                saturation,
+                valeur,
+                hex_saisi: None,
+                champ: None,
+                reglage: Some(champ),
+            });
+            Task::none()
+        }
+
+        // Le choix d'une couleur personnalisée : elle s'enregistre pour
+        // la pastille de la barre — et rien ne va au texte tant qu'on ne
+        // l'applique pas (bug-report-10, 5.4).
+        Message::PickerCouleurEnregistrer => {
+            let Some(picker) = state.picker_couleur.as_ref() else {
+                return Task::none();
+            };
+
+            let hex = crate::ui::picker_couleur::hsv_vers_hex(
+                picker.teinte,
+                picker.saturation,
+                picker.valeur,
+            );
+            state.derniere_couleur = Some(hex.clone());
+            state.note = Some(crate::app::state::Note::info(format!(
+                "« {hex} » est votre dernière couleur — la pastille de la barre en insère la balise."
+            )));
+
+            Task::none()
+        }
+
+        Message::PickerCouleurAppliquer => {
+            let Some(picker) = state.picker_couleur.take() else {
+                return Task::none();
+            };
+            let hex = crate::ui::picker_couleur::hsv_vers_hex(
+                picker.teinte,
+                picker.saturation,
+                picker.valeur,
+            );
+            // La couleur employée devient la dernière — la pastille la
+            // garde, quel que soit le mode (bug-report-10, 5.4).
+            state.derniere_couleur = Some(hex.clone());
+            if let Some(reglage) = picker.reglage {
+                return update(state, Message::MiseEnPageChamp(reglage, hex));
+            }
+            match picker.champ {
+                // Le thème : le champ du thème reçoit le hex.
+                Some(champ) => update(state, Message::ThemeEditeurChamp(champ, hex)),
+                // Le texte : la sélection se teinte.
+                None => update(
+                    state,
+                    Message::Format(crate::app::message::FormatAction::Couleur(hex)),
+                ),
+            }
+        }
+
+        // Le code hex pilote la roue : ce qui se tape devient la couleur,
+        // et si la saisie n'est pas encore un hex, elle reste sous les
+        // doigts sans rien casser.
+        Message::PickerCouleurHex(texte) => {
+            if let Some(picker) = state.picker_couleur.as_mut() {
+                picker.hex_saisi = Some(texte.clone());
+                if let Some((teinte, saturation, valeur)) =
+                    crate::ui::picker_couleur::hex_vers_hsv(&texte)
+                {
+                    picker.teinte = teinte;
+                    picker.saturation = saturation;
+                    picker.valeur = valeur;
+                }
+            }
+            Task::none()
+        }
+
+        // Une couleur rapide suit la **cible de la roue** : le réglage
+        // des normes, le champ de thème, ou le texte — jamais le texte
+        // quand on règle le document (bug-report-9, T1.1). La roue reste
+        // ouverte pour la suite.
+        Message::PickerCouleurRapide(nom) => {
+            let cible = state
+                .picker_couleur
+                .as_ref()
+                .map(|picker| (picker.reglage, picker.champ));
+
+            match cible {
+                Some((Some(reglage), _)) => update(state, Message::MiseEnPageChamp(reglage, nom)),
+                Some((None, Some(champ))) => update(state, Message::ThemeEditeurChamp(champ, nom)),
+                _ => update(
+                    state,
+                    Message::Format(crate::app::message::FormatAction::Couleur(nom)),
+                ),
+            }
+        }
+
         Message::CompletionMove(delta) => {
             if let Some(open) = state.lsp.completion.as_mut() {
                 open.move_selection(delta);
@@ -2246,7 +2774,62 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        // Une fenêtre de rendu doit montrer son document : la première
+        // compilation, puis son lecteur (bug-report-9).
+        Message::RenduInitialiser => {
+            if state.render.pending || state.render.export_en_cours {
+                return Task::none();
+            }
+
+            // Le partage d'abord : si ce texte a déjà son rendu, la
+            // fenêtre le montre — le même PDF pour tout le monde.
+            let empreinte = state.compilation_fingerprint();
+
+            if let Some(partage) = state.rendus_partages.get(&empreinte) {
+                if partage.document.is_some() {
+                    state.render.document.clone_from(&partage.document);
+                }
+
+                if partage.lecteur.is_some() {
+                    state.render.lecteur.clone_from(&partage.lecteur);
+                    let total = state
+                        .render
+                        .document
+                        .as_deref()
+                        .map_or(0, crate::typst::render::page_count);
+                    state.render.invalidate_rasterization(total);
+                    return rasterize_visible(state);
+                }
+            }
+
+            if state.render.document.is_none() && !state.render.done {
+                state.render.pending = true;
+                return compile_task(state);
+            }
+
+            if state.render.document.is_some()
+                && state.render.lecteur.is_none()
+                && !state.render.export_tente
+            {
+                state.render.export_tente = true;
+                return generer_le_pdf_du_rendu(state);
+            }
+
+            Task::none()
+        }
+
         Message::RenderTick => {
+            // Le geste de zoom est fini : le rendu net part, une seule
+            // fois, et non un rendu par cran de molette.
+            if state
+                .render
+                .zoom_depuis
+                .is_some_and(|depuis| depuis.elapsed() >= DUREE_GESTE_ZOOM)
+            {
+                state.render.zoom_depuis = None;
+                return rasterize_visible(state);
+            }
+
             if let Some(tache) = crate::app::epreuves::driver_zoom(state) {
                 return tache;
             }
@@ -2298,6 +2881,13 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             // démarrage, qui ouvre le premier d'une autre façon : le serveur
             // n'était alors jamais lancé, et rien ne le disait.
             state.follow_with_lsp();
+
+            // Chaque fenêtre de rendu visible montre son document — celle
+            // du démarrage aussi (bug-report-9 : l'initialisation laissait
+            // l'aperçu vide tant qu'on ne basculait pas de mode).
+            if let Some(tache) = rendre_les_fenetres_de_rendu(state) {
+                return tache;
+            }
 
             // Le compte de mots est une donnée de la vue, et la vue n'a pas le
             // droit de modifier l'état : il se calcule donc ici, au rythme des
@@ -2360,6 +2950,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             if outcome.content != state.compilation_fingerprint() {
                 return Task::none();
             }
+            state.render.export_tente = false;
             state.render.done = true;
             let chapter_page = outcome.chapter_page;
 
@@ -2371,6 +2962,17 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             // reste affichée sous les erreurs, et ses textures gardent
             // leur place jusqu'à ce qu'une nouvelle compilation les
             // remplace. C'était la promesse du double tampon, tenue.
+            // Le document compilé rejoint le partage : toute fenêtre qui
+            // montre ce texte le montre lui, jamais une copie (bug-report-10).
+            state
+                .rendus_partages
+                .entry(state.render.content.clone())
+                .or_default()
+                .completant(&crate::app::state::RenduPartage {
+                    document: outcome.document.clone(),
+                    lecteur: None,
+                });
+
             if outcome.document.is_some() {
                 state.render.document = outcome.document;
             }
@@ -2417,7 +3019,53 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::batch([rasterize_visible(state), follow_chapter(state)])
         }
 
-        Message::PageRendered(revision, index, image) => {
+        // La réponse de la génération du PDF lancée par la bascule vers la
+        // vue rendu : le lecteur s'installe, l'aperçu se refait au neuf.
+        Message::PdfApercu(resultat) => {
+            state.render.export_en_cours = false;
+
+            let octets = match resultat {
+                Ok(octets) => octets,
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                    return Task::none();
+                }
+            };
+
+            match crate::typst::render::ouvrir_pdf(octets) {
+                Some(pdf) => {
+                    let partage = std::sync::Arc::new(pdf);
+
+                    if let Some(empreinte) = state.render.export_empreinte.take() {
+                        state
+                            .rendus_partages
+                            .entry(empreinte)
+                            .or_default()
+                            .completant(&crate::app::state::RenduPartage {
+                                document: None,
+                                lecteur: Some(partage.clone()),
+                            });
+                    }
+
+                    state.render.lecteur = Some(partage);
+                    let total = state
+                        .render
+                        .document
+                        .as_deref()
+                        .map_or(0, crate::typst::render::page_count);
+                    state.render.invalidate_rasterization(total);
+                    rasterize_visible(state)
+                }
+                None => {
+                    state.note = Some(crate::app::state::Note::erreur(
+                        "Le PDF généré n'est pas lisible : le rendu reste en attente.".to_string(),
+                    ));
+                    Task::none()
+                }
+            }
+        }
+
+        Message::PageRendered(revision, index, image, boite) => {
             state.render.finish_page_render(revision, index);
 
             // Une compilation est arrivée pendant le rendu : cette image
@@ -2458,7 +3106,13 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
                 // le vide.
                 state.render.page_cache.insert(
                     index,
-                    Handle::from_rgba(image.width, image.height, image.pixels),
+                    crate::app::state::Tranche {
+                        gauche: boite.0,
+                        haut: boite.1,
+                        largeur: boite.2,
+                        hauteur: boite.3,
+                        image: Handle::from_rgba(image.width, image.height, image.pixels),
+                    },
                 );
 
                 // Une image peut arriver après qu'on a défilé ailleurs :
@@ -2470,7 +3124,15 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             rasterize_visible(state)
         }
 
-        Message::ViewportChanged(first, last, bounds) => {
+        Message::ViewportChanged(first, last, vue, scroll) => {
+            // Le rectangle de fenêtre ne vient que d'un vrai défilement :
+            // les sondes de taille du panneau le rapportent à l'origine,
+            // et une ancre de zoom sur cette origine serait fausse.
+            if scroll.is_some() {
+                state.render.fenetre = Some(vue);
+            }
+            let scroll = scroll.unwrap_or(state.render.scroll);
+            let bounds = vue.size();
             // « Aucune page » envoie (0, 0) : ce n'est pas une plage,
             // c'est l'absence d'information. Un document tenu dans la
             // fenêtre n'en reçoit jamais d'autre, et ses pages 2+ ne
@@ -2488,9 +3150,11 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             };
 
             let unchanged = state.render.visible == Some((first, last))
-                && state.render.viewport == Some(bounds);
+                && state.render.viewport == Some(bounds)
+                && state.render.scroll == scroll;
 
             state.render.visible = Some((first, last));
+            state.render.scroll = scroll;
 
             // La place d'une page a changé : la taille d'affichage change, donc
             // la densité dont le rendu a besoin. Les images en cache
@@ -2529,9 +3193,34 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             // Une page qui entre dans le viewport sans image valide doit
             // être rasterisée ; une page déjà en cache et à jour ne l'est
             // plus (c'est ce qui rendait chaque défilement coûteux).
-            for index in first..=last {
-                if !state.render.page_cache.contains_key(&index) {
-                    state.render.stale.insert(index);
+            // Une page sans tranche couvrant la fenêtre visible part au
+            // rendu : défiler hors de la marge coûte un rendu, défiler
+            // dedans rien du tout.
+            if let Some(document) = state.render.document.clone() {
+                let sizes =
+                    crate::ui::preview::sizes_of_with_zoom(&document, bounds, state.render.zoom);
+
+                for index in first..=last {
+                    let Some(taille) = sizes.get(index).copied() else {
+                        continue;
+                    };
+                    let haut = crate::ui::preview::scroll_offset_for_page(&sizes, index);
+                    let region = crate::ui::preview::region_pour_page(
+                        taille,
+                        haut,
+                        scroll,
+                        (bounds.width, bounds.height),
+                        0.0,
+                    );
+
+                    if !state
+                        .render
+                        .page_cache
+                        .get(&index)
+                        .is_some_and(|tranche| crate::ui::preview::tranche_couvre(tranche, region))
+                    {
+                        state.render.stale.insert(index);
+                    }
                 }
             }
 
@@ -2589,6 +3278,13 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
         Message::TogglePreview => {
             state.layout.preview_visible = !state.layout.preview_visible;
+
+            // La bascule rafraîchit : ce qui reparaît est ce qu'on écrit,
+            // pas la mémoire du dernier rendu. Jamais de purge — l'ancien
+            // reste affiché jusqu'au neuf, sans clignotement.
+            if state.layout.preview_visible {
+                return compile_task(state);
+            }
 
             Task::none()
         }
@@ -2715,6 +3411,53 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RecherchePrecedent
         | Message::RechercheRemplacer
         | Message::RechercheRemplacerTout => recherche(state, message),
+
+        // Les gestes d'un élément de liste (bug-report-10, 3.2, 3.3, 3.6).
+        Message::ListeIndenter => {
+            let contenu = state.editor.content();
+            let offset = state.editor.cursor_offset();
+            let (neuf, curseur) = indenter_la_ligne(&contenu, offset);
+
+            Task::batch([
+                state.editor.replace_span(0, contenu.len(), &neuf),
+                state.editor.set_cursor_offset(curseur),
+            ])
+            .map(Message::Editor)
+        }
+        Message::ListeDesindenter => {
+            let contenu = state.editor.content();
+            let offset = state.editor.cursor_offset();
+            let (neuf, curseur) = desindenter_la_ligne(&contenu, offset);
+
+            Task::batch([
+                state.editor.replace_span(0, contenu.len(), &neuf),
+                state.editor.set_cursor_offset(curseur),
+            ])
+            .map(Message::Editor)
+        }
+        // `Entrée` crée l'élément suivant (bug-report-10, 3.4).
+        Message::ListeEnchainer => {
+            let contenu = state.editor.content();
+            let offset = state.editor.cursor_offset();
+
+            match marque_suivante(&contenu, offset) {
+                Some(marque) => state.editor.insert_at_cursor(&marque).map(Message::Editor),
+                None => Task::none(),
+            }
+        }
+
+        Message::ListeMonter | Message::ListeDescendre => {
+            let haut = matches!(message, Message::ListeMonter);
+            let contenu = state.editor.content();
+            let offset = state.editor.cursor_offset();
+            let (neuf, curseur) = deplacer_la_ligne(&contenu, offset, haut);
+
+            Task::batch([
+                state.editor.replace_span(0, contenu.len(), &neuf),
+                state.editor.set_cursor_offset(curseur),
+            ])
+            .map(Message::Editor)
+        }
 
         Message::BlocMonter => state.editor.deplacer_le_bloc(true).map(Message::Editor),
         Message::BlocDescendre => state.editor.deplacer_le_bloc(false).map(Message::Editor),
@@ -3178,6 +3921,22 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                         return Task::none();
                     }
 
+                    // Le document cite les bibliothèques du projet : sans
+                    // cela, les citations Zotero sont introuvables et un
+                    // `references.bib` manquant casse la compilation
+                    // (bug-report-9).
+                    let main_typ = dir.join("main.typ");
+
+                    if let Ok(contenu) = std::fs::read_to_string(&main_typ)
+                        && let Some(branche) =
+                            crate::project::model::brancher_les_bibliographies(&dir, &contenu)
+                        && let Err(erreur) = crate::project::ecrire_atomique(&main_typ, &branche)
+                    {
+                        state.note = Some(crate::app::state::Note::erreur(format!(
+                            "La bibliographie n'a pas pu être branchée dans main.typ : {erreur}"
+                        )));
+                    }
+
                     // La liaison est faite : le projet la porte, et la
                     // bibliothèque montrée devient celle de Zotero — lue, jamais
                     // écrite.
@@ -3255,6 +4014,8 @@ struct Situation {
     projet: bool,
     /// Une confirmation attend son mot — `Échap` est « Annuler ».
     confirmation: bool,
+    /// Le curseur est sur une ligne de liste (bug-report-10, 3.2).
+    sur_liste: bool,
     /// Le composeur est ouvert : sa frappe est à lui.
     composeur: bool,
     /// Une fenêtre est ouverte — c'est le contrat qui s'applique.
@@ -3265,6 +4026,10 @@ struct Situation {
     aide: bool,
     recherche: bool,
     liaison: bool,
+    /// Le panneau de la note de bas de page — `Échap` annule.
+    note: bool,
+    /// Le composeur d'extension — `Échap` annule.
+    extension: bool,
     /// La liste de complétion, le survol — et le mode focus.
     completion: bool,
     survol: bool,
@@ -3279,12 +4044,15 @@ impl Situation {
             theme: state.editeur_theme.is_some(),
             projet: state.projet_dialogue.is_some(),
             confirmation: state.confirmation.is_some(),
+            sur_liste: est_sur_une_liste(&state.editor.content(), state.editor.cursor_offset()),
             composeur: state.composeur.is_some(),
             fenetre: fenetre_ouverte(state),
             fiche: state.edition_reference.is_some(),
             aide: state.aide,
             recherche: state.recherche.is_some(),
             liaison: state.liaison.is_some(),
+            note: state.note_dialogue.is_some(),
+            extension: state.extension.is_some(),
             completion: state.lsp.completion.is_some(),
             survol: state.lsp.hover.is_some(),
             focus: state.layout.focus_mode,
@@ -3310,6 +4078,130 @@ enum Action {
 
     /// La touche ne fait rien : elle était à quelqu'un d'autre.
     Rien,
+}
+
+/// La marque de l'élément suivant (bug-report-10, 3.4) : la ligne
+/// d'avant porte le marqueur, la suivante reçoit le sien — `- ` reste,
+/// `3. ` devient `4. `. Rien quand la ligne d'avant n'est pas une liste.
+fn marque_suivante(contenu: &str, offset: usize) -> Option<String> {
+    let offset = offset.min(contenu.len());
+    let debut = contenu[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    if debut == 0 {
+        return None;
+    }
+
+    // La ligne d’avant : de son début au saut qui la termine — la
+    // première du texte commence à zéro.
+    let avant = contenu[..debut - 1]
+        .rfind(char::from(10))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let ligne = &contenu[avant..debut - 1];
+    let en_tete = ligne.len() - ligne.trim_start().len();
+    let tete = ligne.trim_start();
+
+    let marque = if tete.starts_with("- ") {
+        "- ".to_string()
+    } else {
+        let chiffres = tete.chars().take_while(|c| c.is_ascii_digit()).count();
+        if chiffres == 0 || !tete[chiffres..].starts_with(". ") {
+            return None;
+        }
+
+        let numero: usize = tete[..chiffres].parse().ok()?;
+        format!("{}. ", numero + 1)
+    };
+
+    Some(format!("{}{}", " ".repeat(en_tete), marque))
+}
+
+/// La ligne du curseur : sa plage dans le contenu, et son texte.
+fn ligne_du_curseur(contenu: &str, offset: usize) -> (usize, usize, &str) {
+    let offset = offset.min(contenu.len());
+    let debut = contenu[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let fin = contenu[offset..]
+        .find('\n')
+        .map(|i| offset + i)
+        .unwrap_or(contenu.len());
+
+    (debut, fin, &contenu[debut..fin])
+}
+
+/// Le curseur est-il sur une ligne de liste ?
+fn est_sur_une_liste(contenu: &str, offset: usize) -> bool {
+    let (_, _, ligne) = ligne_du_curseur(contenu, offset);
+    let tete = ligne.trim_start();
+
+    if tete.starts_with("- ") {
+        return true;
+    }
+
+    let chiffres = tete.chars().take_while(|c| c.is_ascii_digit()).count();
+    chiffres > 0 && tete[chiffres..].starts_with(". ")
+}
+
+/// Indente la ligne du curseur (bug-report-10, 3.2).
+fn indenter_la_ligne(contenu: &str, offset: usize) -> (String, usize) {
+    let (debut, _, _) = ligne_du_curseur(contenu, offset);
+    let mut neuf = String::with_capacity(contenu.len() + 2);
+    neuf.push_str(&contenu[..debut]);
+    neuf.push_str("  ");
+    neuf.push_str(&contenu[debut..]);
+
+    (neuf, offset + 2)
+}
+
+/// Désindente la ligne du curseur (bug-report-10, 3.3) — deux espaces
+/// s'il y en a, sinon rien.
+fn desindenter_la_ligne(contenu: &str, offset: usize) -> (String, usize) {
+    let (debut, _, ligne) = ligne_du_curseur(contenu, offset);
+    let en_trop = (ligne.len() - ligne.trim_start().len()).min(2);
+    let mut neuf = String::with_capacity(contenu.len());
+    neuf.push_str(&contenu[..debut]);
+    neuf.push_str(&contenu[debut + en_trop..]);
+
+    (neuf, offset.saturating_sub(en_trop))
+}
+
+/// Déplace la ligne du curseur vers le haut ou vers le bas (bug-report-10,
+/// 3.6) — le curseur suit sa ligne.
+fn deplacer_la_ligne(contenu: &str, offset: usize, haut: bool) -> (String, usize) {
+    let (debut, fin, _) = ligne_du_curseur(contenu, offset);
+    let dans_la_ligne = offset - debut;
+
+    if haut {
+        if debut == 0 {
+            return (contenu.to_string(), offset);
+        }
+
+        let avant = contenu[..debut - 1].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let mut neuf = String::with_capacity(contenu.len());
+        neuf.push_str(&contenu[..avant]);
+        neuf.push_str(&contenu[debut..fin]);
+        neuf.push('\n');
+        neuf.push_str(&contenu[avant..debut - 1]);
+        neuf.push_str(&contenu[fin..]);
+
+        (neuf, avant + dans_la_ligne)
+    } else {
+        if fin >= contenu.len() {
+            return (contenu.to_string(), offset);
+        }
+
+        let apres = fin + 1;
+        let fin_suivante = contenu[apres..]
+            .find('\n')
+            .map(|i| apres + i)
+            .unwrap_or(contenu.len());
+        let mut neuf = String::with_capacity(contenu.len());
+        neuf.push_str(&contenu[..debut]);
+        neuf.push_str(&contenu[apres..fin_suivante]);
+        neuf.push('\n');
+        neuf.push_str(&contenu[debut..fin]);
+        neuf.push_str(&contenu[fin_suivante..]);
+
+        (neuf, debut + (fin_suivante - apres) + 1 + dans_la_ligne)
+    }
 }
 
 /// La table du clavier, dans l'ordre où les choses la prennent.
@@ -3375,6 +4267,29 @@ fn plan_touche(
             return Action::Rien;
         }
         _ => {}
+    }
+
+    // Sur une liste, `Tabulation` change de niveau — `Maj` ou `Ctrl`
+    // reviennent (bug-report-10, 3.2, 3.3) — et `Ctrl+Maj+Haut/Bas`
+    // déplace l'élément, pas le bloc tout entier (3.6).
+    if etat.sur_liste {
+        match key {
+            Key::Named(Named::Tab) if modifiers.shift() || modifiers.control() => {
+                return Action::Message(Message::ListeDesindenter);
+            }
+            Key::Named(Named::Tab) => return Action::Message(Message::ListeIndenter),
+            // `Entrée` crée l'élément suivant (bug-report-10, 3.4) : la
+            // touche a déjà posé son saut de ligne chez le widget, le
+            // geste n'ajoute que la marque suivante.
+            Key::Named(Named::Enter) => return Action::Message(Message::ListeEnchainer),
+            Key::Named(Named::ArrowUp) if modifiers.control() && modifiers.shift() => {
+                return Action::Message(Message::ListeMonter);
+            }
+            Key::Named(Named::ArrowDown) if modifiers.control() && modifiers.shift() => {
+                return Action::Message(Message::ListeDescendre);
+            }
+            _ => {}
+        }
     }
 
     // Le bloc entier se déplace : `Ctrl+Maj+Haut/Bas`.
@@ -3451,6 +4366,14 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
         return Message::TableauAnnuler;
     }
 
+    if etat.note {
+        return Message::NoteAnnuler;
+    }
+
+    if etat.extension {
+        return Message::ExtensionAnnuler;
+    }
+
     if etat.projets {
         return Message::ProjetsVue;
     }
@@ -3485,6 +4408,8 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 /// Quelque fenêtre est-elle ouverte ?
 fn fenetre_ouverte(state: &State) -> bool {
     state.tableau.is_some()
+        || state.note_dialogue.is_some()
+        || state.extension.is_some()
         || state.projets_vue
         || state.editeur_theme.is_some()
         || state.projet_dialogue.is_some()
@@ -3598,6 +4523,12 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
         return Task::none();
     };
 
+    // Le PDF est la source du rendu : sans lui, rien à rasteriser — la
+    // bascule vers la vue rendu le génère systématiquement.
+    let Some(pdf) = state.render.lecteur.clone() else {
+        return Task::none();
+    };
+
     // Tant qu'aucun viewport n'a été signalé, les pages du haut sont celles
     // qu'on voit. `iced` n'en signale d'ailleurs aucun tant que le contenu
     // tient dans la fenêtre — auquel cas tout est visible d'un coup, et trois
@@ -3610,6 +4541,11 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
         .viewport
         .unwrap_or_else(crate::ui::preview::default_viewport);
     let scale_factor = state.scale_factor;
+    let ecran = f64::from(scale_factor).max(crate::typst::render::MIN_SCREEN_SCALE);
+
+    let sizes = crate::ui::preview::sizes_of_with_zoom(&document, box_size, state.render.zoom);
+    let scroll = state.render.scroll;
+    let fenetre = (box_size.width, box_size.height);
 
     let candidates: Vec<usize> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| state.render.stale.contains(index))
@@ -3628,30 +4564,128 @@ fn rasterize_visible(state: &mut State) -> Task<Message> {
     let tasks: Vec<Task<Message>> = wanted
         .into_iter()
         .map(|index| {
-            let document = document.clone();
+            let pdf = pdf.clone();
 
             // La densité est celle de **l'affichage** : la page est montrée
             // réduite — le panneau est plus étroit qu'une page — et le rendu
             // n'a besoin que des pixels que cette réduction consomme. Elle se
             // calcule page par page, parce qu'une page en paysage n'a pas le
             // même rapport qu'une page en portrait.
+            let page = crate::typst::render::page_size(&document, index).unwrap_or((595.3, 841.9));
             let density = crate::typst::render::pixel_per_pt(
-                crate::ui::preview::display_ratio_for_zoom(
-                    box_size,
-                    crate::typst::render::page_size(&document, index).unwrap_or((595.3, 841.9)),
-                    state.render.zoom,
-                ),
+                crate::ui::preview::display_ratio_for_zoom(box_size, page, state.render.zoom),
                 scale_factor,
             );
 
+            // La **région** à rendre : la fenêtre visible, élargie de la
+            // marge — jamais la page entière (bug-report-9, fluidité).
+            let taille = sizes.get(index).copied().unwrap_or((595.3, 841.9));
+            let haut = crate::ui::preview::scroll_offset_for_page(&sizes, index);
+            let boite =
+                crate::ui::preview::region_pour_page(taille, haut, scroll, fenetre, MARGE_RENDU);
+            // Fractions de la page -> pixels de sortie, à la densité du rendu.
+            let (x0, y0) = (
+                (boite.0 * taille.0 * ecran as f32) as u32,
+                (boite.1 * taille.1 * ecran as f32) as u32,
+            );
+            let (largeur, hauteur) = (
+                (boite.2 * taille.0 * ecran as f32).ceil() as u32,
+                (boite.3 * taille.1 * ecran as f32).ceil() as u32,
+            );
+
             Task::perform(
-                async move { crate::typst::render::render_page(&document, index, density) },
-                move |image| Message::PageRendered(revision, index, image),
+                async move {
+                    crate::typst::render::render_region(
+                        &pdf, index, density, x0, y0, largeur, hauteur,
+                    )
+                },
+                move |image| Message::PageRendered(revision, index, image, boite),
             )
         })
         .collect();
 
     Task::batch(tasks)
+}
+
+/// La bascule vers la vue rendu génère systématiquement le PDF (bug-report-9).
+///
+/// C'est lui que l'aperçu affiche, et lui que l'export écrit : le montreur
+/// ne travaille jamais que sur le fichier livré. La génération est celle de
+/// l'export — même appel, mêmes octets.
+/// Chaque fenêtre de rendu visible montre son document.
+///
+/// Au démarrage comme quand un panneau se montre, l'aperçu n'attend
+/// personne : la vue reçoit l'ordre de compiler, puis de fabriquer son
+/// lecteur. C'était la bascule de mode qui le faisait — et elle n'arrive
+/// jamais pour une fenêtre déjà ouverte (bug-report-9).
+fn rendre_les_fenetres_de_rendu(state: &mut State) -> Option<Task<Message>> {
+    let mut ids: Vec<u64> = state
+        .espace
+        .grille
+        .iter()
+        .filter_map(|(_, p)| p.onglets.get(p.actif).copied())
+        .collect();
+    ids.push(state.espace.active);
+    ids.sort_unstable();
+    ids.dedup();
+
+    let mut taches = Vec::new();
+
+    for id in ids {
+        let active = id == state.espace.active;
+        let (mode, compile, pdf) = if active {
+            (
+                state.mode,
+                state.render.document.is_none() && !state.render.done && !state.render.pending,
+                state.render.document.is_some()
+                    && state.render.lecteur.is_none()
+                    && !state.render.export_en_cours
+                    && !state.render.export_tente,
+            )
+        } else {
+            let Some(vue) = state.espace.vues.get(&id) else {
+                continue;
+            };
+            (
+                vue.mode,
+                vue.render.document.is_none() && !vue.render.done && !vue.render.pending,
+                vue.render.document.is_some()
+                    && vue.render.lecteur.is_none()
+                    && !vue.render.export_en_cours
+                    && !vue.render.export_tente,
+            )
+        };
+
+        if mode != crate::app::state::ModeVue::Rendu || (!compile && !pdf) {
+            continue;
+        }
+
+        taches.push(Task::done(Message::RetourVue(
+            id,
+            Box::new(Message::RenduInitialiser),
+        )));
+    }
+
+    (!taches.is_empty()).then(|| Task::batch(taches))
+}
+
+fn generer_le_pdf_du_rendu(state: &mut State) -> Task<Message> {
+    let dir = state.document_dir();
+    let (entry, overrides) = state.compilation_unit();
+    state.render.export_en_cours = true;
+    // L'empreinte du texte exporté : le registre s'en souvient, et les
+    // autres fenêtres du même fichier prendront ce PDF (bug-report-10).
+    state.render.export_empreinte = Some(state.compilation_fingerprint());
+
+    Task::perform(
+        async move { crate::typst::render::render_pdf(&dir, &entry, &overrides) },
+        |octets| {
+            Message::PdfApercu(octets.ok_or_else(|| {
+                "La compilation a échoué : corrigez les erreurs signalées dans le panneau."
+                    .to_string()
+            }))
+        },
+    )
 }
 
 /// L'aperçu suit la ligne qu'on lit.
@@ -3714,7 +4748,7 @@ fn scroll_preview_to_page(state: &State, page: usize) -> Task<Message> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
         Message,
     >(
-        crate::ui::preview::SCROLL_ID.into(),
+        id_du_scrollable(state),
         iced::advanced::widget::operation::scrollable::AbsoluteOffset {
             x: None,
             y: Some(offset),
@@ -3765,6 +4799,42 @@ fn set_preview_zoom(state: &mut State, zoom: crate::app::state::PreviewZoomMode)
         return Task::none();
     }
 
+    let box_size = state
+        .render
+        .viewport
+        .unwrap_or_else(crate::ui::preview::default_viewport);
+    let document = state.render.document.clone();
+
+    // L'ancre du zoom : le point sous le curseur — le milieu de la fenêtre
+    // quand le curseur n'est pas connu. C'est lui qui ne doit pas bouger
+    // (bug-report-9 : « centrée sur l'emplacement du curseur »).
+    let fenetre = state
+        .render
+        .fenetre
+        .unwrap_or(iced::Rectangle::new(iced::Point::ORIGIN, box_size));
+    let curseur = state.layout.cursor;
+    let (cx, cy) = (
+        (curseur.x - fenetre.x).clamp(0.0, fenetre.width),
+        (curseur.y - fenetre.y).clamp(0.0, fenetre.height),
+    );
+
+    // Le rapport ancien → nouveau, lu sur la page qui porte l'ancre.
+    let facteur = document
+        .as_deref()
+        .map(|document| {
+            let avant =
+                crate::ui::preview::sizes_of_with_zoom(document, box_size, state.render.zoom);
+            let apres = crate::ui::preview::sizes_of_with_zoom(document, box_size, zoom);
+            let y = state.render.scroll.1 + cy;
+            let index = (0..avant.len())
+                .find(|index| {
+                    crate::ui::preview::scroll_offset_for_page(&avant, *index) + avant[*index].1 > y
+                })
+                .unwrap_or(0);
+            apres[index].1 / avant[index].1.max(1.0)
+        })
+        .unwrap_or(1.0);
+
     state.render.zoom = zoom;
     let total = state
         .render
@@ -3774,7 +4844,41 @@ fn set_preview_zoom(state: &mut State, zoom: crate::app::state::PreviewZoomMode)
     state.render.invalidate_rasterization(total);
     state.render.bound_page_cache();
 
-    rasterize_visible(state)
+    // Le geste continue : le rendu net part quand il s'arrête — un cran de
+    // molette ne vaut pas un rendu (bug-report-9, geste différé).
+    state.render.zoom_depuis = Some(std::time::Instant::now());
+
+    // La cible de défilement : l'ancre reste sous le curseur. Elle est
+    // **imposée** : c'est aussi ce qui neutralise le défilement que la
+    // molette a laissé fuiter pendant ctrl+molette.
+    let cible_x = (state.render.scroll.0 + cx) * facteur - cx;
+    let cible_y = (state.render.scroll.1 + cy) * facteur - cy;
+
+    let (largeur_contenu, hauteur_contenu) = document
+        .as_deref()
+        .map(|document| {
+            let apres = crate::ui::preview::sizes_of_with_zoom(document, box_size, zoom);
+            let mut largeur: f32 = 0.0;
+            for (l, _) in &apres {
+                largeur = largeur.max(*l);
+            }
+            let hauteur: f32 = apres.iter().map(|(_, h)| *h).sum();
+            (largeur, hauteur)
+        })
+        .unwrap_or((0.0, 0.0));
+
+    let cible_x = cible_x.clamp(0.0, (largeur_contenu - fenetre.width).max(0.0));
+    let cible_y = cible_y.clamp(0.0, (hauteur_contenu - fenetre.height).max(0.0));
+
+    iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
+        Message,
+    >(
+        id_du_scrollable(state),
+        iced::advanced::widget::operation::scrollable::AbsoluteOffset {
+            x: Some(cible_x),
+            y: Some(cible_y),
+        },
+    ))
 }
 
 /// Relie les titres composés par Typst aux lignes du `document.tw` canonique.
@@ -3866,9 +4970,15 @@ fn compile_task(state: &State) -> Task<Message> {
     let dir = state.document_dir();
     let (entry, overrides, preparation) = state.compilation_unit_avec_diagnostics();
 
+    // Les métadonnées du projet deviennent les entrées `sys.inputs` : ce
+    // sont elles que les quick parts appellent ({titre}, {auteur}… —
+    // bug-report-7, point 9). Avant, personne ne les remplissait.
+    let entrees = crate::project::metadonnees::Metadonnees::charger(&dir).entrees();
+
     Task::perform(
         async move {
-            let mut resultat = crate::typst::render::compile(&dir, &entry, &overrides);
+            let mut resultat =
+                crate::typst::render::compile_avec_entrees(&dir, &entry, &overrides, &entrees);
             // Les citations neutralisées pendant la préparation sont des
             // avertissements au même titre que ceux du compilateur — les
             // masquer ici les condamnerait au silence.
@@ -4447,5 +5557,96 @@ mod tests_plan_touche {
             plan_touche(etat, &touche("s"), Modifiers::CTRL | Modifiers::ALT),
             Action::Rien
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests_des_gestes_de_liste {
+    use super::*;
+
+    fn contenu() -> String {
+        let saut = &char::from(10).to_string();
+        ["- un", "  - sous", "- deux", ""].join(saut)
+    }
+
+    /// Le curseur reconnaît une ligne de liste (bug-report-10, 3.2).
+    #[test]
+    fn le_curseur_reconnait_une_liste() {
+        let texte = contenu();
+        assert!(
+            est_sur_une_liste(&texte, 2),
+            "la première ligne est une puce"
+        );
+        assert!(est_sur_une_liste(&texte, 10), "la ligne indentée aussi");
+        assert!(
+            est_sur_une_liste(&texte, texte.len() - 1),
+            "la dernière l'est encore"
+        );
+
+        let paragraphe = "Du texte.".to_string();
+        assert!(
+            !est_sur_une_liste(&paragraphe, 3),
+            "un paragraphe n'est pas une liste"
+        );
+    }
+
+    /// Tab augmente le niveau, Shift+Tab le diminue (3.2, 3.3).
+    #[test]
+    fn le_niveau_monte_et_redescend() {
+        let texte = contenu();
+
+        let (indente, curseur) = indenter_la_ligne(&texte, 2);
+        assert!(
+            indente.starts_with("  - un"),
+            "le niveau monte : {indente:?}"
+        );
+        assert_eq!(curseur, 4, "le curseur suit son texte");
+
+        let (revient, curseur) = desindenter_la_ligne(&indente, curseur);
+        assert_eq!(revient, texte, "le retour est exact");
+        assert_eq!(curseur, 2, "le curseur revient");
+    }
+
+    /// `Entrée` crée l'élément suivant (3.4) : la marque suit — la puce
+    /// reste, le numéro avance.
+    #[test]
+    fn la_suite_de_la_liste_se_continue() {
+        let saut = &char::from(10).to_string();
+        let contenu = ["- un", "1. deux", ""].join(saut);
+
+        // Le curseur vient de poser son saut au milieu : la ligne d'avant
+        // porte le marqueur, la suivante reçoit le sien.
+        let apres_un = contenu.find("1. deux").unwrap();
+        assert_eq!(
+            marque_suivante(&contenu, apres_un),
+            Some("- ".to_string()),
+            "la puce continue la puce"
+        );
+        assert_eq!(
+            marque_suivante(&contenu, contenu.len()),
+            Some("2. ".to_string()),
+            "le numéro avance"
+        );
+
+        let paragraphe = ["Du texte.", ""].join(saut);
+        assert_eq!(
+            marque_suivante(&paragraphe, paragraphe.len()),
+            None,
+            "hors liste, rien ne s'enchaîne"
+        );
+    }
+
+    /// L'élément se déplace, et le curseur le suit (3.6).
+    #[test]
+    fn l_element_se_deplace() {
+        let texte = contenu();
+        let offset = 2; // le curseur sur « - un »
+
+        let (bas, curseur) = deplacer_la_ligne(&texte, offset, false);
+        assert!(bas.starts_with("  - sous"), "le premier descend : {bas:?}");
+        assert_eq!(curseur, 11, "le curseur suit sa ligne");
+
+        let (haut, _) = deplacer_la_ligne(&bas, curseur, true);
+        assert_eq!(haut, texte, "le déplacement inverse est exact");
     }
 }

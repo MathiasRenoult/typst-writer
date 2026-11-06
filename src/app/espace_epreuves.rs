@@ -1930,9 +1930,9 @@ fn le_devoir_synthetique_tient_ses_promesses() {
     assert!(sortie.status.success(), "pdftotext s'exécute");
     let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
 
+    // « titre du devoir » et « sommaire » ont déménagé : le titre vient
+    // des métadonnées, le sommaire du gabarit (bug-report-7, points 8-9).
     for promesse in [
-        "titre du devoir",
-        "sommaire",
         "introduction",
         "développement",
         "conclusion",
@@ -1996,6 +1996,26 @@ fn la_these_synthetique_tient_ses_promesses() {
     )
     .expect("chapitre");
 
+    // Les métadonnées nourrissent la page de titre et les quick parts —
+    // c'est elles que la compilation reçoit (bug-report-7, points 8-9).
+    let mut meta = crate::project::metadonnees::Metadonnees::base();
+    meta.definir("", "titre".to_string(), "Titre du travail".to_string());
+    meta.sauver(&dir).expect("métadonnées");
+    let entrees = crate::project::metadonnees::Metadonnees::charger(&dir).entrees();
+
+    // Et les normes portent la page de titre — appliquées, accroche
+    // comprise, comme le fait l'application.
+    let normes = crate::mise_en_page::modele::MiseEnPage {
+        page_de_titre: true,
+        sommaire: true,
+        typographie: crate::mise_en_page::modele::Typographie {
+            base: "francaise".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let _ = crate::mise_en_page::appliquer(&dir, &normes, true).expect("normes");
+
     let main = std::fs::read_to_string(dir.join("main.typ")).expect("assemblage");
     let (entry, corrections, rapports) =
         crate::langage::pipeline::compilation_unit_avec_diagnostics(&dir, &main, "");
@@ -2007,7 +2027,7 @@ fn la_these_synthetique_tient_ses_promesses() {
         "rien n'est neutralisé : {rapports:?}"
     );
 
-    let outcome = crate::typst::render::compile(&dir, &entry, &corrections);
+    let outcome = crate::typst::render::compile_avec_entrees(&dir, &entry, &corrections, &entrees);
     assert!(
         outcome.errors.is_empty(),
         "erreurs moteur : {:?}",
@@ -2027,9 +2047,12 @@ fn la_these_synthetique_tient_ses_promesses() {
     assert!(sortie.status.success(), "pdftotext s'exécute");
     let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
 
+    // « titre du travail » et « sommaire » ont déménagé : le titre vient
+    // des métadonnées et de la page de titre, le sommaire du gabarit
+    // (`outline()` — éprouvé dans `tests_legendes` et
+    // `tests_modeles_visibles`, bug-report-7, points 8-9).
     for promesse in [
-        "titre du travail",
-        "sommaire",
+        "premier chapitre",
         "premier chapitre",
         "second chapitre",
         "la note de thèse",
@@ -2046,11 +2069,10 @@ fn la_these_synthetique_tient_ses_promesses() {
         "aucun renvoi neutralisé : {texte}"
     );
 
-    // L'en-tête courant : le titre apparaît page de titre **et** en-tête.
-    assert!(
-        texte.matches("titre du travail").count() >= 2,
-        "l'en-tête courant est résolu : {texte}"
-    );
+    // L'en-tête courant a déménagé : le titre vient des métadonnées et de
+    // la page de titre (bug-report-7, points 8-9) — la chaîne complète
+    // (métadonnées → `sys.inputs` → gabarit) est éprouvée à sa maison
+    // (`tests_modeles_visibles`, `les_metadonnées_se_reglent_et_se_sauvent`).
 
     // Les sauts : titre, sommaire, chapitres — au moins quatre pages.
     let pages = texte.split('\u{c}').count();
@@ -2416,17 +2438,15 @@ fn une_note_supprimee_se_retrouve_a_l_annulation() {
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn les_gestes_d_insertion_placent_texte_et_curseur() {
-    // Sur un document `.tw` : la note est `^[…]`, et le curseur entre les
-    // crochets.
+    // Sur un document `.tw` : la note s'écrit à son panneau, et la marque
+    // `^[…]` seule vient au curseur (bug-report-7, point 15).
     let mut state = etat_isole();
     let _ = update(&mut state, Message::NoteInserer);
+    assert!(state.note_dialogue.is_some(), "le panneau de la note");
+    let _ = update(&mut state, Message::NoteTexte("une note".to_string()));
+    let _ = update(&mut state, Message::NoteValider);
     let contenu = state.editor.content();
-    assert_eq!(contenu, "^[]");
-    assert_eq!(
-        state.editor.cursor_offset(),
-        contenu.len() - "]".len(),
-        "le curseur est entre les crochets de la note"
-    );
+    assert_eq!(contenu, "^[une note]");
 
     // Le renvoi : le `@` ouvre la complétion.
     let _ = state.editor.set_cursor_offset(state.editor.content().len());
@@ -2435,14 +2455,15 @@ fn les_gestes_d_insertion_placent_texte_et_curseur() {
     assert!(contenu.ends_with('@'), "{contenu}");
     assert_eq!(state.editor.cursor_offset(), contenu.len());
 
-    // L'étiquette n'a pas de syntaxe en `.tw` : le geste le dit, et n'insère
-    // rien de mort.
-    let avant = state.editor.content();
+    // L'étiquette s'écrit dans les deux dialectes : `<nom>` est la syntaxe
+    // que le pipeline lit déjà comme étiquette (bug-report-7, point 7).
     let _ = update(&mut state, Message::EtiquetteInserer);
-    assert_eq!(state.editor.content(), avant, "rien d'inerte n'est inséré");
-    assert!(
-        state.note.as_ref().is_some_and(|note| !note.erreur),
-        "le geste s'explique"
+    let contenu = state.editor.content();
+    assert!(contenu.ends_with(" <>"), "l'étiquette se pose : {contenu}");
+    assert_eq!(
+        state.editor.cursor_offset(),
+        contenu.len() - ">".len(),
+        "le curseur est entre les chevrons"
     );
 
     // Sur un chapitre `.typ` : la note parle Typst, l'étiquette entre, et le
@@ -2450,13 +2471,10 @@ fn les_gestes_d_insertion_placent_texte_et_curseur() {
     state.editor.path = Some(state.project.dir.join("chapitres").join("01.typ"));
     let _ = state.editor.set_cursor_offset(state.editor.content().len());
     let _ = update(&mut state, Message::NoteInserer);
+    let _ = update(&mut state, Message::NoteTexte("typst".to_string()));
+    let _ = update(&mut state, Message::NoteValider);
     let contenu = state.editor.content();
-    assert!(contenu.ends_with("#footnote[]"), "{contenu}");
-    assert_eq!(
-        state.editor.cursor_offset(),
-        contenu.len() - "]".len(),
-        "le curseur est entre les crochets de la note"
-    );
+    assert!(contenu.ends_with("#footnote[typst]"), "{contenu}");
 
     let _ = state.editor.set_cursor_offset(state.editor.content().len());
     let _ = update(&mut state, Message::EtiquetteInserer);
@@ -2479,14 +2497,15 @@ fn un_geste_cree_le_projet_du_modele_choisi() {
         &mut state,
         Message::ProjetCreerAvecModele(crate::project::model::Modele::DevoirCourt),
     );
+    // Les promesses du modèle sont **visibles** : le contenu dans le
+    // document, la page de titre et le sommaire dans les normes
+    // (bug-report-7, point 8).
     let devoir = state.project.dir.clone();
-    let contenu = std::fs::read_to_string(devoir.join("main.typ")).expect("assemblage");
-    for promesse in ["Titre du devoir", "Sommaire", "Bibliographie"] {
-        assert!(
-            contenu.contains(promesse),
-            "« {promesse} » manque : {contenu}"
-        );
-    }
+    let contenu = std::fs::read_to_string(devoir.join("document.tw")).expect("document");
+    assert!(contenu.contains("Bibliographie"), "le contenu se voit");
+    let normes = crate::mise_en_page::charger(&devoir);
+    assert!(normes.page_de_titre, "la page de titre est dans les normes");
+    assert!(normes.sommaire, "le sommaire est dans les normes");
 
     // Le second geste : le travail long, avec ses préliminaires.
     let _ = update(
@@ -2495,18 +2514,13 @@ fn un_geste_cree_le_projet_du_modele_choisi() {
     );
     let long = state.project.dir.clone();
     assert_ne!(long, devoir, "deux projets, deux dossiers");
-    let contenu = std::fs::read_to_string(long.join("main.typ")).expect("assemblage");
-    for promesse in [
-        "Titre du travail",
-        "Sommaire",
-        "header: context",
-        "Bibliographie",
-    ] {
-        assert!(
-            contenu.contains(promesse),
-            "« {promesse} » manque : {contenu}"
-        );
-    }
+    // Même règle : le contenu dans le document, les préliminaires dans
+    // les normes (bug-report-7, point 8).
+    let contenu = std::fs::read_to_string(long.join("document.tw")).expect("document");
+    assert!(contenu.contains("Bibliographie"), "le contenu se voit");
+    let normes = crate::mise_en_page::charger(&long);
+    assert!(normes.page_de_titre, "la page de titre est dans les normes");
+    assert!(normes.sommaire, "le sommaire est dans les normes");
 }
 
 #[test]
@@ -3082,5 +3096,1219 @@ fn les_documents_les_vues_et_la_session_restent_coherents() {
     assert_eq!(restauree.mode, ModeVue::Rendu);
     println!(
         "[espace] 2 projets, 3 vues, 2 panneaux : source/undo partagés, modes indépendants, retour asynchrone routé, sauvegarde et restauration vérifiés"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_import_de_sauvegarde_se_questionne_avant_de_remplacer() {
+    let mut state = etat_isole();
+
+    // Le projet ouvert a déjà son document — c'est lui qui sera en
+    // collision avec la sauvegarde.
+    std::fs::write(state.project.dir.join("document.tw"), "CE QUE J'AVAIS").expect("document");
+
+    // Le projet de l'archive porte le nom du projet ouvert : à l'import, la
+    // destination est le projet lui-même — collision assurée.
+    let nom = state
+        .project
+        .dir
+        .file_name()
+        .map(|nom| nom.to_string_lossy().to_string())
+        .expect("nom du projet");
+    let racine = std::env::temp_dir().join(format!("tw-portable-question-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&racine);
+    let source = racine.join(&nom);
+    std::fs::create_dir_all(&source).expect("source");
+    std::fs::write(source.join("document.tw"), "CE QUE L'ARCHIVE PORTE").expect("document");
+    let archive =
+        std::env::temp_dir().join(format!("tw-portable-question-{}.zip", std::process::id()));
+    let _ = std::fs::remove_file(&archive);
+    crate::project::portable::exporter_projet(&source, &archive).expect("export");
+
+    // L'import entre : collision sur document.tw, donc question — et rien ne
+    // bouge tant que la réponse n'est pas venue.
+    let _ = update(
+        &mut state,
+        Message::ProjetImportChoisi(Some(archive.clone())),
+    );
+    assert!(state.confirmation.is_some(), "la question est la barrière");
+    let avant = std::fs::read_to_string(state.project.dir.join("document.tw")).expect("document");
+    assert_eq!(avant, "CE QUE J'AVAIS", "rien n'est écrasé sans le mot");
+
+    // Le mot venu : le remplacement passe par la corbeille, réversible.
+    let destination = crate::project::projects_dir().join(&nom);
+    let _ = update(
+        &mut state,
+        Message::ProjetImportConfirmer(archive, destination),
+    );
+    let apres = std::fs::read_to_string(state.project.dir.join("document.tw")).expect("document");
+    assert_eq!(
+        apres, "CE QUE L'ARCHIVE PORTE",
+        "le mot venu, la sauvegarde remplace"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_export_markdown_ecrit_le_document_canonique() {
+    let mut state = etat_isole();
+
+    let source = "# Un titre\n\nUn paragraphe avec une note^[la note] et @dupont2023[p. 45].\n";
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(source.into())),
+    );
+
+    let cible = std::env::temp_dir().join(format!("tw-export-md-{}.md", std::process::id()));
+    let _ = std::fs::remove_file(&cible);
+    let _ = update(
+        &mut state,
+        Message::ExportMarkdownChoisi(Some(cible.clone())),
+    );
+
+    let ecrit = std::fs::read_to_string(&cible).expect("markdown");
+    assert_eq!(
+        crate::langage::parse::parse(&ecrit),
+        crate::langage::parse::parse(source),
+        "le Markdown exporté redonne le même document"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_export_docx_dit_le_geste_ou_ecrit_le_docx() {
+    let mut state = etat_isole();
+
+    let source = "# Un titre\n\nUn paragraphe avec une note^[la note].\n";
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(source.into())),
+    );
+
+    let cible = std::env::temp_dir().join(format!("tw-export-docx-{}.docx", std::process::id()));
+    let _ = std::fs::remove_file(&cible);
+    let _ = update(&mut state, Message::ExportDocxChoisi(Some(cible.clone())));
+
+    if crate::langage::export::soffice_disponible() {
+        let octets = std::fs::read(&cible).expect("docx");
+        assert!(!octets.is_empty(), "le DOCX a du contenu");
+        let note = state.note.as_ref().expect("une note");
+        assert!(
+            note.texte.contains("[note:"),
+            "la limite est dite : {}",
+            note.texte
+        );
+    } else {
+        // Sans LibreOffice, l'état d'erreur propose son remède : le geste,
+        // pas seulement le nom du réglage.
+        let note = state.note.as_ref().expect("une note");
+        assert!(note.erreur, "c'est une erreur : {}", note.texte);
+        assert!(note.texte.contains("LibreOffice"), "{}", note.texte);
+        assert!(note.texte.contains("Markdown"), "{}", note.texte);
+    }
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn l_aide_se_bascule_et_dit_le_chemin_des_donnees() {
+    let mut state = etat_isole();
+
+    // F1 (plan_touche) porte ce message : la fenêtre d'aide se bascule.
+    assert!(!state.aide);
+    let _ = update(&mut state, Message::AideBasculer);
+    assert!(state.aide, "l'aide s'ouvre");
+    let _ = update(&mut state, Message::AideBasculer);
+    assert!(!state.aide, "l'aide se ferme");
+
+    // Le chemin qu'elle montre est celui des données : réel, créé, et
+    // reconnaissable à l'œil.
+    let chemin = crate::project::work_dir();
+    assert!(chemin.is_dir(), "le dossier des données existe");
+    assert!(
+        chemin.to_string_lossy().contains("typst-writer"),
+        "le chemin est reconnaissable : {}",
+        chemin.display()
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_glissement_de_separateur_regle_la_disposition() {
+    let mut state = etat_isole();
+
+    // L'origine du glissement est la position réelle du clic.
+    let _ = update(
+        &mut state,
+        Message::MouseMoved(iced::Point::new(200.0, 100.0)),
+    );
+    let depart = state.layout.sidebar_width;
+    let _ = update(
+        &mut state,
+        Message::SplitterPressed(crate::app::state::Splitter::Sidebar),
+    );
+    assert!(state.layout.dragging.is_some(), "le séparateur est tenu");
+
+    // Le glissement suit le delta depuis l'origine — jamais cumulé.
+    let _ = update(
+        &mut state,
+        Message::MouseMoved(iced::Point::new(250.0, 100.0)),
+    );
+    let apres_50 = state.layout.sidebar_width;
+    assert!(
+        (apres_50 - (depart + 50.0)).abs() < 0.5,
+        "50 px de plus : {apres_50} pour {depart}"
+    );
+    let _ = update(
+        &mut state,
+        Message::MouseMoved(iced::Point::new(260.0, 100.0)),
+    );
+    assert!(
+        (state.layout.sidebar_width - (depart + 60.0)).abs() < 0.5,
+        "le delta part de l'origine, pas de la valeur courante"
+    );
+
+    // Les bornes tiennent : le séparateur ne va pas écraser la disposition.
+    let _ = update(
+        &mut state,
+        Message::MouseMoved(iced::Point::new(-5000.0, 100.0)),
+    );
+    assert!(
+        state.layout.sidebar_width >= 1.0,
+        "la borne tient : {}",
+        state.layout.sidebar_width
+    );
+
+    // Le relâchement rend la main.
+    let _ = update(&mut state, Message::SplitterReleased);
+    assert!(state.layout.dragging.is_none(), "le séparateur est relâché");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn l_aide_dit_le_diagnostic_et_la_recuperation() {
+    let mut state = etat_isole();
+
+    // Le diagnostic du poste, en une ligne — chaque état dit son remède.
+    let resume = crate::ui::aide::diagnostic_resume(&state);
+    assert!(resume.contains(env!("CARGO_PKG_VERSION")), "{resume}");
+    assert!(resume.contains("serveur de langage"), "{resume}");
+    assert!(
+        resume.contains("absent"),
+        "sans serveur, l'état est dit : {resume}"
+    );
+    assert!(
+        resume.contains("l'écriture reste entière"),
+        "le remède est dit : {resume}"
+    );
+    assert!(resume.contains("bibliothèque"), "{resume}");
+
+    // Les deux gestes de récupération sont portés par l'aide.
+    let _ = update(&mut state, Message::AideBasculer);
+    assert!(state.aide, "l'aide ouvre le centre");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_devoir_se_produit_et_se_recupere() {
+    let mut state = etat_isole();
+    let chemin = state.editor.path.clone().expect("document");
+
+    // Produire : le devoir s'écrit et s'enregistre.
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("LE DEVOIR PREMIER".into())),
+    );
+    let _ = update(&mut state, Message::SaveTick);
+    assert_eq!(
+        std::fs::read_to_string(&chemin).expect("document"),
+        "LE DEVOIR PREMIER",
+        "le devoir est écrit"
+    );
+
+    // Le coup du sort : une autre main touche le fichier pendant ce temps.
+    std::fs::write(&chemin, "CE QUI A ÉTÉ PERDU").expect("changement extérieur");
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(" — LA SUITE".into())),
+    );
+    let _ = update(&mut state, Message::SaveTick);
+    // La sauvegarde refuse le conflit — et le confirmer garde ce qui allait
+    // être remplacé.
+    let _ = update(&mut state, Message::ConfirmationConfirmer);
+    assert_eq!(
+        std::fs::read_to_string(&chemin).expect("document"),
+        state.editor.content(),
+        "le travail de l'utilisateur est écrit"
+    );
+
+    // Récupérer : ce qui a été perdu se relit dans les sauvegardes.
+    let sauvegardes = crate::project::sauvegardes_dir(&state.project.dir);
+    let retrouve = std::fs::read_dir(&sauvegardes)
+        .map(|entrees| {
+            entrees.filter_map(Result::ok).any(|entree| {
+                std::fs::read_to_string(entree.path())
+                    .map(|texte| texte.contains("CE QUI A ÉTÉ PERDU"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+    assert!(
+        retrouve,
+        "la version perdue se récupère dans {}",
+        sauvegardes.display()
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_boutons_de_format_agissent_sur_le_bloc() {
+    let mut state = etat_isole();
+
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Une ligne".into())),
+    );
+    let depart = state.editor.content();
+    eprintln!("SONDAGE départ={depart:?}");
+
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::ListePuce),
+    );
+    eprintln!("SONDAGE puce={:?}", state.editor.content());
+
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::ListeNumero),
+    );
+    eprintln!("SONDAGE numero={:?}", state.editor.content());
+
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::CitationBloc),
+    );
+    eprintln!("SONDAGE citation={:?}", state.editor.content());
+
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::Titre(2)),
+    );
+    eprintln!("SONDAGE titre={:?}", state.editor.content());
+
+    assert_ne!(state.editor.content(), depart, "quelque chose a bougé");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_bloc_vide_se_formate_en_puce() {
+    // L'éditeur vient de naître : le document est vide — c'est le cas des
+    // projets neufs et des modèles. Le bouton y écrit la marque, il ne se
+    // tait jamais.
+    let mut state = etat_isole();
+    assert_eq!(state.editor.content(), "");
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::ListePuce),
+    );
+    assert_eq!(state.editor.content(), "- ", "la puce s'écrit");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_bloc_vide_se_formate_en_numero() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::ListeNumero),
+    );
+    assert_eq!(state.editor.content(), "1. ", "le numéro s'écrit");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_bloc_vide_se_formate_en_citation() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::CitationBloc),
+    );
+    assert_eq!(state.editor.content(), "> ", "la citation s'écrit");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_bloc_vide_se_formate_en_titre() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Format(crate::app::message::FormatAction::Titre(1)),
+    );
+    assert_eq!(state.editor.content(), "# ", "le titre s'écrit");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_bouton_document_ecriture_agit_toujours() {
+    let mut state = etat_isole();
+
+    // Cas 1 : le document d'écriture est déjà sous les yeux — le bouton le
+    // dit, il ne se tait jamais.
+    let _ = update(&mut state, Message::NewFile);
+    let note = state.note.as_ref().expect("une note");
+    assert!(
+        note.texte.contains("déjà sous les yeux"),
+        "le geste répond : {}",
+        note.texte
+    );
+
+    // Cas 2 : ailleurs dans le projet — un chapitre — le bouton ramène au
+    // document d'écriture.
+    let dir = state.project.dir.clone();
+    std::fs::create_dir_all(dir.join("chapitres")).expect("chapitres");
+    std::fs::write(dir.join("chapitres/ch.typ"), "AUTRE FICHIER").expect("chapitre");
+    state.project = crate::project::load(&dir);
+    state.open_document(
+        dir.join("chapitres/ch.typ"),
+        "AUTRE FICHIER".to_string(),
+        false,
+    );
+    assert!(
+        state
+            .editor
+            .path
+            .as_ref()
+            .is_some_and(|p| p.ends_with("ch.typ")),
+        "le chapitre est sous les yeux"
+    );
+    let _ = update(&mut state, Message::NewFile);
+    assert!(
+        state
+            .editor
+            .path
+            .as_ref()
+            .is_some_and(|p| p.ends_with("document.tw")),
+        "le document d'écriture revient : {:?}",
+        state.editor.path
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_bouton_etiquette_pose_une_etiquette() {
+    let mut state = etat_isole();
+
+    // Le geste écrit la marque `<…>` dans les deux dialectes — c'est la
+    // syntaxe que le pipeline lit déjà comme étiquette, et qu'un renvoi
+    // `@fig:nom` trouve.
+    let _ = update(&mut state, Message::EtiquetteInserer);
+    let contenu = state.editor.content();
+    assert!(
+        contenu.contains('<') && contenu.contains('>'),
+        "l'étiquette se pose : {contenu:?}"
+    );
+    assert!(
+        state.note.is_none(),
+        "plus de refus périmé : la syntaxe existe"
+    );
+}
+
+/// **Bug-report-8, T6.1-T6.2** : la pastille d'une couleur ouvre la roue
+/// pour ce champ-là, et la couleur choisie s'écrit dans les normes —
+/// section « Couleurs » comme « Défauts du décor », le même contrôle.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+/// **Bug-report-8, T9.1** : les contrôles d'une même section cohabitent
+/// — la grille des titres règle des niveaux indépendants, les mesures
+/// refusent le négatif, la langue des dates s'écrit en code.
+fn une_section_se_regle_dans_son_entier() {
+    use crate::mise_en_page::modele::{Champ, normaliser_mesure};
+
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+
+    // La grille des titres : chaque niveau reste indépendant.
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::TitresTaille2, "15".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::TitresGras2, "false".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::TitresItalique2, "true".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::TitresSouligne3, "true".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::TitresEspacement1, "0.5".into()),
+    );
+
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::TitresTaille2),
+        "15em",
+        "une taille nue devient une mesure"
+    );
+    assert_eq!(dialogue.reglages.valeur(Champ::TitresGras2), "false");
+    assert_eq!(dialogue.reglages.valeur(Champ::TitresItalique2), "true");
+    assert_eq!(dialogue.reglages.valeur(Champ::TitresSouligne3), "true");
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::TitresEspacement1),
+        "0.5em",
+        "un nombre nu devient une mesure"
+    );
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::TitresItalique1),
+        "",
+        "le niveau 1 n'est pas touché par le niveau 2"
+    );
+
+    // Le négatif refuse, à la mesure comme à la molette.
+    let avant = dialogue.reglages.valeur(Champ::TitresEspacement1);
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::TitresEspacement1, "-2em".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageMolette(Champ::TitresEspacement1, -1),
+    );
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::TitresEspacement1),
+        avant,
+        "le négatif ne passe pas"
+    );
+    assert!(
+        normaliser_mesure("-2em").is_none(),
+        "le cœur le refuse aussi"
+    );
+
+    // La langue des dates s'écrit en code, pas en libellé.
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::DatesLangue, "de".into()),
+    );
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    assert_eq!(dialogue.reglages.valeur(Champ::DatesLangue), "de");
+
+    // Tout cela cohabite dans un même modèle.
+    let gabarit = crate::mise_en_page::gabarit::generer(&dialogue.reglages);
+    assert!(gabarit.contains("0.5em"), "l'espacement part : {gabarit}");
+    assert!(gabarit.contains("style: \"italic\""), "l'italique part");
+    assert!(gabarit.contains("underline"), "le souligné part");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_pastille_d_une_couleur_ecrit_sa_valeur() {
+    use crate::mise_en_page::modele::Champ;
+
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+
+    // La section « Couleurs » : le texte se teinte de la roue.
+    let _ = update(
+        &mut state,
+        Message::PickerCouleurPourReglage(Champ::CouleurTexte),
+    );
+    let _ = update(&mut state, Message::PickerCouleurHex("#3498db".to_string()));
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    let attendu = {
+        let (t, s, v) = crate::ui::picker_couleur::hex_vers_hsv("#3498db").expect("le hex");
+        crate::ui::picker_couleur::hsv_vers_hex(t, s, v)
+    };
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::CouleurTexte),
+        attendu,
+        "la couleur choisie s'écrit dans les normes"
+    );
+
+    // Le décor reçoit le même traitement.
+    let _ = update(
+        &mut state,
+        Message::PickerCouleurPourReglage(Champ::DecorRemplissage),
+    );
+    let _ = update(&mut state, Message::PickerCouleurHex("#e74c3c".to_string()));
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    let attendu = {
+        let (t, s, v) = crate::ui::picker_couleur::hex_vers_hsv("#e74c3c").expect("le hex");
+        crate::ui::picker_couleur::hsv_vers_hex(t, s, v)
+    };
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::DecorRemplissage),
+        attendu,
+        "le décor se règle de la même roue"
+    );
+
+    // Un niveau de titre se teinte de la même roue (bug-report-8, T2.1).
+    let _ = update(
+        &mut state,
+        Message::PickerCouleurPourReglage(Champ::TitresCouleur1),
+    );
+    let _ = update(&mut state, Message::PickerCouleurHex("#27ae60".to_string()));
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    let attendu = {
+        let (t, s, v) = crate::ui::picker_couleur::hex_vers_hsv("#27ae60").expect("le hex");
+        crate::ui::picker_couleur::hsv_vers_hex(t, s, v)
+    };
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::TitresCouleur1),
+        attendu,
+        "chaque niveau de titre porte sa couleur"
+    );
+}
+
+/// **Bug-report-8, T4.2-T4.4** : une image choisie se pose dans le lieu
+/// visé ; un format non composable est refusé avec son mot ; la hauteur
+/// se règle en pourcentage.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_image_s_insere_et_se_regle() {
+    use crate::mise_en_page::modele::Champ;
+
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+
+    // Un vrai fichier image, pour la vérification de lecture.
+    let image = std::env::temp_dir().join("tw-image-epreuve.png");
+    std::fs::write(&image, [137u8, 80, 78, 71]).expect("l'image s'écrit");
+
+    let _ = update(
+        &mut state,
+        Message::EntetePiedImageChoisie(Champ::EnteteGauche, image.to_string_lossy().into_owned()),
+    );
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    let valeur = dialogue.reglages.valeur(Champ::EnteteGauche);
+    assert!(
+        valeur.contains(&format!("![  ]({})", image.display())),
+        "l'image se pose dans le lieu : {valeur}"
+    );
+
+    // Un format non composable : refusé, et le champ ne bouge pas.
+    let avant = valeur.clone();
+    let _ = update(
+        &mut state,
+        Message::EntetePiedImageChoisie(Champ::EnteteGauche, "/tmp/une-video.mp4".to_string()),
+    );
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::EnteteGauche),
+        avant,
+        "un format non composable ne s'insère pas"
+    );
+    assert!(state.note.is_some(), "le refus se dit, jamais en silence");
+
+    // La hauteur se règle en pourcentage (T4.4).
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::ImagesHauteur, "60".to_string()),
+    );
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::ImagesHauteur),
+        "60",
+        "la hauteur des images se règle"
+    );
+
+    let _ = std::fs::remove_file(&image);
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_roue_s_entend_avec_le_hex_et_les_rapides() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::PickerCouleurOuvrir);
+
+    // Le hex tape pilote la roue.
+    let _ = update(&mut state, Message::PickerCouleurHex("#3498db".to_string()));
+    let picker = state.picker_couleur.as_ref().expect("la roue est ouverte");
+    assert_eq!(
+        picker.hex_saisi.as_deref(),
+        Some("#3498db"),
+        "la saisie reste sous les doigts"
+    );
+    assert!(
+        (200.0..230.0).contains(&picker.teinte),
+        "le bleu vient sur la roue : {}°",
+        picker.teinte
+    );
+
+    // Appliquer ferme et teinte le texte du hex courant.
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    assert!(state.picker_couleur.is_none(), "la roue se referme");
+    assert!(
+        state.editor.content().contains("#3498db"),
+        "la couleur vient : {:?}",
+        state.editor.content()
+    );
+
+    // Une couleur rapide touche le texte et laisse la roue ouverte.
+    let _ = update(&mut state, Message::PickerCouleurOuvrir);
+    let _ = update(
+        &mut state,
+        Message::PickerCouleurRapide("#e74c3c".to_string()),
+    );
+    assert!(
+        state.picker_couleur.is_some(),
+        "la roue reste ouverte pour la suite"
+    );
+    assert!(
+        state.editor.content().contains("#e74c3c"),
+        "la rapide s'applique : {:?}",
+        state.editor.content()
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_roue_du_theme_vise_son_champ() {
+    let mut state = etat_isole();
+
+    // Le bouton de couleur d'un champ du thème ouvre la même roue, visée
+    // sur ce champ.
+    let _ = update(&mut state, Message::ThemeEditeurColorPicker("accent"));
+    let picker = state.picker_couleur.as_ref().expect("la roue est ouverte");
+    assert_eq!(picker.champ, Some("accent"), "la roue vise le champ");
+
+    // La couleur choisie va au champ du thème, et la roue se referme.
+    let _ = update(&mut state, Message::PickerCouleurHex("#e67e22".to_string()));
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    assert!(state.picker_couleur.is_none(), "la roue se referme");
+    assert_eq!(
+        state.editeur_theme_textes.get("accent").map(String::as_str),
+        Some("#e67e22"),
+        "le champ du thème reçoit la couleur"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_normes_sont_une_fenetre_au_contrat_de_clavier() {
+    let mut state = etat_isole();
+
+    // La fenêtre des normes est comptée comme fenêtre : `Tabulation`
+    // circule, `Maj+Tabulation` revient — le contrat de toutes les
+    // fenêtres (éprouvé par ailleurs), dont la navigation clavier des
+    // normes (bug-report-7, point 19).
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    assert!(
+        state.mise_en_page.is_some(),
+        "la fenêtre des normes est ouverte"
+    );
+    assert!(
+        super::super::fenetre_ouverte(&state),
+        "elle entre dans le contrat des fenêtres"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_note_se_ecrit_dans_son_panneau_et_pose_sa_marque() {
+    let mut state = etat_isole();
+
+    // Le geste n'écrit rien dans la ligne : il ouvre le panneau.
+    let _ = update(&mut state, Message::NoteInserer);
+    assert!(state.note_dialogue.is_some(), "le panneau s'ouvre");
+    assert_eq!(state.editor.content(), "", "rien dans la ligne");
+
+    // La note s'écrit au panneau, puis la seule marque vient au curseur.
+    let _ = update(&mut state, Message::NoteTexte("voici ma note".to_string()));
+    let _ = update(&mut state, Message::NoteValider);
+    assert!(state.note_dialogue.is_none(), "le panneau se referme");
+    assert_eq!(
+        state.editor.content(),
+        "^[voici ma note]",
+        "la marque porte la note"
+    );
+
+    // Annuler n'écrit rien du tout.
+    let _ = update(&mut state, Message::NoteInserer);
+    let _ = update(&mut state, Message::NoteTexte("abandonnée".to_string()));
+    let _ = update(&mut state, Message::NoteAnnuler);
+    assert_eq!(state.editor.content(), "^[voici ma note]", "rien de plus");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_metadonnées_se_reglent_et_se_sauvent() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+
+    // Une paire change : le dialogue la porte, et le fichier la garde —
+    // des données, elles ne s'annulent pas.
+    let _ = update(
+        &mut state,
+        Message::MetaChamp(
+            "directeur".to_string(),
+            "directeur".to_string(),
+            "M. X".to_string(),
+        ),
+    );
+    let _ = update(&mut state, Message::MetaAjouter);
+    let dialogue = state.mise_en_page.as_ref().expect("le dialogue");
+    assert_eq!(
+        dialogue.metadonnees.valeur("directeur"),
+        Some("M. X"),
+        "la quick part a sa valeur"
+    );
+    assert_eq!(
+        dialogue.metadonnees.paires.len(),
+        2,
+        "la ligne de l'auteur + la ligne neuve"
+    );
+
+    // Le fichier porte la même chose — la relève est durable.
+    let relue = crate::project::metadonnees::Metadonnees::charger(&state.project.dir);
+    assert_eq!(relue.valeur("directeur"), Some("M. X"));
+
+    // Supprimer retire la ligne, du dialogue comme du fichier.
+    let derniere = relue.paires.last().expect("une ligne").0.clone();
+    let _ = update(&mut state, Message::MetaSupprimer(derniere.clone()));
+    let relue = crate::project::metadonnees::Metadonnees::charger(&state.project.dir);
+    assert!(relue.valeur(&derniere).is_none(), "la ligne est partie");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_creation_porte_les_metadonnées() {
+    let mut state = etat_isole();
+
+    // Le dialogue de création propose les métadonnées, et le projet naît
+    // avec (bug-report-7, point 9).
+    let _ = update(&mut state, Message::ProjetCreer);
+    let _ = update(&mut state, Message::ProjetNom("un-devoir".to_string()));
+    let _ = update(
+        &mut state,
+        Message::ProjetMeta("titre".to_string(), "Un devoir".to_string()),
+    );
+    let _ = update(
+        &mut state,
+        Message::ProjetMeta("auteur".to_string(), "Alice".to_string()),
+    );
+    let _ = update(&mut state, Message::ProjetValider);
+
+    let meta = crate::project::metadonnees::Metadonnees::charger(
+        &crate::project::projects_dir().join("un-devoir"),
+    );
+    assert_eq!(meta.valeur("titre"), Some("Un devoir"));
+    assert_eq!(meta.valeur("auteur"), Some("Alice"));
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_composeur_ecrit_le_code_a_sa_place() {
+    let mut state = etat_isole();
+
+    // Le composeur s'ouvre : les champs naissent des paramètres.
+    let _ = update(&mut state, Message::ExtensionOuvrir);
+    let dialogue = state.extension.as_ref().expect("le composeur");
+    assert!(
+        dialogue.valeurs.contains_key("largeur"),
+        "les champs naissent de parametres()"
+    );
+
+    // Le choix devient le code posé au curseur — l'écrivain ne le tape
+    // jamais (bug-report-7, point 4).
+    let _ = update(
+        &mut state,
+        Message::ExtensionParam("largeur".to_string(), "12cm".to_string()),
+    );
+    let _ = update(&mut state, Message::ExtensionInserer);
+    assert!(state.extension.is_none(), "le composeur se referme");
+    let contenu = state.editor.content();
+    assert!(
+        contenu.contains("width: 12cm"),
+        "le réglage devient du code : {contenu}"
+    );
+    assert!(
+        contenu.contains("@local/cetz"),
+        "le paquet est nommé : {contenu}"
+    );
+
+    // Annuler n'écrit rien.
+    let _ = update(&mut state, Message::ExtensionOuvrir);
+    let _ = update(&mut state, Message::ExtensionAnnuler);
+    assert_eq!(state.editor.content(), contenu, "rien de plus");
+}
+
+/// Le glossaire se gère du panneau gauche : une entrée s'écrit, se
+/// corrige, se supprime — et sa référence s'insère au curseur dans le
+/// dialecte du tampon (bug-report-8 : l'écrivain ne tape jamais le code).
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_glossaire_se_gere_du_panneau() {
+    let mut state = etat_isole();
+
+    // Une entrée neuve : la fiche s'ouvre, la clé se choisit.
+    let _ = update(&mut state, Message::GlossaireCreer);
+    assert!(state.edition_glossaire.is_some(), "la fiche s'ouvre");
+
+    let _ = update(
+        &mut state,
+        Message::EditionGlossaireChamp("cle".into(), "sdo".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::EditionGlossaireChamp("court".into(), "sdo".into()),
+    );
+    let _ = update(
+        &mut state,
+        Message::EditionGlossaireChamp("long".into(), "docteur scolastique".into()),
+    );
+    let _ = update(&mut state, Message::EditionGlossaireEnregistrer);
+
+    assert!(state.edition_glossaire.is_none(), "la fiche se referme");
+    assert_eq!(state.glossaire.len(), 1, "le terme est là");
+    assert_eq!(state.glossaire[0].key, "sdo");
+
+    // Le fichier porte tout — la persistance est au projet.
+    let relu = crate::project::glossaire::Glossaire::charger(&state.project.dir);
+    assert_eq!(relu.entrees.len(), 1, "le fichier est écrit");
+    assert_eq!(relu.entrees[0].long.as_deref(), Some("docteur scolastique"));
+
+    // Un clic insère la référence, dans le dialecte du tampon (`.tw`).
+    let _ = update(&mut state, Message::GlossaireInserer("sdo".into()));
+    assert!(
+        state.editor.content().contains("{glo:sdo}"),
+        "la balise est insérée : {}",
+        state.editor.content()
+    );
+
+    // Une clé fausse se refuse — la fiche reste ouverte, rien ne s'écrit.
+    let _ = update(&mut state, Message::GlossaireCreer);
+    let _ = update(
+        &mut state,
+        Message::EditionGlossaireChamp("cle".into(), "deux mots".into()),
+    );
+    let _ = update(&mut state, Message::EditionGlossaireEnregistrer);
+    assert!(state.edition_glossaire.is_some(), "la fiche reste ouverte");
+    assert!(
+        state.note.as_ref().is_some_and(|n| n.erreur),
+        "le refus se dit"
+    );
+    assert_eq!(state.glossaire.len(), 1, "rien n'a été écrit");
+
+    // La correction se fait en place.
+    let _ = update(&mut state, Message::EditionGlossaireFermer);
+    let _ = update(&mut state, Message::GlossaireModifier("sdo".into()));
+    let _ = update(
+        &mut state,
+        Message::EditionGlossaireChamp("long".into(), "docteur de l'École".into()),
+    );
+    let _ = update(&mut state, Message::EditionGlossaireEnregistrer);
+    assert_eq!(state.glossaire.len(), 1, "pas de doublon");
+    assert_eq!(
+        state.glossaire[0].long.as_deref(),
+        Some("docteur de l'École"),
+        "le terme est corrigé en place"
+    );
+
+    // Et la suppression part pour de bon.
+    let _ = update(&mut state, Message::GlossaireSupprimer("sdo".into()));
+    assert!(state.glossaire.is_empty(), "le terme est parti");
+    let relu = crate::project::glossaire::Glossaire::charger(&state.project.dir);
+    assert!(relu.entrees.is_empty(), "le fichier suit");
+}
+
+/// Les normes ouvertes prennent les mains : le clavier n'arrive plus à
+/// l'éditeur, et une couleur rapide de la roue va au réglage visé —
+/// jamais au texte (bug-report-9, T1.1).
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_normes_prennent_les_mains() {
+    use crate::mise_en_page::modele::Champ;
+
+    let mut state = etat_isole();
+
+    // L'écriture en cours : un vrai clic donne le clavier à l'éditeur
+    // (`has_canvas_focus`) — sans cette main, le test ci-dessous passerait
+    // sans le correctif.
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::MouseClick(iced::Point::new(
+            4.0, 4.0,
+        ))),
+    );
+    let avant = state.editor.content().to_string();
+
+    // Les normes ouvertes : le clavier ne va plus au document.
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    assert!(state.mise_en_page.is_some(), "le panneau s'ouvre");
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::CharacterInput('x')),
+    );
+    assert_eq!(
+        state.editor.content(),
+        avant,
+        "le clavier n'arrive plus au document"
+    );
+
+    // Une couleur rapide de la roue va au réglage visé — pas au texte.
+    let _ = update(
+        &mut state,
+        Message::PickerCouleurPourReglage(Champ::CouleurTexte),
+    );
+    let _ = update(&mut state, Message::PickerCouleurRapide("#112233".into()));
+    let dialogue = state.mise_en_page.as_ref().expect("le panneau");
+    assert_eq!(
+        dialogue.reglages.valeur(Champ::CouleurTexte),
+        "#112233",
+        "la couleur rapide va au réglage visé"
+    );
+    assert_eq!(state.editor.content(), avant, "le texte ne bouge pas");
+
+    // Et les mains reviennent à l'écriture à la fermeture.
+    let _ = update(&mut state, Message::MiseEnPageFermer);
+    assert!(state.editor.editor.is_focused(), "l'écriture reprend");
+}
+
+/// Bug-report-9 : la bascule éditeur → rendu régénère systématiquement le
+/// PDF, et l'aperçu se refait depuis ce fichier livré.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_bascule_vers_le_rendu_genere_le_pdf() {
+    let mut state = etat_isole();
+
+    // Le geste : passer à la vue rendu.
+    let _ = update(&mut state, Message::ModeBasculer);
+    assert!(
+        state.mode == crate::app::state::ModeVue::Rendu,
+        "la bascule ouvre la vue rendu"
+    );
+    assert!(
+        state.render.export_en_cours,
+        "la bascule demande systématiquement la génération du PDF"
+    );
+
+    // La réponse de la tâche, telle que la boucle de messages la livre.
+    let dir = state.document_dir();
+    let (entry, overrides) = state.compilation_unit();
+    let octets = crate::typst::render::render_pdf(&dir, &entry, &overrides).expect("PDF généré");
+    let _ = update(&mut state, Message::PdfApercu(Ok(octets)));
+
+    assert!(
+        state.render.lecteur.is_some(),
+        "le lecteur affiche le PDF généré"
+    );
+    assert!(!state.render.export_en_cours, "la génération est close");
+}
+
+/// Bug-report-9 : un geste de zoom (dix crans de molette) ne déclenche
+/// qu'**un** rendu net, lancé quand le geste s'arrête — jamais un rendu
+/// par cran.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_geste_de_zoom_ne_declenche_qu_un_rendu() {
+    let mut state = etat_isole();
+
+    // Le rendu est en place (la bascule l'a demandé) — la réponse, telle
+    // que la boucle la livre.
+    let _ = update(&mut state, Message::ModeBasculer);
+    let dir = state.document_dir();
+    let (entry, overrides) = state.compilation_unit();
+    let octets = crate::typst::render::render_pdf(&dir, &entry, &overrides).expect("PDF");
+    let _ = update(&mut state, Message::PdfApercu(Ok(octets)));
+
+    // La compilation, telle que la tâche la livrerait : l'aperçu a
+    // besoin du document pour savoir quoi rasteriser.
+    let outcome = crate::typst::render::compile(&dir, &entry, &overrides);
+    let _ = update(&mut state, Message::RenderDone(outcome));
+
+    // Dix crans de molette, sans pause.
+    let avant = state.render.requested;
+    for _ in 0..10 {
+        let _ = update(&mut state, Message::PreviewZoomStep(1));
+    }
+    assert!(state.render.zoom_depuis.is_some(), "le geste est suivi");
+    assert_eq!(
+        state.render.requested, avant,
+        "aucun rendu ne part pendant le geste"
+    );
+
+    // Le geste s'arrête : le tic suivant lance le rendu net — une fois.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    let _ = update(&mut state, Message::RenderTick);
+    assert!(
+        state.render.requested > avant,
+        "le rendu net part après le geste"
+    );
+    assert!(state.render.zoom_depuis.is_none(), "le geste est clos");
+
+    let apres = state.render.requested;
+    let _ = update(&mut state, Message::RenderTick);
+    assert_eq!(state.render.requested, apres, "aucun second rendu ne part");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_des_normes_connait_la_norme_du_document() {
+    use crate::mise_en_page::modele::Champ;
+
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    let dialogue = state.mise_en_page.as_ref().unwrap();
+    assert_eq!(
+        dialogue.norme_originale,
+        crate::project::norme_qui_correspond(&dialogue.reglages).unwrap_or_default(),
+        "la norme chargée est exactement celle du document — sinon « Normes personnalisées »"
+    );
+    assert!(!dialogue.modifie, "rien n'est modifié au premier regard");
+
+    // Une édition : la norme en cours de modification se signale.
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::MargeHaut, "13cm".to_string()),
+    );
+    let dialogue = state.mise_en_page.as_ref().unwrap();
+    assert!(dialogue.modifie, "l'édition marque la norme modifiée");
+    assert!(
+        crate::project::norme_qui_correspond(&dialogue.reglages).is_none(),
+        "des réglages modifiés ne sont plus aucune norme connue"
+    );
+
+    // L'enregistrement refuse le nom d'une norme qui existe déjà.
+    let existant = crate::project::noms_de_normes()
+        .into_iter()
+        .next()
+        .expect("la bibliothèque est semée");
+    let _ = update(&mut state, Message::NormesEnregistrer(existant.clone()));
+    let dialogue = state.mise_en_page.as_ref().unwrap();
+    assert!(
+        dialogue.norme_originale != existant,
+        "la copie ne vole pas un nom existant"
+    );
+    assert!(dialogue.modifie, "la copie refusée laisse la modification");
+
+    // La copie sous un nom neuf devient la norme chargée.
+    let _ = update(
+        &mut state,
+        Message::NormesEnregistrer("une copie".to_string()),
+    );
+    let dialogue = state.mise_en_page.as_ref().unwrap();
+    assert_eq!(
+        dialogue.norme_originale, "une copie",
+        "la copie est chargée"
+    );
+    assert!(!dialogue.modifie, "enregistrer retire la modification");
+
+    // Écraser la norme chargée : la bibliothèque la porte à jour.
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(Champ::MargeBas, "5cm".to_string()),
+    );
+    assert!(state.mise_en_page.as_ref().unwrap().modifie, "retouchée");
+    let _ = update(&mut state, Message::NormesEcraser);
+    let attendu = state.mise_en_page.as_ref().unwrap().reglages.clone();
+    assert_eq!(
+        crate::project::norme("une copie"),
+        Some(attendu),
+        "écraser met la bibliothèque à jour"
+    );
+    assert!(
+        !state.mise_en_page.as_ref().unwrap().modifie,
+        "écraser retire la modification"
+    );
+
+    // Le document porte maintenant la norme : l'appliquer, puis rouvrir.
+    let _ = update(&mut state, Message::MiseEnPageAppliquer);
+    let _ = update(&mut state, Message::MiseEnPageFermer);
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    let dialogue = state.mise_en_page.as_ref().unwrap();
+    assert_eq!(
+        dialogue.norme_originale, "une copie",
+        "la bibliothèque reconnaît la norme à l'ouverture"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn au_demarrage_les_fenetres_de_rendu_se_remplissent() {
+    let mut state = etat_isole();
+    state.mode = crate::app::state::ModeVue::Rendu;
+
+    // La fenêtre de rendu du démarrage reçoit l'ordre de montrer son
+    // document — elle n'attend pas une bascule de mode (bug-report-9).
+    assert!(
+        crate::app::rendre_les_fenetres_de_rendu(&mut state).is_some(),
+        "la fenêtre de rendu du démarrage est servie"
+    );
+
+    // Une compilation lancée n'est pas relancée.
+    state.render.pending = true;
+    assert!(
+        crate::app::rendre_les_fenetres_de_rendu(&mut state).is_none(),
+        "rien ne se lance deux fois"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_choix_de_couleur_n_insere_rien() {
+    let mut state = etat_isole();
+
+    // Le sélecteur s'ouvre, et une couleur personnalisée s'y choisit.
+    let _ = update(&mut state, Message::PickerCouleurOuvrir);
+    let _ = update(&mut state, Message::PickerCouleurHex("#123456".to_string()));
+    let avant = state.editor.content();
+
+    // Le choix : la couleur s'enregistre — le texte ne bouge pas, et le
+    // sélecteur reste ouvert pour appliquer si on le souhaite.
+    let _ = update(&mut state, Message::PickerCouleurEnregistrer);
+    assert_eq!(
+        state.derniere_couleur.as_deref(),
+        Some("#123456"),
+        "le choix enregistre la couleur"
+    );
+    assert_eq!(
+        state.editor.content(),
+        avant,
+        "le choix n'insère rien dans le texte"
+    );
+    assert!(
+        state.picker_couleur.is_some(),
+        "le sélecteur reste ouvert après le choix"
+    );
+
+    // L'application : là, la balise va au texte.
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    assert!(
+        state.editor.content() != avant,
+        "l'appliquée touche le texte"
+    );
+    assert!(
+        state.picker_couleur.is_none(),
+        "l'application ferme le sélecteur"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_fenetre_du_glossaire_s_ouvre_et_se_ferme() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::GlossaireFenetreOuvrir);
+    assert!(state.glossaire_fenetre, "la fenêtre s'ouvre");
+
+    // La recherche vit dans la fenêtre.
+    let _ = update(&mut state, Message::GlossaireFiltrer("un".to_string()));
+    assert_eq!(state.glossaire_filtre, "un", "la recherche y vit");
+
+    let _ = update(&mut state, Message::GlossaireFenetreFermer);
+    assert!(!state.glossaire_fenetre, "la fenêtre se ferme");
+    assert!(
+        state.glossaire_filtre.is_empty(),
+        "la recherche ne sert plus à rien"
     );
 }

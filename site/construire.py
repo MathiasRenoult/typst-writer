@@ -24,10 +24,12 @@ PAGES = [
     ("prise-en-main", "Prise en main"),
     ("ecrire", "Écrire"),
     ("bibliographie", "La bibliographie"),
+    ("glossaire", "Le glossaire"),
     ("normes", "Les normes"),
     ("recherche", "Rechercher et remplacer"),
     ("raccourcis", "Les raccourcis"),
     ("fichiers", "Les fichiers"),
+    ("installation-linux", "Installer sous Linux"),
 ]
 
 

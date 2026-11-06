@@ -91,9 +91,13 @@ pub struct Regles {
     /// contiennent. Le dernier niveau sert au-delà.
     pub guillemets: Vec<(char, char)>,
 
-    /// La forme de la numérotation des figures : "1", "A", "I", "1.1".
+    /// La forme de la numérotation des figures : "1", "A", "a", "I", "i", "1.1".
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
+
+    /// Les mots et formats de la balise `{date:...}` — siècles,
+    /// millénaires, dates pleines.
+    pub dates: crate::langage::dates::Regles,
 }
 
 impl Regles {
@@ -106,6 +110,7 @@ impl Regles {
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
             numerotation_figures: String::new(),
+            dates: crate::langage::dates::Regles::default(),
         }
     }
 
@@ -119,6 +124,7 @@ impl Regles {
             espace_guillemets: Espace::Insécable,
             guillemets: vec![('«', '»'), ('‹', '›'), ('"', '"')],
             numerotation_figures: String::new(),
+            dates: crate::langage::dates::Regles::default(),
         }
     }
 
@@ -131,6 +137,7 @@ impl Regles {
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('"', '"'), ('\'', '\''), ('"', '"')],
             numerotation_figures: String::new(),
+            dates: crate::langage::dates::Regles::default(),
         }
     }
 
@@ -144,6 +151,7 @@ impl Regles {
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('„', '“'), ('‚', '‘'), ('»', '«')],
             numerotation_figures: String::new(),
+            dates: crate::langage::dates::Regles::default(),
         }
     }
 
@@ -416,45 +424,36 @@ fn paire(regles: &Regles, profondeur: usize) -> (char, char) {
     regles.guillemets.get(index).copied().unwrap_or(('«', '»'))
 }
 
-/// Les nombres romains désignant un siècle ou un millénaire passent en
-/// petites capitales : `XXe` devient `#smallcaps[XX]e`.
-///
-/// La règle ne vise que les **désignations de siècles** — un nombre romain
-/// seul, ou suivi d'autre chose, reste intact. `Ier`, `IIe`, `XXe` et les
-/// variantes de casse sont reconnues.
-pub fn petites_capitales_siecles(texte: &str) -> String {
+/// Les marqueurs de siècles deviennent leur code Typst — appelée **après**
+/// l'échappement, pour que le code reste vivant.
+pub fn substituer_siecles(texte: &str) -> String {
     let mut sortie = String::new();
     let chars: Vec<char> = texte.chars().collect();
     let mut i = 0;
-
     while i < chars.len() {
-        // Un nombre romain : une suite de IVXLCDM en majuscules.
-        if chars[i].is_ascii_uppercase() && "IVXLCDM".contains(chars[i]) {
-            let debut = i;
-            while i < chars.len() && "IVXLCDM".contains(chars[i]) {
-                i += 1;
+        if chars[i] == '\u{2}' {
+            let mut j = i + 1;
+            let mut corps = String::new();
+            while j < chars.len() && chars[j] != '\u{2}' {
+                corps.push(chars[j]);
+                j += 1;
             }
-            let romain: String = chars[debut..i].iter().collect();
-
-            // Le marqueur de siècle suit immédiatement : `e`, `er`, `ème`.
-            let reste: String = chars[i..].iter().take(3).collect();
-            let marqueur = reste.starts_with("er")
-                || reste.starts_with("ème")
-                || (reste.starts_with('e') && !reste.starts_with("es"));
-
-            if marqueur && !romain.is_empty() {
-                sortie.push_str("#smallcaps[");
-                sortie.push_str(&romain);
-                sortie.push(']');
-            } else {
-                sortie.push_str(&romain);
+            sortie.push_str(&format!("#smallcaps[{corps}]"));
+            i = j + 1;
+        } else if chars[i] == '\u{3}' {
+            let mut j = i + 1;
+            let mut exposant = String::new();
+            while j < chars.len() && chars[j] != '\u{3}' {
+                exposant.push(chars[j]);
+                j += 1;
             }
+            sortie.push_str(&format!("#super[{exposant}]"));
+            i = j + 1;
         } else {
             sortie.push(chars[i]);
             i += 1;
         }
     }
-
     sortie
 }
 

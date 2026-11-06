@@ -5,7 +5,84 @@
 > ultérieur et les limites constatées sont documentés dans
 > [l'audit avant bêta](agent/Pr%C3%A9-Beta/audit-avant-beta-2026-11.md).
 
-## En cours — import sans perte et source fiable
+## 0.3.0-alpha.3 — le coffre-fort des documents et le quotidien
+
+R1 à R8 de la [feuille de route](roadmap-vers-beta-2026-11.md), les
+rapports 7 à 10, et les corrections qui ont suivi. Les limites
+connues sont nommées dans le [README](README.md) — les essais
+Windows et macOS restent à faire nativement.
+
+### R1 — le coffre-fort des documents
+
+R1 de la [feuille de route](roadmap-vers-beta-2026-11.md) : sauvegarde,
+verrou et écritures sûres.
+
+- Un verrou natif protège les instances récentes contre les acquisitions
+  simultanées ; le protocole a été testé sous Linux, pas encore sur Windows
+  ou macOS. Ne travaillez pas simultanément avec une ancienne version, qui
+  ne respecte pas ce verrou. Rust 1.92 est requis pour construire le projet.
+- Les migrations au démarrage ne modifient plus un projet dont le verrou
+  n'a pas été obtenu ; la migration des anciens fichiers à plat s'abstient
+  lorsqu'un projet existe déjà.
+- Les écritures atomiques utilisent des temporaires distincts et conservent
+  les permissions du fichier remplacé. Ces mesures ne remplacent pas une
+  sauvegarde : le verrouillage, la récupération et la fermeture sûre sont
+  encore en chantier.
+- Avant chaque remplacement, la version précédente du document est conservée
+  dans `sauvegardes/`, à côté du projet : vingt copies par document,
+  espacées d'une minute. Un fichier modifié hors de l'application n'est
+  jamais écrasé en silence — une question s'ouvre, la version du disque est
+  conservée quoi qu'il arrive. La procédure de restauration est au guide.
+- Un export — PDF, mise en page, copie — refuse d'écrire dans un projet de
+  l'application que la fenêtre ne détient pas, et les retours d'une
+  compilation périmée ne remplacent plus l'aperçu courant.
+- Une écriture interrompue par une panne ne se perd plus : le temporaire
+  abandonné devient, à la réouverture du document, une copie datée dans
+  `sauvegardes/`. Une copie de sécurité ou une écriture impossible ne
+  remplace jamais le document, et le renommage des fichiers est synchronisé
+  pour survivre à une coupure de courant.
+- La création d'un projet ne paraît qu'une fois prête : le squelette se
+  prépare dans un temporaire caché, puis le projet est publié d'un seul
+  renommage — jamais un demi-projet dans la liste.
+- Lors d'une fermeture normale, les documents modifiés sont enregistrés
+  avant de fermer la fenêtre ; en cas d'échec, la fermeture est annulée et
+  le tampon conservé. Les épreuves couvrent les messages et les fichiers ;
+  les gestes réels restent à vérifier.
+- Importer une image extérieure n'écrase plus une image du même nom : la
+  nouvelle copie reçoit un suffixe numérique.
+- Plusieurs écritures du projet et la frappe sont refusées lorsqu'aucun
+  verrou n'a été obtenu. La couverture des autres opérations et le
+  verrouillage multiplateforme restent à compléter.
+- Avant le déplacement ou la suppression d'un projet, les vues modifiées
+  sont sauvegardées ; la suppression est annulée si cette sauvegarde échoue.
+  Les vues et la session suivent le nouveau dossier lors d'un renommage.
+- Les épreuves qui lisaient des projets personnels utilisent des fixtures
+  synthétiques.
+
+
+### Le glossaire (glossarium)
+
+- Le glossaire se gère du **panneau gauche** : un terme porte sa clé, ses
+  formes courte et longue, ses pluriels, sa définition et son groupe.
+  Un clic insère sa référence au curseur ; le crayon corrige, la
+  corbeille supprime ; la loupe cherche par clé, formes ou définition.
+- Les balises `{glo:clé}`, `{glo:clé pluriel}`, `{glo:clé majuscule}` et
+  `{glo:clé majuscule pluriel}` appellent le terme ; la ligne
+  `{glossaire}` pose la liste finale où l'auteur la veut —
+  `{glossaire: tout}` y montre aussi les termes jamais cités.
+- Le rendu est celui du paquet **glossarium 0.5.10**, vendé dans le
+  dépôt et installé localement à la compilation — **jamais de réseau** :
+  première occurrence développée, reprises serrées, liste avec renvoi
+  aux pages. Sans liste, les termes se composent sans lien ; un terme
+  inconnu se neutralise en `[clé]` et se signale — le document compile
+  toujours.
+- Les termes vivent dans `glossaire.toml`, à la racine du projet, dans
+  l'ordre de l'auteur ; ils voyagent avec le projet (archive portable et
+  `.tw` unique — sa clôture passe à la version 2, qu'une ancienne
+  application refuse proprement au lieu de tout lire de travers).
+
+### R2 à R4 — imports sans perte, références fidèles, styles bibliographiques
+
 
 R2 de la [feuille de route](roadmap-vers-beta-2026-11.md) :
 
@@ -70,21 +147,8 @@ R2 de la [feuille de route](roadmap-vers-beta-2026-11.md) :
 - Le moteur Typst est épinglé à sa version exacte : un glissement de
   version ne peut plus changer un rendu sans que les tests ne le disent.
 
-## 0.3.0-alpha.8 — en cours (R6)
+### R5 — modèles de documents, typographie, notes et renvois
 
-- La recherche/remplacement est exacte dans ses deux modes : le littéral
-  ne lit ni métacaractères ni `$`-groupes, le régulier les garde.
-- La recherche montre ce que chaque occurrence devient avant de remplacer,
-  et l'undo remet tout d'un geste — remplacements comme notes supprimées.
-- Les raccourcis exigent le Contrôleur (verrouillé par tests), et un
-  aperçu de normes ou de thème annulé n'enregistre jamais rien.
-- Le changement d'onglets ne perd jamais le tampon, une bibliographie de
-  300 notices se charge sans troncature, et le mode focus rend la
-  disposition d'avant — éprouvés. Choisir une notice ouvre sa fiche sans
-  rien écrire d'autre, la note du composeur s'écrit dans le texte, et un
-  saut de diagnostic ne touche ni la saisie ni l'annulation.
-
-## 0.3.0-alpha.7 — en cours (R5)
 
 - Deux modèles de documents en un geste : devoir court et travail long,
   naissant complets — page de titre, sommaire, bibliographie — sans
@@ -108,53 +172,106 @@ R2 de la [feuille de route](roadmap-vers-beta-2026-11.md) :
   sommaire, sauts, notes, légendes, tableaux, renvois, bibliographie et
   export — lus dans le PDF extrait.
 
-## 0.3.0-alpha.3 — coffre-fort des documents
+### R6 à R8 — édition quotidienne, exports, paquet Linux
 
-R1 de la [feuille de route](roadmap-vers-beta-2026-11.md) : sauvegarde,
-verrou et écritures sûres. Les limites connues sont nommées ci-dessous —
-les essais Windows et macOS restent à faire nativement.
+- Bug-report 7, premier lot : les siècles deviennent de vraies petites
+  capitales à l'exposant (le code mort dans le rendu vient de là),
+  l'étiquette s'écrit dans les deux dialectes, les boutons de format
+  écrivent même sur un bloc vide (ils se taisaient sur les projets neufs),
+  le bouton du document d'écriture répond toujours, l'aperçu se
+  rafraîchit à la bascule.
+- La couleur du texte se choisit sur une roue (teinte, saturation,
+  valeur), centrée dans la fenêtre, avec aperçu hex et ouverture sur la
+  dernière couleur. Les quick parts de l'en-tête et du pied fonctionnent —
+  `{projet}`, `{document}`, `{date}`, `{auteur}`, `{titre}` — les entrées
+  du moteur n'étaient jamais alimentées et les marqueurs étaient
+  défigurés par leur propre échappement ; les images s'y posent aussi, et
+  chaque champ a son sélecteur de quick parts.
 
-- Un verrou natif protège les instances récentes contre les acquisitions
-  simultanées ; le protocole a été testé sous Linux, pas encore sur Windows
-  ou macOS. Ne travaillez pas simultanément avec une ancienne version, qui
-  ne respecte pas ce verrou. Rust 1.92 est requis pour construire le projet.
-- Les migrations au démarrage ne modifient plus un projet dont le verrou
-  n'a pas été obtenu ; la migration des anciens fichiers à plat s'abstient
-  lorsqu'un projet existe déjà.
-- Les écritures atomiques utilisent des temporaires distincts et conservent
-  les permissions du fichier remplacé. Ces mesures ne remplacent pas une
-  sauvegarde : le verrouillage, la récupération et la fermeture sûre sont
-  encore en chantier.
-- Avant chaque remplacement, la version précédente du document est conservée
-  dans `sauvegardes/`, à côté du projet : vingt copies par document,
-  espacées d'une minute. Un fichier modifié hors de l'application n'est
-  jamais écrasé en silence — une question s'ouvre, la version du disque est
-  conservée quoi qu'il arrive. La procédure de restauration est au guide.
-- Un export — PDF, mise en page, copie — refuse d'écrire dans un projet de
-  l'application que la fenêtre ne détient pas, et les retours d'une
-  compilation périmée ne remplacent plus l'aperçu courant.
-- Une écriture interrompue par une panne ne se perd plus : le temporaire
-  abandonné devient, à la réouverture du document, une copie datée dans
-  `sauvegardes/`. Une copie de sécurité ou une écriture impossible ne
-  remplace jamais le document, et le renommage des fichiers est synchronisé
-  pour survivre à une coupure de courant.
-- La création d'un projet ne paraît qu'une fois prête : le squelette se
-  prépare dans un temporaire caché, puis le projet est publié d'un seul
-  renommage — jamais un demi-projet dans la liste.
-- Lors d'une fermeture normale, les documents modifiés sont enregistrés
-  avant de fermer la fenêtre ; en cas d'échec, la fermeture est annulée et
-  le tampon conservé. Les épreuves couvrent les messages et les fichiers ;
-  les gestes réels restent à vérifier.
-- Importer une image extérieure n'écrase plus une image du même nom : la
-  nouvelle copie reçoit un suffixe numérique.
-- Plusieurs écritures du projet et la frappe sont refusées lorsqu'aucun
-  verrou n'a été obtenu. La couverture des autres opérations et le
-  verrouillage multiplateforme restent à compléter.
-- Avant le déplacement ou la suppression d'un projet, les vues modifiées
-  sont sauvegardées ; la suppression est annulée si cette sauvegarde échoue.
-  Les vues et la session suivent le nouveau dossier lors d'un renommage.
-- Les épreuves qui lisaient des projets personnels utilisent des fixtures
-  synthétiques.
+
+- La recherche/remplacement est exacte dans ses deux modes : le littéral
+  ne lit ni métacaractères ni `$`-groupes, le régulier les garde.
+- La recherche montre ce que chaque occurrence devient avant de remplacer,
+  et l'undo remet tout d'un geste — remplacements comme notes supprimées.
+- Les raccourcis exigent le Contrôleur (verrouillé par tests), et un
+  aperçu de normes ou de thème annulé n'enregistre jamais rien.
+- Un projet s'exporte en une archive portable (avec l'inventaire de ce
+  qui manque) et se réimporte : jamais d'écrasement sans choix, ce qui est
+  remplacé reste dans la corbeille, et un import interrompu remet tout en
+  place. L'aide (F1) devient le centre d'aide, diagnostic et récupération. L'expérience DOCX/Markdown est
+  mesurée et documentée : titres, tableaux, citations et images y
+  survivent, les notes deviennent du texte. Les deux exports en découlent :
+  Markdown fidèle (canonique, relu au même document) et DOCX par
+  LibreOffice, avec sa limite dite — et son remède dit quand LibreOffice
+  - Les performances d'un long document et d'une bibliothèque de
+    1 000 notices sont mesurées et publiées, sans goulet caché dans la
+    chaîne d'écriture. Le dossier des données et l'ouverture des dossiers
+    sont portables (Linux, macOS, Windows) sans rien déplacer sous Unix.
+  L'aide (F1) ouvre sur les premiers pas et sur le chemin des données,
+  ouvrable d'un geste. Un paquet Linux s'installe, se met à jour et se
+  désinstalle d'un geste, chaque fichier vérifié par son empreinte.
+- Le changement d'onglets ne perd jamais le tampon, une bibliographie de
+  300 notices se charge sans troncature, et le mode focus rend la
+  disposition d'avant — éprouvés. Choisir une notice ouvre sa fiche sans
+  rien écrire d'autre, la note du composeur s'écrit dans le texte, et un
+  saut de diagnostic ne touche ni la saisie ni l'annulation.
+
+### Bug-report 8 — le panneau des normes en entier (2026-11-04)
+
+- Les neuf chantiers du rapport 8 sont traités : polices système et
+  suggestions, quick parts vivantes partout, couleurs unifiées
+  pastille→roue, grille des titres (couleur, italique, souligné),
+  images d'en-tête avec sélecteur natif et hauteur en %, guillemets à
+  préréglages avec aperçu à trois niveaux, formats de dates documentés
+  et noms localisés fr/en/de/it, aperçu CSL fidèle, composants
+  harmonisés et persistance éprouvée. Deux courses parallèles du cœur
+  (corbeille, atelier d'import) trouvées en chemin et réglées à la
+  racine.
+
+### Bug-report 9 — le rendu PDF, les normes en main, Zotero (2026-11-05)
+
+- Le rendu vient du **PDF** : la fenêtre ne rasterise que ce qu'elle
+  montre, par région ; le zoom et la molette sont ancrés au curseur,
+  avec retour immédiat — la molette dirigée n'intercepte que Ctrl.
+- Le panneau des normes charge la norme du document (« Normes
+  personnalisées » hors correspondance), dit ce qu'on modifie, et
+  choisit d'écraser ou d'enregistrer une copie nommée ; les couleurs de
+  style (gras, italique, liens) se rendent réellement au moteur.
+- Le lien **Zotero** branche la bibliographie : l'appel `#bibliographie`
+  cite exactement les `.bib` présents ; les sections `{bibliographie}`
+  et `[[TOC]]` s'insèrent d'un geste ; la numérotation est libre partout
+  (tout schéma passe tel quel).
+
+### Bug-report 10 — la barre, le glossaire, les listes, la synchro (2026-11-05)
+
+- La barre supérieure : BIB/GLO en icônes, styles de titre en icône et
+  menu, séparateur fin entre les fenêtres ; le sélecteur de couleur
+  distingue le choix (« Enregistrer ») de l'application (« Appliquer »).
+- Le glossaire s'ouvre en **fenêtre dédiée** : consulter, chercher,
+  insérer, ajouter, modifier, supprimer.
+- Structure documentaire : saut de page avant la bibliographie selon
+  les normes, bibliographie en titre de niveau 1, balise `[[TOC]]` et
+  bouton ; le sommaire gauche est continu, la bibliographie se replie
+  par bloc avec recherche, Projets et bibliothèque gèrent d'un geste.
+- Des **profils de métadonnées** portent leurs valeurs, les balises
+  `{clé}` les lisent, les clés système sont réservées.
+- **Listes multiniveaux** : deux espaces de retrait par niveau, `Tab`
+  et `Maj+Tab` changent le niveau, `Ctrl+Maj+Haut/Bas` déplace
+  l'élément, `Entrée` crée l'élément suivant.
+- Le rendu : les bibliographies dupliquées ne cassent plus la
+  compilation (la bibliothèque locale gagne sur l'export Zotero), et
+  la synchro édition / rendu se déclenche à la bascule de mode, à
+  1,5 s d'arrêt de frappe et à `Entrée`.
+
+### Corrections après le rapport 10 (2026-11-06)
+
+- La bibliographie du panneau gauche se replie **en un bloc** ; la
+  recherche montre les entrées qui matchent même repliées.
+- Chaque fenêtre de rendu d'un même fichier partage **le même PDF** —
+  un registre par empreinte, jamais une copie par fenêtre.
+
+**Comptes** : 553 tests ordinaires, 126 épreuves d'espace, 29 tests du
+crate vendoré, clippy 0 warning, `cargo deny check` vert.
 
 ## 0.3.0-alpha.2 — rapports 5 et 6 soldés, interface fiabilisée
 

@@ -2,14 +2,19 @@ pub mod aide;
 pub mod completion;
 pub mod confirmation;
 pub mod editor;
+pub mod extension;
+pub mod glossaire;
+pub mod glossaire_fenetre;
 pub mod layout;
+pub mod note;
 pub mod onglets;
+pub mod picker_couleur;
 pub mod preview;
 pub mod projet;
 pub mod projets;
 pub mod recherche;
 pub mod reference;
-mod reglages;
+pub(crate) mod reglages;
 pub mod rename;
 pub mod sidebar;
 pub mod status_bar;
@@ -35,8 +40,14 @@ use iced::{Element, Length};
 /// derrière — le texte, un bouton de la barre — et la fenêtre ouverte
 /// faisait travailler l'application à travers elle.
 pub fn voile<'a>(arriere_plan: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    // Un vrai écran : **tout** ce qui est pointeur s'y arrête — clics
+    // gauche, droit, molette, défilement — sinon l'interface derrière
+    // reste jouable à travers les fenêtres (bug-report-9, T1.1).
     iced::widget::mouse_area(arriere_plan.into())
         .on_press(Message::Rien)
+        .on_right_press(Message::Rien)
+        .on_middle_press(Message::Rien)
+        .on_scroll(|_| Message::Rien)
         .into()
 }
 
@@ -74,12 +85,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
         note_overlay(state),
         projets::view(state),
         reference::view(state),
+        glossaire::view(state),
+        glossaire_fenetre::view(state),
         zotero::view(state),
         recherche::view(state),
         reglages::view(state),
         aide::view(state),
+        picker_couleur::view(state, state.resolved.palette),
         confirmation::view(state),
         projet::view(state),
+        note::view(state),
+        extension::view(state),
         tableau::view(state),
         theme_editeur::view(state),
     ]

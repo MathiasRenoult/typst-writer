@@ -314,33 +314,16 @@ pub fn vue<'a>(
         );
     }
 
-    // Les commandes de zoom, dans la fenêtre de rendu — pas dans la barre
-    // supérieure, où elles n'ont rien à faire (TOPBAR-08).
-    let zoom_bar = iced::widget::row![
-        iced::widget::button(iced::widget::text("−").size(12))
-            .on_press(Message::PreviewZoomStep(-1))
-            .padding([3, 7]),
-        palette
-            .label(crate::ui::preview::zoom_percent(state).unwrap_or_else(|| "—".to_string()))
-            .size(11)
-            .color(palette.text_muted),
-        iced::widget::button(iced::widget::text("+").size(12))
-            .on_press(Message::PreviewZoomStep(1))
-            .padding([3, 7]),
-        iced::widget::button(iced::widget::text("W").size(11))
-            .on_press(Message::PreviewZoom(
-                crate::app::state::PreviewZoomMode::FitWidth
-            ))
-            .padding([3, 7]),
-        iced::widget::button(iced::widget::text("H").size(11))
-            .on_press(Message::PreviewZoom(
-                crate::app::state::PreviewZoomMode::FitHeight
-            ))
-            .padding([3, 7]),
-    ]
-    .spacing(4)
-    .align_y(iced::Alignment::Center);
-    content = content.push(zoom_bar);
+    // La génération du PDF lancée par la bascule : dite, jamais silencieuse
+    // (bug-report-9).
+    if state.render.export_en_cours {
+        content = content.push(
+            palette
+                .label("Génération du rendu…")
+                .size(11)
+                .color(palette.text_muted),
+        );
+    }
 
     // Diagnostics du compilateur, en tête du panneau.
     if !render.errors.is_empty() {
@@ -397,7 +380,9 @@ pub fn vue<'a>(
             .height(Fill)
             // Aucune page : le viewport ne sert à rien, mais le message garde
             // la forme attendue par l'état de rendu.
-            .on_scroll(|viewport| Message::ViewportChanged(0, 0, viewport.bounds().size()))
+            .on_scroll(|viewport| {
+                Message::ViewportChanged(0, 0, viewport.bounds(), Some((0.0, 0.0)))
+            })
             .into();
     }
 
@@ -442,7 +427,7 @@ pub fn vue<'a>(
         content = content.push(space::vertical().height(Length::Fixed(tail)).width(Fill));
     }
 
-    scrollable(content)
+    let defilable = scrollable(content)
         .id(id.map_or_else(
             || iced::widget::Id::from(SCROLL_ID),
             |id| iced::widget::Id::from(format!("apercu-{id}")),
@@ -456,6 +441,7 @@ pub fn vue<'a>(
         .on_scroll(move |viewport| {
             // La marge intérieure du panneau n'est pas dans le repère du
             // viewport : on la retire pour raisonner sur le contenu défilant.
+            let gauche = viewport.absolute_offset().x - PANEL_PADDING;
             let top = viewport.absolute_offset().y - PANEL_PADDING;
             let bottom = top + viewport.bounds().height;
 
@@ -466,9 +452,13 @@ pub fn vue<'a>(
             // d'affichage — donc de la finesse dont le rendu a besoin. Les
             // bornes du viewport la portent, et ne changent qu'au
             // redimensionnement : un défilement ne les retransmet donc pas.
-            Message::ViewportChanged(first, last, viewport.bounds().size())
-        })
-        .into()
+            Message::ViewportChanged(first, last, viewport.bounds(), Some((gauche, top)))
+        });
+
+    // La molette est dirigée (bug-report-9) : `Ctrl` la destine au zoom
+    // seul — jamais au défilement — `Maj` au défilement horizontal, et
+    // la molette simple laisse défiler verticalement.
+    MoletteDirigee::new(defilable.into(), state.controle_tenu).into()
 }
 
 /// Une page : l'image si elle est rasterisée, sinon un cadre de la même
@@ -498,11 +488,21 @@ fn page_view(
     let paper = render.paper.unwrap_or(iced::Color::WHITE);
 
     match render.page_cache.get(&index) {
-        Some(handle) => container(
-            image(handle.clone())
-                .width(Length::Fixed(width))
-                .height(Length::Fixed(height))
-                .content_fit(ContentFit::Contain),
+        // La tranche rendue se place dans le cadre de la page : le papier
+        // reste dessous, la page hors écran n'a jamais été rasterisée.
+        Some(tranche) => container(
+            container(
+                image(tranche.image.clone())
+                    .width(Length::Fixed(tranche.largeur * width))
+                    .height(Length::Fixed(tranche.hauteur * height))
+                    .content_fit(ContentFit::Fill),
+            )
+            .padding(iced::Padding {
+                top: tranche.haut * height,
+                right: 0.0,
+                bottom: 0.0,
+                left: tranche.gauche * width,
+            }),
         )
         .width(Length::Fixed(width))
         .height(Length::Fixed(height))
@@ -1112,5 +1112,237 @@ mod tests {
 
         assert!(first < sizes.len(), "début dans le document : {first}");
         assert_eq!(last, sizes.len() - 1, "fin bornée à la dernière page");
+    }
+}
+
+/// `Ctrl` consomme la molette pour le zoom seul ; tout le reste — `Maj`
+/// y compris, dont le scrollable fait le défilement horizontal — lui
+/// revient (bug-report-9).
+fn la_molette_est_au_zoom(controle: bool) -> bool {
+    controle
+}
+
+/// L'emballeur qui tient la molette : il **consomme** l'événement quand
+/// `Ctrl` le destine au zoom — le défilement ne le reçoit donc jamais
+/// (bug-report-9 : « désacréer le défilement lorsque je zoome avec
+/// ctrl+molette »).
+struct MoletteDirigee<'a> {
+    contenu: Element<'a, Message>,
+    controle: bool,
+}
+
+impl<'a> MoletteDirigee<'a> {
+    fn new(contenu: Element<'a, Message>, controle: bool) -> Self {
+        Self { contenu, controle }
+    }
+}
+
+impl<'a> From<MoletteDirigee<'a>> for Element<'a, Message> {
+    fn from(widget: MoletteDirigee<'a>) -> Self {
+        Element::new(widget)
+    }
+}
+
+impl<'a> iced::advanced::widget::Widget<Message, iced::Theme, iced::Renderer>
+    for MoletteDirigee<'a>
+{
+    fn size(&self) -> iced::Size<iced::Length> {
+        self.contenu.as_widget().size()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        self.contenu
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::layout::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        self.contenu.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        )
+    }
+
+    fn children(&self) -> Vec<iced::advanced::widget::Tree> {
+        vec![iced::advanced::widget::Tree::new(self.contenu.as_widget())]
+    }
+
+    fn diff(&self, tree: &mut iced::advanced::widget::Tree) {
+        tree.diff_children(&[self.contenu.as_widget()]);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::layout::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &iced::Rectangle,
+    ) {
+        if let iced::Event::Mouse(iced::mouse::Event::WheelScrolled { .. }) = event
+            && la_molette_est_au_zoom(self.controle)
+        {
+            shell.capture_event();
+            return;
+        }
+
+        self.contenu.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        layout: iced::advanced::layout::Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        self.contenu
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        layout: iced::advanced::layout::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &iced::Rectangle,
+        renderer: &iced::Renderer,
+    ) -> iced::mouse::Interaction {
+        self.contenu.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+}
+
+/// La région à rasteriser pour une page : ce que la fenêtre montre,
+/// élargi d'une marge de chaque côté — défiler dans la marge ne coûte
+/// aucun rendu (bug-report-9, fluidité). En fractions de la page.
+pub(crate) fn region_pour_page(
+    taille: (f32, f32),
+    haut_page: f32,
+    scroll: (f32, f32),
+    fenetre: (f32, f32),
+    marge: f32,
+) -> (f32, f32, f32, f32) {
+    let marge_x = fenetre.0 * marge;
+    let marge_y = fenetre.1 * marge;
+
+    let x_debut = (scroll.0 - marge_x).clamp(0.0, taille.0);
+    let x_fin = (scroll.0 + fenetre.0 + marge_x).clamp(0.0, taille.0);
+    let y_debut = (scroll.1 - haut_page - marge_y).clamp(0.0, taille.1);
+    let y_fin = (scroll.1 - haut_page + fenetre.1 + marge_y).clamp(0.0, taille.1);
+
+    // Fractions de la page : la tranche s'étire avec le zoom.
+    (
+        x_debut / taille.0,
+        y_debut / taille.1,
+        ((x_fin - x_debut) / taille.0).max(1.0 / taille.0),
+        ((y_fin - y_debut) / taille.1).max(1.0 / taille.1),
+    )
+}
+
+/// Une tranche couvre-t-elle la région demandée ? Tant qu'elle la couvre,
+/// défiler est gratuit.
+pub(crate) fn tranche_couvre(
+    tranche: &crate::app::state::Tranche,
+    region: (f32, f32, f32, f32),
+) -> bool {
+    let (x, y, l, h) = region;
+
+    const EPSILON: f32 = 1.0e-3;
+
+    tranche.gauche <= x + EPSILON
+        && tranche.haut <= y + EPSILON
+        && tranche.gauche + tranche.largeur >= x + l - EPSILON
+        && tranche.haut + tranche.hauteur >= y + h - EPSILON
+}
+
+#[cfg(test)]
+mod tests_des_regions {
+    use super::*;
+
+    #[test]
+    fn la_region_est_la_fenetre_elargie_et_bornee_a_la_page() {
+        // Une page de 500 × 800, la fenêtre au milieu, une marge de 50 %.
+        let region = region_pour_page((500.0, 800.0), 0.0, (0.0, 300.0), (500.0, 200.0), 0.5);
+        assert_eq!(region, (0.0, 0.25, 1.0, 0.5), "fenêtre 300-500 ±100");
+
+        // En haut de page : la marge ne sort pas par le haut.
+        let region = region_pour_page((500.0, 800.0), 0.0, (0.0, 0.0), (500.0, 200.0), 0.5);
+        assert_eq!(region, (0.0, 0.0, 1.0, 0.375), "haut de page");
+
+        // En bas : ni par le bas.
+        let region = region_pour_page((500.0, 800.0), 0.0, (0.0, 750.0), (500.0, 200.0), 0.5);
+        assert_eq!(region, (0.0, 0.8125, 1.0, 0.1875), "bas de page");
+    }
+
+    #[test]
+    fn la_tranche_couvre_ce_qu_elle_contient() {
+        let tranche = crate::app::state::Tranche {
+            gauche: 0.0,
+            haut: 0.125,
+            largeur: 1.0,
+            hauteur: 0.5,
+            image: iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]),
+        };
+
+        assert!(
+            tranche_couvre(&tranche, (0.0, 0.25, 1.0, 0.25)),
+            "la fenêtre dedans est couverte"
+        );
+        assert!(
+            !tranche_couvre(&tranche, (0.0, 0.5625, 1.0, 0.125)),
+            "la fenêtre qui dépasse ne l'est pas"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests_de_la_molette_dirigee {
+    use super::*;
+
+    #[test]
+    fn seule_ctrl_consome_la_molette() {
+        assert!(la_molette_est_au_zoom(true), "Ctrl : le zoom seul");
+        assert!(
+            !la_molette_est_au_zoom(false),
+            "sinon la molette revient au scrollable — Maj y compris, qui en fait le défilement horizontal"
+        );
     }
 }
