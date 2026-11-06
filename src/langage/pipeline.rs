@@ -438,7 +438,20 @@ fn bibliography_call_range(main: &str) -> Option<(usize, usize)> {
 }
 
 #[cfg(test)]
+/// Le texte replaté : les blancs, les césures de fin de ligne et les
+/// césures douces sortent. `pdftotext` coupe où la mise en page veut —
+/// un nom de projet y passe sur deux lignes — et l'aiguille se
+/// compare au **contenu**, jamais à l'habillage.
+fn plat(texte: &str) -> String {
+    texte
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != char::from(0xAD) && *c != char::from(12))
+        .collect()
+}
+
+#[cfg(test)]
 mod tests {
+    use super::plat;
 
     /// La typographie des normes s'applique au texte composé — et le `\`
     /// de la syntaxe en exempte ce qu'il écrit.
@@ -1041,7 +1054,7 @@ mod tests {
         // distingue pas les casse.
         let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
         assert!(
-            texte.contains("dupont") && texte.contains("théologie"),
+            plat(&texte).contains("dupont") && plat(&texte).contains(&plat("théologie")),
             "la source citée est dans le texte extrait du PDF : {texte}"
         );
     }
@@ -1086,7 +1099,7 @@ mod tests {
         let texte = String::from_utf8_lossy(&sortie.stdout).to_lowercase();
         for nom in ["dupont", "martin", "bernard"] {
             assert!(
-                texte.contains(nom),
+                plat(&texte).contains(&plat(nom)),
                 "l'auteur {nom} est dans le texte extrait : {texte}"
             );
         }
@@ -2648,6 +2661,7 @@ mod tests_du_pipeline_vrai {
 mod epreuves_de_mise_en_page {
     //! L'application réelle des normes, prouvée dans le PDF extrait — pas
     //! seulement dans le gabarit généré (R5, « réellement appliquée »).
+    use super::plat;
 
     fn racine(nom: &str) -> std::path::PathBuf {
         let root =
@@ -2657,7 +2671,7 @@ mod epreuves_de_mise_en_page {
         root
     }
 
-    /// L' + q + 'outil de lecture du PDF est-il là ? Un test qui dépend d' + q + 'un outil
+    /// L'outil de lecture du PDF est-il là ? Un test qui dépend d'un outil
     /// externe **saute** proprement quand il manque, il ne faillit pas —
     /// en CI comme ailleurs (règle des épreuves).
     fn pdftotext_disponible() -> bool {
@@ -2713,18 +2727,21 @@ mod epreuves_de_mise_en_page {
         assert!(!texte.is_empty(), "pdftotext présent");
 
         assert!(
-            texte.contains("INTRODUCTION"),
+            plat(&texte).contains("INTRODUCTION"),
             "le niveau 1 est en capitales : {texte}"
         );
         assert!(
-            !texte.contains("Introduction"),
+            !plat(&texte).contains("Introduction"),
             "seule la capitale initiale n'a pas cédé : {texte}"
         );
         assert!(
-            !texte.contains("PARTIE"),
+            !plat(&texte).contains("PARTIE"),
             "le niveau 2 garde sa casse : {texte}"
         );
-        assert!(texte.contains("Partie"), "le niveau 2 est là : {texte}");
+        assert!(
+            plat(&texte).contains("Partie"),
+            "le niveau 2 est là : {texte}"
+        );
     }
 
     /// **Bug-report-8, T9.2** : le document de synthèse exploite toutes
@@ -2830,12 +2847,18 @@ mod epreuves_de_mise_en_page {
             .expect("pdftotext s'exécute");
         let texte = String::from_utf8_lossy(&texte.stdout).to_string();
 
-        assert!(texte.contains("Alice"), "la quick part se rend : {texte}");
         assert!(
-            texte.contains("Tuesday 14 July 1789"),
+            plat(&texte).contains("Alice"),
+            "la quick part se rend : {texte}"
+        );
+        assert!(
+            plat(&texte).contains(&plat("Tuesday 14 July 1789")),
             "la date localisée se rend : {texte}"
         );
-        assert!(texte.contains("Le titre"), "le titre se rend : {texte}");
+        assert!(
+            plat(&texte).contains(&plat("Le titre")),
+            "le titre se rend : {texte}"
+        );
     }
 
     /// Les quick parts vivent dans l'en-tête : `{projet}` vient de
@@ -2890,12 +2913,12 @@ mod epreuves_de_mise_en_page {
 
         // {projet} vient de sys.inputs, alimenté par la racine elle-même.
         assert!(
-            texte.contains("quickparts"),
+            plat(&texte).contains("quickparts"),
             "le nom du projet vit dans l'en-tête : {texte}"
         );
         // {titre} est repris par le moteur, via query sur les titres.
         assert!(
-            texte.contains("Un grand titre"),
+            plat(&texte).contains(&plat("Un grand titre")),
             "le titre du document vit dans l'en-tête : {texte}"
         );
     }
@@ -2978,11 +3001,11 @@ mod epreuves_de_mise_en_page {
         assert!(!texte.is_empty(), "pdftotext présent");
 
         assert!(
-            texte.contains("p. 1 — 2 pages"),
+            plat(&texte).contains(&plat("p. 1 — 2 pages")),
             "la première page dit ses numéros : {texte}"
         );
         assert!(
-            texte.contains("p. 2 — 2 pages"),
+            plat(&texte).contains(&plat("p. 2 — 2 pages")),
             "la seconde page dit ses numéros : {texte}"
         );
     }
