@@ -2,19 +2,20 @@
 
 > Les notes historiques ci-dessous reflètent les annonces de publication ;
 > elles ne constituent pas une validation des fonctionnalités. L'audit
-> ultérieur et les limites constatées sont documentés dans
-> [l'audit avant bêta](agent/Pr%C3%A9-Beta/audit-avant-beta-2026-11.md).
+> ultérieur et les limites constatées sont documentés dans l'audit avant
+> bêta — **document de développement local**, volontairement hors dépôt
+> avec le reste du suivi de travail.
 
 ## 0.3.0-alpha.3 — le coffre-fort des documents et le quotidien
 
-R1 à R8 de la [feuille de route](roadmap-vers-beta-2026-11.md), les
+R1 à R8 de la feuille de route, les
 rapports 7 à 10, et les corrections qui ont suivi. Les limites
 connues sont nommées dans le [README](README.md) — les essais
 Windows et macOS restent à faire nativement.
 
 ### R1 — le coffre-fort des documents
 
-R1 de la [feuille de route](roadmap-vers-beta-2026-11.md) : sauvegarde,
+R1 de la feuille de route : sauvegarde,
 verrou et écritures sûres.
 
 - Un verrou natif protège les instances récentes contre les acquisitions
@@ -84,7 +85,7 @@ verrou et écritures sûres.
 ### R2 à R4 — imports sans perte, références fidèles, styles bibliographiques
 
 
-R2 de la [feuille de route](roadmap-vers-beta-2026-11.md) :
+R2 de la feuille de route :
 
 - L'import d'un fragment Typst ou d'un fichier `.tw` travaille sur le
   **tampon ouvert** : la conversion est prévisualisée — ce qui s'est

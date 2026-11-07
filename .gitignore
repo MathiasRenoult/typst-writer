@@ -2,3 +2,10 @@
 /dist
 .typst-writer/
 vendor/*/target/
+
+# Le travail de collaboration humain-IA : rapports, suivis, audits,
+# briefs et notes d'agent — utiles localement, hors du dépôt public.
+agent/
+hermes.md
+IDEA.md
+IMPLEMENTATION_PROGRESS.md
