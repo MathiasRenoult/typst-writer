@@ -185,6 +185,50 @@ pub fn creer_au_nom(parent: &Path, nom: &str) -> Result<PathBuf, String> {
         })
 }
 
+/// Crée un projet **depuis un projet de base** : un modèle est un
+/// projet comme un autre, et celui-ci devient le squelette du nouveau
+/// (demande de l'auteur). Les données d'exécution du modèle — verrou,
+/// sauvegardes, métadonnées — ne voyagent pas : le projet naît les
+/// siennes, et n'est pas lui-même un modèle.
+pub fn creer_au_nom_depuis(parent: &Path, nom: &str, base: &Path) -> Result<PathBuf, String> {
+    let dir = creer_au_nom(parent, nom)?;
+
+    if let Err(erreur) = copier_la_base(base, &dir) {
+        // Rien ne paraît à moitié : le projet juste publié se retire.
+        let _ = std::fs::remove_dir_all(&dir);
+
+        return Err(format!("La base n'a pas pu être copiée : {erreur}"));
+    }
+
+    Ok(dir)
+}
+
+/// La copie de base : tout, sauf ce qui appartient à l'exécution.
+fn copier_la_base(base: &Path, dir: &Path) -> std::io::Result<()> {
+    const SAUF: &[&str] = &["verrou", "sauvegardes", "metadonnees.toml", ".typst-writer"];
+
+    for entree in std::fs::read_dir(base)? {
+        let entree = entree?;
+        let nom = entree.file_name();
+        let nom = nom.to_string_lossy();
+
+        if SAUF.contains(&nom.as_ref()) {
+            continue;
+        }
+
+        let source = entree.path();
+        let cible = dir.join(nom.as_ref());
+
+        if source.is_dir() {
+            std::fs::create_dir_all(&cible)?;
+            copier_la_base(&source, &cible)?;
+        } else {
+            std::fs::copy(&source, &cible)?;
+        }
+    }
+
+    Ok(())
+}
 /// Prépare un projet complet dans un temporaire caché, puis le publie d'un
 /// seul renommage.
 ///
@@ -3445,11 +3489,9 @@ mod tests_vignettes {
 
         // Le vrai chemin des projets neufs : un projet de modèle doit lui
         // aussi porter sa vignette (bug-report-7, point 12).
-        let modele_dir = crate::project::model::create_avec_modele(
-            &racine.join("un-devoir").to_string_lossy(),
-            crate::project::model::Modele::DevoirCourt,
-        )
-        .expect("modèle");
+        let base = crate::project::creer_au_nom(&racine, "une-base").expect("base");
+        let modele_dir =
+            crate::project::creer_au_nom_depuis(&racine, "un-devoir", &base).expect("modèle");
         let vignettes = crate::project::vignettes(std::slice::from_ref(&modele_dir));
         if vignettes.is_empty() {
             let compilation = crate::typst::render::compile(&modele_dir, "main.typ", &[]);
@@ -3590,5 +3632,51 @@ mod tests_de_la_correspondance {
             None,
             "des réglages inconnus ne portent aucune norme"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_de_la_base {
+    use super::*;
+
+    /// Un projet naît de sa base : ses fichiers suivent, jamais ses
+    /// données d'exécution (demande de l'auteur : un modèle est un
+    /// projet comme un autre).
+    #[test]
+    fn un_projet_nait_de_sa_base() {
+        let parent = std::env::temp_dir().join(format!("tw-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(parent.join("ma-base/chapitres")).expect("dossier");
+
+        let base = parent.join("ma-base");
+        std::fs::write(base.join("document.tw"), "Le contenu du modèle.").expect("document");
+        std::fs::write(base.join("chapitres/01-chapitre.typ"), "= Un chapitre").expect("chapitre");
+        std::fs::write(base.join("verrou"), "x").expect("verrou");
+        std::fs::create_dir_all(base.join("sauvegardes")).expect("sauvegardes");
+        std::fs::write(base.join("metadonnees.toml"), "est_modele = true").expect("métadonnées");
+
+        let dir = creer_au_nom_depuis(&parent, "un-devoir", &base).expect("création");
+
+        assert!(
+            std::fs::read_to_string(dir.join("document.tw"))
+                .unwrap()
+                .contains("Le contenu du modèle."),
+            "le contenu de la base suit"
+        );
+        assert!(
+            dir.join("chapitres/01-chapitre.typ").exists(),
+            "les chapitres suivent"
+        );
+        assert!(!dir.join("verrou").exists(), "le verrou ne voyage pas");
+        assert!(
+            !dir.join("sauvegardes").exists(),
+            "les sauvegardes ne voyagent pas"
+        );
+        assert!(
+            !dir.join("metadonnees.toml").exists(),
+            "les métadonnées du modèle ne voyagent pas : le projet naît les siennes"
+        );
+
+        let _ = std::fs::remove_dir_all(&parent);
     }
 }

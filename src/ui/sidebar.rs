@@ -177,377 +177,381 @@ pub fn view(state: &State) -> Element<'_, Message> {
         );
     }
 
-    // ---- La bibliographie ----
-    content = content.push(Space::new().height(18));
+    if state.reglages.fonctionnalites.bibliographie {
+        // ---- La bibliographie ----
+        content = content.push(Space::new().height(18));
 
-    // Le titre replie la liste, et le filtre la cherche : une thèse a
-    // des centaines de notices, et une liste qui ne se cherche pas est un
-    // mur.
-    content = content.push(
-        button(
-            row![
-                theme::icon(
-                    if state.references_repliees {
-                        lucide_icons::iced::icon_chevron_right::<Theme>()
-                    } else {
-                        lucide_icons::iced::icon_chevron_down::<Theme>()
-                    },
-                    12.0,
-                    palette.text_muted,
-                ),
-                palette.label("Bibliographie").size(theme::jetons::SAILLANT),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .on_press(Message::ReferencesReplier)
-        .padding([2, 4])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-    );
-
-    // Les gestes de la bibliographie, **en icônes** (bug-report
-    // 2026-11-03) : création, import, recherche — et le lien Zotero
-    // rejoint la rangée. Les gestes d'insertion (note, figure, étiquette,
-    // renvoi) sont retirés : ils ne servaient à rien ici.
-    let mut gestes = row![].spacing(2).align_y(Alignment::Center);
-    if state.project.bibliography.is_none() {
-        gestes = gestes.push(tooltip(
-            button(theme::icon(
-                lucide_icons::iced::icon_file_plus::<Theme>(),
-                13.0,
-                palette.text,
-            ))
-            .on_press(Message::BibliographieCreer)
-            .padding([4, 6])
-            .style(move |t, status| entry_style(t, status, palette, false)),
-            palette
-                .label("Créer la bibliographie locale")
-                .size(theme::jetons::DETAIL),
-            tooltip::Position::Bottom,
-        ));
-    }
-    gestes = gestes.push(tooltip(
-        button(theme::icon(
-            lucide_icons::iced::icon_upload::<Theme>(),
-            13.0,
-            palette.text,
-        ))
-        .on_press(Message::BibliographieImporter)
-        .padding([4, 6])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-        palette
-            .label("Importer un fichier .bib…")
-            .size(theme::jetons::DETAIL),
-        tooltip::Position::Bottom,
-    ));
-    gestes = gestes.push(tooltip(
-        button(theme::icon(
-            lucide_icons::iced::icon_search::<Theme>(),
-            13.0,
-            palette.text,
-        ))
-        .on_press(Message::ReferencesRechercheBascule)
-        .padding([4, 6])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-        palette
-            .label("Chercher une référence")
-            .size(theme::jetons::DETAIL),
-        tooltip::Position::Bottom,
-    ));
-    if state.zotero.source == crate::zotero::Source::Locale {
-        gestes = gestes.push(tooltip(
-            button(theme::icon(
-                lucide_icons::iced::icon_link::<Theme>(),
-                13.0,
-                palette.text,
-            ))
-            .on_press(Message::ZoteroLierOuvrir)
-            .padding([4, 6])
-            .style(move |t, status| entry_style(t, status, palette, false)),
-            palette.label("Lier à Zotero…").size(theme::jetons::DETAIL),
-            tooltip::Position::Bottom,
-        ));
-    }
-    content = content.push(gestes);
-
-    // La dernière notice supprimée se ravise d'un geste : sa copie est à
-    // la corbeille, et c'est elle qu'on remet.
-    if let Some(copie) = state.derniere_notice_supprimee.clone() {
-        content = content.push(
-            button(
-                palette
-                    .label("Restaurer la dernière notice supprimée")
-                    .size(theme::jetons::DETAIL),
-            )
-            .on_press(Message::ReferenceRestaurer(copie))
-            .padding([5, 10])
-            .width(Fill),
-        );
-    }
-
-    // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
-    if !state.references_repliees
-        && (state.references_recherche_visible || !state.references_filtre.is_empty())
-    {
-        content = content.push(
-            text_input("chercher une référence", &state.references_filtre)
-                .on_input(Message::ReferencesFiltrer)
-                .padding(5)
-                .size(theme::jetons::DETAIL)
-                .width(Fill),
-        );
-    }
-
-    let missing = project.bibliography.is_none();
-
-    content = content.push(info_row(
-        theme::icon(
-            lucide_icons::iced::icon_book::<Theme>(),
-            14.0,
-            palette.text_muted,
-        ),
-        "Entrées bibliographiques".to_string(),
-        if missing {
-            "absent".to_string()
-        } else {
-            format!("{} entrée(s)", project.bibliography_entries)
-        },
-        missing,
-        palette,
-    ));
-
-    // Un projet lié vit de sa collection : on le voit, et on peut s'en
-    // dédire. Sinon, la liaison se propose — pour une bibliothèque locale
-    // seulement, car une notice Zotero déjà pointée n'a pas de deuxième chef.
-    if let Some(lien) = state.project.zotero.as_ref() {
-        content = content.push(Space::new().height(6));
-        content = content.push(
-            row![
-                theme::icon(
-                    lucide_icons::iced::icon_book::<Theme>(),
-                    11.0,
-                    palette.success,
-                ),
-                palette
-                    .label(format!("Zotero · {}", lien.nom))
-                    .size(theme::jetons::CORPS),
-                Space::new().width(Fill),
-                button(
-                    palette
-                        .label("Synchroniser")
-                        .size(theme::jetons::DETAIL)
-                        .color(palette.text_muted)
-                )
-                .on_press(Message::ZoteroSynchroniser)
-                .padding([4, 8]),
-                button(
-                    palette
-                        .label("Délier")
-                        .size(theme::jetons::DETAIL)
-                        .color(palette.text_muted)
-                )
-                .on_press(Message::ZoteroDelier)
-                .padding([4, 8]),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        );
-    }
-    // Le lien Zotero s'est joint à la rangée de gestes (bug-report
-    // 2026-11-03) — l'icône, comme les autres.
-
-    // Une notice s'ajoute quand la bibliothèque est la sienne : seule une
-    // bibliothèque locale s'écrit.
-    let locale = state.zotero.source == crate::zotero::Source::Locale;
-
-    if locale && !missing {
-        content = content.push(Space::new().height(6));
+        // Le titre replie la liste, et le filtre la cherche : une thèse a
+        // des centaines de notices, et une liste qui ne se cherche pas est un
+        // mur.
         content = content.push(
             button(
                 row![
                     theme::icon(
-                        lucide_icons::iced::icon_plus::<Theme>(),
-                        11.0,
+                        if state.references_repliees {
+                            lucide_icons::iced::icon_chevron_right::<Theme>()
+                        } else {
+                            lucide_icons::iced::icon_chevron_down::<Theme>()
+                        },
+                        12.0,
                         palette.text_muted,
                     ),
-                    palette
-                        .label("Nouvelle référence")
-                        .size(theme::jetons::CORPS),
+                    palette.label("Bibliographie").size(theme::jetons::SAILLANT),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
             )
-            .on_press(Message::EditionReferenceNouveau)
-            .padding([4, 8])
-            .width(Fill)
+            .on_press(Message::ReferencesReplier)
+            .padding([2, 4])
             .style(move |t, status| entry_style(t, status, palette, false)),
         );
-    }
 
-    // Les clés citables, quand la bibliographie en contient : un clic insère
-    // `@clé` au curseur. Le filtre cherche l'auteur, le titre ou la clé.
-    let filtre = state.references_filtre.trim().to_lowercase();
+        // Les gestes de la bibliographie, **en icônes** (bug-report
+        // 2026-11-03) : création, import, recherche — et le lien Zotero
+        // rejoint la rangée. Les gestes d'insertion (note, figure, étiquette,
+        // renvoi) sont retirés : ils ne servaient à rien ici.
+        let mut gestes = row![].spacing(2).align_y(Alignment::Center);
+        if state.project.bibliography.is_none() {
+            gestes = gestes.push(tooltip(
+                button(theme::icon(
+                    lucide_icons::iced::icon_file_plus::<Theme>(),
+                    13.0,
+                    palette.text,
+                ))
+                .on_press(Message::BibliographieCreer)
+                .padding([4, 6])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+                palette
+                    .label("Créer la bibliographie locale")
+                    .size(theme::jetons::DETAIL),
+                tooltip::Position::Bottom,
+            ));
+        }
+        gestes = gestes.push(tooltip(
+            button(theme::icon(
+                lucide_icons::iced::icon_upload::<Theme>(),
+                13.0,
+                palette.text,
+            ))
+            .on_press(Message::BibliographieImporter)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+            palette
+                .label("Importer un fichier .bib…")
+                .size(theme::jetons::DETAIL),
+            tooltip::Position::Bottom,
+        ));
+        gestes = gestes.push(tooltip(
+            button(theme::icon(
+                lucide_icons::iced::icon_search::<Theme>(),
+                13.0,
+                palette.text,
+            ))
+            .on_press(Message::ReferencesRechercheBascule)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+            palette
+                .label("Chercher une référence")
+                .size(theme::jetons::DETAIL),
+            tooltip::Position::Bottom,
+        ));
+        if state.zotero.source == crate::zotero::Source::Locale {
+            gestes = gestes.push(tooltip(
+                button(theme::icon(
+                    lucide_icons::iced::icon_link::<Theme>(),
+                    13.0,
+                    palette.text,
+                ))
+                .on_press(Message::ZoteroLierOuvrir)
+                .padding([4, 6])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+                palette.label("Lier à Zotero…").size(theme::jetons::DETAIL),
+                tooltip::Position::Bottom,
+            ));
+        }
+        content = content.push(gestes);
 
-    let visibles = state.bibliography.iter().filter(|entry| {
-        filtre.is_empty()
-            || entry.key.to_lowercase().contains(&filtre)
-            || entry.titre.to_lowercase().contains(&filtre)
-            || entry
-                .annee
-                .as_deref()
-                .map(|a| a.to_lowercase().contains(&filtre))
-                .unwrap_or(false)
-            || entry
-                .auteurs
-                .iter()
-                .any(|(nom, prenom)| format!("{nom} {prenom}").to_lowercase().contains(&filtre))
-    });
+        // La dernière notice supprimée se ravise d'un geste : sa copie est à
+        // la corbeille, et c'est elle qu'on remet.
+        if let Some(copie) = state.derniere_notice_supprimee.clone() {
+            content = content.push(
+                button(
+                    palette
+                        .label("Restaurer la dernière notice supprimée")
+                        .size(theme::jetons::DETAIL),
+                )
+                .on_press(Message::ReferenceRestaurer(copie))
+                .padding([5, 10])
+                .width(Fill),
+            );
+        }
 
-    // La recherche trouve ses résultats même la section repliée
-    // (bug-report-10, 2.2).
-    if !state.references_repliees || !filtre.is_empty() {
-        for (rang, entry) in visibles.enumerate() {
-            if rang > 0 {
-                content = content.push(separation(palette));
+        // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
+        if !state.references_repliees
+            && (state.references_recherche_visible || !state.references_filtre.is_empty())
+        {
+            content = content.push(
+                text_input("chercher une référence", &state.references_filtre)
+                    .on_input(Message::ReferencesFiltrer)
+                    .padding(5)
+                    .size(theme::jetons::DETAIL)
+                    .width(Fill),
+            );
+        }
+
+        let missing = project.bibliography.is_none();
+
+        content = content.push(info_row(
+            theme::icon(
+                lucide_icons::iced::icon_book::<Theme>(),
+                14.0,
+                palette.text_muted,
+            ),
+            "Entrées bibliographiques".to_string(),
+            if missing {
+                "absent".to_string()
+            } else {
+                format!("{} entrée(s)", project.bibliography_entries)
+            },
+            missing,
+            palette,
+        ));
+
+        // Un projet lié vit de sa collection : on le voit, et on peut s'en
+        // dédire. Sinon, la liaison se propose — pour une bibliothèque locale
+        // seulement, car une notice Zotero déjà pointée n'a pas de deuxième chef.
+        if let Some(lien) = state.project.zotero.as_ref() {
+            content = content.push(Space::new().height(6));
+            content = content.push(
+                row![
+                    theme::icon(
+                        lucide_icons::iced::icon_book::<Theme>(),
+                        11.0,
+                        palette.success,
+                    ),
+                    palette
+                        .label(format!("Zotero · {}", lien.nom))
+                        .size(theme::jetons::CORPS),
+                    Space::new().width(Fill),
+                    button(
+                        palette
+                            .label("Synchroniser")
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted)
+                    )
+                    .on_press(Message::ZoteroSynchroniser)
+                    .padding([4, 8]),
+                    button(
+                        palette
+                            .label("Délier")
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted)
+                    )
+                    .on_press(Message::ZoteroDelier)
+                    .padding([4, 8]),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
+        }
+        // Le lien Zotero s'est joint à la rangée de gestes (bug-report
+        // 2026-11-03) — l'icône, comme les autres.
+
+        // Une notice s'ajoute quand la bibliothèque est la sienne : seule une
+        // bibliothèque locale s'écrit.
+        let locale = state.zotero.source == crate::zotero::Source::Locale;
+
+        if locale && !missing {
+            content = content.push(Space::new().height(6));
+            content = content.push(
+                button(
+                    row![
+                        theme::icon(
+                            lucide_icons::iced::icon_plus::<Theme>(),
+                            11.0,
+                            palette.text_muted,
+                        ),
+                        palette
+                            .label("Nouvelle référence")
+                            .size(theme::jetons::CORPS),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::EditionReferenceNouveau)
+                .padding([4, 8])
+                .width(Fill)
+                .style(move |t, status| entry_style(t, status, palette, false)),
+            );
+        }
+
+        // Les clés citables, quand la bibliographie en contient : un clic insère
+        // `@clé` au curseur. Le filtre cherche l'auteur, le titre ou la clé.
+        let filtre = state.references_filtre.trim().to_lowercase();
+
+        let visibles = state.bibliography.iter().filter(|entry| {
+            filtre.is_empty()
+                || entry.key.to_lowercase().contains(&filtre)
+                || entry.titre.to_lowercase().contains(&filtre)
+                || entry
+                    .annee
+                    .as_deref()
+                    .map(|a| a.to_lowercase().contains(&filtre))
+                    .unwrap_or(false)
+                || entry
+                    .auteurs
+                    .iter()
+                    .any(|(nom, prenom)| format!("{nom} {prenom}").to_lowercase().contains(&filtre))
+        });
+
+        // La recherche trouve ses résultats même la section repliée
+        // (bug-report-10, 2.2).
+        if !state.references_repliees || !filtre.is_empty() {
+            for (rang, entry) in visibles.enumerate() {
+                if rang > 0 {
+                    content = content.push(separation(palette));
+                }
+
+                let survolee = state.survol_reference.as_deref() == Some(entry.key.as_str());
+                content = content.push(citation_row(entry, palette, survolee));
             }
-
-            let survolee = state.survol_reference.as_deref() == Some(entry.key.as_str());
-            content = content.push(citation_row(entry, palette, survolee));
         }
     }
 
-    // ---- Le glossaire ----
-    content = content.push(Space::new().height(18));
+    if state.reglages.fonctionnalites.glossaire {
+        // ---- Le glossaire ----
+        content = content.push(Space::new().height(18));
 
-    // Le titre replie la liste, et le filtre la cherche.
-    content = content.push(
-        button(
-            row![
-                theme::icon(
-                    if state.glossaire_replie {
-                        lucide_icons::iced::icon_chevron_right::<Theme>()
-                    } else {
-                        lucide_icons::iced::icon_chevron_down::<Theme>()
-                    },
-                    12.0,
-                    palette.text_muted,
-                ),
-                palette.label("Glossaire").size(theme::jetons::SAILLANT),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .on_press(Message::GlossaireReplier)
-        .padding([2, 4])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-    );
-
-    // Les gestes : un terme s'ajoute, la liste se cherche — en icônes,
-    // comme la bibliographie.
-    let mut gestes = row![].spacing(2).align_y(Alignment::Center);
-    gestes = gestes.push(tooltip(
-        button(theme::icon(
-            lucide_icons::iced::icon_plus::<Theme>(),
-            13.0,
-            palette.text,
-        ))
-        .on_press(Message::GlossaireCreer)
-        .padding([4, 6])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-        palette.label("Nouveau terme").size(theme::jetons::DETAIL),
-        tooltip::Position::Bottom,
-    ));
-    gestes = gestes.push(tooltip(
-        button(theme::icon(
-            lucide_icons::iced::icon_search::<Theme>(),
-            13.0,
-            palette.text,
-        ))
-        .on_press(Message::GlossaireRechercheBascule)
-        .padding([4, 6])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-        palette
-            .label("Chercher un terme")
-            .size(theme::jetons::DETAIL),
-        tooltip::Position::Bottom,
-    ));
-    content = content.push(gestes);
-
-    // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
-    if !state.glossaire_replie
-        && (state.glossaire_recherche_visible || !state.glossaire_filtre.is_empty())
-    {
+        // Le titre replie la liste, et le filtre la cherche.
         content = content.push(
-            text_input("chercher un terme", &state.glossaire_filtre)
-                .on_input(Message::GlossaireFiltrer)
-                .padding(5)
-                .size(theme::jetons::DETAIL)
-                .width(Fill),
+            button(
+                row![
+                    theme::icon(
+                        if state.glossaire_replie {
+                            lucide_icons::iced::icon_chevron_right::<Theme>()
+                        } else {
+                            lucide_icons::iced::icon_chevron_down::<Theme>()
+                        },
+                        12.0,
+                        palette.text_muted,
+                    ),
+                    palette.label("Glossaire").size(theme::jetons::SAILLANT),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::GlossaireReplier)
+            .padding([2, 4])
+            .style(move |t, status| entry_style(t, status, palette, false)),
         );
-    }
 
-    // L'état : combien de termes — et le vide dit quoi faire.
-    content = content.push(info_row(
-        theme::icon(
-            lucide_icons::iced::icon_book::<Theme>(),
-            14.0,
-            palette.text_muted,
-        ),
-        "Termes du glossaire".to_string(),
-        if state.glossaire.is_empty() {
-            "aucun".to_string()
-        } else {
-            format!("{} terme(s)", state.glossaire.len())
-        },
-        state.glossaire.is_empty(),
-        palette,
-    ));
-
-    if state.glossaire.is_empty() {
-        content = content.push(
+        // Les gestes : un terme s'ajoute, la liste se cherche — en icônes,
+        // comme la bibliographie.
+        let mut gestes = row![].spacing(2).align_y(Alignment::Center);
+        gestes = gestes.push(tooltip(
+            button(theme::icon(
+                lucide_icons::iced::icon_plus::<Theme>(),
+                13.0,
+                palette.text,
+            ))
+            .on_press(Message::GlossaireCreer)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
+            palette.label("Nouveau terme").size(theme::jetons::DETAIL),
+            tooltip::Position::Bottom,
+        ));
+        gestes = gestes.push(tooltip(
+            button(theme::icon(
+                lucide_icons::iced::icon_search::<Theme>(),
+                13.0,
+                palette.text,
+            ))
+            .on_press(Message::GlossaireRechercheBascule)
+            .padding([4, 6])
+            .style(move |t, status| entry_style(t, status, palette, false)),
             palette
-                .label(
-                    "Le glossaire se gère ici : un terme porte sa clé, ses formes et sa \
+                .label("Chercher un terme")
+                .size(theme::jetons::DETAIL),
+            tooltip::Position::Bottom,
+        ));
+        content = content.push(gestes);
+
+        // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
+        if !state.glossaire_replie
+            && (state.glossaire_recherche_visible || !state.glossaire_filtre.is_empty())
+        {
+            content = content.push(
+                text_input("chercher un terme", &state.glossaire_filtre)
+                    .on_input(Message::GlossaireFiltrer)
+                    .padding(5)
+                    .size(theme::jetons::DETAIL)
+                    .width(Fill),
+            );
+        }
+
+        // L'état : combien de termes — et le vide dit quoi faire.
+        content = content.push(info_row(
+            theme::icon(
+                lucide_icons::iced::icon_book::<Theme>(),
+                14.0,
+                palette.text_muted,
+            ),
+            "Termes du glossaire".to_string(),
+            if state.glossaire.is_empty() {
+                "aucun".to_string()
+            } else {
+                format!("{} terme(s)", state.glossaire.len())
+            },
+            state.glossaire.is_empty(),
+            palette,
+        ));
+
+        if state.glossaire.is_empty() {
+            content = content.push(
+                palette
+                    .label(
+                        "Le glossaire se gère ici : un terme porte sa clé, ses formes et sa \
                      définition. Un clic sur un terme de la liste l'insère au curseur.",
-                )
-                .size(theme::jetons::DETAIL)
-                .color(palette.text_muted),
-        );
-    }
+                    )
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
+            );
+        }
 
-    // Les termes citables : un clic insère `{glo:clé}` (ou `#gls("clé")`,
-    // selon le dialecte du tampon). Le filtre cherche la clé, les formes
-    // ou la définition.
-    let filtre = state.glossaire_filtre.trim().to_lowercase();
+        // Les termes citables : un clic insère `{glo:clé}` (ou `#gls("clé")`,
+        // selon le dialecte du tampon). Le filtre cherche la clé, les formes
+        // ou la définition.
+        let filtre = state.glossaire_filtre.trim().to_lowercase();
 
-    let visibles = state.glossaire.iter().filter(|entree| {
-        filtre.is_empty()
-            || entree.key.to_lowercase().contains(&filtre)
-            || entree
-                .short
-                .as_deref()
-                .map(|forme| forme.to_lowercase().contains(&filtre))
-                .unwrap_or(false)
-            || entree
-                .long
-                .as_deref()
-                .map(|forme| forme.to_lowercase().contains(&filtre))
-                .unwrap_or(false)
-            || entree
-                .description
-                .as_deref()
-                .map(|forme| forme.to_lowercase().contains(&filtre))
-                .unwrap_or(false)
-    });
+        let visibles = state.glossaire.iter().filter(|entree| {
+            filtre.is_empty()
+                || entree.key.to_lowercase().contains(&filtre)
+                || entree
+                    .short
+                    .as_deref()
+                    .map(|forme| forme.to_lowercase().contains(&filtre))
+                    .unwrap_or(false)
+                || entree
+                    .long
+                    .as_deref()
+                    .map(|forme| forme.to_lowercase().contains(&filtre))
+                    .unwrap_or(false)
+                || entree
+                    .description
+                    .as_deref()
+                    .map(|forme| forme.to_lowercase().contains(&filtre))
+                    .unwrap_or(false)
+        });
 
-    if !state.glossaire_replie {
-        for (rang, entree) in visibles.enumerate() {
-            if rang > 0 {
-                content = content.push(separation(palette));
+        if !state.glossaire_replie {
+            for (rang, entree) in visibles.enumerate() {
+                if rang > 0 {
+                    content = content.push(separation(palette));
+                }
+
+                let survolee = state.survol_glossaire.as_deref() == Some(entree.key.as_str());
+                content = content.push(glossaire_row(entree, palette, survolee));
             }
-
-            let survolee = state.survol_glossaire.as_deref() == Some(entree.key.as_str());
-            content = content.push(glossaire_row(entree, palette, survolee));
         }
     }
 
@@ -559,7 +563,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // La liste des projets : l'étagère se choisit **au menu** (pas une
     // bascule), et la recherche ne se montre que sur son icône
     // (bug-report 2026-11-03).
-    let etageres = crate::project::etageres();
+    let etageres = &state.etageres;
     let mut choix_etages = vec!["Mon étagère".to_string(), "Tous".to_string()];
     let mut noms: Vec<String> = etageres
         .values()
@@ -622,7 +626,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let visibles = projets_visibles(
         &state.projects,
         project,
-        &etageres,
+        etageres,
         &state.projets_etage,
         &state.projets_recherche,
     );
@@ -1442,7 +1446,7 @@ mod tests {
     #[test]
     fn displayed_paths_keep_only_the_last_components() {
         let path = std::path::Path::new(
-            "/home/mat/.typst-writer/projets/mon-travail/chapitres/01-intro.typ",
+            "/home/quelqu-un/.typst-writer/projets/mon-travail/chapitres/01-intro.typ",
         );
 
         assert_eq!(format_path(path), "chapitres/01-intro.typ");

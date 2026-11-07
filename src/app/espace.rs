@@ -4,7 +4,7 @@
 //! sont des projections synchronisées à la fin de chaque transaction ; leur
 //! curseur, sélection, défilement et cache graphique restent locaux.
 
-use super::state::{LspState, ModeVue, RenderState};
+use super::state::{ModeVue, RenderState};
 use iced::widget::pane_grid::{self, Axis, Configuration, Edge, Node, Pane};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -62,7 +62,6 @@ pub struct Disposition {
 pub struct Vue {
     pub editor: crate::editor::EditorState,
     pub render: RenderState,
-    pub lsp: LspState,
     pub project: crate::project::Project,
     pub bibliography: Vec<crate::project::BibliographyEntry>,
     pub zotero: crate::zotero::Etat,
@@ -96,7 +95,6 @@ impl Vue {
         Self {
             editor,
             render: RenderState::default(),
-            lsp: LspState::default(),
             project: projet,
             bibliography,
             zotero,
@@ -108,7 +106,6 @@ impl Vue {
     pub fn echanger(&mut self, state: &mut super::State) {
         std::mem::swap(&mut self.editor, &mut state.editor);
         std::mem::swap(&mut self.render, &mut state.render);
-        std::mem::swap(&mut self.lsp, &mut state.lsp);
         std::mem::swap(&mut self.project, &mut state.project);
         std::mem::swap(&mut self.bibliography, &mut state.bibliography);
         std::mem::swap(&mut self.zotero, &mut state.zotero);

@@ -251,7 +251,26 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .spacing(4)
     .height(Length::Fill);
 
-    let fenetre = container(column![entete, modeles, etat, vu, pied].spacing(12))
+    // Les fonctionnalités du projet : une débranchée, son interface
+    // disparaît (demande de l'auteur).
+    let fonctionnalites = row![
+        palette
+            .label("Fonctionnalités du projet :")
+            .size(theme::jetons::DETAIL),
+        iced::widget::checkbox(reglages.fonctionnalites.bibliographie)
+            .label("Bibliographie")
+            .on_toggle(|v| Message::ReglagesFonctionnalite("bibliographie".to_string(), v)),
+        iced::widget::checkbox(reglages.fonctionnalites.glossaire)
+            .label("Glossaire")
+            .on_toggle(|v| Message::ReglagesFonctionnalite("glossaire".to_string(), v)),
+        iced::widget::checkbox(reglages.fonctionnalites.graphiques)
+            .label("Graphiques")
+            .on_toggle(|v| Message::ReglagesFonctionnalite("graphiques".to_string(), v)),
+    ]
+    .spacing(10)
+    .align_y(iced::Alignment::Center);
+
+    let fenetre = container(column![entete, modeles, fonctionnalites, etat, vu, pied].spacing(12))
         .padding(18)
         .style(bubble_style(palette))
         .width(Length::Fixed(largeur))

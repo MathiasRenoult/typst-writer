@@ -160,13 +160,33 @@ pub fn familles_systeme() -> Vec<String> {
 
     CACHE
         .get_or_init(|| {
-            let sortie = std::process::Command::new("fc-list")
-                .args([":", "family"])
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                .unwrap_or_default();
-            familles_depuis_fc_list(&sortie)
+            // La voie portable (feuille de route, phase 5, point 5.2) :
+            // fontdb, sans commande système, sur les trois plateformes.
+            let mut base = fontdb::Database::new();
+            base.load_system_fonts();
+            let mut vues: Vec<String> = Vec::new();
+            let mut familles: Vec<String> = Vec::new();
+            for face in base.faces() {
+                let nom = face.families.first().map(|(f, _)| f.clone());
+                if let Some(nom) = nom
+                    && !vues.contains(&nom)
+                {
+                    vues.push(nom.clone());
+                    familles.push(nom);
+                }
+            }
+            if familles.is_empty() {
+                // Repli : fontconfig, là où il existe.
+                let sortie = std::process::Command::new("fc-list")
+                    .args([":", "family"])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default();
+                familles_depuis_fc_list(&sortie)
+            } else {
+                familles
+            }
         })
         .clone()
 }

@@ -40,7 +40,7 @@ pub fn compilation_unit_avec_diagnostics(
 ) -> (
     String,
     Vec<(PathBuf, String)>,
-    Vec<crate::typst::render::Diagnostic>,
+    Vec<crate::langage::diagnostics::Diagnostic>,
 ) {
     compilation_unit_document_avec_diagnostics(root, main, &parse(writing_source))
 }
@@ -65,7 +65,7 @@ pub fn compilation_unit_document_avec_diagnostics(
 ) -> (
     String,
     Vec<(PathBuf, String)>,
-    Vec<crate::typst::render::Diagnostic>,
+    Vec<crate::langage::diagnostics::Diagnostic>,
 ) {
     let include = format!("#include \"{GENERATED_FILE}\"");
     let entry = if main.lines().any(|line| line.trim() == include) {
@@ -216,13 +216,14 @@ fn appliquer_le_style_du_projet(
     main: &str,
     style_projet: Option<&str>,
     fichier: &Path,
-    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+    rapports: &mut Vec<crate::langage::diagnostics::Diagnostic>,
 ) -> String {
     // Le style du projet doit être connu du moteur — jamais deviné.
     let style_valide = match style_projet {
         Some(style) if crate::typst::styles::style_valide(style) => Some(style),
         Some(style) => {
-            rapports.push(crate::typst::render::Diagnostic {
+            rapports.push(crate::langage::diagnostics::Diagnostic {
+                origine: crate::langage::diagnostics::Origine::Analyse,
                 message: format!(
                     "Le style « {style} » est inconnu du moteur : non appliqué, le style de base le remplace."
                 ),
@@ -263,7 +264,8 @@ fn appliquer_le_style_du_projet(
             if let Some(style) = style_valide
                 && valeur != style
             {
-                rapports.push(crate::typst::render::Diagnostic {
+                rapports.push(crate::langage::diagnostics::Diagnostic {
+                    origine: crate::langage::diagnostics::Origine::Analyse,
                     message: format!(
                         "Le document impose le style « {valeur} » alors que le projet choisit « {style} » : c'est le document qui fait autorité. Accordez les deux pour lever l'ambiguïté."
                     ),
@@ -772,6 +774,12 @@ mod tests {
                 .as_ref()
                 .is_some_and(|fichier| fichier.ends_with("document.generated.typ")),
             "le fichier est dit : {diagnostic:?}"
+        );
+        assert!(
+            rapports.iter().any(|d| d.origine
+                == crate::langage::diagnostics::Origine::Transformation
+                && d.message.contains("inconnue")),
+            "le diagnostic dit son origine : {rapports:?}"
         );
     }
 
@@ -1825,7 +1833,7 @@ fn corriger_le_typst(
     cles_glossaire: &std::collections::BTreeSet<String>,
     etiquettes: &std::collections::BTreeSet<String>,
     fichier: &Path,
-    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+    rapports: &mut Vec<crate::langage::diagnostics::Diagnostic>,
 ) -> String {
     // `#cite(<cle>)` d'abord, sur le bloc entier : la clé peut couvrir
     // plusieurs lignes, et une citation inconnue ne casse jamais le
@@ -1859,7 +1867,8 @@ fn corriger_le_typst(
         } else {
             // La neutralisation se dit : la clé, sa ligne, son fichier.
             let ligne = main[..position].matches('\n').count() + 1;
-            rapports.push(crate::typst::render::Diagnostic {
+            rapports.push(crate::langage::diagnostics::Diagnostic {
+                origine: crate::langage::diagnostics::Origine::Transformation,
                 message: format!("Citation « {cle} » inconnue : neutralisée en [{cle}]."),
                 line: Some(ligne),
                 column: None,
@@ -1971,7 +1980,8 @@ fn corriger_le_typst(
                 }
 
                 if !echappe && !est_renvoi && !cle.is_empty() && !cles.contains(cle) {
-                    rapports.push(crate::typst::render::Diagnostic {
+                    rapports.push(crate::langage::diagnostics::Diagnostic {
+                        origine: crate::langage::diagnostics::Origine::Transformation,
                         message: format!("Citation « {cle} » inconnue : neutralisée en [{cle}]."),
                         line: Some(numero + 1),
                         column: None,
@@ -2006,7 +2016,7 @@ fn corriger_les_inclus(
     cles: &std::collections::BTreeSet<String>,
     cles_glossaire: &std::collections::BTreeSet<String>,
     etiquettes: &std::collections::BTreeSet<String>,
-    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+    rapports: &mut Vec<crate::langage::diagnostics::Diagnostic>,
 ) -> Vec<(PathBuf, String)> {
     let mut corrections = Vec::new();
     let mut vus = std::collections::HashSet::new();
@@ -2192,7 +2202,7 @@ fn guerir_les_termes(
     main: &str,
     cles_glossaire: &std::collections::BTreeSet<String>,
     fichier: &Path,
-    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+    rapports: &mut Vec<crate::langage::diagnostics::Diagnostic>,
 ) -> String {
     let mut sortie = String::new();
     let mut curseur = 0usize;
@@ -2212,7 +2222,8 @@ fn guerir_les_termes(
             sortie.push_str(&main[position..fin]);
         } else {
             let ligne = main[..position].matches('\n').count() + 1;
-            rapports.push(crate::typst::render::Diagnostic {
+            rapports.push(crate::langage::diagnostics::Diagnostic {
+                origine: crate::langage::diagnostics::Origine::Transformation,
                 message: format!("Terme « {cle} » du glossaire inconnu : neutralisé en [{cle}]."),
                 line: Some(ligne),
                 column: None,
@@ -2293,7 +2304,7 @@ fn assembler_le_glossaire(
     entry: String,
     generated: String,
     glossaire: &crate::project::glossaire::Glossaire,
-    rapports: &mut Vec<crate::typst::render::Diagnostic>,
+    rapports: &mut Vec<crate::langage::diagnostics::Diagnostic>,
 ) -> (String, String) {
     let usage = est_glos_utilise(&entry) || est_glos_utilise(&generated);
     if !usage && glossaire.entrees.is_empty() {
@@ -2302,7 +2313,8 @@ fn assembler_le_glossaire(
 
     // Le paquet embarqué se pose dans le dossier local — jamais au réseau.
     if crate::typst::paquets::assurer_glossarium().is_err() {
-        rapports.push(crate::typst::render::Diagnostic {
+        rapports.push(crate::langage::diagnostics::Diagnostic {
+            origine: crate::langage::diagnostics::Origine::Transformation,
             message: "Le paquet glossarium ne s'est pas installé : les termes du glossaire                       sont neutralisés."
                 .to_string(),
             line: None,
@@ -2328,7 +2340,8 @@ fn assembler_le_glossaire(
     generated.insert_str(0, &entete);
 
     if glossaire.entrees.is_empty() && generated.contains("#print-glossary(") {
-        rapports.push(crate::typst::render::Diagnostic {
+        rapports.push(crate::langage::diagnostics::Diagnostic {
+            origine: crate::langage::diagnostics::Origine::Transformation,
             message: "La liste du glossaire est vide : ajoutez des termes dans le panneau \
                       Glossaire."
                 .to_string(),
@@ -2421,7 +2434,7 @@ fn cles_vivantes(
 ) -> (
     std::collections::BTreeSet<String>,
     std::collections::BTreeSet<String>,
-    Vec<crate::typst::render::Diagnostic>,
+    Vec<crate::langage::diagnostics::Diagnostic>,
 ) {
     let mut cles = std::collections::BTreeSet::new();
     let mut etiquettes = std::collections::BTreeSet::new();
@@ -2520,7 +2533,8 @@ fn cles_vivantes(
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            collisions.push(crate::typst::render::Diagnostic {
+            collisions.push(crate::langage::diagnostics::Diagnostic {
+                origine: crate::langage::diagnostics::Origine::Transformation,
                 message: format!(
                     "La clé « {cle} » est dans plusieurs bibliographies ({noms}) : la citation est ambiguë."
                 ),
@@ -3615,37 +3629,77 @@ mod les_normes_se_rendent_au_moteur {
     /// Deux bibliothèques qui partagent une clé ne cassent plus la
     /// compilation — la première garde son entrée (bug-report-10, 6.1).
     #[test]
-    fn les_cles_dupliquees_ne_cassent_plus_le_rendu() {
-        let quand = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("cles-dupliquees-{quand}"));
-        std::fs::create_dir_all(root.join("chapitres")).unwrap();
-        std::fs::write(root.join("chapitres/01-chapitre.typ"), "// genere").unwrap();
-        std::fs::write(root.join("locale.bib"), "@book{dup, title = {Local}}").unwrap();
-        std::fs::write(root.join("zotero.bib"), "@book{dup, title = {Export}}").unwrap();
-        let entry = root.join("main.typ");
-        let saut = &char::from(10).to_string();
-        let source = [
-            r#"#include "chapitres/01-chapitre.typ""#,
-            r#"#bibliography(("locale.bib", "zotero.bib"))"#,
-            "",
-        ]
-        .join(saut);
-        std::fs::write(&entry, &source).unwrap();
+    fn deux_bibliotheques_qui_partagent_une_cle_ne_cassent_plus() {
+        let root = std::env::temp_dir().join("tw-partage-cle");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("biblio")).unwrap();
+        std::fs::write(
+            root.join("biblio/a.bib"),
+            "@book{dupont, title = {Premier}, author = {Dupont}, year = {2020}}",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("biblio/b.bib"),
+            "@book{dupont, title = {Second}, author = {Dupont}, year = {2021}}",
+        )
+        .unwrap();
+        let entry = concat!(
+            "#bibliography(\"biblio/a.bib\")",
+            "\n",
+            "#bibliography(\"biblio/b.bib\")"
+        )
+        .to_string();
+        let guerison = super::guerir_les_bibliographies(&root, &entry, &[]);
+        // La première garde son entrée : elle ne bouge pas.
+        assert!(
+            guerison
+                .iter()
+                .all(|(chemin, _)| !chemin.ends_with("a.bib")),
+            "la première garde son entrée : {:?}",
+            guerison
+        );
+        // La seconde est guérie : la clé en double en part.
+        let seconde = guerison
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with("b.bib"));
+        assert!(seconde.is_some(), "la seconde est guérie : {:?}", guerison);
+        assert!(
+            !seconde.unwrap().1.contains("dupont"),
+            "la clé en double est partie"
+        );
+    }
+}
 
-        let doc = crate::langage::parse::parse("Selon @dup.");
-        let (entry, corrections, _) =
-            super::compilation_unit_document_avec_diagnostics(&root, &source, &doc);
+#[cfg(test)]
+mod tests_pipeline_complet {
+    /// Le pipeline complet (feuille de route, phase 6, point 6.3) : du `.tw`
+    /// au PDF, réellement — et l'erreur de compilation remonte.
+    #[test]
+    fn le_pipeline_complet_rend_un_pdf() {
+        let source = "Bonjour.\n\nUn paragraphe simple.\n";
+        let document = crate::langage::parse(source);
+        let typst = crate::langage::generer::generer(&document);
+        let root = std::path::PathBuf::from("/projet");
+        let entry = "#include \"chapitre.typ\"".to_string();
+        let overrides = vec![(root.join("chapitre.typ"), typst)];
 
-        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        let outcome = crate::typst::render::compile(&root, &entry, &overrides);
         assert!(
             outcome.errors.is_empty(),
-            "la clé dupliquée casserait le rendu : {:?}",
+            "la compilation est sans erreur : {:?}",
             outcome.errors
         );
 
-        std::fs::remove_dir_all(&root).ok();
+        let octets =
+            crate::typst::render::render_pdf(&root, &entry, &overrides).expect("le PDF sort");
+        assert!(octets.starts_with(b"%PDF"), "c'est bien un PDF");
+
+        // L'erreur de compilation est remontée, pas avalée.
+        let casse = vec![(root.join("chapitre.typ"), "#(".to_string())];
+        let outcome = crate::typst::render::compile(&root, &entry, &casse);
+        assert!(
+            !outcome.errors.is_empty(),
+            "une erreur de compilation remonte"
+        );
     }
 }

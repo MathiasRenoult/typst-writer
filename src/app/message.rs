@@ -2,20 +2,9 @@ use crate::typst::render::{CompileOutcome, PageImage};
 use iced_code_editor::Message as EditorMessage;
 use std::path::PathBuf;
 
-/// Mise en forme appliquée à la sélection ou au bloc courant du `document.tw`.
-#[derive(Debug, Clone)]
-pub enum FormatAction {
-    Gras,
-    Italique,
-    Couleur(String),
-    Titre(u8),
-    ListePuce,
-    ListeNumero,
-    CitationBloc,
-    Citation,
-    Note,
-    BlocTypst,
-}
+/// Le vocabulaire de la mise en forme vit chez l'éditeur ; le message
+/// de l'application ne fait que le porter.
+pub use crate::editor::FormatAction;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -56,8 +45,17 @@ pub enum Message {
     /// Crée un projet, puis l'ouvre.
     NewProject,
 
-    /// Créer un projet selon l'un des modèles de R5, en un geste.
-    ProjetCreerAvecModele(crate::project::model::Modele),
+    /// La base choisie à la création : un projet-modèle, ou rien.
+    ProjetBase(String),
+
+    /// Une fonctionnalité du projet se branche ou se débranche.
+    ProjetFonctionnalite(String, bool),
+
+    /// Ce projet est un modèle — ou cesse de l'être.
+    ProjetModeleBascule,
+
+    /// Une fonctionnalité du projet se branche dans les normes.
+    ReglagesFonctionnalite(String, bool),
 
     /// Ouvre un autre projet.
     OpenProject(PathBuf),
@@ -175,16 +173,6 @@ pub enum Message {
 
     /// Tic de sauvegarde périodique (écriture différée sur le disque).
     SaveTick,
-
-    /// Le battement d'écoute du serveur de langage.
-    ///
-    /// On **relève** ses événements au lieu de les attendre : son canal est un
-    /// canal ordinaire, et l'attendre dans un abonnement immobiliserait un fil
-    /// de l'exécuteur pour un serveur qui parle rarement.
-    LspPoll,
-
-    /// Un événement du serveur de langage.
-    Lsp(crate::lsp::client::Event),
 
     /// La liste de complétion : on la parcourt.
     CompletionMove(isize),
@@ -411,6 +399,9 @@ pub enum Message {
     /// L'import a reçu son mot : les collisions partent à la corbeille.
     ProjetImportConfirmer(std::path::PathBuf, std::path::PathBuf),
 
+    /// La fin de l'import de sauvegarde, hors du thread de l'interface.
+    ProjetImporte(crate::project::portable::SortieImport),
+
     /// Exporte le document courant en Markdown.
     ExportMarkdown,
     /// La destination choisie pour le Markdown, `None` si annulé.
@@ -540,22 +531,6 @@ pub enum Message {
 
     /// Une note pour la barre d'état : ce qui vient de se faire, ou pas.
     MiseEnPageNote(String),
-
-    /// Ouvre le renommage du symbole sous le curseur.
-    SymbolRenameStart,
-
-    /// Le nouveau nom change dans la case.
-    SymbolRenameChanged(String),
-
-    /// Demande au serveur ce que ce renommage changerait — c'est ce qu'on
-    /// montrera avant toute écriture.
-    SymbolRenameAsk,
-
-    /// Applique ce que le serveur a proposé, que l'utilisateur a vu.
-    SymbolRenameApply,
-
-    /// Renonce au renommage.
-    SymbolRenameCancel,
 
     /// La fenêtre a changé de taille : (largeur, hauteur).
     WindowResized(iced::Size),

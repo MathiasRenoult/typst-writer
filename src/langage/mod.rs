@@ -31,3 +31,5 @@ pub mod typographie;
 pub use parse::parse;
 pub use schema::Document;
 pub use serialiser::serialiser;
+
+pub mod diagnostics;

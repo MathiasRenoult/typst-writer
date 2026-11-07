@@ -558,10 +558,22 @@ fn commence_par_un_marqueur_de_bloc(contenu: &[Inline]) -> bool {
 /// deux textes nus ne s'adjacent pas, et un lien ne colle pas à un appel
 /// sans page. Voir [`Document::est_canonique`].
 /// Le bord du contenu est-il un blanc ? Il disparaîtrait à la lecture.
-fn bord_blanc(element: Option<&Inline>) -> bool {
+/// Le blanc est fatal au bord d'abord : il disparaît à la lecture. Le
+/// bord dont il s'agit est celui du CONTENU — le début du premier élément,
+/// la fin du dernier — pas les joints internes, stables au round-trip.
+fn bord_blanc_debut(element: Option<&Inline>) -> bool {
     match element {
         Some(Inline::Texte(texte)) | Some(Inline::Litteral(texte)) => {
-            texte.starts_with(char::is_whitespace) || texte.ends_with(char::is_whitespace)
+            texte.starts_with(char::is_whitespace)
+        }
+        _ => false,
+    }
+}
+
+fn bord_blanc_fin(element: Option<&Inline>) -> bool {
+    match element {
+        Some(Inline::Texte(texte)) | Some(Inline::Litteral(texte)) => {
+            texte.ends_with(char::is_whitespace)
         }
         _ => false,
     }
@@ -577,7 +589,7 @@ fn inline_canonique(inline: &[Inline]) -> bool {
     // pire est un littéral : `x\ ` se relit `x\`, et c'est un caractère
     // qui change. Le code échappe à la règle : ses backticks protègent son
     // contenu jusqu'au bord.
-    if bord_blanc(inline.first()) || bord_blanc(inline.last()) {
+    if bord_blanc_debut(inline.first()) || bord_blanc_fin(inline.last()) {
         return false;
     }
 

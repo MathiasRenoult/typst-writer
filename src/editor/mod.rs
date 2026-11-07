@@ -2,6 +2,21 @@ use iced::Task;
 use iced_code_editor::{CodeEditor, Message as EditorMessage};
 use std::path::PathBuf;
 
+/// Mise en forme appliquée à la sélection ou au bloc courant du `document.tw`.
+#[derive(Debug, Clone)]
+pub enum FormatAction {
+    Gras,
+    Italique,
+    Couleur(String),
+    Titre(u8),
+    ListePuce,
+    ListeNumero,
+    CitationBloc,
+    Citation,
+    Note,
+    BlocTypst,
+}
+
 pub struct EditorState {
     pub editor: CodeEditor,
     pub path: Option<PathBuf>,
@@ -452,6 +467,7 @@ impl EditorState {
         Task::batch([insertion, placement])
     }
 
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
     /// Remplace ce qui précède le curseur, puis écrit à sa place.
     ///
     /// Le crate n'expose pas de « remplace cette plage » : on le fait donc comme
@@ -549,31 +565,24 @@ impl EditorState {
     /// La sélection est lue depuis l'éditeur, mais la représentation structurée
     /// est reconstruite immédiatement après la modification et sert à produire
     /// le rendu Typst.
-    pub fn apply_format(
-        &mut self,
-        action: crate::app::message::FormatAction,
-    ) -> Task<EditorMessage> {
+    pub fn apply_format(&mut self, action: FormatAction) -> Task<EditorMessage> {
         let task = match action {
-            crate::app::message::FormatAction::Gras => self.wrap_selection("**", "**"),
-            crate::app::message::FormatAction::Italique => self.wrap_selection("*", "*"),
-            crate::app::message::FormatAction::Couleur(couleur) => {
-                self.wrap_selection(&format!("{{{couleur}:"), "}")
-            }
-            crate::app::message::FormatAction::Citation => self.insert_at_cursor("@"),
-            crate::app::message::FormatAction::Note => self.wrap_selection("^[", "]"),
-            crate::app::message::FormatAction::Titre(niveau) => {
+            FormatAction::Gras => self.wrap_selection("**", "**"),
+            FormatAction::Italique => self.wrap_selection("*", "*"),
+            FormatAction::Couleur(couleur) => self.wrap_selection(&format!("{{{couleur}:"), "}"),
+            FormatAction::Citation => self.insert_at_cursor("@"),
+            FormatAction::Note => self.wrap_selection("^[", "]"),
+            FormatAction::Titre(niveau) => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Titre(niveau.clamp(1, 6)))
             }
-            crate::app::message::FormatAction::ListePuce => {
-                self.formater_le_bloc(crate::langage::blocs::Genre::Puce)
-            }
-            crate::app::message::FormatAction::ListeNumero => {
+            FormatAction::ListePuce => self.formater_le_bloc(crate::langage::blocs::Genre::Puce),
+            FormatAction::ListeNumero => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Numero)
             }
-            crate::app::message::FormatAction::CitationBloc => {
+            FormatAction::CitationBloc => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Citation)
             }
-            crate::app::message::FormatAction::BlocTypst => self.format_raw_typst(),
+            FormatAction::BlocTypst => self.format_raw_typst(),
         };
 
         self.refresh_document();
@@ -1215,7 +1224,7 @@ mod tests {
         let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "mot".to_string());
         let _ = editor.update(EditorMessage::SelectAll);
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::Gras);
+        let _ = editor.apply_format(FormatAction::Gras);
 
         assert_eq!(editor.content(), "**mot**");
         assert_eq!(
@@ -1229,7 +1238,7 @@ mod tests {
     fn raw_typst_format_inserts_an_editable_block() {
         let mut editor = EditorState::new_file(PathBuf::from("document.tw"), String::new());
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::BlocTypst);
+        let _ = editor.apply_format(FormatAction::BlocTypst);
 
         assert_eq!(editor.editor.cursor_position(), (2, 0));
         assert_eq!(editor.content(), "\n```typst\n\n```\n");
@@ -1245,7 +1254,7 @@ mod tests {
         let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Section".to_string());
         let _ = editor.editor.set_cursor(0, 0);
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::Titre(2));
+        let _ = editor.apply_format(FormatAction::Titre(2));
 
         assert_eq!(editor.content(), "## Section");
         assert_eq!(
@@ -1260,7 +1269,7 @@ mod tests {
         let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Élément".to_string());
         let _ = editor.editor.set_cursor(0, 0);
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
+        let _ = editor.apply_format(FormatAction::ListePuce);
 
         assert_eq!(editor.content(), "- Élément");
         assert!(matches!(
@@ -1273,7 +1282,7 @@ mod tests {
             [crate::langage::schema::Bloc::ListePuce(_)]
         ));
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
+        let _ = editor.apply_format(FormatAction::ListePuce);
         assert_eq!(editor.content(), "Élément");
     }
 
@@ -1283,7 +1292,7 @@ mod tests {
         let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Élément".to_string());
         let _ = editor.editor.set_cursor(0, 0);
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::ListeNumero);
+        let _ = editor.apply_format(FormatAction::ListeNumero);
 
         assert_eq!(editor.content(), "1. Élément");
         assert!(matches!(
@@ -1304,7 +1313,7 @@ mod tests {
             EditorState::new_file(PathBuf::from("document.tw"), "Citation".to_string());
         let _ = editor.editor.set_cursor(0, 0);
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::CitationBloc);
+        let _ = editor.apply_format(FormatAction::CitationBloc);
 
         assert_eq!(editor.content(), "> Citation");
         assert!(matches!(
@@ -1464,7 +1473,7 @@ mod tests {
         );
         let _ = editor.editor.set_cursor(1, 3);
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::ListePuce);
+        let _ = editor.apply_format(FormatAction::ListePuce);
 
         assert_eq!(
             editor.content(),
@@ -1501,10 +1510,14 @@ mod tests {
         let mut editor =
             EditorState::new_file(PathBuf::from("document.tw"), "## Deuxième".to_string());
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::Titre(2));
+        let _ = editor.apply_format(FormatAction::Titre(2));
         assert_eq!(editor.content(), "Deuxième", "redemander le niveau retire");
 
-        let _ = editor.apply_format(crate::app::message::FormatAction::Titre(4));
+        let _ = editor.apply_format(FormatAction::Titre(4));
         assert_eq!(editor.content(), "#### Deuxième");
     }
 }
+
+/// La complétion locale : contexte, filtre, insertion — ses fonctions
+/// pures vivent ici, hors du monde LSP retiré.
+pub mod completion;

@@ -78,25 +78,9 @@ pub fn pixel_per_pt(display_ratio: f64, scale_factor: f32) -> f64 {
     (display_ratio * screen_scale).max(MIN_PIXEL_PER_PT)
 }
 
-/// Un diagnostic (erreur ou avertissement) positionné dans le document.
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub message: String,
-
-    /// Ligne du diagnostic (1-based), si le compilateur l'a précisée.
-    pub line: Option<usize>,
-
-    /// Colonne du diagnostic (1-based), si le compilateur l'a précisée.
-    pub column: Option<usize>,
-
-    /// Le fichier où se situe le diagnostic, résolu sur le disque.
-    ///
-    /// Le document compilé est l'assemblage, qui `#include` les chapitres : un
-    /// diagnostic peut donc tomber dans n'importe lequel. Sans ce champ, une
-    /// erreur dans un chapitre serait signalée sans qu'on sache où la
-    /// corriger — et « sauter à l'erreur » n'aurait aucun sens.
-    pub file: Option<PathBuf>,
-}
+/// Le modèle du diagnostic vit chez la langue (feuille de route, phase 1) :
+/// le pipeline en produit, le moteur en convertit.
+pub use crate::langage::diagnostics::{Diagnostic, Origine};
 
 /// Un titre du document, avec l'endroit où il vit.
 ///
@@ -592,6 +576,7 @@ fn convert_diagnostics(diagnostics: &[SourceDiagnostic], world: &PreviewWorld) -
             let (file, line, column) = locate(diagnostic.span, world);
 
             Diagnostic {
+                origine: Origine::CompilationTypst,
                 message: diagnostic.message.to_string(),
                 line,
                 column,
@@ -809,6 +794,14 @@ impl World for PreviewWorld {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chaque_origine_dit_son_libelle() {
+        assert_eq!(Origine::Analyse.libelle(), "analyse du .tw");
+        assert_eq!(Origine::Transformation.libelle(), "transformation en Typst");
+        assert_eq!(Origine::CompilationTypst.libelle(), "compilation Typst");
+        assert_eq!(Origine::ExportPdf.libelle(), "export PDF");
+        assert_eq!(Origine::RenduPdf.libelle(), "rendu PDF");
+    }
     /// Le moteur est **verrouillé** : chaque brique Typst est épinglée à sa
     /// version exacte. Un glissement même mineur changerait des rendus —
     /// le contrat de rendu du projet ne le permet pas (R4, moteur
@@ -907,7 +900,10 @@ mod tests {
     fn diagnose_outline() {
         let entry = std::env::var("TYPST_WRITER_EPREUVE").expect("TYPST_WRITER_EPREUVE=<main.typ>");
         let entry = std::path::PathBuf::from(entry);
-        let root = crate::lsp::client::root_of(&entry);
+        let root = entry
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
         let source = std::fs::read_to_string(&entry).expect("le document");
 
         let outcome = compile(&root, &source, &[]);
@@ -1019,6 +1015,75 @@ mod tests {
     ///
     /// Ignoré par défaut (quelques secondes) :
     /// `cargo test --release -- --ignored bench_full_document`
+    #[test]
+    /// Les mesures de la feuille de route (phase 3, point 3.4) : quatre
+    /// temps, la mémoire, trois tailles de document. À lancer en release :
+    /// `cargo test --release -- --ignored mesures_du_pipeline --nocapture`.
+    #[ignore = "banc de mesure manuel"]
+    fn mesures_du_pipeline() {
+        fn memoire_rss() -> Option<usize> {
+            let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+            statm.split_whitespace().nth(1)?.parse().ok()
+        }
+
+        for paragraphes in [50usize, 500, 2000] {
+            let source = (0..paragraphes)
+                .map(|i| format!("Un paragraphe numéro {i} avec quelques mots."))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            println!();
+            println!(
+                "— {paragraphes} paragraphes ({} caractères) —",
+                source.len()
+            );
+
+            let debut = std::time::Instant::now();
+            let document = crate::langage::parse(&source);
+            let typst = crate::langage::generer::generer(&document);
+            let generation = debut.elapsed();
+            println!("Génération Typst   : {generation:>10.2?}");
+
+            let root = std::path::PathBuf::from("/projet");
+            let entry = "#include \"chapitre.typ\"\n".to_string();
+            let overrides = vec![(root.join("chapitre.typ"), typst.clone())];
+
+            let debut = std::time::Instant::now();
+            let outcome = compile(&root, &entry, &overrides);
+            let compilation = debut.elapsed();
+            println!("Compilation        : {compilation:>10.2?}");
+
+            let debut = std::time::Instant::now();
+            let octets = render_pdf(&root, &entry, &overrides);
+            let export = debut.elapsed();
+            println!("Export PDF         : {export:>10.2?}");
+
+            let rasterisation = octets.as_deref().and_then(|octets| {
+                let pdf = ouvrir_pdf(octets.to_vec())?;
+                let debut = std::time::Instant::now();
+                let page = render_page(&pdf, 0, 1.5);
+                let temps = debut.elapsed();
+                println!(
+                    "Rasterisation      : {temps:>10.2?} (page : {})",
+                    page.as_ref().map_or(0, |p| p.pixels.len())
+                );
+                Some(temps)
+            });
+            let _ = rasterisation;
+
+            println!(
+                "Mémoire            : texte {} o, PDF {} o, RSS {} pages",
+                typst.len(),
+                octets.as_ref().map_or(0, |o| o.len()),
+                memoire_rss().map_or_else(|| "n/a".to_string(), |p| p.to_string()),
+            );
+            println!(
+                "Tâches simultanées : plafond {}",
+                crate::app::state::RenderState::SIMULTANEES
+            );
+            println!("Diagnostics        : {} erreur(s)", outcome.errors.len());
+        }
+    }
+
     #[test]
     #[ignore = "banc de mesure manuel"]
     fn bench_full_document() {
@@ -2067,7 +2132,10 @@ mod tests {
         };
 
         let entry = PathBuf::from(entry);
-        let root = crate::lsp::client::root_of(&entry);
+        let root = entry
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
         let content = std::fs::read_to_string(&entry).expect("assemblage lisible");
 
         let outcome = compile(&root, &content, &[]);

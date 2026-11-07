@@ -71,6 +71,11 @@ pub struct Metadonnees {
 
     /// Le profil actif — vide : aucune, les paires seules.
     pub profil_actif: String,
+
+    /// Ce projet est un **modèle** : en créer un nouveau, c'est le
+    /// prendre pour base (demande de l'auteur). Un modèle reste un
+    /// projet comme un autre — ouvrable, modifiable, effaçable.
+    pub est_modele: bool,
 }
 
 /// Le format de fichier reste une table TOML (`clé = "valeur"`) — les

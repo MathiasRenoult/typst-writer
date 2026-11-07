@@ -33,7 +33,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         return fenetre_composeur(composeur, palette, state.editor.is_intermediate());
     }
 
-    let Some(open) = state.lsp.completion.as_ref() else {
+    let Some(open) = state.completion.as_ref() else {
         return container(Space::new()).into();
     };
 
@@ -58,7 +58,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let fenetre = container(
         column![
             entete,
-            completion_popup(open, palette, LARGEUR, state.lsp.awaiting),
+            completion_popup(open, palette, LARGEUR, false),
             pied,
         ]
         .spacing(10),

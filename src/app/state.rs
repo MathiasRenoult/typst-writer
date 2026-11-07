@@ -1,4 +1,5 @@
 use crate::editor::EditorState;
+use crate::editor::completion::Completion;
 use crate::project::{BibliographyEntry, Project};
 use crate::typst::render::Diagnostic;
 use std::collections::{HashMap, HashSet};
@@ -65,6 +66,15 @@ pub struct ProjetDialogue {
     /// Les métadonnées choisies à la création (bug-report-7, point 9).
     pub titre: String,
     pub auteur: String,
+
+    /// Les bases proposées : les projets marqués comme modèles.
+    pub bases: Vec<String>,
+
+    /// La base choisie : le nom d'un projet-modèle, ou vide.
+    pub base: String,
+
+    /// Les fonctionnalités du projet à naître (demande de l'auteur).
+    pub fonctionnalites: crate::mise_en_page::modele::Fonctionnalites,
 
     /// `None` pour créer ; le dossier pour renommer.
     pub cible: Option<std::path::PathBuf>,
@@ -138,6 +148,12 @@ pub struct Importation {
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
 /// la séquence de démarrage sait établir.
 pub struct State {
+    /// La liste de complétion ouverte — locale (feuille de route, phase 1).
+    pub completion: Option<Completion>,
+    /// Les normes appliquées du projet : l' + q + 'interface y lit les
+    /// fonctionnalités branchées pour montrer ou cacher leurs gestes
+    /// (demande de l' + q + 'auteur).
+    pub reglages: crate::mise_en_page::modele::MiseEnPage,
     /// Les rendus partagés par empreinte de texte : un seul PDF par
     /// fichier, quelle que soit la fenêtre qui le montre (bug-report-10).
     pub rendus_partages: std::collections::HashMap<String, RenduPartage>,
@@ -157,6 +173,9 @@ pub struct State {
 
     /// Les projets disponibles, pour passer de l'un à l'autre.
     pub projects: Vec<Project>,
+    /// Les étagères des projets, chargées avec la liste — jamais par la
+    /// vue (feuille de route, phase 4, point 4.1).
+    pub etageres: std::collections::BTreeMap<String, String>,
 
     /// Entrées de bibliographie citables (le `.bib` du projet).
     pub bibliography: Vec<BibliographyEntry>,
@@ -219,7 +238,6 @@ pub struct State {
     pub editeur_theme_textes: std::collections::HashMap<String, String>,
 
     /// Le picker RVB intégré : le champ édité et les composantes RGB.
-
     /// Le nom de l'étagère à poser sur un projet — la vue des projets.
     pub etagere_brouillon: String,
     /// La liste des projets montre tous les projets (sinon : l'étagère
@@ -303,9 +321,6 @@ pub struct State {
     /// Disposition des panneaux : visibilité, largeurs, position de l'aperçu.
     pub layout: LayoutState,
 
-    /// L'assistance à la frappe : tinymist, s'il est là.
-    pub lsp: LspState,
-
     /// Taille de la fenêtre, telle que la vue la rapporte.
     ///
     /// Elle sert à savoir **où il y a de la place** pour la liste de complétion :
@@ -332,9 +347,6 @@ pub struct State {
 
     /// Le dialogue de mise en page, s'il est ouvert.
     pub mise_en_page: Option<DialogueMiseEnPage>,
-
-    /// Renommage de symbole en cours, s'il y en a un.
-    pub renommage: Option<Renommage>,
 
     /// Le composeur de notes de références, s'il est ouvert.
     ///
@@ -466,7 +478,6 @@ pub struct DialogueMiseEnPage {
 
     /// L'aperçu des titres : les six niveaux rendus par le moteur avec les
     /// normes du dialogue — jamais une imitation (R5).
-
     /// Les styles installés dans Zotero, tels qu'ils étaient à l'ouverture
     /// de la fenêtre : la troisième porte du choix (R4).
     pub styles_zotero: Vec<crate::zotero::styles::CslStyle>,
@@ -477,21 +488,6 @@ pub struct DialogueMiseEnPage {
 
     /// Les réglages ont-ils changé depuis le chargement ?
     pub modifie: bool,
-}
-
-/// Un renommage de symbole en cours.
-///
-/// Il a deux temps : le nouveau nom est d'abord **demandé**, puis le serveur
-/// dit ce que cela changerait — et c'est montré, jamais appliqué d'autorité.
-/// Un renommage touche des fichiers que personne n'a pas ouverts : c'est à
-/// voir avant.
-pub struct Renommage {
-    /// Le nouveau nom, tel qu'il est écrit dans la case.
-    pub nom: String,
-
-    /// Ce que le serveur proposerait de modifier. `None` tant qu'il n'a pas
-    /// répondu — et tant que c'est `None`, rien ne s'applique.
-    pub changements: Option<Vec<crate::lsp::messages::FileEdit>>,
 }
 
 /// aussi courante.
@@ -809,175 +805,6 @@ impl LayoutState {
             // droite le rétrécit.
             Splitter::Preview => Self::clamp_width(extent - delta),
         }
-    }
-}
-
-/// L'assistance du serveur de langage, quand il est là.
-///
-/// Le serveur est **facultatif** : sans lui, tout le reste de l'application
-/// fonctionne à l'identique — l'aperçu compile par ses propres moyens. Cet état
-/// ne décrit donc que ce qui *s'ajoute*, et l'interface le dit tel quel plutôt
-/// que de présenter son absence comme une panne.
-#[derive(Default)]
-pub struct LspState {
-    /// La session avec le serveur, tant qu'il répond.
-    pub session: Option<crate::lsp::client::Session>,
-
-    /// Le serveur a été cherché, et n'est pas là.
-    ///
-    /// Retenu, pour ne pas payer un démarrage raté à chaque document ouvert :
-    /// le chercher une fois suffit, et l'utilisateur qui l'installe en cours de
-    /// route relancera l'application.
-    pub unavailable: bool,
-
-    /// Le serveur a répondu à l'initialisation : il est prêt à être questionné.
-    pub ready: bool,
-
-    /// L'adresse du document ouvert auprès du serveur.
-    pub document: Option<String>,
-
-    /// Ce que le serveur signale dans le document ouvert.
-    ///
-    /// Gardé pour la gravité : la barre d'état en compte les erreurs. Le
-    /// panneau, lui, montre `reported` — les mêmes, mais déjà traduits pour
-    /// l'affichage (la colonne du protocole ne se donne pas telle quelle à
-    /// l'éditeur).
-    pub diagnostics: Vec<crate::lsp::messages::Diagnostic>,
-
-    /// Les mêmes diagnostics, prêts à montrer et à sauter.
-    pub reported: Vec<crate::lsp::messages::Reported>,
-
-    /// Une réponse est attendue : le battement d'écoute se resserre.
-    pub awaiting: bool,
-
-    /// Depuis quand, pour ne pas attendre toujours : un serveur lent ou
-    /// muet ne doit pas tenir l'application en haleine.
-    pub depuis: Option<std::time::Instant>,
-
-    /// Le texte tel que le serveur l'a vu, la dernière fois qu'on le lui
-    /// a donné.
-    ///
-    /// Ses positions sont dans **son** texte : les recalculer sur celui du
-    /// moment ferait pointer les diagnostics ailleurs que le problème.
-    pub vu: String,
-
-    /// La liste de complétion ouverte, s'il y en a une.
-    pub completion: Option<Completion>,
-
-    /// Ce que le serveur dit du symbole sous le curseur, tel qu'il s'affiche.
-    pub hover: Option<Hover>,
-
-    /// Numéro de la dernière demande de survol ou de définition.
-    ///
-    /// Une réponse plus ancienne que la dernière question est celle d'un endroit
-    /// que le curseur a déjà quitté : elle est ignorée.
-    pub attention: u64,
-
-    /// Numéro de la dernière demande de complétion.
-    ///
-    /// Une réponse qui porte un numéro périmé est celle d'une frappe
-    /// précédente : la garder ferait apparaître une liste qui ne correspond plus
-    /// à ce qui est écrit.
-    pub tokens: u64,
-}
-
-impl LspState {
-    /// Accepte uniquement la réponse courante et termine son attente.
-    pub(crate) fn accept_completion_response(&mut self, token: u64) -> bool {
-        if token != self.tokens {
-            return false;
-        }
-
-        self.awaiting = false;
-        self.depuis = None;
-        true
-    }
-
-    /// Invalide une complétion annulée et cesse d'attendre sa réponse.
-    pub(crate) fn cancel_completion_request(&mut self) {
-        self.tokens = self.tokens.wrapping_add(1);
-        self.awaiting = false;
-        self.depuis = None;
-    }
-
-    /// Purge tout ce que le serveur a pu laisser : document ouvert, diagnostics,
-    /// survol, demande en vol.
-    ///
-    /// **Pas** la complétion : pour un fichier intermédiaire elle est la nôtre —
-    /// les `@` tirés de la bibliographie — et la prendre à chaque tic refermait
-    /// la fenêtre de suggestions trois dixièmes de seconde après son ouverture.
-    pub(crate) fn purge_server(&mut self) {
-        if self.document.take().is_some()
-            && let Some(session) = self.session.as_mut()
-        {
-            session.close_document();
-        }
-
-        self.diagnostics.clear();
-        self.reported.clear();
-        self.hover = None;
-        self.awaiting = false;
-        self.depuis = None;
-    }
-}
-
-/// Ce que le serveur dit d'un symbole, prêt à être montré.
-pub struct Hover {
-    /// Le texte renvoyé par le serveur, en markdown.
-    pub text: String,
-
-    /// Où il s'accroche : la position du curseur au moment de la question.
-    pub anchor: iced::Point,
-}
-
-/// La liste de complétion, telle qu'elle s'affiche.
-pub struct Completion {
-    /// Ce que le serveur a proposé.
-    pub items: Vec<crate::lsp::messages::CompletionItem>,
-
-    /// Les indices des éléments qui correspondent à ce qui est tapé, dans
-    /// l'ordre voulu par le serveur.
-    pub shown: Vec<usize>,
-
-    /// La sélection, dans [`Self::shown`].
-    pub selected: usize,
-
-    /// Ce qui a été tapé après le déclencheur.
-    pub typed: String,
-
-    /// Le caractère qui a ouvert la liste.
-    pub trigger: char,
-
-    /// Le décalage, en octets, du début de ce qui serait remplacé.
-    pub start: usize,
-
-    /// Position source du curseur à la dernière mise à jour de la liste.
-    pub cursor_offset: usize,
-}
-
-impl Completion {
-    /// Ferme la liste si le curseur a été déplacé sans modifier le texte.
-    pub fn should_close_after(&self, cursor_offset: usize, content_changed: bool) -> bool {
-        !content_changed && cursor_offset != self.cursor_offset
-    }
-
-    /// L'élément sélectionné, s'il y en a un.
-    pub fn selected_item(&self) -> Option<&crate::lsp::messages::CompletionItem> {
-        self.shown
-            .get(self.selected)
-            .and_then(|index| self.items.get(*index))
-    }
-
-    /// Déplace la sélection, en boucle : on ne bute pas sur les extrémités.
-    pub fn move_selection(&mut self, delta: isize) {
-        if self.shown.is_empty() {
-            return;
-        }
-
-        let count = self.shown.len() as isize;
-        let wanted = (self.selected as isize + delta).rem_euclid(count);
-
-        self.selected = wanted as usize;
     }
 }
 
@@ -1511,6 +1338,39 @@ mod tests {
 
     /// Une invalidation ne rouvre pas le plafond : les rendus en vol
     /// gardent leur place, et c'est leur fin qui libère la suivante.
+    /// Les tâches concurrentes (feuille de route, phase 3, point 3.2) : la
+    /// même page ne se rasterise pas deux fois pour la même révision.
+    /// Les tâches concurrentes (feuille de route, phase 3, point 3.2) : une
+    /// tâche obsolète ne libère pas la place de la nouvelle révision.
+    #[test]
+    fn une_tache_obsolete_ne_libere_pas_la_place_neuve() {
+        let mut render = RenderState::default();
+        render.begin_page_render(render.revision, 0);
+        let ancienne = render.revision;
+        render.invalidate_rasterization(1);
+        render.begin_page_render(render.revision, 0);
+        // L'ancienne tâche finit : sa place à elle est libérée, pas celle de
+        // la nouvelle révision.
+        render.finish_page_render(ancienne, 0);
+        assert!(
+            !render.begin_page_render(render.revision, 0),
+            "la nouvelle tâche tient encore sa place"
+        );
+    }
+
+    #[test]
+    fn une_page_ne_se_rasterise_pas_deux_fois() {
+        let mut render = RenderState::default();
+        let revision = render.revision;
+        assert!(render.begin_page_render(revision, 3), "la première part");
+        assert!(
+            !render.begin_page_render(revision, 3),
+            "la seconde est refusée : la page est déjà en cours"
+        );
+        // Une autre page trouve sa place.
+        assert!(render.begin_page_render(revision, 4), "une autre page part");
+    }
+
     #[test]
     fn une_invalidation_ne_rouvre_pas_le_plafond() {
         let mut render = RenderState {
@@ -1550,6 +1410,36 @@ mod tests {
     /// Changer la densité du rendu est un affaire de rasterisation : le
     /// document compilé est bon, seules les images se refont. C'est la
     /// promesse du jalon, et la voici éprouvée.
+    /// Les comportements asynchrones (feuille de route, phase 6, point 6.4) :
+    /// une compilation invalidée par une nouvelle modification relance
+    /// l attente, au lieu de partir sur l état intermédiaire.
+    #[test]
+    fn une_modification_relance_l_attente() {
+        use std::time::{Duration, Instant};
+        let mut render = crate::app::state::RenderState::default();
+        let t0 = Instant::now();
+        assert!(
+            !render.compile_due("ab", 0, t0),
+            "la première frappe attend"
+        );
+        assert!(
+            !render.compile_due("cd", 0, t0 + Duration::from_millis(10)),
+            "la seconde modification relance l attente"
+        );
+        assert!(
+            !render.compile_due("cd", 0, t0 + Duration::from_millis(100)),
+            "le temps de la première ne compte plus"
+        );
+        assert!(
+            render.compile_due(
+                "cd",
+                0,
+                t0 + Duration::from_millis(crate::app::state::IDLE_DELAY_MS + 100)
+            ),
+            "la compilation part après le silence"
+        );
+    }
+
     #[test]
     fn le_zoom_ne_redemande_pas_de_compilation() {
         let mut render = RenderState {
@@ -1640,67 +1530,6 @@ mod tests {
     }
 
     use super::*;
-
-    #[test]
-    fn stale_completion_response_does_not_clear_current_wait() {
-        let mut lsp = LspState {
-            awaiting: true,
-            tokens: 2,
-            ..LspState::default()
-        };
-
-        assert!(!lsp.accept_completion_response(1));
-        assert!(lsp.awaiting);
-        assert!(lsp.accept_completion_response(2));
-        assert!(!lsp.awaiting);
-    }
-
-    #[test]
-    fn cancelling_completion_invalidates_its_inflight_response() {
-        let mut lsp = LspState {
-            awaiting: true,
-            tokens: 2,
-            ..LspState::default()
-        };
-
-        lsp.cancel_completion_request();
-
-        assert_eq!(lsp.tokens, 3);
-        assert!(!lsp.awaiting);
-        assert!(!lsp.accept_completion_response(2));
-    }
-
-    /// Purger le serveur ne ferme pas la complétion de citation : elle est la
-    /// nôtre, tirée de la bibliographie, et non une réponse du serveur. La
-    /// prendre à chaque tic refermait la fenêtre dès qu'on cessait de taper.
-    #[test]
-    fn purging_the_server_keeps_the_local_citation_completion() {
-        let mut lsp = LspState {
-            completion: Some(Completion {
-                items: Vec::new(),
-                shown: Vec::new(),
-                selected: 0,
-                typed: String::new(),
-                trigger: '@',
-                start: 0,
-                cursor_offset: 0,
-            }),
-            awaiting: true,
-            ..LspState::default()
-        };
-
-        lsp.purge_server();
-
-        assert!(
-            lsp.completion.is_some(),
-            "la complétion de citation doit survivre à la purge du serveur"
-        );
-        assert!(
-            !lsp.awaiting,
-            "la demande en vol du serveur, elle, s'éteint"
-        );
-        assert!(lsp.hover.is_none());
-    }
 
     /// Une image quelconque : seule son identité compte pour ces tests.
     fn tranche() -> Tranche {

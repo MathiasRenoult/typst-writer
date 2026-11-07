@@ -211,10 +211,14 @@ pub fn parse(texte: &str) -> Document {
         // Un paragraphe : tout ce qui n'est pas un autre bloc, jusqu'à une
         // ligne vide ou un nouveau bloc.
         let (paragraphe, suivant) = lire_paragraphe(&lignes, index);
-        blocs.push(habiller(
-            Bloc::Paragraphe(parse_inline(&paragraphe)),
-            &mut en_attente,
-        ));
+        // Un paragraphe de blancs n'en est pas un : la forme canonique
+        // n'admet pas un paragraphe vide (feuille de route, point 2.2).
+        if !paragraphe.trim().is_empty() {
+            blocs.push(habiller(
+                Bloc::Paragraphe(parse_inline(&paragraphe)),
+                &mut en_attente,
+            ));
+        }
         index = suivant;
     }
 
@@ -1397,6 +1401,44 @@ mod tests {
     /// Une cellule en plus n'est jamais tronquée : le tableau s'élargit, et
     /// tout se relit. La seule transformation admise est la mise à largeur —
     /// comble les trous, garde tout le reste.
+    /// Les cas nommés par la feuille de route (phase 2, point 2.2) côté
+    /// analyseur : CRLF, chaînes vides, bords blancs, Unicode — chacun se
+    /// normalise, et la normalisation tient le round-trip.
+    #[test]
+    fn la_normalisation_tient_sur_les_cas_nommes() {
+        // CRLF et LF donnent le même document.
+        assert_eq!(
+            parse("Un paragraphe.\r\n\r\nUn autre.\r\n"),
+            parse("Un paragraphe.\n\nUn autre.\n"),
+            "CRLF et LF se lisent de même"
+        );
+        // Chaîne vide et blancs seuls.
+        assert_eq!(parse("").blocs.len(), 0, "la chaîne vide est vide");
+        // Une ligne de blancs n'est pas un paragraphe (mais trois lignes
+        // vides consécutives font un saut de page — le design, EDITOR-04).
+        let blancs = parse("   ");
+        assert_eq!(
+            blancs.blocs.len(),
+            0,
+            "les blancs seuls sont vides : {blancs:?}"
+        );
+        // Bords blancs : le texte se rogne.
+        assert_eq!(
+            parse("  Un paragraphe.  "),
+            parse("Un paragraphe."),
+            "les bords blancs se rognent"
+        );
+        // Unicode varié survit au round-trip.
+        let unicode = "éàü 中文 🎉 a\u{0301} \u{202F}fin";
+        let document = parse(unicode);
+        let regenere = crate::langage::serialiser::serialiser(&document);
+        assert_eq!(
+            parse(&regenere),
+            document,
+            "l'Unicode tient le round-trip (sérialisé : {regenere:?})"
+        );
+    }
+
     #[test]
     fn une_cellule_en_plus_nest_jamais_perdue() {
         let source = "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 | 4 |\n";

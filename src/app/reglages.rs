@@ -278,6 +278,18 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             Task::none()
         }
 
+        Message::ReglagesFonctionnalite(nom, actif) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                match nom.as_str() {
+                    "bibliographie" => dialogue.reglages.fonctionnalites.bibliographie = actif,
+                    "glossaire" => dialogue.reglages.fonctionnalites.glossaire = actif,
+                    "graphiques" => dialogue.reglages.fonctionnalites.graphiques = actif,
+                    _ => {}
+                }
+            }
+
+            Task::none()
+        }
         Message::MiseEnPageAppliquer => appliquer(state),
 
         // L'ajout d'image : le sélecteur natif, les formats que Typst
@@ -432,6 +444,9 @@ fn appliquer(state: &mut State) -> Task<Message> {
     }
 
     let reglages = dialogue.reglages.clone();
+    // Les normes appliquées sont celles que l'interface lit pour
+    // montrer ou cacher les fonctionnalités du projet.
+    state.reglages = reglages.clone();
     let accrocher = dialogue.accrocher;
 
     match mise_en_page::appliquer(&state.project.dir, &reglages, accrocher) {

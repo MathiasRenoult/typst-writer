@@ -18,7 +18,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
                         state,
                         &state.render,
                         &state.editor,
-                        &state.lsp,
                         None,
                     ))
                     .on_show(move |size| {
@@ -273,22 +272,15 @@ fn message_vue(id: VueId, message: Message) -> Message {
 
 fn contenu_vue(state: &State, id: VueId) -> Element<'_, Message> {
     let active = id == state.espace.active;
-    let (editor, render, lsp, mode, genere) = if active {
+    let (editor, render, mode, genere) = if active {
         (
             &state.editor,
             &state.render,
-            &state.lsp,
             state.mode,
             state.typst_genere.as_str(),
         )
     } else if let Some(vue) = state.espace.vues.get(&id) {
-        (
-            &vue.editor,
-            &vue.render,
-            &vue.lsp,
-            vue.mode,
-            vue.typst.as_str(),
-        )
+        (&vue.editor, &vue.render, vue.mode, vue.typst.as_str())
     } else {
         return iced::widget::Space::new().into();
     };
@@ -296,31 +288,25 @@ fn contenu_vue(state: &State, id: VueId) -> Element<'_, Message> {
         ModeVue::Edition => super::editor::vue(state, editor, active),
         ModeVue::Rendu => {
             let (first, last) = render.visible.unwrap_or((0, 2));
-            iced::widget::sensor::Sensor::new(super::preview::vue(
-                state,
-                render,
-                editor,
-                lsp,
-                Some(id),
-            ))
-            .key(id)
-            .on_show(move |size| {
-                Message::ViewportChanged(
-                    first,
-                    last,
-                    iced::Rectangle::new(iced::Point::ORIGIN, size),
-                    None,
-                )
-            })
-            .on_resize(move |size| {
-                Message::ViewportChanged(
-                    first,
-                    last,
-                    iced::Rectangle::new(iced::Point::ORIGIN, size),
-                    None,
-                )
-            })
-            .into()
+            iced::widget::sensor::Sensor::new(super::preview::vue(state, render, editor, Some(id)))
+                .key(id)
+                .on_show(move |size| {
+                    Message::ViewportChanged(
+                        first,
+                        last,
+                        iced::Rectangle::new(iced::Point::ORIGIN, size),
+                        None,
+                    )
+                })
+                .on_resize(move |size| {
+                    Message::ViewportChanged(
+                        first,
+                        last,
+                        iced::Rectangle::new(iced::Point::ORIGIN, size),
+                        None,
+                    )
+                })
+                .into()
         }
         ModeVue::Typst => super::onglets::source_typst(state.resolved.palette, genere),
     }

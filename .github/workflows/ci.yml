@@ -41,3 +41,29 @@ jobs:
 
       - name: Tests du crate vendoré
         run: cargo test --manifest-path vendor/iced-code-editor/Cargo.toml --lib --features two-face
+
+  # La vérification régulière des cibles (feuille de route, phase 5, point
+  # 5.3) : Windows et macOS sont construits et éprouvés à chaque poussée. Il
+  # n'est pas exigé d'un support complet — mais aucun choix architectural ne
+  # doit empêcher la prise en charge, et la compilation le dirait tout de
+  # suite. Les épreuves qui parlent à un outil externe (pdftotext) sautent
+  # d'elles-mêmes là où il manque.
+  portabilite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Construction
+        run: cargo build --release
+
+      - name: Tests
+        run: cargo test --release

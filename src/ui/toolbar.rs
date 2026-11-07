@@ -90,26 +90,18 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette.label("Projet").size(theme::jetons::DETAIL),
             iced_aw::menu::Menu::new(vec![
                 iced_aw::menu::Item::new(
-                    button(
-                        palette
-                            .label("Nouveau devoir court…")
-                            .size(theme::jetons::DETAIL),
-                    )
-                    .on_press(Message::ProjetCreerAvecModele(
-                        crate::project::model::Modele::DevoirCourt,
-                    ))
-                    .padding([4, 10])
-                    .width(Length::Fill),
+                    button(palette.label("Nouveau projet…").size(theme::jetons::DETAIL))
+                        .on_press(Message::ProjetCreer)
+                        .padding([4, 10])
+                        .width(Length::Fill),
                 ),
                 iced_aw::menu::Item::new(
                     button(
                         palette
-                            .label("Nouveau travail long…")
+                            .label("Définir comme modèle, ou l'en retirer")
                             .size(theme::jetons::DETAIL),
                     )
-                    .on_press(Message::ProjetCreerAvecModele(
-                        crate::project::model::Modele::TravailLong,
-                    ))
+                    .on_press(Message::ProjetModeleBascule)
                     .padding([4, 10])
                     .width(Length::Fill),
                 ),
@@ -327,30 +319,36 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             false,
         ));
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_library::<Theme>(),
-            "Insérer une section bibliographie",
-            Message::BibliographieSectionInserer,
-            palette,
-            false,
-        ));
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_book_a::<Theme>(),
-            "Insérer une section glossaire",
-            Message::GlossaireSectionInserer,
-            palette,
-            false,
-        ));
+        if state.reglages.fonctionnalites.bibliographie {
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_library::<Theme>(),
+                "Insérer une section bibliographie",
+                Message::BibliographieSectionInserer,
+                palette,
+                false,
+            ));
+        }
+        if state.reglages.fonctionnalites.glossaire {
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_book_a::<Theme>(),
+                "Insérer une section glossaire",
+                Message::GlossaireSectionInserer,
+                palette,
+                false,
+            ));
+        }
 
         // TOPBAR-10 : une icône ouvre la fenêtre du glossaire — la
         // liste déroulante ne permettait que d'insérer (bug-report-10, 5.3).
-        bar = bar.push(icon_button(
-            lucide_icons::iced::icon_book_marked::<Theme>(),
-            "Glossaire : consulter et gérer les termes",
-            Message::GlossaireFenetreOuvrir,
-            palette,
-            state.glossaire_fenetre,
-        ));
+        if state.reglages.fonctionnalites.glossaire {
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_book_marked::<Theme>(),
+                "Glossaire : consulter et gérer les termes",
+                Message::GlossaireFenetreOuvrir,
+                palette,
+                state.glossaire_fenetre,
+            ));
+        }
 
         // TOPBAR-06 : la pastille applique la dernière couleur choisie,
         // le picker ouvre le choix. La pastille mémorise la couleur courante.

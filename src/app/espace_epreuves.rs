@@ -1,6 +1,21 @@
 //! Épreuves d'intégration exécutées uniquement dans un HOME jetable.
 use super::*;
 
+/// Crée un projet par le vrai geste : le dialogue, puis la validation.
+fn creer_un_projet(state: &mut crate::app::State, nom: &str) {
+    let _ = update(state, Message::ProjetCreer);
+    let _ = update(state, Message::ProjetNom(nom.to_string()));
+    let _ = update(state, Message::ProjetValider);
+}
+
+/// Crée un projet depuis une base — un projet-modèle (demande de
+/// l'auteur : un modèle est un projet comme un autre).
+fn creer_depuis(state: &mut crate::app::State, nom: &str, base: &str) {
+    let _ = update(state, Message::ProjetCreer);
+    let _ = update(state, Message::ProjetNom(nom.to_string()));
+    let _ = update(state, Message::ProjetBase(base.to_string()));
+    let _ = update(state, Message::ProjetValider);
+}
 fn etat_isole() -> State {
     assert_eq!(
         std::env::var("TYPST_WRITER_TEST_ESPACE").as_deref(),
@@ -841,6 +856,7 @@ fn un_apercu_affiche_sous_des_erreurs_est_indique_ancien() {
     let echec = crate::typst::render::CompileOutcome {
         content: state.compilation_fingerprint(),
         errors: vec![crate::typst::render::Diagnostic {
+            origine: crate::typst::render::Origine::CompilationTypst,
             message: "Une panne synthétique.".into(),
             line: Some(1),
             column: None,
@@ -1205,6 +1221,7 @@ fn supprimer_un_projet_retire_toutes_ses_vues_et_reponses_tardives() {
     assert_eq!(state.espace.grille.len(), 2);
     let second = crate::project::create("second").expect("autre projet");
     state.projects = crate::project::list_projects();
+    state.etageres = crate::project::etageres();
     state.maj_tenu = true;
     let _ = update(&mut state, Message::OpenProject(second.clone()));
     state.maj_tenu = false;
@@ -1462,235 +1479,6 @@ fn confirmer_un_chapitre_dun_autre_projet_ne_le_supprime_pas() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_renommage_dit_le_detail_de_ce_qu_il_a_fait() {
-    use crate::lsp::messages::{FileEdit, Position, Range, TextEdit};
-    let mut state = etat_isole();
-    let premier = state.project.dir.join("a.typ");
-    let second = state.project.dir.join("b.typ");
-    std::fs::write(&premier, "X").expect("fichier synthétique");
-    std::fs::write(&second, "X").expect("fichier synthétique");
-    let edition = |chemin: std::path::PathBuf| FileEdit {
-        path: chemin,
-        edits: vec![TextEdit {
-            range: Range {
-                start: Position {
-                    line: 0,
-                    character: 0,
-                },
-                end: Position {
-                    line: 0,
-                    character: 1,
-                },
-            },
-            new_text: "Y".into(),
-        }],
-    };
-    state.renommage = Some(crate::app::state::Renommage {
-        nom: "Y".into(),
-        changements: Some(vec![edition(premier), edition(second)]),
-    });
-    let _ = update(&mut state, Message::SymbolRenameApply);
-    let rapport = state.export_status.expect("un résultat est dit");
-    assert!(
-        rapport.contains("a.typ") && rapport.contains("b.typ"),
-        "le résultat nomme les fichiers touchés : {rapport}"
-    );
-    assert!(
-        rapport.contains("2 fichier(s)"),
-        "le résultat compte les fichiers : {rapport}"
-    );
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_fichier_illisible_arrete_le_renommage_et_le_dit() {
-    use crate::lsp::messages::{FileEdit, Position, Range, TextEdit};
-    let mut state = etat_isole();
-    let illisible = state.project.dir.join("a.typ");
-    let intact = state.project.dir.join("b.typ");
-    std::fs::write(&illisible, "X").expect("fichier synthétique");
-    std::fs::write(&intact, "X").expect("fichier synthétique");
-    let mut permissions = std::fs::metadata(&illisible)
-        .expect("métadonnées")
-        .permissions();
-    use std::os::unix::fs::PermissionsExt;
-    permissions.set_mode(0o000);
-    std::fs::set_permissions(&illisible, permissions).expect("verrou de lecture");
-    let edition = |chemin: std::path::PathBuf| FileEdit {
-        path: chemin,
-        edits: vec![TextEdit {
-            range: Range {
-                start: Position {
-                    line: 0,
-                    character: 0,
-                },
-                end: Position {
-                    line: 0,
-                    character: 1,
-                },
-            },
-            new_text: "Y".into(),
-        }],
-    };
-    state.renommage = Some(crate::app::state::Renommage {
-        nom: "Y".into(),
-        changements: Some(vec![edition(illisible.clone()), edition(intact.clone())]),
-    });
-    let _ = update(&mut state, Message::SymbolRenameApply);
-    let note = state.note.expect("le problème est dit");
-    assert!(
-        note.texte.contains("a.typ"),
-        "la note nomme le fichier illisible : {}",
-        note.texte
-    );
-    assert_eq!(
-        std::fs::read_to_string(&intact).expect("fichier"),
-        "X",
-        "rien ne s'écrit après un échec de lecture"
-    );
-    // Le ménage : les permissions reprennent pour laisser le HOME jetable
-    // se supprimer sans drame.
-    let mut permissions = std::fs::metadata(&illisible)
-        .expect("métadonnées")
-        .permissions();
-    permissions.set_mode(0o644);
-    std::fs::set_permissions(&illisible, permissions).expect("déverrou");
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_renommage_lsp_preserve_un_fichier_temporaire_existant() {
-    use crate::lsp::messages::{FileEdit, Position, Range, TextEdit};
-    let mut state = etat_isole();
-    let cible = state.project.dir.join("auxiliaire.typ");
-    let ancien_temporaire = state.project.dir.join(".typst-writer-tmp");
-    std::fs::write(&cible, "ABC").expect("fichier synthétique");
-    std::fs::write(&ancien_temporaire, "À CONSERVER").expect("ancien temporaire");
-    state.renommage = Some(crate::app::state::Renommage {
-        nom: "X".into(),
-        changements: Some(vec![FileEdit {
-            path: cible.clone(),
-            edits: vec![TextEdit {
-                range: Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 1,
-                    },
-                },
-                new_text: "X".into(),
-            }],
-        }]),
-    });
-    let _ = update(&mut state, Message::SymbolRenameApply);
-    assert_eq!(std::fs::read_to_string(cible).unwrap(), "XBC");
-    assert_eq!(
-        std::fs::read_to_string(ancien_temporaire).unwrap(),
-        "À CONSERVER"
-    );
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_renommage_lsp_ne_perd_pas_un_tampon_non_sauvegarde() {
-    use crate::lsp::messages::{FileEdit, Position, Range, TextEdit};
-    let mut state = etat_isole();
-    let chemin = state.editor.path.clone().expect("document");
-    let disque = std::fs::read(&chemin).expect("document initial");
-    let _ = update(
-        &mut state,
-        Message::Editor(iced_code_editor::Message::Paste("TEXTE NON SAUVÉ".into())),
-    );
-    let avant = state.editor.content();
-    state.renommage = Some(crate::app::state::Renommage {
-        nom: "X".into(),
-        changements: Some(vec![FileEdit {
-            path: chemin.clone(),
-            edits: vec![TextEdit {
-                range: Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 1,
-                    },
-                },
-                new_text: "X".into(),
-            }],
-        }]),
-    });
-    let _ = update(&mut state, Message::SymbolRenameApply);
-    assert_eq!(
-        state.editor.content(),
-        avant,
-        "le texte non sauvegardé est conservé"
-    );
-    assert!(state.editor.is_modified());
-    assert_eq!(
-        std::fs::read(chemin).unwrap(),
-        disque,
-        "aucune écriture ne commence"
-    );
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_renommage_lsp_ne_modifie_aucun_projet_si_une_cible_est_etrangere() {
-    use crate::lsp::messages::{FileEdit, Position, Range, TextEdit};
-    let premiere = etat_isole();
-    let a = premiere.project.dir.join("document.tw");
-    std::fs::write(&a, "AAA").expect("document A synthétique");
-    let mut seconde = etat_isole();
-    let _ = update(&mut seconde, Message::NewProject);
-    let b = seconde.project.dir.join("document.tw");
-    assert_ne!(a, b);
-    std::fs::write(&b, "BBB").expect("document B synthétique");
-    let remplacement = TextEdit {
-        range: Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 0,
-                character: 1,
-            },
-        },
-        new_text: "X".into(),
-    };
-    seconde.renommage = Some(crate::app::state::Renommage {
-        nom: "X".into(),
-        changements: Some(vec![
-            FileEdit {
-                path: b.clone(),
-                edits: vec![remplacement.clone()],
-            },
-            FileEdit {
-                path: a.clone(),
-                edits: vec![remplacement],
-            },
-        ]),
-    });
-    let _ = update(&mut seconde, Message::SymbolRenameApply);
-    assert_eq!(
-        std::fs::read_to_string(&a).unwrap(),
-        "AAA",
-        "projet A protégé"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&b).unwrap(),
-        "BBB",
-        "aucune application partielle"
-    );
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn une_reponse_tardive_ne_modifie_pas_le_projet_dun_onglet_remplace() {
     let mut state = etat_isole();
     let ancien_id = state.espace.active;
@@ -1850,12 +1638,33 @@ fn un_import_bib_sans_plugin_rejoint_la_bibliographie() {
 fn le_devoir_synthetique_tient_ses_promesses() {
     let mut state = etat_isole();
 
-    // Le geste : le devoir naît du modèle.
-    let _ = update(
-        &mut state,
-        Message::ProjetCreerAvecModele(crate::project::model::Modele::DevoirCourt),
-    );
+    // Le geste : le devoir naît du dialogue.
+    creer_un_projet(&mut state, "devoir-synthetique");
     let dir = state.project.dir.clone();
+    // Le devoir lui-même : ce que l'auteur écrirait (les modèles
+    // intégrés sont retirés — demande de l'auteur).
+    std::fs::write(
+        dir.join("document.tw"),
+        "= Introduction
+
+Selon @dupont2023, la thèse est posée^[note exacte].
+
+= Conclusion
+
+La synthèse.
+
+= Bibliographie
+
+La liste se compose elle-même, d'après vos citations.
+",
+    )
+    .expect("document");
+    // Les normes du devoir : page de titre et sommaire — c'est le
+    // sommaire qui nomme chaque section dans le PDF.
+    let mut normes = crate::mise_en_page::charger(&dir);
+    normes.page_de_titre = true;
+    normes.sommaire = true;
+    let _ = crate::mise_en_page::appliquer(&dir, &normes, true);
 
     // Une notice, pour la bibliographie.
     std::fs::write(
@@ -1960,10 +1769,7 @@ fn le_devoir_synthetique_tient_ses_promesses() {
 fn la_these_synthetique_tient_ses_promesses() {
     let mut state = etat_isole();
 
-    let _ = update(
-        &mut state,
-        Message::ProjetCreerAvecModele(crate::project::model::Modele::TravailLong),
-    );
+    creer_un_projet(&mut state, "these-synthetique");
     let dir = state.project.dir.clone();
 
     std::fs::write(
@@ -2489,38 +2295,30 @@ fn les_gestes_d_insertion_placent_texte_et_curseur() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_geste_cree_le_projet_du_modele_choisi() {
+fn un_geste_cree_le_projet_de_la_base_choisie() {
     let mut state = etat_isole();
 
-    // Le geste : un clic, et le devoir naît complet.
-    let _ = update(
-        &mut state,
-        Message::ProjetCreerAvecModele(crate::project::model::Modele::DevoirCourt),
-    );
-    // Les promesses du modèle sont **visibles** : le contenu dans le
-    // document, la page de titre et le sommaire dans les normes
-    // (bug-report-7, point 8).
-    let devoir = state.project.dir.clone();
-    let contenu = std::fs::read_to_string(devoir.join("document.tw")).expect("document");
-    assert!(contenu.contains("Bibliographie"), "le contenu se voit");
-    let normes = crate::mise_en_page::charger(&devoir);
-    assert!(normes.page_de_titre, "la page de titre est dans les normes");
-    assert!(normes.sommaire, "le sommaire est dans les normes");
+    // La base : un projet comme un autre, marqué comme modèle.
+    creer_un_projet(&mut state, "mon-modele");
+    let base = state.project.dir.clone();
+    std::fs::write(base.join("document.tw"), "Le squelette de mes devoirs.").expect("contenu");
+    let mut normes = crate::mise_en_page::charger(&base);
+    normes.page_de_titre = true;
+    let _ = crate::mise_en_page::appliquer(&base, &normes, true);
+    let _ = update(&mut state, Message::ProjetModeleBascule);
 
-    // Le second geste : le travail long, avec ses préliminaires.
-    let _ = update(
-        &mut state,
-        Message::ProjetCreerAvecModele(crate::project::model::Modele::TravailLong),
+    // Le geste : le nouveau projet naît de la base choisie.
+    creer_depuis(&mut state, "un-devoir", "mon-modele");
+    let neuf = state.project.dir.clone();
+    assert_ne!(neuf, base, "deux projets, deux dossiers");
+
+    let contenu = std::fs::read_to_string(neuf.join("document.tw")).expect("document");
+    assert!(
+        contenu.contains("Le squelette de mes devoirs."),
+        "le contenu de la base suit"
     );
-    let long = state.project.dir.clone();
-    assert_ne!(long, devoir, "deux projets, deux dossiers");
-    // Même règle : le contenu dans le document, les préliminaires dans
-    // les normes (bug-report-7, point 8).
-    let contenu = std::fs::read_to_string(long.join("document.tw")).expect("document");
-    assert!(contenu.contains("Bibliographie"), "le contenu se voit");
-    let normes = crate::mise_en_page::charger(&long);
-    assert!(normes.page_de_titre, "la page de titre est dans les normes");
-    assert!(normes.sommaire, "le sommaire est dans les normes");
+    let normes = crate::mise_en_page::charger(&neuf);
+    assert!(normes.page_de_titre, "les normes de la base suivent");
 }
 
 #[test]
@@ -3292,11 +3090,8 @@ fn l_aide_dit_le_diagnostic_et_la_recuperation() {
     // Le diagnostic du poste, en une ligne — chaque état dit son remède.
     let resume = crate::ui::aide::diagnostic_resume(&state);
     assert!(resume.contains(env!("CARGO_PKG_VERSION")), "{resume}");
-    assert!(resume.contains("serveur de langage"), "{resume}");
-    assert!(
-        resume.contains("absent"),
-        "sans serveur, l'état est dit : {resume}"
-    );
+    assert!(resume.contains("diagnostic(s)"), "{resume}");
+    assert!(resume.contains("rendu"), "la promesse est dite : {resume}");
     assert!(
         resume.contains("l'écriture reste entière"),
         "le remède est dit : {resume}"
@@ -4310,5 +4105,19 @@ fn la_fenetre_du_glossaire_s_ouvre_et_se_ferme() {
     assert!(
         state.glossaire_filtre.is_empty(),
         "la recherche ne sert plus à rien"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_arrobase_au_curseur_ouvre_le_composeur() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("@".into())),
+    );
+    assert!(
+        state.composeur.is_some(),
+        "le @ tapé ouvre le composeur de notes"
     );
 }

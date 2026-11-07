@@ -14,7 +14,12 @@
 //! et rien n'y touche à l'interface. C'est ce qui rend la boucle
 //! « référence → page → autre référence » éprouvable sans écran.
 
+use crate::app::Message;
+use crate::app::State;
+use crate::app::update;
 use crate::langage::schema::Reference;
+use iced::Task;
+use std::path::Path;
 
 /// L'étape où est le composeur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,10 +338,291 @@ fn texte_des(references: &[Reference], intermediaire: bool) -> String {
     if intermediaire {
         crate::langage::serialiser::texte_appel(references)
     } else {
-        let mut out = String::new();
-        crate::langage::generer::generer_citation(references, &mut out);
-        out
+        crate::langage::serialiser::texte_citation(references)
     }
+}
+
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+pub fn reserved_keys() -> Vec<iced::keyboard::Key> {
+    use iced::keyboard::{Key, key::Named};
+
+    vec![
+        Key::Named(Named::ArrowUp),
+        Key::Named(Named::ArrowDown),
+        Key::Named(Named::Enter),
+        Key::Named(Named::Tab),
+        Key::Named(Named::Escape),
+    ]
+}
+
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+/// Repose les glyphes de notes : le document change, les numéros suivent.
+///
+/// C'est ici que « dynamique » a lieu — à chaque frappe, à chaque déplacement
+/// du curseur. La règle de pliage est **une**, dans l'éditeur
+/// (`EditorState::marques_a_jour`) : elle suit aussi les remplacements faits
+/// par le composeur, qui ne passent pas par la boucle des messages.
+/// Ouvre le composeur de notes, sur le `@` qui vient d'être tapé.
+///
+/// Le déclencheur **part** : le `@`, et ce qui a pu être tapé derrière, sont
+/// mangés — leur place est dans le champ du panneau. Le document ne revoit
+/// donc la note qu'à la fin, et Échap ne laisse rien. Le clavier part aux
+/// champs ; l'éditeur le rend, et ne le reprend qu'à la fermeture.
+pub fn ouvrir_composeur(
+    state: &mut State,
+    context: &crate::editor::completion::Context,
+) -> Task<Message> {
+    let cles = state
+        .bibliography
+        .iter()
+        .map(|entry| {
+            let auteurs = entry
+                .auteurs
+                .iter()
+                .map(|(nom, prenom)| format!("{nom} {prenom}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let recherche = format!(
+                "{auteurs} {} {}",
+                entry.titre,
+                entry.annee.clone().unwrap_or_default()
+            );
+            (entry.key.clone(), entry.kind.clone(), recherche)
+        })
+        .collect();
+
+    // L'ancre est celle du `@` déclencheur : le mot tapé commence juste après.
+    let ancre = context.start.saturating_sub(1);
+    let manges = state.editor.cursor_offset() - ancre;
+
+    // Toute réponse tinymist encore en vol n'a plus lieu d'être.
+
+    let manger = state.editor.replace_before(manges, "").map(Message::Editor);
+    state.editor.editor.lose_focus();
+
+    let mut composeur = Composeur::ouvert(cles, ancre);
+    composeur.saisir(context.typed.clone());
+    state.composeur = Some(composeur);
+
+    Task::batch([manger, champ_composeur()])
+}
+
+/// Ouvre le composeur **sur une citation déjà écrite**, pour la réécrire.
+///
+/// Rien n'est mangé : la citation d'origine reste en place dans le document
+/// tant qu'on ne l'a pas réécrite. Échap ne la touche donc pas — c'est la
+/// même promesse qu'en création, tenue par un autre bout.
+pub fn ouvrir_edition(
+    state: &mut State,
+    references: Vec<crate::langage::schema::Reference>,
+    debut: usize,
+    fin: usize,
+) -> Task<Message> {
+    let cles = state
+        .bibliography
+        .iter()
+        .map(|entry| {
+            let auteurs = entry
+                .auteurs
+                .iter()
+                .map(|(nom, prenom)| format!("{nom} {prenom}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let recherche = format!(
+                "{auteurs} {} {}",
+                entry.titre,
+                entry.annee.clone().unwrap_or_default()
+            );
+            (entry.key.clone(), entry.kind.clone(), recherche)
+        })
+        .collect();
+
+    // Toute réponse tinymist encore en vol n'a plus lieu d'être.
+    state.editor.editor.lose_focus();
+
+    let mut composeur = Composeur::ouvert(cles, debut);
+    composeur.charger(references);
+    composeur.edition = Some(fin);
+    state.composeur = Some(composeur);
+
+    champ_composeur()
+}
+
+/// Le champ de saisie du composeur, prêt à recevoir la frappe.
+fn champ_composeur() -> Task<Message> {
+    iced::widget::operation::focus(Composeur::champ_id())
+}
+
+/// Les touches du composeur, quand il est ouvert.
+///
+/// Tab avance d'une étape, Entrée insère la note, Échap ne laisse rien, et
+/// les flèches déplacent la sélection. Elles arrivent d'autant plus sûrement
+/// qu'elles ne servent à rien dans le champ de saisie — qui, lui, prend la
+/// frappe entière.
+pub fn composeur_touche(
+    state: &mut State,
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Task<Message>> {
+    use iced::keyboard::{Key, key::Named};
+
+    // Le composeur fermé ne prend rien : sans cette garde, il volait
+    // Tab, Entrée et Échap à toutes les fenêtres — la fiche de
+    // référence ne pouvait ni naviguer, ni valider, ni fermer.
+    state.composeur.as_ref()?;
+
+    let message = match key {
+        Key::Named(Named::Tab) => Message::ComposeurAvancer,
+        Key::Named(Named::Enter) => Message::ComposeurTerminer,
+        Key::Named(Named::Escape) => Message::ComposeurFermer,
+        Key::Named(Named::ArrowUp) => Message::ComposeurDeplacer(-1),
+        Key::Named(Named::ArrowDown) => Message::ComposeurDeplacer(1),
+        Key::Character(texte) if modifiers.control() && texte.as_str() == " " => {
+            Message::ComposeurTerminer
+        }
+        _ => return None,
+    };
+
+    Some(update(state, message))
+}
+
+/// Les messages du composeur de notes.
+pub fn composeur_update(state: &mut State, message: Message) -> Task<Message> {
+    let intermediaire = state.editor.is_intermediate();
+
+    let Some(composeur) = state.composeur.as_mut() else {
+        return Task::none();
+    };
+
+    match message {
+        Message::ComposeurSaisie(texte) => {
+            composeur.saisir(texte);
+
+            Task::none()
+        }
+        Message::ComposeurDeplacer(delta) => {
+            composeur.deplacer(delta);
+
+            Task::none()
+        }
+        Message::ComposeurPrendre(index) => {
+            let dernier = composeur.visibles().len().saturating_sub(1);
+            composeur.selection = index.min(dernier);
+            composeur.avancer();
+
+            Task::none()
+        }
+        Message::ComposeurChoisir(index) => {
+            composeur.choisir(index);
+
+            Task::none()
+        }
+        Message::ComposeurAvancer => {
+            composeur.avancer();
+
+            Task::none()
+        }
+        Message::ComposeurTerminer => {
+            let texte = composeur.terminer(intermediaire);
+
+            fermer_composeur(state, texte)
+        }
+        Message::ComposeurFermer => fermer_composeur(state, None),
+        _ => Task::none(),
+    }
+}
+
+/// Ferme le composeur, et écrit la note s'il y en a une.
+///
+/// C'est le **seul** endroit où le document reçoit quelque chose du
+/// composeur : la note entière, d'un seul tenant, à la place du `@`
+/// déclencheur mangé. Quand il n'y a rien — Échap —, rien ne s'écrit : c'est
+/// tout le sens de « Échap ne laisse rien ».
+pub fn fermer_composeur(state: &mut State, texte: Option<String>) -> Task<Message> {
+    let Some(composeur) = state.composeur.take() else {
+        return Task::none();
+    };
+
+    // Le clavier revient à l'éditeur.
+    let refocus = state
+        .editor
+        .update(iced_code_editor::Message::CanvasFocusGained)
+        .map(Message::Editor);
+
+    let Some(texte) = texte else {
+        return refocus;
+    };
+
+    // Ce qui précède le curseur depuis l'ancre : le `@` mangé, et rien d'autre
+    // — sauf si la frappe a devancé le focus, auquel cas elle part avec. En
+    // édition, c'est la plage de la citation d'origine qui est remplacée.
+    state.render.words_pending = true;
+
+    let edition = match composeur.edition {
+        Some(fin) => {
+            let texte = separer(state, fin, texte);
+
+            state
+                .editor
+                .replace_span(composeur.ancre, fin, &texte)
+                .map(Message::Editor)
+        }
+        None => {
+            // En création, la plage va du `@` mangé (l'ancre) au curseur : ce
+            // que la frappe a écrit par-dessus. Même remplacement en une
+            // sélection — jamais de retours arrière à compter.
+            let fin = state.editor.cursor_offset();
+            let texte = separer(state, fin, texte);
+
+            state
+                .editor
+                .replace_span(composeur.ancre, fin, &texte)
+                .map(Message::Editor)
+        }
+    };
+
+    Task::batch([edition, refocus])
+}
+
+/// Un espace après la note, si ce qui suit viendrait s'y coller.
+///
+/// Une clé de citation court jusqu'au premier caractère qui n'en est pas un :
+/// `@martin2020` suivi de « Un texte » donnerait la clé « martin2020Un ». Ce
+/// qui suit est donc protégé d'un espace, comme la main l'aurait laissé.
+fn separer(state: &State, offset: usize, mut texte: String) -> String {
+    let content = state.editor.content();
+    let suite = content.get(offset..).and_then(|reste| reste.chars().next());
+
+    if suite.is_some_and(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        texte.push(' ');
+    }
+
+    texte
+}
+
+/// Va d'un endroit à un autre : le même document, ou un autre chapitre.
+///
+/// Un aller à la définition peut traverser le projet. Le trajet se fait donc en
+/// deux temps lorsque le fichier visé n'est pas celui qui est ouvert : on retient
+/// l'endroit, on ouvre le chapitre, et c'est son ouverture qui y pose le curseur.
+pub fn jump_to(state: &mut State, path: &Path, line: usize, column: usize) -> Task<Message> {
+    let current = state.editor.path.clone();
+
+    if current.is_some_and(|open| crate::project::same_file(&open, path)) {
+        return state.editor.set_cursor(line, column).map(Message::Editor);
+    }
+
+    // Ailleurs : il faut que ce soit un chapitre du projet — sinon nous n'aurions
+    // rien pour l'ouvrir.
+    if !state.project.owns(path) {
+        state.export_status = Some("La définition est hors du projet".to_string());
+
+        return Task::none();
+    }
+
+    state.jump = Some((line, column));
+
+    update(state, Message::OpenChapter(path.to_path_buf()))
 }
 
 #[cfg(test)]

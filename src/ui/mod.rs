@@ -15,7 +15,6 @@ pub mod projets;
 pub mod recherche;
 pub mod reference;
 pub(crate) mod reglages;
-pub mod rename;
 pub mod sidebar;
 pub mod status_bar;
 pub mod tableau;
@@ -75,7 +74,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
     stack![
         column![
             toolbar::view(state),
-            rename::view(state),
             layout::view(state),
             status_bar::view(state),
         ]
@@ -181,3 +179,5 @@ fn note_overlay(state: &State) -> Element<'_, Message> {
     .height(Length::Fill)
     .into()
 }
+
+pub mod rename;

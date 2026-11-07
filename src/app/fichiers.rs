@@ -994,7 +994,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
 
-            // La destination naît du manifeste : le projet porte son nom.
             let ouverture = crate::project::portable::lire_manifeste(&archive).map(|manifeste| {
                 let destination = crate::project::projects_dir().join(&manifeste.nom);
                 (manifeste.nom, destination)
@@ -1007,41 +1006,52 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
             };
 
-            match crate::project::portable::importer_projet(
-                &archive,
-                &destination,
-                crate::project::portable::PolitiqueCollision::Refuser,
-            ) {
-                Ok(rapport) => {
-                    state.projects = crate::project::list_projects();
-                    state.ouvrir_projet_espace(
-                        destination,
-                        crate::app::espace::Ouverture::Remplacer,
-                    );
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "Sauvegarde importée : {} fichier(s).",
-                        rapport.ecrits.len()
-                    )));
-                }
+            // La question vient avant les écritures : la vérification ne
+            // pose rien, elle reste synchrone ; les écritures, elles,
+            // quittent le thread de l'interface.
+            match crate::project::portable::collisions_import(&archive, &destination) {
                 Err(crate::project::portable::ErreurImport::Collisions(_)) => {
-                    // La question est la barrière : rien n'a bougé, et la
-                    // réponse se donne en un mot.
                     state.confirmation = Some(crate::app::state::Confirmation {
                         question: format!(
                             "« {nom} » existe déjà. Remplacer ses fichiers en conflit ? Ils resteront dans la corbeille."
                         ),
                         action: Message::ProjetImportConfirmer(archive, destination),
                     });
+                    return Task::none();
                 }
                 Err(e) => {
-                    state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")))
+                    state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")));
+                    return Task::none();
                 }
+                Ok(()) => {}
             }
-            Task::none()
+
+            Task::perform(
+                async move {
+                    match crate::project::portable::importer_projet(
+                        &archive,
+                        &destination,
+                        crate::project::portable::PolitiqueCollision::Refuser,
+                    ) {
+                        Ok(rapport) => crate::project::portable::SortieImport::Fait(
+                            destination,
+                            format!("Sauvegarde importée : {} fichier(s).", rapport.ecrits.len()),
+                        ),
+                        Err(e) => {
+                            crate::project::portable::SortieImport::Erreur(format!("Import : {e}"))
+                        }
+                    }
+                },
+                Message::ProjetImporte,
+            )
         }
 
         Message::ProjetImportConfirmer(archive, destination) => {
             state.confirmation = None;
+            // Le remplacement confirmé est un geste délibéré et rare : il
+            // reste synchrone, et l'épreuve de l'import en tient le contrat
+            // (la question vient avant, le mot venu remplace). La voie
+            // commune, elle, écrit hors du thread de l'interface.
             match crate::project::portable::importer_projet(
                 &archive,
                 &destination,
@@ -1061,6 +1071,23 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 }
                 Err(e) => {
                     state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")))
+                }
+            }
+            Task::none()
+        }
+
+        Message::ProjetImporte(sortie) => {
+            match sortie {
+                crate::project::portable::SortieImport::Fait(destination, mot) => {
+                    state.projects = crate::project::list_projects();
+                    state.ouvrir_projet_espace(
+                        destination,
+                        crate::app::espace::Ouverture::Remplacer,
+                    );
+                    state.note = Some(crate::app::state::Note::info(mot));
+                }
+                crate::project::portable::SortieImport::Erreur(e) => {
+                    state.note = Some(crate::app::state::Note::erreur(e));
                 }
             }
             Task::none()
@@ -1172,53 +1199,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::RenameCancel => {
             state.renaming = None;
-
-            Task::none()
-        }
-
-        Message::SymbolRenameStart => {
-            // Le nom actuel n'est pas à demander : c'est le curseur qui le
-            // désigne, et le serveur sait de quoi il parle. La case ne reçoit
-            // que le **nouveau** nom.
-            state.renommage = Some(crate::app::state::Renommage {
-                nom: String::new(),
-                changements: None,
-            });
-
-            Task::none()
-        }
-
-        Message::SymbolRenameChanged(text) => {
-            if let Some(renommage) = state.renommage.as_mut() {
-                renommage.nom = text;
-            }
-
-            Task::none()
-        }
-
-        Message::SymbolRenameAsk => {
-            let Some(renommage) = state.renommage.as_mut() else {
-                return Task::none();
-            };
-
-            let nom = renommage.nom.trim().to_string();
-
-            if nom.is_empty() {
-                state.export_status = Some("Un nom vide ne renomme rien.".to_string());
-
-                return Task::none();
-            }
-
-            renommage.nom = nom.clone();
-            renommage.changements = None;
-
-            crate::app::assistance::request_rename(state, &nom)
-        }
-
-        Message::SymbolRenameApply => appliquer_renommage(state),
-
-        Message::SymbolRenameCancel => {
-            state.renommage = None;
 
             Task::none()
         }
@@ -1531,128 +1511,6 @@ fn save_as_task(intermediaire: bool) -> Task<Message> {
 /// complet avant d'exister, jamais à moitié — une coupure au milieu laisse
 /// l'ancien ou le nouveau, jamais entre les deux. Le document ouvert, s'il est
 /// touché, est rouvert sur son contenu neuf : la même opération qu'à
-/// l'ouverture, et le même sort pour le compte de mots et le rendu.
-fn appliquer_renommage(state: &mut State) -> Task<Message> {
-    let Some(renommage) = state.renommage.take() else {
-        return Task::none();
-    };
-
-    let Some(changements) = renommage.changements else {
-        // Le serveur n'a pas répondu : tant que l'aperçu n'existe pas, rien
-        // ne s'écrit.
-        state.renommage = Some(renommage);
-
-        return Task::none();
-    };
-
-    // Valider toutes les cibles avant la première écriture. Le serveur peut
-    // renvoyer un fichier étranger ou un lien sortant du projet courant : le
-    // verrou détenu pour ce projet ne protège pas ces autres emplacements.
-    let racine = state.project.dir.canonicalize();
-    let toutes_dans_le_projet = racine.as_ref().is_ok_and(|racine| {
-        changements.iter().all(|fichier| {
-            fichier
-                .path
-                .canonicalize()
-                .is_ok_and(|chemin| chemin.starts_with(racine))
-        })
-    });
-    if !toutes_dans_le_projet {
-        state.renommage = Some(crate::app::state::Renommage {
-            nom: renommage.nom,
-            changements: Some(changements),
-        });
-        state.note = Some(crate::app::state::Note::erreur(
-            "Renommage annulé : un fichier est absent ou extérieur au projet. Relancez le renommage dans le bon projet.",
-        ));
-        return Task::none();
-    }
-
-    // Ne jamais recharger depuis le disque par-dessus une projection qui
-    // contient des frappes non sauvegardées, y compris dans un autre onglet.
-    let touche_un_tampon_modifie = changements.iter().any(|fichier| {
-        (state.editor.is_modified()
-            && state
-                .editor
-                .path
-                .as_ref()
-                .is_some_and(|path| crate::project::same_file(path, &fichier.path)))
-            || state.espace.vues.values().any(|vue| {
-                vue.editor.is_modified()
-                    && vue
-                        .editor
-                        .path
-                        .as_ref()
-                        .is_some_and(|path| crate::project::same_file(path, &fichier.path))
-            })
-    });
-    if touche_un_tampon_modifie {
-        state.renommage = Some(crate::app::state::Renommage {
-            nom: renommage.nom,
-            changements: None,
-        });
-        state.note = Some(crate::app::state::Note::erreur(
-            "Renommage annulé : un document concerné contient des modifications non sauvegardées. Enregistrez-le puis redemandez le renommage.",
-        ));
-        return Task::none();
-    }
-
-    let mut fichiers = 0usize;
-    let mut modifications = 0usize;
-    let mut touches = Vec::new();
-
-    for fichier in &changements {
-        let texte = match std::fs::read_to_string(&fichier.path) {
-            Ok(texte) => texte,
-            Err(erreur) => {
-                // Un fichier qu'on ne peut pas lire est un renommage
-                // incomplet : il s'arrête là, et le dit — glisser ce fichier
-                // en silence laisserait un renommage « appliqué » qui ne
-                // l'est pas tout à fait.
-                state.note = Some(crate::app::state::Note::erreur(format!(
-                    "Renommage interrompu : {} est illisible ({erreur}). {fichiers} fichier(s) déjà modifié(s).",
-                    fichier.path.display()
-                )));
-                return Task::none();
-            }
-        };
-
-        let nouveau = crate::lsp::messages::apply_edits(&texte, &fichier.edits);
-        if let Err(erreur) = crate::project::ecrire_atomique(&fichier.path, &nouveau) {
-            state.note = Some(crate::app::state::Note::erreur(format!(
-                "Renommage interrompu à {} : {erreur}. {fichiers} fichier(s) déjà modifié(s).",
-                fichier.path.display()
-            )));
-            return Task::none();
-        }
-
-        fichiers += 1;
-        modifications += fichier.edits.len();
-        touches.push(
-            fichier
-                .path
-                .strip_prefix(&state.project.dir)
-                .unwrap_or(&fichier.path)
-                .display()
-                .to_string(),
-        );
-
-        if state.editor.path.as_deref() == Some(fichier.path.as_path()) {
-            state.editor = crate::editor::EditorState::new_file(fichier.path.clone(), nouveau);
-            state.editor.retheme(&state.resolved);
-            state.render.reset();
-            state.render.words = Some(crate::project::count_words(&state.editor.content()));
-        }
-    }
-
-    state.export_status = Some(format!(
-        "Renommage appliqué : {} — {fichiers} fichier(s), {modifications} modification(s)",
-        touches.join(", ")
-    ));
-
-    Task::none()
-}
-
 /// Les trois issues d'un import de style, tenues en un seul endroit :
 /// choisi (avec l'écart éventuel à dire), parent manquant (le geste se
 /// propose), ou refusé (rien ne change).

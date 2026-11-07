@@ -257,6 +257,7 @@ impl State {
         }
 
         self.projects = crate::project::list_projects();
+        self.etageres = crate::project::etageres();
         let autre = self
             .projects
             .iter()
@@ -269,6 +270,7 @@ impl State {
                 let nouveau = crate::project::create(&nom)
                     .map_err(|e| format!("création du projet de remplacement : {e}"))?;
                 self.projects = crate::project::list_projects();
+                self.etageres = crate::project::etageres();
                 nouveau
             }
         };
@@ -349,7 +351,6 @@ impl State {
                 .as_deref()
                 .map(crate::project::parse_bibliography)
                 .unwrap_or_default();
-            self.lsp = Default::default();
             self.render.reset();
         }
         for vue in self.espace.vues.values_mut() {
@@ -365,7 +366,6 @@ impl State {
                 .as_deref()
                 .map(crate::project::parse_bibliography)
                 .unwrap_or_default();
-            vue.lsp = Default::default();
             vue.render.reset();
         }
         let documents = std::mem::take(&mut self.espace.documents);
@@ -882,6 +882,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 Ouverture::Remplacer
             };
             state.ouvrir_projet_espace(dir, ouverture);
+            state.reglages = crate::mise_en_page::charger(&state.project.dir);
             Task::none()
         }
         Message::OngletChoisir(dir) => {
@@ -893,27 +894,27 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             match crate::project::create(&nom) {
                 Ok(dir) => {
                     state.projects = crate::project::list_projects();
+                    state.etageres = crate::project::etageres();
                     state.ouvrir_projet_espace(dir, Ouverture::Remplacer);
                 }
                 Err(e) => state.note = Some(Note::erreur(format!("Création du projet : {e}"))),
             }
             Task::none()
         }
-        Message::ProjetCreerAvecModele(modele) => {
-            // Le modèle se choisit en un geste ; le projet naît complet —
-            // page de titre, sommaire, bibliographie — et reste à écrire.
-            let nom = super::next_project_name(&state.projects);
-            match crate::project::model::create_avec_modele(&nom, modele) {
-                Ok(dir) => {
-                    state.projects = crate::project::list_projects();
-                    state.ouvrir_projet_espace(dir, Ouverture::Remplacer);
-                    state.note = Some(Note::info(format!(
-                        "Projet créé d'après le modèle « {} ».",
-                        modele.nom()
-                    )));
-                }
-                Err(e) => state.note = Some(Note::erreur(format!("Création du projet : {e}"))),
-            }
+        Message::ProjetModeleBascule => {
+            // Un modèle est un projet comme un autre : la bascule ne
+            // touche qu'à sa marque (demande de l'auteur).
+            let dir = state.project.dir.clone();
+            let mut meta = crate::project::metadonnees::Metadonnees::charger(&dir);
+            meta.est_modele = !meta.est_modele;
+            let est_modele = meta.est_modele;
+            let _ = meta.sauver(&dir);
+            state.note = Some(Note::info(if est_modele {
+                "Ce projet est un modèle : il servira de base à vos prochains projets."
+            } else {
+                "Ce projet n'est plus un modèle."
+            }));
+
             Task::none()
         }
         Message::SaveTick | Message::RenderTick if !state.espace.transaction => {

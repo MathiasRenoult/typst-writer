@@ -354,91 +354,18 @@ pub fn create(name: &str) -> std::io::Result<PathBuf> {
 
 /// Variante utilisée par la migration, qui garde le verrou pendant la reprise.
 pub(super) fn create_avec_verrou(name: &str) -> std::io::Result<(PathBuf, super::Verrou)> {
-    creer_avec_modele_verrou(name, Modele::Classique)
+    creer_classique_verrou(name)
 }
 
 /// Crée un projet selon l'un des modèles de R5, en un geste.
-/// Le document du modèle classique : le vide accueillant.
-pub const DOCUMENT_CLASSIQUE: &str = "";
-
-/// Le devoir court : sa structure, dans l'éditeur — titre et page de
-/// titre naissent des métadonnées et des normes, pas de Typst caché.
-pub const DOCUMENT_DEVOIR_COURT: &str = r#"= Introduction
-
-Le sujet, en quelques lignes.
-
-= Développement
-
-Le corps du devoir.
-
-= Conclusion
-
-Ce qui en reste.
-
-= Bibliographie
-
-La liste se compose elle-même, d'après vos citations.
-"#;
-
-/// Le travail long : les mêmes bases, pour un document qui grandit.
-pub const DOCUMENT_TRAVAIL_LONG: &str = r#"= Introduction
-
-L'entrée dans le sujet.
-
-= État de la question
-
-Où en est la recherche.
-
-= Développement
-
-Le corps du travail.
-
-= Conclusion
-
-La synthèse.
-
-= Bibliographie
-
-La liste se compose elle-même, d'après vos citations.
-"#;
-
-pub fn create_avec_modele(name: &str, modele: Modele) -> std::io::Result<PathBuf> {
-    let (dir, verrou) = creer_avec_modele_verrou(name, modele)?;
-
-    // Le document d'écriture : ce que l'éditeur montre, tout de suite
-    // modifiable (bug-report-7, point 8). Et les normes du modèle : la
-    // page de titre est une norme, née des métadonnées.
-    std::fs::write(dir.join("document.tw"), modele.document())?;
-    let normes = crate::mise_en_page::modele::MiseEnPage {
-        page_de_titre: true,
-        sommaire: true,
-        typographie: crate::mise_en_page::modele::Typographie {
-            base: "francaise".to_string(),
-            ..Default::default()
-        },
-        titres: crate::mise_en_page::modele::Titres {
-            numerotation: "1.1".to_string(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    // `appliquer` écrit les normes, le gabarit **et l'accroche** de
-    // `main.typ` — sans accroche, les normes ne s'appliquent jamais, et
-    // les renvois aux titres se cassent (bug-report-7, point 8).
-    let _ = crate::mise_en_page::appliquer(&dir, &normes, true).map_err(std::io::Error::other)?;
-
-    drop(verrou);
-    Ok(dir)
-}
-
-/// Le cœur : création verrouillée selon un modèle.
-fn creer_avec_modele_verrou(
-    name: &str,
-    modele: Modele,
-) -> std::io::Result<(PathBuf, super::Verrou)> {
+/// Le cœur : création verrouillée, sur la base classique — un projet
+/// vide, ouvert aux modèles que l'auteur s'est faits (demande de
+/// l'auteur : les modèles intégrés sont retirés).
+fn creer_classique_verrou(name: &str) -> std::io::Result<(PathBuf, super::Verrou)> {
     let parent = projects_dir();
-    let (dir, verrou) = super::creer_et_publier(&parent, &slug(name), true, modele.gabarit())?;
+    let (dir, verrou) = super::creer_et_publier(&parent, &slug(name), true, MAIN_TEMPLATE)?;
     let verrou = verrou.expect("le verrou était demandé");
+    std::fs::write(dir.join("document.tw"), DOCUMENT_CLASSIQUE)?;
     Ok((dir, verrou))
 }
 
@@ -575,6 +502,7 @@ fn chapter_of(path: &Path, included: &[PathBuf]) -> Option<Chapter> {
     })
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Compare deux chemins en tolérant l'un relatif à l'autre.
 ///
 /// Deux chemins qui **existent** se comparent une fois résolus : c'est exact, et
@@ -615,6 +543,7 @@ pub fn find_label(project: &Project, label: &str) -> Option<(PathBuf, usize)> {
     None
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Retrouve une clé de citation dans `references.bib`, à sa ligne.
 ///
 /// Comme une étiquette, une citation vaut pour tout le document qui la compile,
@@ -1236,6 +1165,9 @@ fn fold_accent(character: char) -> char {
 }
 
 /// Assemblage d'un nouveau projet.
+/// Le document d'écriture du projet classique : le vide accueillant.
+pub const DOCUMENT_CLASSIQUE: &str = "";
+
 pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 #set text(font: "New Computer Modern", size: 11pt)
 
@@ -1244,70 +1176,6 @@ pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 #bibliography("references.bib", style: "chicago-notes")
 "#;
 
-/// Les modèles de documents, choisis en un geste à la création (R5).
-///
-/// Aucun n'impose une institution : les métadonnées sont celles de
-/// l'écrivain, et les normes du projet (`mise-en-page.toml`) s'appliquent
-/// par-dessus. Les champs dynamiques (pagination, en-tête courant) sont
-/// résolus par le moteur lui-même — jamais imités.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Modele {
-    /// Le gabarit d'origine, inchangé : les projets existants gardent
-    /// exactement leur rendu.
-    Classique,
-    /// Le devoir court : page de titre, sommaire, sections, bibliographie.
-    DevoirCourt,
-    /// Le travail long : page de titre, sommaire à numérotation romaine,
-    /// corps numéroté avec en-tête courant, bibliographie.
-    TravailLong,
-}
-
-impl Modele {
-    /// Son assemblage typst, écrit pour être relu et modifié à la main.
-    pub fn gabarit(&self) -> &'static str {
-        match self {
-            Modele::Classique => MAIN_TEMPLATE,
-            Modele::DevoirCourt => MAIN_DEVOIR_COURT,
-            Modele::TravailLong => MAIN_TRAVAIL_LONG,
-        }
-    }
-
-    /// Le document d'écriture du modèle : ce que l'éditeur montre, tout
-    /// de suite modifiable — jamais du Typst caché dans `main.typ`
-    /// (bug-report-7, point 8).
-    pub fn document(&self) -> &'static str {
-        match self {
-            Modele::Classique => DOCUMENT_CLASSIQUE,
-            Modele::DevoirCourt => DOCUMENT_DEVOIR_COURT,
-            Modele::TravailLong => DOCUMENT_TRAVAIL_LONG,
-        }
-    }
-
-    /// Son nom, tel qu'il se dit à l'écran.
-    pub fn nom(&self) -> &'static str {
-        match self {
-            Modele::Classique => "classique",
-            Modele::DevoirCourt => "devoir court",
-            Modele::TravailLong => "travail long",
-        }
-    }
-}
-
-/// Le devoir court : quelques pages, mais déjà un vrai document — page de
-/// titre, sommaire, sections et bibliographie.
-/// L'assemblage : le document d'écriture, composé avec les normes du
-/// projet (mise-en-page.toml). Rien de ce qui se lit n'est écrit ici.
-pub const MAIN_DEVOIR_COURT: &str = r#"#bibliography("references.bib", style: "chicago-notes")
-"#;
-
-/// Le travail long : les préliminaires à numérotation romaine, le corps
-/// numéroté avec son en-tête courant — résolu par le moteur, fidèlement.
-/// L'assemblage : le document d'écriture, composé avec les normes du
-/// projet (mise-en-page.toml). Rien de ce qui se lit n'est écrit ici.
-pub const MAIN_TRAVAIL_LONG: &str = r#"#bibliography("references.bib", style: "chicago-notes")
-"#;
-
-/// Bibliographie d'un nouveau projet.
 pub const BIBLIOGRAPHY_TEMPLATE: &str = r#"% Une entrée par référence, au format BibTeX.
 % La clé (ici « exemple2026 ») est ce qui se cite dans le texte : @exemple2026.
 %
@@ -2294,22 +2162,21 @@ mod tests {
 
 #[cfg(test)]
 mod epreuves_de_modele {
-    use super::{BIBLIOGRAPHY_TEMPLATE, Modele};
+    use super::{BIBLIOGRAPHY_TEMPLATE, DOCUMENT_CLASSIQUE, MAIN_TEMPLATE};
 
-    /// Un dossier de projet fabriqué, avec l'assemblage du modèle. Chaque
+    /// Un dossier de projet fabriqué, sur la base classique. Chaque
     /// appelant a le sien : les tests tournent en parallèle.
-    fn projet(modele: Modele, essai: &str) -> std::path::PathBuf {
+    fn projet(essai: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "typst-writer-modele-{}-{}-{}",
-            modele.nom().replace(' ', "-"),
+            "typst-writer-base-{}-{}",
             essai,
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("chapitres")).expect("dossier");
-        std::fs::write(dir.join("main.typ"), modele.gabarit()).expect("assemblage");
+        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).expect("assemblage");
         std::fs::write(dir.join("references.bib"), BIBLIOGRAPHY_TEMPLATE).expect("bibliographie");
-        std::fs::write(dir.join("document.tw"), modele.document()).expect("document");
+        std::fs::write(dir.join("document.tw"), DOCUMENT_CLASSIQUE).expect("document");
         let normes = crate::mise_en_page::modele::MiseEnPage {
             page_de_titre: true,
             sommaire: true,
@@ -2327,30 +2194,28 @@ mod epreuves_de_modele {
         dir
     }
 
-    /// Les deux modèles de R5 compilent réellement — la promesse d'un
-    /// modèle qui refuse de compiler n'est rien.
+    /// Un projet créé compile réellement — la promesse d’un projet
+    /// qui refuse de compiler n’est rien.
     #[test]
-    fn les_deux_modeles_compilent() {
-        for modele in [Modele::DevoirCourt, Modele::TravailLong] {
-            let dir = projet(modele, "compilent");
-            let resultat = crate::typst::render::compile(&dir, modele.gabarit(), &[]);
-            assert!(
-                resultat.errors.is_empty(),
-                "{} : {:?}",
-                modele.nom(),
-                resultat.errors
-            );
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+    fn un_projet_cree_compile() {
+        let dir = projet("compile");
+        let source = std::fs::read_to_string(dir.join("main.typ")).expect("assemblage");
+        let resultat = crate::typst::render::compile(&dir, &source, &[]);
+        assert!(resultat.errors.is_empty(), "{:?}", resultat.errors);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// La promesse du modèle est **visible** : le contenu est dans le
-    /// document, la page de titre est dans les normes — la règle neuve de
-    /// `bug-report-7.md` (point 8). L'ancien modèle promettait dans le PDF
-    /// ce que du Typst caché fabriquait : ce n'est plus le contrat.
+    /// La promesse est **visible** : ce que le projet écrit se voit
+    /// dans l’éditeur, et ses normes portent la page de titre.
     #[test]
-    fn le_devoir_promet_ce_que_l_editeur_montre() {
-        let dir = projet(Modele::DevoirCourt, "devoir");
+    fn le_projet_promet_ce_que_l_editeur_montre() {
+        let dir = projet("promesses");
+        std::fs::write(
+            dir.join("document.tw"),
+            "= Introduction\n\nLe corps du devoir.\n\n= Conclusion\n\n= Bibliographie\n",
+        )
+        .expect("document");
+
         let document = std::fs::read_to_string(dir.join("document.tw")).expect("document");
         for promesse in ["Introduction", "Conclusion", "Bibliographie"] {
             assert!(
@@ -2360,61 +2225,46 @@ mod epreuves_de_modele {
         }
         let normes = crate::mise_en_page::charger(&dir);
         assert!(normes.page_de_titre, "la page de titre est dans les normes");
-    }
-
-    /// Le travail long aussi — et son document grandit dans l'éditeur.
-    #[test]
-    fn le_travail_long_promet_ce_que_l_editeur_montre() {
-        let dir = projet(Modele::TravailLong, "long");
-        let document = std::fs::read_to_string(dir.join("document.tw")).expect("document");
-        for promesse in ["Introduction", "Développement", "Conclusion"] {
-            assert!(
-                document.contains(promesse),
-                "« {promesse} » manque : {document}"
-            );
-        }
-        let normes = crate::mise_en_page::charger(&dir);
-        assert!(normes.page_de_titre, "la page de titre est dans les normes");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
-
 #[cfg(test)]
 mod tests_modeles_visibles {
-    use crate::project::model::Modele;
-
-    /// La demande 8 : tout ce que le modèle écrit se voit et se modifie
-    /// dans l'éditeur — le document porte le contenu, les normes portent
-    /// la page de titre, et `main.typ` n'est qu'assemblage.
+    /// Un modèle est un projet comme un autre : ce qu’il écrit se voit
+    /// et se modifie dans l’éditeur — le document porte le contenu, les
+    /// normes portent la page de titre, et `main.typ` n’est qu’assemblage
+    /// (la promesse de bug-report-7 point 8, portée par les modèles
+    /// projets — demande de l’auteur).
     #[test]
     fn un_modele_ecrit_ce_que_l_editeur_montre() {
-        let racine = std::env::temp_dir().join(format!("tw-modele-{}", std::process::id()));
-        std::fs::create_dir_all(&racine).expect("dossier");
-        let _ = std::fs::remove_dir_all(racine.join("un-devoir"));
-        let dir = crate::project::model::create_avec_modele(
-            &racine.join("un-devoir").to_string_lossy(),
-            Modele::DevoirCourt,
-        )
-        .expect("modèle");
+        let parent = std::env::temp_dir().join(format!("tw-modele-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(&parent).expect("dossier");
 
-        // Le document d'écriture porte le contenu : l'éditeur n'est pas vide.
+        // Le modèle : un projet qui porte son contenu et ses normes.
+        let base = crate::project::creer_au_nom(&parent, "mon-modele").expect("modèle");
+        std::fs::write(base.join("document.tw"), "= Introduction\n\nLe corps.\n").expect("contenu");
+        let mut normes = crate::mise_en_page::charger(&base);
+        normes.page_de_titre = true;
+        let _ = crate::mise_en_page::appliquer(&base, &normes, true).expect("normes");
+
+        // Le projet qui en naît porte la même promesse.
+        let dir = crate::project::creer_au_nom_depuis(&parent, "un-devoir", &base).expect("copie");
         let document = std::fs::read_to_string(dir.join("document.tw")).expect("document");
         assert!(document.contains("= Introduction"), "le contenu se voit");
 
-        // Les normes portent la page de titre.
         let normes = crate::mise_en_page::charger(&dir);
         assert!(normes.page_de_titre, "la page de titre est une norme");
 
-        // Le gabarit la compose depuis les métadonnées — pas de Typst caché.
         let gabarit = crate::mise_en_page::gabarit::generer(&normes);
         assert!(
             gabarit.contains("page(header: none, footer: none)"),
             "le gabarit compose la page de titre : {gabarit}"
         );
 
-        std::fs::remove_dir_all(&racine).expect("nettoyage");
+        std::fs::remove_dir_all(&parent).expect("nettoyage");
     }
 }
-
 #[cfg(test)]
 mod tests_du_branchement {
     use super::*;

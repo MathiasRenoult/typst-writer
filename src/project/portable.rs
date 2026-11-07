@@ -200,6 +200,15 @@ pub fn exporter_projet(dir: &Path, cible: &Path) -> Result<Inventaire, String> {
 }
 
 /// Lit le manifeste d'une archive sans rien extraire.
+/// Ce que l'import a à dire — produit hors du thread de l'interface,
+/// porté par un message (feuille de route, phase 1, cartographie, geste 4).
+#[derive(Debug, Clone)]
+pub enum SortieImport {
+    /// Le projet est écrit : sa destination, et la note à montrer.
+    Fait(std::path::PathBuf, String),
+    /// L'import a échoué : le mot à montrer.
+    Erreur(String),
+}
 pub fn lire_manifeste(archive: &Path) -> Result<Manifeste, String> {
     let mut zip = ouvrir_archive(archive)?;
     let mut entree = zip.by_name(MANIFESTE).map_err(|_| {
@@ -218,11 +227,14 @@ pub fn lire_manifeste(archive: &Path) -> Result<Manifeste, String> {
 /// Tout se prépare d'abord, rien ne bouge avant : une collision refusée, ou
 /// une cible qui n'est pas un fichier, laisse la destination exactement
 /// comme elle était. Les remplacements choisis passent par la corbeille.
-pub fn importer_projet(
-    archive: &Path,
-    destination: &Path,
-    politique: PolitiqueCollision,
-) -> Result<RapportImport, ErreurImport> {
+/// Le contenu lu et les collisions relevées — la préparation de l'import.
+pub type Preparation = (Vec<(String, Vec<u8>)>, Vec<String>);
+
+/// La préparation de l'import : l'archive se lit, les collisions se
+/// relèvent — sans rien écrire. La question de confirmation s'appuie
+/// dessus, synchrone ; les écritures, elles, partent hors du thread de
+/// l'interface (feuille de route, phase 1, cartographie, geste 4).
+pub fn preparer_import(archive: &Path, destination: &Path) -> Result<Preparation, ErreurImport> {
     let mut zip = ouvrir_archive(archive)?;
     let manifeste = {
         let mut entree = zip.by_name(MANIFESTE).map_err(|_| {
@@ -281,6 +293,25 @@ pub fn importer_projet(
         }
     }
 
+    Ok((contenu, collisions))
+}
+
+/// Les collisions de l'import, relevées sans écrire.
+pub fn collisions_import(archive: &Path, destination: &Path) -> Result<(), ErreurImport> {
+    let (_, collisions) = preparer_import(archive, destination)?;
+    if collisions.is_empty() {
+        Ok(())
+    } else {
+        Err(ErreurImport::Collisions(collisions))
+    }
+}
+
+pub fn importer_projet(
+    archive: &Path,
+    destination: &Path,
+    politique: PolitiqueCollision,
+) -> Result<RapportImport, ErreurImport> {
+    let (contenu, collisions) = preparer_import(archive, destination)?;
     if !collisions.is_empty() && politique == PolitiqueCollision::Refuser {
         return Err(ErreurImport::Collisions(collisions));
     }

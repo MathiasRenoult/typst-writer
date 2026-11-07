@@ -181,7 +181,7 @@ pub fn driver_reglages(state: &State) -> Option<Task<Message>> {
 ///
 /// Le document d'épreuve **finit** par une utilisation du symbole : le curseur
 /// en fin de document est donc dessus, et c'est lui que le serveur renomme.
-pub fn driver_renommage(state: &State) -> Option<Task<Message>> {
+pub fn driver_renommage(_state: &State) -> Option<Task<Message>> {
     if !actif("renommage") {
         return None;
     }
@@ -197,66 +197,6 @@ pub fn driver_renommage(state: &State) -> Option<Task<Message>> {
             Some(Task::done(Message::Editor(
                 iced_code_editor::Message::CtrlEnd,
             )))
-        }
-
-        12 => {
-            println!("[épreuve] le renommage s'ouvre");
-
-            Some(Task::done(Message::SymbolRenameStart))
-        }
-
-        14 => {
-            println!("[épreuve] le nouveau nom : repere2");
-
-            Some(Task::done(Message::SymbolRenameChanged(
-                "repere2".to_string(),
-            )))
-        }
-
-        16 => {
-            println!("[épreuve] demande au serveur ce que cela changerait");
-
-            Some(Task::done(Message::SymbolRenameAsk))
-        }
-
-        60 => {
-            // L'aperçu : c'est lui que l'utilisateur verrait, et c'est lui
-            // qui décide si l'application est permise.
-            match state
-                .renommage
-                .as_ref()
-                .and_then(|r| r.changements.as_ref())
-            {
-                Some(changements) => {
-                    println!("[épreuve] aperçu reçu :");
-
-                    for fichier in changements {
-                        println!(
-                            "[épreuve]   {} — {} modification(s)",
-                            fichier.path.display(),
-                            fichier.edits.len()
-                        );
-                    }
-
-                    println!("[épreuve] application");
-
-                    Some(Task::done(Message::SymbolRenameApply))
-                }
-
-                None => {
-                    println!("[épreuve] aucun aperçu reçu — rien ne s'applique");
-
-                    if let Some(message) = &state.export_status {
-                        println!("[épreuve] la barre d'état dit : {message}");
-                    }
-
-                    if state.lsp.session.is_none() {
-                        println!("[épreuve] la session du serveur n'est pas prête");
-                    }
-
-                    None
-                }
-            }
         }
 
         _ => None,

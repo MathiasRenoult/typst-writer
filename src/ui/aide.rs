@@ -196,18 +196,13 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
 /// Chaque état dit son remède : un diagnostic qui n'explique pas quoi
 /// faire n'est qu'une inquiétude de plus.
 pub fn diagnostic_resume(state: &crate::app::State) -> String {
-    let serveur = if state.lsp.session.is_some() {
-        "présent".to_string()
-    } else {
-        "absent — la complétion dort, l'écriture reste entière".to_string()
-    };
     let bibliotheque = match state.zotero.source {
         crate::zotero::Source::Locale => "locale",
         crate::zotero::Source::Zotero => "Zotero (lecture seule)",
     };
     format!(
-        "Version {} — serveur de langage : {serveur} — {} diagnostic(s) — bibliothèque : {bibliotheque}",
+        "Version {} — rendu : {} diagnostic(s) — l'écriture reste entière — bibliothèque : {bibliotheque}",
         env!("CARGO_PKG_VERSION"),
-        state.lsp.diagnostics.len()
+        state.render.errors.len()
     )
 }

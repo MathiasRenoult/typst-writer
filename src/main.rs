@@ -5,7 +5,6 @@ mod editor;
 #[allow(dead_code)]
 mod extensions;
 mod langage;
-mod lsp;
 mod mise_en_page;
 mod project;
 mod theming;

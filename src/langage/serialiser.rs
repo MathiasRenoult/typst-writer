@@ -403,6 +403,15 @@ fn echapper_cible(cible: &str, out: &mut String) {
 /// C'est **la** forme canonique — `@dupont2023[p. 45]; @martin2020` — que le
 /// sérialiseur écrit et que le composeur de notes insère : une seule source,
 /// pour que le document lu et le document écrit ne divergent jamais.
+/// Le texte qu'une note prend dans le document, forme finale : les
+/// citations en Typst incorporé. C'est le format qui sait ce qu'il
+/// insère — jamais le générateur, que l'interface ne connaît pas
+/// (feuille de route, phase 2, point 2.1).
+pub fn texte_citation(references: &[Reference]) -> String {
+    let mut out = String::new();
+    crate::langage::generer::generer_citation(references, &mut out);
+    out
+}
 pub fn texte_appel(references: &[Reference]) -> String {
     let mut out = String::new();
 
@@ -688,6 +697,68 @@ mod tests {
     ///
     /// C'est l'invariant du langage intermédiaire : le même texte donne toujours
     /// le même Document, et le même Document toujours le même texte.
+    /// Les cas limites nommés par la feuille de route (phase 2, point 2.2) :
+    /// chacun porte une forme canonique, et le contrat est
+    /// `parse(serialiser(document)) == document`.
+    #[test]
+    fn le_round_trip_tient_sur_les_cas_limites_nommes() {
+        let cas = [
+            // Chaîne vide.
+            Document { blocs: vec![] },
+            // Caractères spéciaux : ils vivent dans les littéraux.
+            Document {
+                blocs: vec![Bloc::Paragraphe(vec![
+                    Inline::Texte("Spéciaux:".to_string()),
+                    Inline::Litteral("{}[]#@".to_string()),
+                    Inline::Texte("et".to_string()),
+                    Inline::Litteral("$&%|".to_string()),
+                ])],
+            },
+            // Unicode varié.
+            Document {
+                blocs: vec![Bloc::Paragraphe(vec![Inline::Texte(
+                    "éàü 中文 🎉 a\u{0301} fin".to_string(),
+                )])],
+            },
+            // Frontières entre éléments : littéral collé au texte, emphase
+            // autour du code.
+            Document {
+                blocs: vec![Bloc::Paragraphe(vec![
+                    Inline::Texte("devant".to_string()),
+                    Inline::Litteral("!".to_string()),
+                    Inline::Gras(vec![Inline::Code("c".to_string())]),
+                    Inline::Texte("derrière".to_string()),
+                ])],
+            },
+            // Structures imbriquées.
+            Document {
+                blocs: vec![Bloc::Paragraphe(vec![Inline::Gras(vec![
+                    Inline::Texte("un ".to_string()),
+                    Inline::Litteral("*".to_string()),
+                ])])],
+            },
+            // Lignes vides et blocs successifs.
+            Document {
+                blocs: vec![
+                    Bloc::Paragraphe(vec![Inline::Texte("un".to_string())]),
+                    Bloc::Paragraphe(vec![Inline::Texte("deux".to_string())]),
+                ],
+            },
+        ];
+        for document in cas {
+            assert!(
+                document.est_canonique(),
+                "{document:?} devrait être canonique"
+            );
+            let regenere = serialiser(&document);
+            let relu = parse(&regenere);
+            assert_eq!(
+                relu, document,
+                "le contrat tient pour {document:?} (sérialisé : {regenere:?})"
+            );
+        }
+    }
+
     #[test]
     fn le_round_trip_conserve_le_document() {
         let texte = "# Titre\n\nUn paragraphe avec du **gras**, de l'*italique* et du `code`.\n\n> Une citation.\n\n- une puce\n- une autre\n\n1. un élément\n2. un autre\n\n```typst\n#figure(...)\n```\n";

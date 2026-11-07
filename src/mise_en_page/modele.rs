@@ -12,6 +12,32 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Les fonctionnalités du projet : chacune se **débranche**, et son
+/// interface disparaît avec elle — ses boutons, ses sections de panneau
+/// (demande de l'auteur). Une ancienne mise en page sans ce bloc les
+/// porte toutes : le défaut est le confort, pas l'austérité.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fonctionnalites {
+    /// La bibliographie : ses boutons, sa section, sa fenêtre.
+    pub bibliographie: bool,
+
+    /// Le glossaire : ses boutons, sa section, sa fenêtre.
+    pub glossaire: bool,
+
+    /// Les graphiques (cetz) : le bouton d' + q + 'insertion.
+    pub graphiques: bool,
+}
+
+impl Default for Fonctionnalites {
+    fn default() -> Self {
+        Self {
+            bibliographie: true,
+            glossaire: true,
+            graphiques: true,
+        }
+    }
+}
+
 /// La mise en page d'un document.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -73,6 +99,10 @@ pub struct MiseEnPage {
 
     /// La bibliographie : le style des citations et de la liste finale.
     pub bibliographie: Bibliographie,
+
+    /// Les fonctionnalités branchées ou non (la bibliographie, le
+    /// glossaire, les graphiques).
+    pub fonctionnalites: Fonctionnalites,
 }
 
 /// La bibliographie d'un projet.
@@ -1688,5 +1718,31 @@ mod tests {
                 "couleur du titre 3"
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_des_fonctionnalites {
+    use super::*;
+
+    /// Un projet naît avec toutes ses fonctionnalités (demande de
+    /// l'auteur : le défaut est le confort).
+    #[test]
+    fn les_fonctionnalites_naissent_branches() {
+        let normes = MiseEnPage::default();
+
+        assert!(normes.fonctionnalites.bibliographie);
+        assert!(normes.fonctionnalites.glossaire);
+        assert!(normes.fonctionnalites.graphiques);
+    }
+
+    /// Une mise en page d'avant, sans le bloc, les porte toutes.
+    #[test]
+    fn un_ancien_fichier_garde_ses_fonctionnalites() {
+        let normes: MiseEnPage = toml::from_str("sommaire = true").unwrap();
+
+        assert!(normes.fonctionnalites.bibliographie);
+        assert!(normes.fonctionnalites.glossaire);
+        assert!(normes.fonctionnalites.graphiques);
     }
 }

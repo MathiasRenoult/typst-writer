@@ -154,7 +154,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     }
     let palette = state.resolved.palette;
-    let classement = crate::project::etageres();
+    let classement = &state.etageres;
     let mut groupes: BTreeMap<String, Vec<&Project>> = BTreeMap::new();
     for projet in &state.projects {
         groupes

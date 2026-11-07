@@ -163,6 +163,41 @@ pub(crate) fn sizes_of(
 }
 
 /// Dimensions logiques des pages selon le mode de zoom du panneau.
+/// Les pages visibles dans la fenêtre, aux tailles courantes — sans attendre
+/// un défilement (feuille de route, phase 3, point 3.3) : un zoom ou un
+/// redimensionnement change ce que montre la fenêtre, même à défilement
+/// immobile.
+pub fn pages_visibles(
+    tailles: &[(f32, f32)],
+    hauteur_fenetre: f32,
+    defilement_y: f32,
+) -> (usize, usize) {
+    if tailles.is_empty() {
+        return (0, 0);
+    }
+    let haut = defilement_y.max(0.0);
+    let bas = haut + hauteur_fenetre.max(1.0);
+    let mut premier = tailles.len() - 1;
+    let mut dernier = 0;
+    let mut y = 0.0f32;
+    for (index, (_, hauteur)) in tailles.iter().enumerate() {
+        let fin = y + hauteur;
+        if fin > haut && y < bas {
+            premier = premier.min(index);
+            dernier = dernier.max(index);
+        }
+        y = fin;
+    }
+    if dernier < premier {
+        // Rien n'est visible : la page la plus proche du bord du haut.
+        let index = (haut / y.max(1.0) * tailles.len() as f32) as usize;
+        let index = index.min(tailles.len() - 1);
+        (index, index)
+    } else {
+        (premier, dernier)
+    }
+}
+
 pub(crate) fn sizes_of_with_zoom(
     document: &typst_layout::PagedDocument,
     box_size: iced::Size,
@@ -279,7 +314,6 @@ pub fn vue<'a>(
     state: &'a State,
     render: &'a crate::app::state::RenderState,
     editor: &'a crate::editor::EditorState,
-    lsp: &'a crate::app::state::LspState,
     id: Option<u64>,
 ) -> Element<'a, Message> {
     let sizes = page_sizes(render);
@@ -351,9 +385,6 @@ pub fn vue<'a>(
     // Diagnostics du serveur de langage : ils arrivent **au fil de la frappe**,
     // là où notre compilation attend deux secondes de silence. Le fichier ouvert
     // est le seul qu'on puisse rejoindre depuis l'éditeur.
-    if !lsp.reported.is_empty() {
-        content = content.push(server_diagnostics_panel(&lsp.reported, palette));
-    }
 
     if sizes.is_empty() {
         // État d'attente avant la première compilation.
@@ -544,69 +575,6 @@ fn paper_style(paper: iced::Color) -> impl Fn(&iced::Theme) -> container::Style 
     }
 }
 
-/// Bandeau listant les erreurs (ou avertissements) du compilateur.
-///
-/// Le document compilé est l'assemblage, qui inclut les chapitres : un
-/// diagnostic peut donc tomber dans un fichier qui n'est pas celui qu'on est en
-/// train d'écrire. Ceux-là nomment leur fichier et ne proposent pas de saut —
-/// un saut calculé pour un autre fichier mènerait au mauvais endroit, ce qui est
-/// pire que pas de saut du tout.
-/// Les diagnostics du serveur de langage, au fil de la frappe.
-///
-/// Le compilateur a les siens : plus tard, et pour tout l'assemblage. Le serveur
-/// parle du document qu'on écrit, tout de suite. Les deux sources restent
-/// **nommées** — un même problème peut apparaître chez les deux, et ce n'est pas
-/// un doublon à taire mais deux regards à distinguer.
-fn server_diagnostics_panel<'a>(
-    diagnostics: &'a [crate::lsp::messages::Reported],
-    palette: Palette,
-) -> Element<'a, Message> {
-    use crate::lsp::messages::Severity;
-
-    let is_error = diagnostics
-        .iter()
-        .any(|diagnostic| matches!(diagnostic.severity, Some(Severity::Error) | None));
-
-    let title = format!("{} diagnostic(s) du serveur", diagnostics.len());
-    let mut list = column![palette.label(title).size(13).color(if is_error {
-        palette.danger
-    } else {
-        palette.warning
-    })]
-    .spacing(4);
-
-    for diagnostic in diagnostics {
-        // La gravité se lit à la couleur du rang : un avertissement ne doit pas
-        // prendre le rouge d'une erreur.
-        let accent = match diagnostic.severity {
-            Some(Severity::Error) | None => palette.danger,
-            Some(Severity::Warning) => palette.warning,
-            Some(Severity::Information) | Some(Severity::Hint) => palette.text_muted,
-        };
-
-        list = list.push(
-            button(
-                palette
-                    .label(diagnostic.label.clone())
-                    .size(13)
-                    .wrapping(Wrapping::Word)
-                    .width(Fill)
-                    .color(accent),
-            )
-            .on_press_maybe(Some(Message::GotoError(diagnostic.line, diagnostic.column)))
-            .padding([6, 10])
-            .width(Fill)
-            .style(button::text),
-        );
-    }
-
-    container(list)
-        .padding(10)
-        .width(Fill)
-        .style(move |_| panel_style(is_error, palette))
-        .into()
-}
-
 fn diagnostics_panel<'a>(
     diagnostics: &'a [Diagnostic],
     is_error: bool,
@@ -648,9 +616,17 @@ fn diagnostics_panel<'a>(
         };
 
         let label = if location.is_empty() {
-            format!("{where_}{}", diagnostic.message)
+            format!(
+                "{where_}[{}] {}",
+                diagnostic.origine.libelle(),
+                diagnostic.message
+            )
         } else {
-            format!("{where_}{location} — {}", diagnostic.message)
+            format!(
+                "{where_}{location} [{}] — {}",
+                diagnostic.origine.libelle(),
+                diagnostic.message
+            )
         };
 
         let jump = if here {
@@ -1344,5 +1320,34 @@ mod tests_de_la_molette_dirigee {
             !la_molette_est_au_zoom(false),
             "sinon la molette revient au scrollable — Maj y compris, qui en fait le défilement horizontal"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_pages_visibles {
+    use super::pages_visibles;
+
+    /// Les pages visibles (feuille de route, phase 3, point 3.3) : le calcul
+    /// suit la fenêtre et les tailles, sans défilement manuel.
+    #[test]
+    fn les_pages_visibles_suivent_la_fenetre() {
+        let tailles = [(100.0f32, 100.0f32), (100.0, 100.0), (100.0, 100.0)];
+        // Au tout début : la première page.
+        assert_eq!(pages_visibles(&tailles, 50.0, 0.0), (0, 0));
+        // Une fenêtre haute montre deux pages.
+        assert_eq!(pages_visibles(&tailles, 150.0, 0.0), (0, 1));
+        // Au milieu : la deuxième seule.
+        assert_eq!(pages_visibles(&tailles, 50.0, 120.0), (1, 1));
+        // Une fenêtre qui a grandi montre plus de pages — le cas du zoom.
+        assert_eq!(pages_visibles(&tailles, 250.0, 0.0), (0, 2));
+    }
+
+    /// Rien n'est visible : on reste sur la page la plus proche.
+    #[test]
+    fn hors_du_document_on_reste_sur_une_page() {
+        let tailles = [(100.0f32, 100.0f32), (100.0, 100.0)];
+        let (premier, dernier) = pages_visibles(&tailles, 10.0, 500.0);
+        assert_eq!(premier, dernier, "une seule page, la plus proche");
+        assert!(premier < tailles.len());
     }
 }

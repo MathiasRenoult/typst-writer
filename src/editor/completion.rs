@@ -5,8 +5,40 @@
 //! fonctions pures, donc éprouvables, et c'est là que se cachent les erreurs qui
 //! coûtent — le mot qu'on croyait remplacer, le gabarit inséré tel quel.
 
-use super::messages::CompletionItem;
+/// Un élément de complétion : ce que l'application propose d'elle-même —
+/// une clé citable, un terme du glossaire, un gabarit. Le monde LSP
+/// est retiré (feuille de route, phase 1) : la complétion locale garde
+/// ses fonctions pures, et son type est à elle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Element {
+    /// Ce qui se lit dans la liste.
+    pub label: String,
 
+    /// Ce qui s'écrit au curseur — par défaut, le libellé.
+    pub insert: Option<String>,
+
+    /// Le texte sur lequel filtrer quand on continue de taper — par
+    /// défaut, le libellé.
+    pub filtre: Option<String>,
+}
+
+impl Element {
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    /// Ce qui s'insère, gabarits compris.
+    pub fn insertion(&self) -> Option<&str> {
+        self.insert.as_deref()
+    }
+
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    /// Le texte de filtre : le libellé, sauf choix contraire.
+    pub fn filter(&self) -> &str {
+        self.filtre.as_deref().unwrap_or(&self.label)
+    }
+}
+
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Les caractères qui, tapés, demandent la liste.
 ///
 /// Ce sont ceux que le serveur annonce comme déclencheurs : `#` ouvre ses
@@ -14,6 +46,7 @@ use super::messages::CompletionItem;
 /// que le serveur a dit savoir faire.
 pub const TRIGGERS: [char; 2] = ['#', '@'];
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Le nom d'une référence, où que soit le curseur dans le mot.
 ///
 /// C'est la différence avec `context` : celui-ci ne regarde que ce qui a été
@@ -55,6 +88,7 @@ fn is_reference(character: char) -> bool {
 /// Le caractère qui appelle une citation.
 pub const CITATION: char = '@';
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Ce qu'un déclencheur a ouvert : le mot en cours, et où il commence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
@@ -69,6 +103,7 @@ pub struct Context {
     pub start: usize,
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Ce que le texte, à cette position, demande-t-il ?
 ///
 /// On remonte au début du mot en cours, puis on regarde le caractère qui le
@@ -100,11 +135,13 @@ pub fn context(text: &str, offset: usize) -> Option<Context> {
     })
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Un caractère peut-il appartenir à un nom de commande ou à une clé ?
 fn is_word(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Les éléments qui correspondent à ce qui a été tapé, dans l'ordre du serveur.
 ///
 /// L'ordre est **celui du serveur** : il trie mieux que nous, et il le dit par
@@ -113,7 +150,7 @@ fn is_word(character: char) -> bool {
 /// Deux passes, parce que c'est ce que la main attend : d'abord ce qui *commence*
 /// par ce qu'on a tapé, puis ce qui le *contient*. « figure » doit passer devant
 /// « quad_figure ».
-pub fn matching(items: &[CompletionItem], typed: &str) -> Vec<usize> {
+pub fn matching(items: &[Element], typed: &str) -> Vec<usize> {
     if typed.is_empty() {
         return (0..items.len()).collect();
     }
@@ -138,6 +175,7 @@ pub fn matching(items: &[CompletionItem], typed: &str) -> Vec<usize> {
     starts
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// L'expansion d'un gabarit, et la place du curseur après elle.
 ///
 /// tinymist envoie des marqueurs (`figure(${1:})`) **même quand on lui déclare
@@ -239,6 +277,7 @@ pub fn expand(snippet: &str) -> (String, Option<usize>) {
     (expanded, first_stop)
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Ce qu'il faut faire au document pour accepter un élément.
 ///
 /// Le remplacement, et non l'ajout : `#fig` devient `#figure(…)`, il ne devient
@@ -256,12 +295,13 @@ pub struct Insertion {
     pub caret: Option<usize>,
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Ce qu'il faut faire pour accepter un élément.
 ///
 /// `typed` est ce qui a été tapé après le déclencheur, et `replacement` la
 /// longueur que le serveur demande de remplacer — le plus souvent la longueur de
 /// `typed`, mais pas toujours.
-pub fn insertion(item: &CompletionItem, typed: &str, replacement: Option<usize>) -> Insertion {
+pub fn insertion(item: &Element, typed: &str, replacement: Option<usize>) -> Insertion {
     let (text, caret) = expand(item.insertion().unwrap_or(&item.label));
 
     Insertion {
@@ -271,19 +311,71 @@ pub fn insertion(item: &CompletionItem, typed: &str, replacement: Option<usize>)
     }
 }
 
+/// La liste de complétion, telle qu'elle s'affiche.
+pub struct Completion {
+    /// Ce que le serveur a proposé.
+    pub items: Vec<crate::editor::completion::Element>,
+
+    /// Les indices des éléments qui correspondent à ce qui est tapé, dans
+    /// l'ordre voulu par le serveur.
+    pub shown: Vec<usize>,
+
+    /// La sélection, dans [`Self::shown`].
+    pub selected: usize,
+
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    /// Ce qui a été tapé après le déclencheur.
+    pub typed: String,
+
+    /// Le caractère qui a ouvert la liste.
+    pub trigger: char,
+
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    /// Le décalage, en octets, du début de ce qui serait remplacé.
+    pub start: usize,
+
+    /// Position source du curseur à la dernière mise à jour de la liste.
+    pub cursor_offset: usize,
+}
+
+impl Completion {
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    /// Ferme la liste si le curseur a été déplacé sans modifier le texte.
+    pub fn should_close_after(&self, cursor_offset: usize, content_changed: bool) -> bool {
+        !content_changed && cursor_offset != self.cursor_offset
+    }
+
+    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
+    /// L'élément sélectionné, s'il y en a un.
+    pub fn selected_item(&self) -> Option<&crate::editor::completion::Element> {
+        self.shown
+            .get(self.selected)
+            .and_then(|index| self.items.get(*index))
+    }
+
+    /// Déplace la sélection, en boucle : on ne bute pas sur les extrémités.
+    pub fn move_selection(&mut self, delta: isize) {
+        if self.shown.is_empty() {
+            return;
+        }
+
+        let count = self.shown.len() as isize;
+        let wanted = (self.selected as isize + delta).rem_euclid(count);
+
+        self.selected = wanted as usize;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::messages::CompletionItem;
 
-    fn item(label: &str, insert: Option<&str>) -> CompletionItem {
-        let mut value = serde_json::json!({ "label": label });
-
-        if let Some(insert) = insert {
-            value["insertText"] = serde_json::Value::String(insert.to_string());
+    fn item(label: &str, insert: Option<&str>) -> Element {
+        Element {
+            label: label.to_string(),
+            insert: insert.map(str::to_string),
+            filtre: None,
         }
-
-        serde_json::from_value(value).expect("élément")
     }
 
     /// Le déclencheur se reconnaît au mot en cours, et à rien d'autre.
@@ -353,21 +445,23 @@ mod tests {
         assert!(matching(&items, "rien").is_empty());
     }
 
-    /// Le filtre suit `filterText` quand le serveur en donne un.
+    /// Le filtre suit le texte de filtre quand il en donne un.
     #[test]
-    fn the_filter_text_wins_over_the_label() {
-        let mut value = serde_json::json!({ "label": "Une étiquette", "filterText": "figure" });
-        let item: CompletionItem = serde_json::from_value(value.clone()).expect("élément");
-
+    fn le_filtre_l_emporte_sur_le_libelle() {
+        let item = Element {
+            label: "Une étiquette".to_string(),
+            insert: None,
+            filtre: Some("figure".to_string()),
+        };
         assert_eq!(matching(std::slice::from_ref(&item), "fig"), vec![0]);
 
-        value["filterText"] = serde_json::Value::String("autre".to_string());
-        let other: CompletionItem = serde_json::from_value(value).expect("élément");
-
-        assert!(matching(&[other], "fig").is_empty());
+        let autre = Element {
+            filtre: Some("autre".to_string()),
+            ..item.clone()
+        };
+        assert!(matching(&[autre], "fig").is_empty());
         assert_eq!(matching(&[item], "fig"), vec![0]);
     }
-
     /// Un gabarit ne laisse aucun marqueur dans le document.
     #[test]
     fn a_template_loses_its_markers() {

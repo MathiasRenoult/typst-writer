@@ -670,6 +670,66 @@ mod tests {
 
     /// Un marqueur de bloc après un blanc est un marqueur : Typst en
     /// ferait une liste. Le rempart tient toute la tête de ligne.
+    /// Le bloc se génère tout entier, contexte compris — la porte de la
+    /// sonde typographique.
+    fn generer_inline_en_clair(
+        bloc: &[Inline],
+        regles: &crate::langage::typographie::Regles,
+    ) -> String {
+        let mut out = String::new();
+        let mut contexte = crate::langage::typographie::Contexte::neuf();
+        super::generer_inline(bloc, &mut out, false, regles, &mut contexte);
+        out
+    }
+
+    /// Les cinq défauts nommés par la feuille de route (phase 2, point 2.3) :
+    /// le traitement typographique court sur tout le bloc, et chaque forme
+    /// attendue doit sortir du générateur.
+    #[test]
+    fn le_traitement_typographique_tient_ses_cinq_defauts() {
+        let regles = crate::langage::typographie::Regles::francaise();
+        let texte = |mot: &str| Inline::Texte(mot.to_string());
+
+        // 1. L'insécable aux frontières d'éléments : le point-virgule ouvre
+        //    un élément de mise en forme, et l'espace le précède encore.
+        let sortie =
+            generer_inline_en_clair(&[texte("a"), Inline::Gras(vec![texte("; b")])], &regles);
+        assert_eq!(sortie, "a*~; b*", "l'insécable tient la frontière");
+
+        // 2. Les espaces autour des signes de ponctuation.
+        let sortie = generer_inline_en_clair(&[texte("a: b")], &regles);
+        assert_eq!(sortie, "a~: b", "les deux points prennent leur insécable");
+        let sortie = generer_inline_en_clair(&[texte("a;b")], &regles);
+        assert_eq!(sortie, "a~; b", "le point-virgule se pose de même");
+
+        // 3. L'imbrication des guillemets : les paires suivent le niveau.
+        let sortie =
+            generer_inline_en_clair(&[texte("\u{AB} un \u{AB} deux \u{BB} fin \u{BB}")], &regles);
+        assert_eq!(
+            sortie, "\u{AB}~un \u{2039}~deux~\u{203A} fin~\u{BB}",
+            "les guillemets s'imbriquent par niveau"
+        );
+
+        // 4. La continuité du contexte entre éléments : l'ouvrant est dans
+        //    un élément, le fermant dans un autre.
+        let sortie = generer_inline_en_clair(
+            &[
+                Inline::Gras(vec![texte("\u{AB} ouverture")]),
+                texte(" milieu "),
+                Inline::Italique(vec![texte("fermeture \u{BB}")]),
+            ],
+            &regles,
+        );
+        assert_eq!(
+            sortie, "*\u{AB}~ouverture* milieu _fermeture~\u{BB}_",
+            "le contexte traverse les éléments"
+        );
+
+        // 5. L'échappement Typst : l'insécable devient `~`, et survit.
+        let sortie = generer_inline_en_clair(&[texte("a; b")], &regles);
+        assert_eq!(sortie, "a~; b", "l'insécable survit à l'échappement");
+    }
+
     #[test]
     fn le_repart_de_tete_tient_apres_un_blanc() {
         use super::super::schema::{Bloc, Document, Inline};
@@ -763,6 +823,62 @@ mod tests {
         let overrides = vec![(root.join("chapitre.typ"), typst.to_string())];
 
         crate::typst::render::compile(&root, &entry, &overrides)
+    }
+
+    /// Les trois défauts nommés par la feuille de route (phase 2, point 2.4) :
+    /// la chaîne produite ne suffit pas — le Typst embarqué doit la compiler.
+    #[test]
+    fn la_generation_se_compile_sur_les_defauts_nommes() {
+        // 1. Couleur hexadécimale ; 2. caractères spéciaux ; 3. échappement
+        //    selon la position (un marqueur en tête de ligne).
+        let document = Document {
+            blocs: vec![
+                Bloc::Paragraphe(vec![
+                    Inline::Couleur {
+                        couleur: "#ff0000".to_string(),
+                        contenu: vec![Inline::Texte("rouge".to_string())],
+                    },
+                    Inline::Texte(" et des spéciaux : ".to_string()),
+                    Inline::Litteral("{}[]#@".to_string()),
+                ]),
+                Bloc::Paragraphe(vec![
+                    Inline::Litteral("-".to_string()),
+                    Inline::Texte(" puce en tête de ligne".to_string()),
+                ]),
+            ],
+        };
+        let typst = generer_avec(
+            &document,
+            &Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        let sortie = compiler(&typst);
+        assert!(
+            sortie.errors.is_empty(),
+            "le Typst embarqué compile la génération : {:?} ({typst:?})",
+            sortie.errors
+        );
+    }
+
+    /// La correspondance de positions (feuille de route, phase 2, point 2.5) :
+    /// le générateur garde les numéros de ligne du document source — c'est
+    /// ce qui rend la position du fichier généré valable dans le `.tw`.
+    #[test]
+    fn le_generateur_garde_les_numeros_de_ligne() {
+        for source in [
+            "# Titre\n\nUn paragraphe.\n\n- puce\n- deux\n",
+            "Texte *gras* et `code`.\n\n> citation\n",
+            "1. un\n2. deux\n\n| a | b |\n| - | - |\n| 1 | 2 |\n",
+        ] {
+            let document = crate::langage::parse(source);
+            let typst = generer(&document);
+            let lignes_source = source.split('\n').count();
+            let lignes_typst = typst.split('\n').count();
+            assert!(
+                lignes_typst >= lignes_source - 1 && lignes_typst <= lignes_source + 1,
+                "la structure de lignes tient : {lignes_source} vs {lignes_typst} ({typst:?})"
+            );
+        }
     }
 
     /// Le document généré compile sans erreur.

@@ -1,13 +1,13 @@
 use crate::app::{Message, State};
 
-use crate::app::state::Completion;
+use crate::editor::completion::Completion;
 use crate::ui::theme::Palette;
 
 use iced::advanced::layout::{self, Limits};
 use iced::advanced::overlay;
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
-use iced::widget::{button, column, container, row, space};
+use iced::widget::{button, column, container, row};
 use iced::{Element, Event, Fill, Length, Padding, Rectangle, Size, Vector, alignment, mouse};
 
 /// Mesure de lecture : la largeur maximale du texte, en pixels.
@@ -27,6 +27,7 @@ const SIDE_MARGIN: f32 = 40.0;
 /// Marge en haut du texte : respirer avant la première ligne.
 const TOP_MARGIN: f32 = 28.0;
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Largeur de la liste de complétion.
 const COMPLETION_WIDTH: f32 = 320.0;
 
@@ -44,7 +45,7 @@ fn empty_completion_message(trigger: char, items_empty: bool, awaiting: bool) ->
         return "Recherche des suggestions…";
     }
 
-    if trigger == crate::lsp::completion::CITATION {
+    if trigger == crate::editor::completion::CITATION {
         if items_empty {
             "Aucune référence dans le projet"
         } else {
@@ -60,6 +61,7 @@ fn empty_completion_message(trigger: char, items_empty: bool, awaiting: bool) ->
 /// Marge en bas : de quoi voir venir la suite sans que le texte touche le bord.
 const BOTTOM_MARGIN: f32 = 64.0;
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Combien de lignes un survol montre au plus.
 ///
 /// Un survol est une réponse courte, pas une page de documentation : au-delà, il
@@ -94,14 +96,7 @@ struct EditorOverlay<'a> {
 ///
 /// Elle ne sert plus qu'au **survol** (tinymist) : la complétion s'affiche
 /// désormais dans une fenêtre fixe au centre, pas près du curseur.
-fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
-    if let Some(hover) = state.lsp.hover.as_ref() {
-        return Some(Bulle {
-            contenu: hover_popup(hover, palette),
-            position: hover.anchor,
-        });
-    }
-
+fn bulle(_state: &State, palette: Palette) -> Option<Bulle<'_>> {
     // ÉPREUVE : une bulle de forme connue, sans rien à proposer.
     if crate::app::epreuves::menu_ouvert() {
         let essai = container(
@@ -433,6 +428,7 @@ pub fn vue<'a>(
         .into()
 }
 
+#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Les premières lignes d'un texte, empruntées et non copiées.
 ///
 /// Le survol d'un symbole de tinymist peut être long ; ce qui s'affiche ne l'est
@@ -450,22 +446,6 @@ fn clamp_lines(text: &str, lines: usize) -> &str {
     }
 
     &text[..end]
-}
-
-/// Ce que le serveur sait du symbole, posé près du curseur.
-///
-/// Le texte vient de tinymist, en markdown : il est montré tel quel, borné à
-/// quelques lignes.
-fn hover_popup(hover: &crate::app::state::Hover, palette: Palette) -> Element<'_, Message> {
-    container(
-        palette
-            .label(clamp_lines(&hover.text, HOVER_LINES))
-            .size(13.0)
-            .width(Length::Fixed(COMPLETION_WIDTH)),
-    )
-    .padding(8)
-    .style(bubble_style(palette))
-    .into()
 }
 
 /// La liste de complétion, posée dans la fenêtre centrale.
@@ -524,17 +504,6 @@ pub(super) fn completion_popup<'a>(
         } else {
             palette.text
         }));
-
-        if let Some(kind) = item.kind
-            && !kind.label().is_empty()
-        {
-            line = line.push(space::horizontal().width(Length::Fill));
-            line = line.push(palette.label(kind.label()).size(11).color(if selected {
-                palette.background
-            } else {
-                palette.text_muted
-            }));
-        }
 
         list = list.push(
             button(line)
@@ -614,7 +583,7 @@ mod tests {
     #[test]
     fn empty_completion_message_matches_its_trigger_and_wait_state() {
         assert_eq!(
-            empty_completion_message(crate::lsp::completion::CITATION, true, false),
+            empty_completion_message(crate::editor::completion::CITATION, true, false),
             "Aucune référence dans le projet"
         );
         assert_eq!(

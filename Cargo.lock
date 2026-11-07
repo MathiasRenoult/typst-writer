@@ -6298,9 +6298,10 @@ dependencies = [
 
 [[package]]
 name = "typst-writer"
-version = "0.3.0-alpha.3"
+version = "0.4.0"
 dependencies = [
  "citationberg",
+ "fontdb",
  "hayagriva",
  "iced",
  "iced-code-editor",
@@ -6321,7 +6322,6 @@ dependencies = [
  "typst-library",
  "typst-pdf",
  "typst-syntax",
- "typst-utils",
  "ureq",
  "zip",
 ]
