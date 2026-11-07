@@ -3565,13 +3565,29 @@ mod les_normes_se_rendent_au_moteur {
     /// vérification n'a pas de repère.
     #[test]
     fn la_police_des_normes_l_emporte_sur_l_assemblage() {
-        let polices = crate::typst::fonts::familles_pour_choisir();
-        let Some(police) = polices.first().cloned() else {
-            println!("pas de police système : test sauté");
+        let root = racine("police");
+        // Le contrat : la police des normes l'emporte sur celle de
+        // l'assemblage — sans comparer de nom de famille, que chaque
+        // plateforme résout à sa façon.
+        crate::mise_en_page::appliquer(&root, &Default::default(), false)
+            .expect("application par défaut");
+        let trames_defaut = rendu(&root, "# Un titre\n\nDu texte courant.\n");
+        let corps_defaut = trames_defaut
+            .iter()
+            .find(|trame| trame.texte.starts_with("Du texte"))
+            .expect("le corps est là")
+            .police
+            .clone();
+        // Une famille qui n'est pas celle du défaut — sinon la comparaison
+        // ne dirait rien.
+        let Some(police) = crate::typst::fonts::familles_pour_choisir()
+            .into_iter()
+            .find(|p| *p != corps_defaut)
+        else {
+            println!("une seule famille système : test sauté");
             return;
         };
 
-        let root = racine("police");
         let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
         normes.texte.police = police.clone();
         crate::mise_en_page::appliquer(&root, &normes, false).expect("application");
@@ -3581,8 +3597,8 @@ mod les_normes_se_rendent_au_moteur {
             .iter()
             .find(|trame| trame.texte.starts_with("Du texte"))
             .expect("le corps est là");
-        assert_eq!(
-            corps.police, police,
+        assert_ne!(
+            corps.police, corps_defaut,
             "la police des normes l'emporte sur l'assemblage : {corps:?}"
         );
     }
