@@ -90,13 +90,36 @@ struct Bulle<'a> {
 struct EditorOverlay<'a> {
     editor: Element<'a, Message>,
     bulle: Option<Bulle<'a>>,
+    /// Une fenêtre est ouverte : l'éditeur ne reçoit plus le pointeur.
+    bloquee: bool,
 }
 
 /// Ce que la bulle doit montrer, et où.
 ///
 /// Elle ne sert plus qu'au **survol** (tinymist) : la complétion s'affiche
 /// désormais dans une fenêtre fixe au centre, pas près du curseur.
-fn bulle(_state: &State, palette: Palette) -> Option<Bulle<'_>> {
+fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
+    // Le survol d'une référence biblique : son extrait (le système de
+    // références bibliques).
+    if let Some((point, reference)) = state.plugins.bible.survol.as_ref() {
+        let contenu = crate::plugins::bible::extrait(
+            std::slice::from_ref(reference),
+            state.plugins.bible.traduction,
+        );
+        let boite = container(
+            palette
+                .label(contenu)
+                .size(crate::ui::theme::jetons::CORPS)
+                .color(palette.text),
+        )
+        .padding(10)
+        .width(Length::Fixed(420.0))
+        .style(bubble_style(palette));
+        return Some(Bulle {
+            contenu: boite.into(),
+            position: *point,
+        });
+    }
     // ÉPREUVE : une bulle de forme connue, sans rien à proposer.
     if crate::app::epreuves::menu_ouvert() {
         let essai = container(
@@ -178,6 +201,10 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if self.bloquee {
+            return;
+        }
+
         self.editor.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -219,6 +246,10 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
         viewport: &Rectangle,
         renderer: &iced::Renderer,
     ) -> mouse::Interaction {
+        if self.bloquee {
+            return mouse::Interaction::Idle;
+        }
+
         self.editor.as_widget().mouse_interaction(
             &tree.children[0],
             layout,
@@ -290,6 +321,22 @@ impl<'a> From<EditorOverlay<'a>> for Element<'a, Message> {
     }
 }
 
+/// Le coin haut-gauche de la bulle : au-dessus du curseur et centrée, ou en
+/// dessous quand le haut manque de place ; toujours dans la fenêtre.
+fn position_bulle(position: iced::Point, size: Size, bounds: Size) -> iced::Point {
+    let marge = 12.0;
+    let mut y = position.y - size.height - marge;
+    if y < 0.0 {
+        y = position.y + marge;
+    }
+    let x = position.x - size.width / 2.0;
+
+    iced::Point::new(
+        x.clamp(0.0, (bounds.width - size.width).max(0.0)),
+        y.clamp(0.0, (bounds.height - size.height).max(0.0)),
+    )
+}
+
 /// Le recouvrement lui-même : la bulle, dessinée à une place absolue.
 struct BulleRecouvrement<'a, 'b> {
     contenu: &'b mut Element<'a, Message>,
@@ -307,18 +354,10 @@ impl overlay::Overlay<Message, iced::Theme, iced::Renderer> for BulleRecouvremen
         );
 
         let size = contenu.bounds().size();
+        let position = position_bulle(self.position, size, bounds);
 
-        // La bulle reste dans la fenêtre, quoi qu'il arrive.
-        let x = self
-            .position
-            .x
-            .clamp(0.0, (bounds.width - size.width).max(0.0));
-        let y = self
-            .position
-            .y
-            .clamp(0.0, (bounds.height - size.height).max(0.0));
-
-        layout::Node::with_children(size, vec![contenu]).translate(Vector::new(x, y))
+        layout::Node::with_children(size, vec![contenu])
+            .translate(Vector::new(position.x, position.y))
     }
 
     fn draw(
@@ -393,13 +432,22 @@ pub fn vue<'a>(
 ) -> Element<'a, Message> {
     let palette = state.resolved.palette;
     let editor = source.editor.view().map(Message::Editor);
-    let bulle = if active { bulle(state, palette) } else { None };
+    let bloquee = crate::app::pointeur_bloque(state);
+    let bulle = if active && !bloquee {
+        bulle(state, palette)
+    } else {
+        None
+    };
     crate::app::epreuves::note_vue(source.editor.viewport_scroll(), bulle.is_some());
 
-    let page = container(EditorOverlay { editor, bulle })
-        .width(Fill)
-        .height(Fill)
-        .max_width(MEASURE);
+    let page = container(EditorOverlay {
+        editor,
+        bulle,
+        bloquee,
+    })
+    .width(Fill)
+    .height(Fill)
+    .max_width(MEASURE);
 
     // La zone de rédaction se détache sur le fond de l'application : sans
     // cette différence de teinte, la marge existe en géométrie mais reste
@@ -577,6 +625,31 @@ mod tests {
 
         // Une ligne accentuée se coupe à sa frontière, jamais avant.
         assert_eq!(clamp_lines("éé\nà", 1), "éé");
+    }
+
+    /// La bulle est au-dessus du curseur, centrée ; elle bascule dessous en
+    /// haut de fenêtre et reste toujours dans les bornes.
+    #[test]
+    fn la_bulle_est_au_dessus_du_curseur_et_centree() {
+        let position = iced::Point::new(200.0, 200.0);
+        let size = Size::new(100.0, 50.0);
+        let bounds = Size::new(800.0, 600.0);
+
+        let place = position_bulle(position, size, bounds);
+        assert_eq!(place.x, 150.0, "centrée sur le curseur");
+        assert_eq!(place.y, 138.0, "au-dessus, avec la marge");
+
+        // En haut de la fenêtre, elle passe en dessous.
+        let place = position_bulle(iced::Point::new(200.0, 30.0), size, bounds);
+        assert_eq!(place.y, 42.0, "elle bascule sous le curseur");
+
+        // Près du bord droit, elle reste entièrement visible.
+        let place = position_bulle(iced::Point::new(780.0, 200.0), size, bounds);
+        assert_eq!(place.x, 700.0, "elle est ramenée dans la fenêtre");
+
+        // Plus grande que la fenêtre : elle est ramenée à l'origine.
+        let place = position_bulle(position, Size::new(900.0, 700.0), bounds);
+        assert_eq!(place, iced::Point::ORIGIN);
     }
 
     /// Même sans résultat, la fenêtre annonce ce qu'elle attend.

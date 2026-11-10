@@ -318,7 +318,7 @@ mod tests {
             editor.line_height / 2.0,
         );
 
-        let _ = editor.update(&Message::MouseClick(point));
+        let _ = editor.update(&Message::MouseClick(point, 0));
         let _ = editor.update(&Message::MouseRelease);
         assert!(!editor.cursors.primary().has_selection());
 

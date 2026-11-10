@@ -230,7 +230,7 @@ mod tests {
             iced::Point::new(text_start + char_width * col as f32, line_y)
         };
 
-        let _ = editor.update(&Message::MouseClick(point_at_col(8)));
+        let _ = editor.update(&Message::MouseClick(point_at_col(8), 0));
         let _ = editor.update(&Message::MouseDrag(point_at_col(11)));
         let _ = editor.update(&Message::MouseRelease);
 
@@ -244,7 +244,7 @@ mod tests {
             text_start + char_width * 4.0,
             editor.line_height * 1.5,
         );
-        let _ = editor.update(&Message::MouseClick(no_match_line));
+        let _ = editor.update(&Message::MouseClick(no_match_line, 0));
         let _ = editor.update(&Message::MouseRelease);
         assert_eq!(editor.search_state.current_match_index, Some(1));
 
@@ -266,7 +266,7 @@ mod tests {
             editor.gutter_width() + 5.0,
             editor.line_height * 1.5,
         );
-        let _ = editor.update(&Message::MouseClick(line_start));
+        let _ = editor.update(&Message::MouseClick(line_start, 0));
         let _ = editor.update(&Message::MouseRelease);
 
         assert_eq!(editor.cursors.primary_position(), (1, 0));
@@ -296,7 +296,7 @@ mod tests {
         editor.show_cursor = false;
 
         let _ =
-            editor.update(&Message::MouseClick(iced::Point::new(100.0, 10.0)));
+            editor.update(&Message::MouseClick(iced::Point::new(100.0, 10.0), 0));
 
         assert!(editor.has_canvas_focus);
         assert!(editor.show_cursor);

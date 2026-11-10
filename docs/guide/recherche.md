@@ -34,11 +34,5 @@ groupes. Le remplacement les rappelle au dollar : `$1-$2`. Tout se fait
 du dernier au premier — **Tout remplacer** ne décale jamais les
 occurrences restantes.
 
-Attention : dans cette version, le remplacement réinterprète le motif comme
-une expression régulière même si la recherche est en mode littéral ; les
-métacaractères du motif et les `$` dans le remplacement peuvent donc produire
-un résultat inattendu. Vérifiez le résultat sur une copie avant d'utiliser
-« Tout remplacer ».
-
 Un motif fautif se dit dans la barre, en rouge, sans jamais effacer ce
 qui est cherché.

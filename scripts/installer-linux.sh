@@ -41,7 +41,13 @@ installer() {
 installer "$dossier/bin/typst-writer" "$bin/typst-writer" 755
 installer "$dossier/share/applications/typst-writer.desktop" "$applications/typst-writer.desktop" 644
 for fichier in "$dossier"/share/doc/typst-writer/*; do
-    installer "$fichier" "$doc/$(basename "$fichier")" 644
+    if [ -d "$fichier" ]; then
+        for sous in "$fichier"/*; do
+            installer "$sous" "$doc/$(basename "$fichier")/$(basename "$sous")" 644
+        done
+    else
+        installer "$fichier" "$doc/$(basename "$fichier")" 644
+    fi
 done
 
 echo

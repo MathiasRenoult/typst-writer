@@ -29,6 +29,10 @@ const LARGEUR: f32 = 400.0;
 pub fn view(state: &State) -> Element<'_, Message> {
     let palette = state.resolved.palette;
 
+    if let Some(panneau) = state.plugins.bible.panneau.as_ref() {
+        return crate::ui::bible::view(state, panneau);
+    }
+
     if let Some(composeur) = state.composeur.as_ref() {
         return fenetre_composeur(composeur, palette, state.editor.is_intermediate());
     }
@@ -36,6 +40,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let Some(open) = state.completion.as_ref() else {
         return container(Space::new()).into();
     };
+
+    let recherche: Element<'_, Message> = text_input("Chercher un livre", &open.typed)
+        .id(iced::widget::Id::new("completion-champ"))
+        .on_input(Message::CompletionChercher)
+        .into();
 
     let entete = row![
         palette
@@ -51,13 +60,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .align_y(Alignment::Center);
 
     let pied = palette
-        .label("↑↓ naviguer · Tab ou Entrée insérer")
+        .label("↑↓ · Tab/Entrée : insérer · Échap")
         .size(theme::jetons::DETAIL)
         .color(palette.text_muted);
 
     let fenetre = container(
         column![
             entete,
+            recherche,
             completion_popup(open, palette, LARGEUR, false),
             pied,
         ]
@@ -67,15 +77,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .padding(16)
     .style(bubble_style(palette));
 
-    // La fenêtre est centrée dans toute la page, et le fond reste la page
-    // elle-même : cliquer hors de la fenêtre tombe dans l'éditeur, ce qui
-    // déplace le curseur et ferme la liste — le geste naturel de sortie.
-    container(fenetre)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+    // La fenêtre est centrée dans toute la page. Le voile intercepte les
+    // clics : sortir de la fenêtre ne déplace plus le curseur derrière elle.
+    // Une modale : le voile arrête les clics, et l'éditeur a rendu le focus
+    // à l'ouverture. On ne travaille plus à travers la fenêtre.
+    crate::ui::voile(
+        container(fenetre)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
 }
 
 /// Le visage composeur : la note se choisit, se pagine, et s'écrit à la fin.
@@ -92,12 +104,12 @@ fn fenetre_composeur<'a>(
                 "Ajouter une référence à la même note"
             },
             "Chercher une clé…",
-            "↑↓ naviguer · Tab : numéro de page · Entrée : insérer · Échap : fermer",
+            "↑↓ · Tab : page · Entrée : insérer · Échap",
         ),
         Etape::Page => (
             "Numéro de page",
             "p. 45, pp. 12-15, chap. 3…",
-            "Tab : une autre référence · Entrée : insérer · Échap : fermer",
+            "Tab : autre référence · Entrée · Échap",
         ),
     };
 
@@ -114,11 +126,12 @@ fn fenetre_composeur<'a>(
 
     // Un seul champ pour les deux étapes : la forme de la fenêtre ne change
     // jamais quand l'étape change, et le focus y demeure.
-    let champ = text_input(invite, &composeur.saisie)
+    let champ: Element<'_, Message> = text_input(invite, &composeur.saisie)
         .id(Composeur::champ_id())
         .on_input(Message::ComposeurSaisie)
         .padding(6)
-        .width(Length::Fixed(LARGEUR));
+        .width(Length::Fixed(LARGEUR))
+        .into();
 
     let note = lignes_note(composeur, palette);
 
@@ -165,12 +178,15 @@ fn fenetre_composeur<'a>(
         .padding(16)
         .style(bubble_style(palette));
 
-    container(fenetre)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+    // Une modale : le voile arrête les clics, et l'éditeur a rendu le focus
+    // à l'ouverture. On ne travaille plus à travers la fenêtre.
+    crate::ui::voile(
+        container(fenetre)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
 }
 
 /// Le fond d'un bouton au survol : une brume, jamais un bloc.

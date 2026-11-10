@@ -223,7 +223,7 @@ pub fn driver_composeur(state: &State) -> Option<Task<Message>> {
             // les deux moitiés du focus, comme dans la vraie vie.
             println!("[épreuve] la main entre dans l'éditeur");
             Some(Task::done(Message::Editor(
-                iced_code_editor::Message::MouseClick(iced::Point::ORIGIN),
+                iced_code_editor::Message::MouseClick(iced::Point::ORIGIN, 0),
             )))
         }
         12 => {
@@ -490,7 +490,7 @@ pub fn driver_glyphe(state: &mut State) -> Option<Task<Message>> {
             let point = state.editor.cursor_view_position();
             println!("[glyphe] clic réel au point {point:?}");
             Some(Task::done(Message::Editor(
-                iced_code_editor::Message::MouseClick(point),
+                iced_code_editor::Message::MouseClick(point, 0),
             )))
         }
         35 => {
@@ -527,7 +527,7 @@ pub fn driver_glyphe(state: &mut State) -> Option<Task<Message>> {
             let point = state.editor.cursor_view_position();
             println!("[glyphe] clic réel au point {point:?}");
             Some(Task::done(Message::Editor(
-                iced_code_editor::Message::MouseClick(point),
+                iced_code_editor::Message::MouseClick(point, 0),
             )))
         }
         70 => {

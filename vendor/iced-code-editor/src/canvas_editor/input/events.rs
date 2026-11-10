@@ -278,6 +278,28 @@ impl CodeEditor {
     /// # Arguments
     ///
     /// * `point` - The click position in canvas coordinates
+    /// Le décalage du texte sous un point de la zone de texte — la carte du
+    /// survol : la ligne visuelle, sa colonne, puis l'octet dans le tampon.
+    pub fn offset_at_point(&self, point: Point) -> Option<usize> {
+        let text_start = self.gutter_width();
+        if point.x < text_start {
+            return None;
+        }
+        let visual_line_idx = (point.y / self.line_height) as usize;
+        let visual_lines = self.visual_lines_cached(self.viewport_width);
+        let visual_line = visual_lines.get(visual_line_idx)?;
+        let colonne = ((point.x - text_start) / self.char_width) as usize;
+        let colonne = (visual_line.start_col + colonne).min(visual_line.end_col);
+        // Le début de la ligne logique dans le tampon.
+        let mut offset = 0;
+        for i in 0..visual_line.logical_line {
+            offset += self.buffer.line(i).len() + 1;
+        }
+        // La colonne en octets.
+        let ligne = self.buffer.line(visual_line.logical_line);
+        Some(offset + ligne.char_indices().nth(colonne).map_or(ligne.len(), |(o, _)| o))
+    }
+
     pub(crate) fn fold_header_at_point(&self, point: Point) -> Option<usize> {
         if !self.folding_enabled {
             return None;
@@ -340,7 +362,7 @@ impl CodeEditor {
                     // Alt+Click: add a new cursor at the clicked position
                     if self.modifiers.get().alt() {
                         let message = if self.vim_enabled {
-                            Message::MouseClick(position)
+                            Message::MouseClick(position, self.offset_at_point(position).unwrap_or(0))
                         } else {
                             Message::AltClick(position)
                         };
@@ -355,7 +377,7 @@ impl CodeEditor {
                             .and_capture(),
                         // Don't capture the event so it can bubble up for focus management
                         // This implements focus event propagation through the widget hierarchy
-                        _ => Action::publish(Message::MouseClick(position)),
+                        _ => Action::publish(Message::MouseClick(position, self.offset_at_point(position).unwrap_or(0))),
                     }
                 })
             }
@@ -373,7 +395,10 @@ impl CodeEditor {
                             .and_capture()
                     } else {
                         // Forward hover events when not dragging to enable LSP hover.
-                        Action::publish(Message::MouseHover(position))
+                        Action::publish(Message::MouseHover(
+                            position,
+                            self.offset_at_point(position).unwrap_or(0),
+                        ))
                     }
                 })
             }
@@ -569,7 +594,7 @@ mod tests {
     fn message_position(message: &Option<Message>) -> Option<Point> {
         match message {
             Some(
-                Message::MouseClick(position)
+                Message::MouseClick(position, _)
                 | Message::MouseHover(position)
                 | Message::MouseDrag(position)
                 | Message::AltClick(position)

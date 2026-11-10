@@ -60,7 +60,23 @@ pub fn view(state: &State) -> Element<'_, Message> {
         "Les normes du document : papier, marges, titres, couleurs (Ctrl+P)",
         Message::MiseEnPageOuvrir,
         palette,
-        state.mise_en_page.is_some(),
+        state
+            .mise_en_page
+            .as_ref()
+            .is_some_and(|dialogue| !dialogue.plugins),
+    ));
+
+    // Les paramètres des plugins sont un panneau distinct des normes :
+    // activer un plugin se fait dans les normes, le configurer se fait ici.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_puzzle::<Theme>(),
+        "Les paramètres des plugins : bibliographie, biblique, glossaire, graphiques",
+        Message::PluginsOuvrir,
+        palette,
+        state
+            .mise_en_page
+            .as_ref()
+            .is_some_and(|dialogue| dialogue.plugins),
     ));
 
     bar = bar.push(separation(palette));
@@ -319,7 +335,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             false,
         ));
-        if state.reglages.fonctionnalites.bibliographie {
+        if state
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_BIBLIOGRAPHIE)
+        {
             bar = bar.push(icon_button(
                 lucide_icons::iced::icon_library::<Theme>(),
                 "Insérer une section bibliographie",
@@ -328,7 +348,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 false,
             ));
         }
-        if state.reglages.fonctionnalites.glossaire {
+        if state
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_GLOSSAIRE)
+        {
             bar = bar.push(icon_button(
                 lucide_icons::iced::icon_book_a::<Theme>(),
                 "Insérer une section glossaire",
@@ -337,16 +361,40 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 false,
             ));
         }
+        if state
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+        {
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_book_open::<Theme>(),
+                "Insérer une référence biblique",
+                Message::ReferenceBibliqueInserer,
+                palette,
+                false,
+            ));
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_list_tree::<Theme>(),
+                "Insérer l'index des citations bibliques",
+                Message::BibleIndexInserer,
+                palette,
+                false,
+            ));
+        }
 
         // TOPBAR-10 : une icône ouvre la fenêtre du glossaire — la
         // liste déroulante ne permettait que d'insérer (bug-report-10, 5.3).
-        if state.reglages.fonctionnalites.glossaire {
+        if state
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_GLOSSAIRE)
+        {
             bar = bar.push(icon_button(
                 lucide_icons::iced::icon_book_marked::<Theme>(),
                 "Glossaire : consulter et gérer les termes",
                 Message::GlossaireFenetreOuvrir,
                 palette,
-                state.glossaire_fenetre,
+                state.plugins.glossaire.fenetre,
             ));
         }
 

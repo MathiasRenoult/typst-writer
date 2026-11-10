@@ -142,6 +142,13 @@ pub fn parse(texte: &str) -> Document {
             continue;
         }
 
+        // L'index des citations bibliques : `{{index}}`, recalculé au rendu.
+        if !echappee && ligne.trim() == "{{index}}" {
+            blocs.push(habiller(Bloc::IndexBiblique, &mut en_attente));
+            index += 1;
+            continue;
+        }
+
         // La table des matières : `[[TOC]]` (bug-report-10, 1.3).
         if !echappee && sommaire_ligne(ligne) {
             blocs.push(habiller(Bloc::Sommaire, &mut en_attente));
@@ -302,6 +309,9 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             || (debut.starts_with('|') && cellules(ligne).is_some())
             // Une formule à part.
             || debut.starts_with("$$")
+            // L'index des citations : une balise de bloc, jamais avalée par
+            // le paragraphe qui la précède.
+            || ligne.trim() == "{{index}}"
             // Une ligne d'attributs trouvée — mais elle flotte jusqu'à son
             // bloc, et le parseur sait le reste.
             || crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
@@ -913,6 +923,22 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
             continue;
         }
 
+        if let Some((contenu, apres)) = reference_bible(reste) {
+            vider!();
+            if let Some((parties, forme)) = crate::langage::references::lire_groupe_complet(contenu)
+            {
+                match forme {
+                    Some(forme) => elements.push(Inline::BibleForme {
+                        elements: parties,
+                        forme,
+                    }),
+                    None => elements.push(Inline::Bible(parties)),
+                }
+            }
+            reste = apres;
+            continue;
+        }
+
         // Citation : `@clé`, `@clé[p. 45]`, ou un appel groupé
         // `@clé[p. 45]; @autre` qui réunit ses références dans une note.
         if let Some((references, apres)) = appel(reste) {
@@ -1053,6 +1079,14 @@ fn note(texte: &str) -> Option<(&str, &str)> {
     let (contenu, reste) = jusqu_au_crochet_fermant(apres_ouverture)?;
 
     Some((contenu, reste))
+}
+
+/// Une référence biblique entre doubles accolades : `{{Jean 3:16}}`, et un
+/// groupe : `{{Jn 3:16 ; Gn 1:1}}`. Une accolade jamais fermée n'ouvre rien.
+fn reference_bible(texte: &str) -> Option<(&str, &str)> {
+    let apres = texte.strip_prefix("{{")?;
+    let fin = apres.find("}}")?;
+    Some((&apres[..fin], &apres[fin + 2..]))
 }
 
 /// La fin d'un code inline ouvert par le backtick en `position`, s'il existe.
@@ -2014,6 +2048,22 @@ mod tests_du_sommaire {
                 Bloc::Paragraphe(vec![Inline::Texte("Du texte.".to_string())]),
                 Bloc::Sommaire,
             ]
+        );
+    }
+
+    /// L'index des citations est un bloc, même collé au paragraphe qui le
+    /// précède : sans cela, la balise serait avalée et disparaîtrait.
+    #[test]
+    fn la_ligne_index_est_un_bloc_meme_sans_ligne_vide() {
+        let doc = super::parse("Du texte.\n{{index}}\n");
+
+        assert_eq!(
+            doc.blocs,
+            vec![
+                Bloc::Paragraphe(vec![Inline::Texte("Du texte.".to_string())]),
+                Bloc::IndexBiblique,
+            ],
+            "l index reste un bloc : {doc:?}"
         );
     }
 }

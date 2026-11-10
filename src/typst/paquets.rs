@@ -1,7 +1,7 @@
 //! L'installation des paquets Typst intégrés à l'application.
 //!
 //! Le monde de rendu (voir [`crate::typst::render`]) résout les
-//! `@local/…` **localement**, depuis [`crate::project::packages_dir`] :
+//! `@local/…` **localement**, depuis [`crate::services::stockage::packages_dir`] :
 //! jamais au réseau à l'exécution. Ce module y **pose** les fichiers des
 //! paquets que l'application embarque — le glossaire glossarium en est le
 //! premier — de façon idempotente et atomique :
@@ -15,7 +15,7 @@
 use std::io::{ErrorKind, Result};
 use std::path::{Path, PathBuf};
 
-use crate::project::packages_dir;
+use crate::services::stockage::packages_dir;
 
 /// L'identité Typst du glossaire embarqué.
 pub const GLOSSARIUM: &str = "@local/glossarium:0.5.10";

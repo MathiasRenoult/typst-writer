@@ -58,6 +58,8 @@
 <tr><td>```<code> </code>`<code>typst </code>``<code> … </code>``<code> </code>`<code> </code>```</td><td>un bloc Typst brut, inséré tel quel</td></tr>
 <tr><td>trois lignes vides consécutives</td><td>un saut de page</td></tr>
 <tr><td><code>// texte</code></td><td>un commentaire — conservé dans le <code>.tw</code>, ignoré au rendu</td></tr>
+<tr><td><code>{bibliographie}</code></td><td>la bibliographie du projet, à cet endroit</td></tr>
+<tr><td><code>{{index}}</code></td><td>l&#x27;index des citations bibliques, recalculé au rendu</td></tr>
 </tbody></table>
 <p>Une <strong>ligne vide</strong> sépare les blocs. Ce qui n&#x27;est pas reconnu reste du texte — un fichier abîmé ne bloque jamais l&#x27;ouverture.</p>
 <h2>Le texte</h2>
@@ -78,6 +80,56 @@
 <p><code>@cle</code> appelle une référence de la bibliographie ; <code>@cle[p. 45]</code> porte la page. Plusieurs appels d&#x27;un geste — <code>@dupont[p. 45]; @martin</code> — ne font jamais qu&#x27;<strong>une</strong> note de bas de page, avec les deux mentions.</p>
 <p>L&#x27;appel est un <strong>glyphe numéroté</strong> — ¹, ² — dans le fil du texte, un caractère entier : il se déplace, se sélectionne et se supprime d&#x27;un seul geste. <strong>Cliquer dessus</strong> ouvre le composeur de notes ; les flèches parcourent la note puis les clés, <code>Échap</code> abandonne sans rien écrire.</p>
 <p>Voir <a href="bibliographie.md">La bibliographie</a>.</p>
+<h2>Les références bibliques</h2>
+<p>Une référence s&#x27;écrit entre doubles accolades : <code>{{Jn 3.16}}</code>. La forme standard est le **nom abrégé suivi de <code>chapitre.verset</code>** ; le livre peut aussi être nommé en entier ou en code OSIS, et les livres numérotés acceptent <code>1Jn</code> comme <code>1 Jean</code>. Les formes historiques <code>Jn 3:16</code> et <code>Jn 3,16</code> restent lues.</p>
+<p>Le bouton <strong>Référence biblique</strong> de la barre supérieure ouvre le panneau d&#x27;insertion : on y choisit un livre, un chapitre et des versets (<code>16</code>, <code>16-18</code>, <code>16, 17</code>), on ajoute autant de références que nécessaire, puis on insère <strong>une seule</strong> balise qui les porte toutes. Le champ chapitre accepte une suite de chapitres entiers, <code>1-11</code>. Un champ <strong>texte libre</strong> ajoute une mention à la fin de la citation : elle est écrite entre guillemets et rendue telle quelle, sans devenir une référence.</p>
+<pre><code>{{Genèse 3.15 ; Marc 2.8 ; Jean 3.16}}
+{{Gn 1-11}}                 → Genèse 1 à 11
+{{Jn 3.16 ; &quot;cf. aussi&quot; ; Gn 1.1}}
+</code></pre>
+<p>C&#x27;est aussi la syntaxe à connaître pour écrire une citation multiple à la main : le point-virgule sépare les membres, la virgule prolonge le membre courant (<code>{{Jn 3.16, 17 ; Rm 8.1}}</code>). Les formes relatives sont lues : <code>{{Jn 3.16 ; 17 ; 4.1}}</code>. Le texte libre se place où l&#x27;on veut entre les références, à condition d&#x27;être entre guillemets ; un point-virgule dans les guillemets ne coupe pas la citation.</p>
+<p>Un même livre n&#x27;est nommé qu&#x27;une fois : ses occurrences sont réunies et séparées par une virgule. L&#x27;ordre des livres suit leur première apparition, sauf si la norme <strong>Ranger les références dans l&#x27;ordre canonique</strong> est cochée dans l&#x27;onglet <strong>Biblique</strong> des plugins. La norme s&#x27;applique au rendu ; une balise déjà écrite garde son ordre dans la source, et le panneau d&#x27;insertion produit directement l&#x27;ordre canonique.</p>
+<pre><code>{{2 Ch 5.6 ; Js 1.9 ; 2 Ch 7.6-12}}
+→ Josué 1.9 ; 2 Chroniques 5.6, 7.6-12   (forme longue, ordre canonique)
+→ 2Ch 5.6, 7.6-12 ; Js 1.9               (forme courte, ordre du texte)
+</code></pre>
+<p>La forme d&#x27;affichage se choisit pour la balise avec un suffixe ; le panneau d&#x27;insertion propose les mêmes choix sans modifier les normes du projet :</p>
+<ul>
+<li><code>|long</code> — le nom complet, « Jean 3.16 » ;</li>
+<li><code>|court</code> — l&#x27;abréviation française, « Jn 3.16 » ;</li>
+<li><code>|osis</code> — le code OSIS, « John 3.16 » ;</li>
+<li><code>|sanspoint</code> — l&#x27;abréviation sans point.</li>
+</ul>
+<p>Sans suffixe, c&#x27;est la forme réglée pour le projet qui s&#x27;applique. Le panneau des plugins (onglet <strong>Biblique</strong>) choisit aussi les chiffres des chapitres et des versets, les séparateurs et l&#x27;ordre canonique.</p>
+<p>Une référence peut nommer sa <strong>traduction</strong> : <code>{{Jn 3.16|lsg}}</code> rend <code>Jn 3.16 (LSG)</code>, <code>{{Jn 3.16|darby}}</code> rend <code>Jn 3.16 (DARBY)</code>. La traduction se met sur chaque référence, avant le suffixe de forme de la balise s&#x27;il y en a un (<code>{{Jn 3.16|lsg|long}}</code>). Sans précision, aucune mention de traduction n&#x27;est ajoutée à la citation.</p>
+<h3>Composer sa syntaxe</h3>
+<p>Le champ <strong>Gabarit d&#x27;une référence</strong> de l&#x27;onglet <strong>Biblique</strong> décrit la forme complète d&#x27;une référence, indépendamment de la balise source qui reste <code>{{…}}</code>. Les jetons disponibles sont <code>{livre}</code>, <code>{chapitres}</code>, <code>{versets}</code>, <code>{nombres}</code>, <code>{chapitre}</code>, <code>{chapitre_fin}</code>, <code>{verset}</code>, <code>{verset_fin}</code> et <code>{reference}</code>. Par exemple :</p>
+<pre><code>{livre} {chapitre}, {verset}       →  Jn 3, 16
+({reference})                     →  (Jn 3.16)
+{chapitres}.{versets}              →  1.18
+</code></pre>
+<p>Un gabarit vide revient au standard <code>{livre} {nombres}</code>. Les formes longues, courtes, OSIS et sans point, les chiffres romains et les séparateurs se combinent avec ce gabarit.</p>
+<h3>L&#x27;index des citations</h3>
+<p>L&#x27;index s&#x27;insère avec <code>{{index}}</code> ou l&#x27;icône de la barre supérieure. Dans l&#x27;onglet <strong>Biblique</strong>, on peut :</p>
+<ul>
+<li><strong>montrer les pages</strong> où chaque référence apparaît, avec la liste des</li>
+</ul>
+<p>  pages séparées par des virgules ;</p>
+<ul>
+<li><strong>regrouper les références sous leur livre</strong> ;</li>
+<li>choisir la <strong>forme des livres dans l&#x27;index</strong> (héritée, longue, abrégée,</li>
+</ul>
+<p>  OSIS ou sans point) ;</p>
+<ul>
+<li>choisir le <strong>nombre de colonnes</strong> de l&#x27;index (1 à 4).</li>
+</ul>
+<p>Avec le regroupement, l&#x27;index ressemble à :</p>
+<pre><code>Genèse :
+- 1.18 (p. 2, 5, 6, 18)
+- 3.15 (p. 4, 5)
+</code></pre>
+<p>Les pages sont demandées à Typst au moment de la composition : ce sont les pages réelles du document, pas une estimation de l&#x27;éditeur. Une citation placée dans une note est signalée par le suffixe <code>n</code> (<code>6n</code>).</p>
+<p>Le survol d&#x27;une référence affiche son extrait après un court repos, sans touche à maintenir ; la bulle est placée au-dessus du curseur et reste dans la fenêtre. Tant qu&#x27;une fenêtre flottante est ouverte, le texte ne répond ni au survol ni au clic : le pointeur ne fait que désigner la fenêtre. Cliquer sur une balise ouvre <strong>La référence cliquée</strong> dans le panneau gauche : chaque citation y est séparée, avec son livre et son chapitre (ou sa suite de chapitres), et chacune porte <strong>son propre extrait biblique</strong>. Le crayon d&#x27;une ligne ouvre une <strong>fenêtre flottante</strong> (livre, chapitre, versets) ; <strong>Enregistrer</strong> réécrit la balise entière en conservant son texte libre et sa forme. Chercher une référence dans les statistiques donne le clavier au champ de recherche, sans écrire dans l&#x27;éditeur. La section <strong>Statistiques bibliques</strong> liste les références du document, permet de les chercher, de les trier dans l&#x27;ordre du document ou dans l&#x27;ordre canonique, et d&#x27;aller directement à leur citation d&#x27;un clic.</p>
 <h2>Le glossaire</h2>
 <p><code>{glo:cle}</code> appelle un terme du glossaire : la forme se développe à la première occurrence, les reprises gardent le sigle. Les variantes <code>pluriel</code> et <code>majuscule</code> s&#x27;écrivent après la clé — <code>{glo:sdo pluriel}</code>, <code>{glo:sdo majuscule}</code>. La liste finale se pose d&#x27;une ligne <code>{glossaire}</code>, ou <code>{glossaire: tout}</code> pour y montrer aussi les termes jamais cités.</p>
 <p>Voir <a href="glossaire.md">Le glossaire</a>.</p>
@@ -105,7 +157,7 @@ $$
 | b | 2 |
 </code></pre>
 <p><code>---</code> aligne à gauche, <code>:-:</code> au centre, <code>---:</code> à droite. Les cellules portent du texte ordinaire — emphase, code, citations ; une barre dedans s&#x27;échappe : <code>\|</code>. Sans la ligne de séparation, ce n&#x27;est pas un tableau : la ligne reste du texte.</p>
-<p><strong>Attention : dans la version actuelle</strong>, les cellules excédant le nombre de colonnes de l&#x27;en-tête sont ignorées lors de l&#x27;analyse et de la génération. Évitez les lignes irrégulières et vérifiez vos tableaux dans le PDF ; ne comptez pas sur une conservation complète à la conversion.</p>
+<p>Une ligne qui porte plus de cellules que l&#x27;en-tête <strong>élargit le tableau</strong> au lieu de perdre la fin de la ligne ; les cellules Unicode se relisent telles quelles. Vérifiez tout de même le rendu d&#x27;un tableau irrégulier dans le PDF avant de le remettre.</p>
 <p>Le décor l&#x27;habille comme tout bloc — <code>{encadré}</code> prend sa tenue dans les normes.</p>
 <h2>Les graphiques</h2>
 <p>Un graphique se déclare par un bloc <code>{graphique}</code> suivi de ses données :</p>
@@ -125,8 +177,8 @@ Mar | 15
 <p><code>encadré</code> prend dans les normes sa couleur de bordure, son épaisseur, son rayon et sa marge ; <code>plein</code> y prend son remplissage. Les noms se combinent — <code>{encadré plein}</code>. La mesure reste possible pour l&#x27;exception — <code>{encadré rayon=0pt}</code> — et elle gagne sur les normes. Voir <a href="normes.md">Les normes</a>.</p>
 <h2>L&#x27;échappement</h2>
 <p>Une barre oblique échappe le caractère qui suit : <code>\*</code>, <code>\@</code>, <code>\{</code> restent du texte, sans aucune interprétation — ni syntaxique, ni typographique. C&#x27;est la porte de sortie universelle : écrire <code>\;</code> en français donne un point-virgule nu, sans l&#x27;espace insécable que la langue y mettrait.</p>
-<h2>Ce qui passe encore par le bloc brut</h2>
-<p>Le Typst à la main reste toujours possible — c&#x27;est la porte de sortie pour ce que la couche ne couvre pas encore :</p>
+<h2>Ce qui passe par le bloc brut</h2>
+<p>Le Typst à la main reste toujours possible — c&#x27;est la porte de sortie pour ce que la couche ne couvre pas :</p>
 <pre><code>```typst
 #figure(
   table(columns: 2, [a], [b]),

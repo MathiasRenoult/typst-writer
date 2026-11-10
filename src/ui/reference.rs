@@ -10,7 +10,7 @@
 //! champs, `Entrée` enregistre, `Échap` ferme.
 
 use crate::app::Message;
-use crate::app::state::EditionReference;
+use crate::plugins::bibliographie::EditionReference;
 use crate::ui::theme::{self, Palette};
 use iced::widget::{Space, button, column, container, pick_list, row, text_input};
 use iced::{Alignment, Element, Length};
@@ -39,7 +39,7 @@ const TYPES: &[&str] = &[
 
 /// La couche d'édition : la fenêtre quand elle est ouverte, rien sinon.
 pub fn view(state: &crate::app::State) -> Element<'_, Message> {
-    let Some(edition) = state.edition_reference.as_ref() else {
+    let Some(edition) = state.plugins.bibliographie.edition.as_ref() else {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
 

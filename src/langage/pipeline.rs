@@ -115,7 +115,8 @@ pub fn compilation_unit_document_avec_diagnostics(
         &mut rapports,
     );
     let entry = ensure_default_bibliography(root, &entry, &normes);
-    let mut regles = normes.typographie.regles();
+    let mut regles = normes.typographie.regles(&normes.references);
+    regles.index = normes.index.clone();
     regles.numerotation_figures = normes.numerotation_figures.clone();
     // Les mots de la balise `{date:...}` viennent des normes (2026-11-03).
     regles.dates = crate::langage::dates::Regles {
@@ -657,7 +658,7 @@ mod tests {
         std::fs::write(root.join("references.bib"), "").expect("bibliographie");
 
         let main = format!(
-            "{}\n{}",
+            "{}\n{}\n#bibliography(\"references.bib\")\n",
             crate::mise_en_page::gabarit::accroche(),
             crate::project::model::MAIN_TEMPLATE
         );
@@ -1713,11 +1714,12 @@ mod tests {
         )
         .expect("bibliographie d'essai");
 
-        let (entry, overrides) = compilation_unit(
-            &root,
-            crate::project::MAIN_TEMPLATE,
-            "Selon @dupont2023, le résultat est établi.\n",
+        let main = format!(
+            "{}\n#bibliography(\"references.bib\")\n",
+            crate::project::MAIN_TEMPLATE
         );
+        let (entry, overrides) =
+            compilation_unit(&root, &main, "Selon @dupont2023, le résultat est établi.\n");
         assert!(entry.contains("style: \"chicago-notes\""), "{entry}");
         let outcome = crate::typst::render::compile(&root, &entry, &overrides);
 
@@ -1738,9 +1740,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Les anciens `main.typ` sans directive récupèrent le `.bib` du projet en mémoire.
+    /// Une ancienne entrée sans directive ne reçoit plus de bibliographie
+    /// automatique : l'insertion reste un geste de l'auteur.
     #[test]
-    fn une_ancienne_entree_sans_bibliographie_resout_les_citations_du_document() {
+    fn une_ancienne_entree_sans_bibliographie_n_en_recoit_pas() {
         let root = std::env::temp_dir().join(format!(
             "typst-writer-pipeline-ancienne-bibliographie-{}",
             std::process::id()
@@ -1754,23 +1757,58 @@ mod tests {
         .expect("bibliographie d'essai");
 
         let old_main = "#set page(margin: 2cm)\n";
-        let (entry, overrides) = compilation_unit(
+        let (entry, _overrides) = compilation_unit(
             &root,
             old_main,
             "Selon @dupont2023, le résultat est établi.\n",
         );
-        assert!(entry.contains("style: \"chicago-notes\""), "{entry}");
-        let outcome = crate::typst::render::compile(&root, &entry, &overrides);
+        assert!(
+            !entry.contains("#bibliography"),
+            "aucune section ne s'ajoute sans instruction : {entry}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Un projet neuf n'a ni bibliographie ni titre automatique : la
+    /// fonctionnalité active n'est qu'une autorisation, pas une insertion.
+    #[test]
+    fn un_projet_neuf_sans_directive_n_affiche_pas_de_bibliographie() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-pipeline-neuf-bibliographie-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+        std::fs::write(root.join("references.bib"), "@book{cle, title = {T}}\n")
+            .expect("bibliographie d'essai");
+        std::fs::write(root.join("main.typ"), crate::project::MAIN_TEMPLATE).expect("assemblage");
+
+        let mut normes = crate::mise_en_page::modele::MiseEnPage::default();
+        normes.bibliographie.style = Some("apa".to_string());
+        normes.bibliographie.titre_un = true;
+        crate::mise_en_page::appliquer(&root, &normes, false).expect("normes");
+
+        let (entry, corrections, rapports) = compilation_unit_avec_diagnostics(
+            &root,
+            crate::project::MAIN_TEMPLATE,
+            "Un paragraphe sans citation.\n",
+        );
 
         assert!(
-            outcome.errors.is_empty(),
-            "une entrée héritée doit trouver references.bib : {:?}",
-            outcome
-                .errors
-                .iter()
-                .map(|error| error.message.clone())
-                .collect::<Vec<_>>()
+            !entry.contains("#bibliography"),
+            "aucune directive ne s'ajoute : {entry}"
         );
+        assert!(
+            !entry.to_lowercase().contains("= bibliographie"),
+            "aucun titre ne s'ajoute : {entry}"
+        );
+        assert!(
+            !rapports
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("conflit")),
+            "aucun conflit de style sur un projet neuf : {rapports:?}"
+        );
+        let _ = corrections;
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2803,7 +2841,7 @@ mod epreuves_de_mise_en_page {
         }
 
         // Le corps : la balise date, localisée par les normes.
-        let mut regles = normes.typographie.regles();
+        let mut regles = normes.typographie.regles(&normes.references);
         regles.dates = crate::langage::dates::Regles {
             siecle: normes.dates.siecle.clone(),
             millenaire: normes.dates.millenaire.clone(),

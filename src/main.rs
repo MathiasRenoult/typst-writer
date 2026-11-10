@@ -1,4 +1,6 @@
 mod app;
+mod base;
+mod design;
 mod editor;
 // L'architecture des extensions (bug-report-7, point 4) : le registre
 // attend sa GUI (jalon 3 — le composeur cetz).
@@ -6,7 +8,9 @@ mod editor;
 mod extensions;
 mod langage;
 mod mise_en_page;
+mod plugins;
 mod project;
+mod services;
 mod theming;
 mod typst;
 mod ui;

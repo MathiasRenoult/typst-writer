@@ -38,6 +38,18 @@ pub fn generer_avec(
 ) -> String {
     let mut out = String::new();
 
+    // L'index des citations est recalculé à chaque rendu : il lit les
+    // références du document, comme la table des matières lit les titres.
+    let index = if document.blocs.iter().any(contient_index) {
+        crate::langage::index_citations::IndexBiblique::construire(
+            document,
+            &regles.references,
+            &regles.index,
+        )
+    } else {
+        crate::langage::index_citations::IndexBiblique::default()
+    };
+
     // L'import `cetz` pour les graphiques, seulement si le document en
     // contient — un import inutile alourdit le préambule.
     let a_graphique = document
@@ -49,10 +61,19 @@ pub fn generer_avec(
     }
 
     for bloc in &document.blocs {
-        generer_bloc(bloc, &mut out, regles, decor);
+        generer_bloc(bloc, &mut out, regles, decor, &index);
     }
 
     out
+}
+
+/// Le document contient-il un index biblique, même sous un décor ?
+fn contient_index(bloc: &Bloc) -> bool {
+    match bloc {
+        Bloc::IndexBiblique => true,
+        Bloc::Décor { bloc, .. } => contient_index(bloc),
+        _ => false,
+    }
 }
 
 /// Génère un bloc, suivi d'une ligne vide — la séparation de blocs de Typst.
@@ -91,6 +112,21 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             | Inline::Litteral(texte)
             | Inline::Code(texte)
             | Inline::Formule(texte) => texte.chars().next(),
+            Inline::Bible(elements) => crate::langage::references::afficher_elements(
+                elements,
+                &crate::mise_en_page::modele::References::default(),
+            )
+            .chars()
+            .next(),
+            Inline::BibleForme { elements, forme } => {
+                crate::langage::references::afficher_elements_forme(
+                    elements,
+                    &crate::mise_en_page::modele::References::default(),
+                    Some(*forme),
+                )
+                .chars()
+                .next()
+            }
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)
@@ -119,6 +155,7 @@ fn generer_bloc(
     out: &mut String,
     regles: &Regles,
     decor: &crate::mise_en_page::modele::Decor,
+    index: &crate::langage::index_citations::IndexBiblique,
 ) {
     // La typographie court sur **tout le bloc** : le niveau des guillemets
     // et les espaces traversent les éléments, jamais isolés.
@@ -264,7 +301,7 @@ fn generer_bloc(
             out.push_str(")[\n");
 
             let mut interieur = String::new();
-            generer_bloc(bloc, &mut interieur, regles, decor);
+            generer_bloc(bloc, &mut interieur, regles, decor, index);
             out.push_str(interieur.trim_end());
 
             out.push_str("\n]\n\n");
@@ -290,6 +327,9 @@ fn generer_bloc(
             // cette place — le branchement du pipeline y pose les vrais
             // fichiers (bug-report-9).
             out.push_str("#bibliography(\"references.bib\", full: true)\n\n");
+        }
+        Bloc::IndexBiblique => {
+            out.push_str(&index.rendre_typst());
         }
         Bloc::Graphique {
             type_,
@@ -337,6 +377,20 @@ fn generer_inline(
     regles: &Regles,
     contexte: &mut crate::langage::typographie::Contexte,
 ) {
+    generer_inline_dans(inline, out, debut_de_ligne, regles, contexte, false);
+}
+
+/// Le même générateur, avec le savoir « suis-je dans une note ? ». Les
+/// citations d'une note portent un repère distinct : l'index peut alors
+/// marquer leur page d'un `n`, comme `6n`.
+fn generer_inline_dans(
+    inline: &[Inline],
+    out: &mut String,
+    debut_de_ligne: bool,
+    regles: &Regles,
+    contexte: &mut crate::langage::typographie::Contexte,
+    dans_note: bool,
+) {
     let mut en_tete = debut_de_ligne;
 
     for (rang, element) in inline.iter().enumerate() {
@@ -346,6 +400,26 @@ fn generer_inline(
         contexte.suivant_texte = premier_texte(&inline[rang + 1..]);
 
         match element {
+            Inline::Bible(elements) => {
+                out.push_str(&crate::langage::references::afficher_elements_typst(
+                    elements,
+                    &regles.references,
+                    None,
+                ));
+                out.push_str(&crate::langage::index_citations::reperes_typst(
+                    elements, dans_note,
+                ));
+            }
+            Inline::BibleForme { elements, forme } => {
+                out.push_str(&crate::langage::references::afficher_elements_typst(
+                    elements,
+                    &regles.references,
+                    Some(*forme),
+                ));
+                out.push_str(&crate::langage::index_citations::reperes_typst(
+                    elements, dans_note,
+                ));
+            }
             Inline::Texte(texte) => {
                 // La typographie de la langue d'abord, l'échappement Typst
                 // ensuite — et l'insécable devient `~`. Un tilde tapé, lui,
@@ -378,31 +452,31 @@ fn generer_inline(
             }
             Inline::Gras(contenu) => {
                 out.push('*');
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
                 out.push('*');
                 en_tete = false;
             }
             Inline::Italique(contenu) => {
                 out.push('_');
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
                 out.push('_');
                 en_tete = false;
             }
             Inline::GrasItalique(contenu) => {
                 out.push_str("*_");
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
                 out.push_str("_*");
                 en_tete = false;
             }
             Inline::Souligne(contenu) => {
                 out.push_str("#underline[");
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
                 out.push(']');
                 en_tete = false;
             }
             Inline::Barre(contenu) => {
                 out.push_str("#strike[");
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
                 out.push(']');
                 en_tete = false;
             }
@@ -448,7 +522,7 @@ fn generer_inline(
                 out.push_str("#text(fill: ");
                 out.push_str(&expression_couleur(couleur));
                 out.push_str(")[");
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
                 out.push(']');
                 en_tete = false;
             }
@@ -458,7 +532,7 @@ fn generer_inline(
             }
             Inline::Note(contenu) => {
                 out.push_str("#footnote[");
-                generer_inline(contenu, out, false, regles, contexte);
+                generer_inline_dans(contenu, out, false, regles, contexte, true);
                 out.push(']');
                 en_tete = false;
             }
@@ -471,7 +545,7 @@ fn generer_inline(
                 out.push_str("#link(\"");
                 echapper_chaine(cible, out);
                 out.push_str("\")[");
-                generer_inline(texte, out, false, regles, contexte);
+                generer_inline_dans(texte, out, false, regles, contexte, dans_note);
                 out.push(']');
                 en_tete = false;
             }
@@ -817,7 +891,7 @@ mod tests {
     /// C'est la seule preuve qui vaille pour un générateur : le texte peut être
     /// bien formé et refusé, ou l'inverse. On compile l'assemblage minimal —
     /// un `#include` du chapitre — avec le texte en mémoire.
-    fn compiler(typst: &str) -> crate::typst::render::CompileOutcome {
+    pub(crate) fn compiler(typst: &str) -> crate::typst::render::CompileOutcome {
         let root = PathBuf::from("/projet");
         let entry = "#include \"chapitre.typ\"\n".to_string();
         let overrides = vec![(root.join("chapitre.typ"), typst.to_string())];
@@ -1516,5 +1590,127 @@ mod tests_glossaire {
             typst.contains("#print-glossary(tw-glossaire, show-all: true)"),
             "{typst}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_de_l_index_des_citations {
+    use super::*;
+    use crate::langage::typographie::Regles;
+    use crate::mise_en_page::modele::{Decor, SystemeAbreviation};
+    /// L'index suit la forme de livre choisie pour le document, et non une
+    /// abréviation figée dans le générateur.
+    #[test]
+    fn l_index_suit_la_forme_des_livres() {
+        let document = crate::langage::parse::parse("{{Jn 3:16}}\n\n{{index}}\n");
+        let mut regles = Regles::aucune();
+        regles.references.livre = SystemeAbreviation::FrancaiseLongue;
+
+        let typst = generer_avec(&document, &regles, &Decor::default());
+
+        assert!(typst.contains("- Jean 3.16"), "{typst}");
+        assert!(!typst.contains("- Jn 3:16"), "{typst}");
+    }
+
+    /// Le texte libre d'une citation est rendu comme du texte : un `#` ou
+    /// un `*` ne doit jamais devenir une commande Typst.
+    #[test]
+    fn le_texte_libre_ne_devient_pas_du_balisage() {
+        let document = crate::langage::parse("{{Jn 3.16 ; \"cf. #aussi\"}}\n");
+        let typst = generer_avec(&document, &Regles::aucune(), &Decor::default());
+
+        assert!(typst.contains("cf. \\#aussi"), "{typst}");
+        assert!(!typst.contains("cf. #aussi"), "{typst}");
+    }
+
+    /// Un index paginé pose ses repères et sa requête Typst : le tout doit
+    /// réellement compiler, pages comprises.
+    #[test]
+    fn l_index_pagine_se_compile() {
+        let document = crate::langage::parse("{{Jn 3.16 ; Gn 1.1}}\n\n{{index}}\n");
+        let mut regles = Regles::aucune();
+        regles.index = crate::mise_en_page::modele::IndexCitations {
+            afficher_pages: true,
+            regrouper_par_livre: true,
+            forme: Some(crate::mise_en_page::modele::SystemeAbreviation::FrancaiseLongue),
+            ..Default::default()
+        };
+        let typst = generer_avec(&document, &regles, &Decor::default());
+
+        assert!(
+            typst.contains("#metadata(\"John|3|3|16|16\") <tw-citation>"),
+            "{typst}"
+        );
+        assert!(typst.contains("[Genèse :]"), "{typst}");
+        assert!(typst.contains("[Jean :]"), "{typst}");
+        let sortie = super::tests::compiler(&typst);
+        assert!(
+            sortie.errors.is_empty(),
+            "l'index paginé ne compile pas : {:?} ({typst:?})",
+            sortie.errors
+        );
+    }
+
+    /// Une citation en note porte le repère `tw-citation-note` : sa page
+    /// sera écrite `6n` dans l'index.
+    #[test]
+    fn une_citation_en_note_porte_son_repere() {
+        let document = crate::langage::parse("Une note ^[{{Jn 3.16}}].\n\n{{index}}\n");
+        let mut regles = Regles::aucune();
+        regles.index = crate::mise_en_page::modele::IndexCitations {
+            afficher_pages: true,
+            ..Default::default()
+        };
+        let typst = generer_avec(&document, &regles, &Decor::default());
+
+        assert!(
+            typst.contains("#metadata(\"John|3|3|16|16\") <tw-citation-note>"),
+            "{typst}"
+        );
+        assert!(
+            typst.contains("sorted(key: p => p.at(0))"),
+            "les pages doivent être rangées dans l'ordre : {typst}"
+        );
+        assert!(
+            typst.contains("if p.at(1) { \"n\" }"),
+            "une citation en note doit porter le suffixe n : {typst}"
+        );
+        let sortie = super::tests::compiler(&typst);
+        assert!(
+            sortie.errors.is_empty(),
+            "l'index avec une note ne compile pas : {:?} ({typst:?})",
+            sortie.errors
+        );
+    }
+
+    /// Un index en colonnes compile : la disposition est demandée à Typst.
+    #[test]
+    fn l_index_en_colonnes_se_compile() {
+        let document = crate::langage::parse("{{Jn 3.16 ; Gn 1.1}}\n\n{{index}}\n");
+        let mut regles = Regles::aucune();
+        regles.index = crate::mise_en_page::modele::IndexCitations {
+            colonnes: 2,
+            regrouper_par_livre: true,
+            ..Default::default()
+        };
+        let typst = generer_avec(&document, &regles, &Decor::default());
+
+        assert!(typst.contains("#columns(2)["), "{typst}");
+        let sortie = super::tests::compiler(&typst);
+        assert!(
+            sortie.errors.is_empty(),
+            "l'index en colonnes ne compile pas : {:?} ({typst:?})",
+            sortie.errors
+        );
+    }
+
+    /// Une traduction écrite dans la citation est rendue, et seulement elle.
+    #[test]
+    fn une_traduction_explicite_est_dans_le_rendu() {
+        let document = crate::langage::parse("{{Jn 3.16|darby}}\n");
+        let typst = generer_avec(&document, &Regles::aucune(), &Decor::default());
+
+        assert!(typst.contains("Jn 3.16 (DARBY)"), "{typst}");
+        assert!(!typst.contains("Jn 3.16 (LSG)"), "{typst}");
     }
 }

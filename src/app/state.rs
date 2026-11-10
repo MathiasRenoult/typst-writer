@@ -150,9 +150,9 @@ pub struct Importation {
 pub struct State {
     /// La liste de complétion ouverte — locale (feuille de route, phase 1).
     pub completion: Option<Completion>,
-    /// Les normes appliquées du projet : l' + q + 'interface y lit les
+    /// Les normes appliquées du projet : l'interface y lit les
     /// fonctionnalités branchées pour montrer ou cacher leurs gestes
-    /// (demande de l' + q + 'auteur).
+    /// (demande de l'auteur).
     pub reglages: crate::mise_en_page::modele::MiseEnPage,
     /// Les rendus partagés par empreinte de texte : un seul PDF par
     /// fichier, quelle que soit la fenêtre qui le montre (bug-report-10).
@@ -176,6 +176,10 @@ pub struct State {
     /// Les étagères des projets, chargées avec la liste — jamais par la
     /// vue (feuille de route, phase 4, point 4.1).
     pub etageres: std::collections::BTreeMap<String, String>,
+    /// L'état des plugins de la vue active : le biblique y range son
+    /// panneau, sa référence cliquée et son analyse ; `Vue::echanger` le fait
+    /// voyager avec l'onglet.
+    pub plugins: crate::plugins::Plugins,
 
     /// Entrées de bibliographie citables (le `.bib` du projet).
     pub bibliography: Vec<BibliographyEntry>,
@@ -191,8 +195,11 @@ pub struct State {
     /// dans un journal que personne ne lit.
     pub note: Option<Note>,
 
-    /// Le verrou du projet, s'il est tenu. Sans lui, rien ne s'écrit :
-    /// deux instances ne s'écrasent jamais leur texte.
+    /// Le verrou du projet avant l'initialisation de l'espace.
+    ///
+    /// `initialiser_espace` le déplace dans `espace.verrous`, indexé par
+    /// dossier : après ce point, ce champ est `None` et la table des verrous
+    /// fait foi. `projet_verrouille` consulte les deux.
     pub verrou: Option<crate::project::Verrou>,
 
     /// Le dialogue de projet ouvert — créer, ou renommer `cible`.
@@ -205,11 +212,6 @@ pub struct State {
     /// remplacer le contenu de l'onglet actif.
     pub maj_tenu: bool,
 
-    /// La liste des références est-elle repliée ?
-    pub references_repliees: bool,
-    /// Le filtre de la liste des références — elle se cherche.
-    pub references_filtre: String,
-
     /// Les projets ouverts, en onglets. Le premier est le courant tant
     /// qu'un autre n'est pas choisi — chaque projet garde son monde : sa
     /// bibliographie, ses normes, sa session.
@@ -217,10 +219,6 @@ pub struct State {
 
     /// La recherche dans les collections Zotero.
     pub zotero_recherche: String,
-
-    /// La référence survolée dans la bibliothèque — ses gestes ne
-    /// paraissent qu'à ce moment (bug 13 du rapport 2).
-    pub survol_reference: Option<String>,
 
     /// L'onglet survolé, pour n'en montrer le × qu'à ce moment-là.
     pub survol_onglet: Option<u64>,
@@ -245,13 +243,16 @@ pub struct State {
     pub projets_tous: bool,
     /// La recherche dans la liste des projets.
     pub projets_recherche: String,
-    /// La recherche des références ne se montre que sur son icône
-    /// (bug-report 2026-11-03).
-    pub references_recherche_visible: bool,
     /// La recherche des projets idem.
     pub projets_recherche_visible: bool,
     /// L'entrée de sommaire survolée : le texte se teinte sous la main.
     pub survol_sommaire: Option<usize>,
+    /// Le sommaire du panneau, replié par l'auteur.
+    pub sommaire_replie: bool,
+    /// La section « Chapitres » (projet ancien), repliée par l'auteur.
+    pub chapitres_replie: bool,
+    /// La section « Projets » du panneau, repliée par l'auteur.
+    pub projets_section_replie: bool,
     /// L'étagère choisie à la liste des projets — « Mon étagère »,
     /// « Tous », ou le nom d'une étagère : un menu, pas une bascule.
     pub projets_etage: String,
@@ -287,6 +288,12 @@ pub struct State {
 
     /// Le geste attendu vient d'être confirmé : il passe au travers de la
     /// question, qui ne se reposera pas.
+    ///
+    /// Drapeau à usage unique : `ConfirmationConfirmer` le pose, rejoue
+    /// l'action, puis le remet à `false`. Les gestionnaires destructeurs le
+    /// consomment eux-mêmes avant d'exécuter ; le rejeu le retombe dans tous
+    /// les cas, pour qu'une action confirmée non destructrice n'arme pas la
+    /// suppression suivante.
     pub geste_confirme: bool,
 
     /// Le changement extérieur dont l'écrasement a été refusé, identifié par
@@ -357,36 +364,6 @@ pub struct State {
     /// L'overlay de note de bas de page : son contenu et la plage qu'il remplace.
     pub note_overlay: Option<NoteOverlay>,
 
-    /// La fenêtre d'édition d'une référence, si elle est ouverte.
-    ///
-    /// Seule une **bibliothèque locale** s'édite : une notice Zotero est à
-    /// Zotero, et la synchronisation la reprendrait de toute façon.
-    pub edition_reference: Option<EditionReference>,
-
-    /// Les entrées du glossaire du projet (`glossaire.toml`), dans
-    /// l'ordre de l'auteur.
-    pub glossaire: Vec<crate::project::glossaire::EntreeGlossaire>,
-
-    /// La recherche du glossaire est-elle visible ? (Elle ne se montre
-    /// que sur son icône — bug-report 2026-11-03.)
-    pub glossaire_recherche_visible: bool,
-
-    /// La liste du glossaire est-elle repliée ?
-    pub glossaire_replie: bool,
-
-    /// Le filtre de la liste du glossaire — elle se cherche.
-    pub glossaire_filtre: String,
-
-    /// L'entrée survolée — ses gestes ne paraissent qu'alors.
-    pub survol_glossaire: Option<String>,
-
-    /// La fiche d'édition d'une entrée, ouverte ou non.
-    /// La fenêtre du glossaire est-elle ouverte ? Sa liste, ses gestes
-    /// (bug-report-10, 5.3).
-    pub glossaire_fenetre: bool,
-
-    pub edition_glossaire: Option<EditionGlossaire>,
-
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 
@@ -398,7 +375,7 @@ pub struct State {
     pub jump: Option<(usize, usize)>,
 
     /// Thème : choix de l'utilisateur et préférence détectée du système.
-    pub theme: crate::ui::theme::ThemeMode,
+    pub theme: crate::base::theme::ThemeMode,
 
     /// Les thèmes disponibles : les natifs, puis les fichiers locaux.
     pub themes: Vec<crate::theming::Theme>,
@@ -423,11 +400,11 @@ pub struct State {
     /// Résolu une fois par changement, et non à chaque image : construire le
     /// thème iced et la palette de coloration n'est pas gratuit, et rien ne
     /// changerait d'une image à l'autre.
-    pub resolved: crate::ui::theme::Resolved,
+    pub resolved: crate::design::theme::Resolved,
 
     /// Mode rapporté par le système, `None` s'il n'a pas encore été lu ou
     /// n'exprime aucune préférence.
-    pub system_theme: crate::ui::theme::SystemMode,
+    pub system_theme: crate::design::theme::SystemMode,
 }
 
 /// Un renommage de chapitre en cours.
@@ -452,6 +429,9 @@ pub struct DialogueMiseEnPage {
 
     /// Le nom du profil de métadonnées à enregistrer (bug-report-10, 4.1).
     pub profil_nom: String,
+
+    /// Le panneau des plugins est-il ouvert, plutôt que les normes ?
+    pub plugins: bool,
 
     /// Le panneau ouvert : 0 la mise en page, 1 la typographie.
     pub panneau: usize,
@@ -503,60 +483,6 @@ pub struct NoteOverlay {
     /// La plage en octets que la note occupe dans le document.
     pub debut: usize,
     pub fin: usize,
-}
-
-/// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
-/// bouge pas : elle est citée dans les documents, la changer les casserait.
-#[derive(Debug, Clone)]
-pub struct EditionReference {
-    /// La clé de citation. Immuable dans une notice — elle est citée — et
-    /// libre dans une notice neuve.
-    pub cle: String,
-
-    /// Le type de document : `book`, `article`, `inproceedings`…
-    pub kind: String,
-
-    /// Le nom de l'auteur.
-    pub nom: String,
-    /// Son prénom.
-    pub prenom: String,
-    /// Le titre de l'œuvre.
-    pub titre: String,
-    /// Le titre court, celui des notes serrées.
-    pub titre_court: String,
-    /// L'année, si elle est là.
-    pub annee: String,
-    /// La maison d'édition.
-    pub editeur: String,
-    /// Le lieu de parution.
-    pub lieu: String,
-
-    /// Une notice neuve, pas encore écrite : la clé se choisit.
-    pub creation: bool,
-    /// La bibliographie est-elle locale ? Seule une bibliothèque locale
-    /// s'écrit ; une notice Zotero se lit, jamais.
-    pub locale: bool,
-}
-
-/// L'édition d'une entrée de glossaire : la fiche du panneau gauche.
-#[derive(Debug, Clone)]
-pub struct EditionGlossaire {
-    /// La clé — identifiant, appelée par `{glo:clé}`. Immuable en
-    /// édition : elle est déjà citée dans les textes.
-    pub cle: String,
-    /// La forme courte : sigle, abréviation.
-    pub court: String,
-    /// La forme longue — développée à la première occurrence.
-    pub long: String,
-    /// La définition, après le terme dans la liste finale.
-    pub description: String,
-    /// Les formes plurielles.
-    pub pluriel_court: String,
-    pub pluriel_long: String,
-    /// Le groupe : la rubrique de la liste finale.
-    pub groupe: String,
-    /// Une entrée neuve, pas encore écrite : la clé se choisit.
-    pub creation: bool,
 }
 
 /// Ce que l'application vient de dire.

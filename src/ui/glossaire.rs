@@ -10,7 +10,7 @@
 //! champs, `Entrée` enregistre, `Échap` ferme.
 
 use crate::app::Message;
-use crate::app::state::EditionGlossaire;
+use crate::plugins::glossaire::EditionGlossaire;
 use crate::ui::theme::{self, Palette};
 use iced::widget::{Space, button, column, container, row, text_input};
 use iced::{Alignment, Element, Length};
@@ -24,9 +24,13 @@ pub fn id_premier_champ() -> iced::widget::Id {
     iced::widget::Id::new("glossaire-premier-champ")
 }
 
+/// Largeur des boutons du pied : le libellé reste entier, même quand la
+/// fenêtre est étroite.
+const LARGEUR_BOUTON: f32 = 104.0;
+
 /// La couche d'édition : la fenêtre quand elle est ouverte, rien sinon.
 pub fn view(state: &crate::app::State) -> Element<'_, Message> {
-    let Some(edition) = state.edition_glossaire.as_ref() else {
+    let Some(edition) = state.plugins.glossaire.edition.as_ref() else {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
 
@@ -126,7 +130,7 @@ fn fenetre<'a>(edition: &'a EditionGlossaire, palette: Palette) -> Element<'a, M
 
     let mut pied = row![
         palette
-            .label("Tab : suivant · Entrée : enregistrer · Échap : fermer")
+            .label("Tab · Entrée · Échap")
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
         Space::new().width(Length::Fill),
@@ -138,6 +142,7 @@ fn fenetre<'a>(edition: &'a EditionGlossaire, palette: Palette) -> Element<'a, M
         pied = pied.push(
             button(palette.label("Supprimer").size(theme::jetons::CORPS))
                 .on_press(Message::GlossaireSupprimer(edition.cle.clone()))
+                .width(Length::Fixed(LARGEUR_BOUTON))
                 .padding([6, 12]),
         );
     }
@@ -145,11 +150,13 @@ fn fenetre<'a>(edition: &'a EditionGlossaire, palette: Palette) -> Element<'a, M
     pied = pied.push(
         button(palette.label("Fermer").size(theme::jetons::CORPS))
             .on_press(Message::EditionGlossaireFermer)
+            .width(Length::Fixed(LARGEUR_BOUTON))
             .padding([6, 12]),
     );
     pied = pied.push(
         button(palette.label("Enregistrer").size(theme::jetons::CORPS))
             .on_press(Message::EditionGlossaireEnregistrer)
+            .width(Length::Fixed(LARGEUR_BOUTON))
             .padding([6, 12]),
     );
 

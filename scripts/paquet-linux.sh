@@ -32,6 +32,7 @@ mkdir -p "$dossier/bin" \
 
 cp target/release/typst-writer "$dossier/bin/typst-writer"
 cp README.md CHANGELOG.md "$dossier/share/doc/typst-writer/"
+cp -r docs/guide "$dossier/share/doc/typst-writer/guide"
 if [ -f LICENSE ]; then
     cp LICENSE "$dossier/share/doc/typst-writer/"
 fi

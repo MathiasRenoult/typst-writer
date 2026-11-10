@@ -85,8 +85,9 @@ impl Glossaire {
         Self::lire(&Self::chemin(root))
     }
 
-    /// La lecture d'un fichier. Jamais d'erreur à l'écran : le glossaire
-    /// vide, et l'auteur voit son fichier intact sur le disque.
+    /// La lecture d'un fichier. Une absence est un glossaire vide ; un
+    /// fichier illisible rend aussi un glossaire vide, mais [`Self::sauver`]
+    /// refusera de l'écraser tant qu'il reste illisible.
     pub fn lire(chemin: &Path) -> Self {
         let Ok(texte) = std::fs::read_to_string(chemin) else {
             return Self::default();
@@ -96,10 +97,32 @@ impl Glossaire {
 
     /// L'écriture, entière et atomique : la bourse du fichier ne se vide
     /// jamais entre le début et la fin de l'écriture.
+    ///
+    /// Si un fichier existe déjà mais ne se lit pas ou ne se parse pas, la
+    /// sauvegarde est **refusée** : remplacer un glossaire abîmé par le
+    /// glossaire vide affiché perdrait le travail de l'auteur.
     pub fn sauver(&self, root: &Path) -> std::io::Result<()> {
+        let chemin = Self::chemin(root);
+
+        match std::fs::read_to_string(&chemin) {
+            Ok(texte) => {
+                toml::from_str::<Glossaire>(&texte).map_err(|erreur| {
+                    std::io::Error::other(format!(
+                        "glossaire existant illisible, sauvegarde refusée : {erreur}"
+                    ))
+                })?;
+            }
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => {}
+            Err(erreur) => {
+                return Err(std::io::Error::other(format!(
+                    "glossaire existant illisible, sauvegarde refusée : {erreur}"
+                )));
+            }
+        }
+
         let texte = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::other(format!("glossaire non sérialisable : {e}")))?;
-        crate::project::ecrire_atomique(&Self::chemin(root), &texte)
+        crate::services::stockage::ecrire_atomique(&chemin, &texte)
     }
 
     /// L'entrée d'une clé.
@@ -219,8 +242,13 @@ mod tests {
         let glossaire = Glossaire::charger(&root);
         assert!(glossaire.entrees.is_empty(), "le vide, sans panique");
         assert!(
-            root.join(FICHIER).is_file(),
-            "le fichier de l'auteur survit"
+            glossaire.sauver(&root).is_err(),
+            "la sauvegarde refuse d'écraser un fichier abîmé"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(FICHIER)).expect("fichier"),
+            "ceci n'est pas du toml [[[",
+            "le fichier de l'auteur survit intact"
         );
 
         let _ = std::fs::remove_dir_all(&root);

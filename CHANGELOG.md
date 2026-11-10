@@ -1,10 +1,116 @@
 # Journal des versions
 
-> Les notes historiques ci-dessous reflètent les annonces de publication ;
-> elles ne constituent pas une validation des fonctionnalités. L'audit
-> ultérieur et les limites constatées sont documentés dans l'audit avant
-> bêta — **document de développement local**, volontairement hors dépôt
-> avec le reste du suivi de travail.
+Les versions sont classées de la plus récente à la plus ancienne. Chaque
+entrée décrit les fonctionnalités et les corrections livrées avec la version
+correspondante.
+
+## 0.5.0 — les plugins à leur place, les références au clair (2026-11-11)
+
+### Le panneau de travail
+
+- Le panneau gauche s'ouvre sur un bloc **Repères** : nom du document,
+  volume, références bibliques, notices et termes du glossaire. Le
+  sommaire, les chapitres et les autres sections viennent ensuite.
+- Les titres de section sont unifiés — chevron, repli, séparateur — et
+  Sommaire, Chapitres, Projets, Bibliographie, Glossaire et Statistiques
+  se replient indépendamment.
+- Les guides du sommaire ne coupent plus le trait entre deux enfants d'un
+  même parent.
+
+### Les références bibliques
+
+- Une balise peut porter une **liste de versets** : `{{Jn 3.16, 17 ; Rm 8.1}}`
+  mêle versets du même chapitre et livres différents.
+- La forme d'affichage se choisit par balise avec `|long`, `|court`, `|osis`
+  ou `|sanspoint` ; les formes relatives (`{{Jn 3.16 ; 17 ; 4.1}}`) sont
+  lues. Le standard est le nom abrégé et le point (`Jn 3.16`).
+- Un même livre n'est nommé qu'une fois, ses occurrences sont séparées par
+  une virgule ; l'onglet **Biblique** des plugins propose l'ordre canonique.
+  Les chapitres entiers s'écrivent `{{Gn 1-11}}` et se rendent
+  « Genèse 1 à 11 ».
+- Le texte libre entre guillemets reste dans la citation
+  (`{{Jn 3.16 ; "cf. aussi" ; Gn 1.1}}`), et le panneau d'insertion offre un
+  champ pour l'ajouter.
+- Le **gabarit de citation** se règle dans l'onglet Biblique : jetons
+  `{livre}`, `{chapitres}`, `{versets}`, `{nombres}`, `{chapitre}`,
+  `{chapitre_fin}`, `{verset}`, `{verset_fin}`, `{reference}`.
+- L'**index des citations** gagne ses réglages : pages réelles demandées à
+  Typst, regroupement par livre, forme des livres propre à l'index, nombre
+  de colonnes (1 à 4) et suffixe `n` pour les citations en note.
+- Le bouton **Référence biblique** ouvre un panneau de construction : livre,
+  chapitre, versets (`16`, `16-18`, `16, 17`), plusieurs références, puis
+  **une seule** balise qui les porte toutes.
+- Le panneau propose la forme longue, abrégée avec ou sans points, OSIS ou
+  l'héritage des normes ; ce choix ponctuel ne modifie pas le projet.
+- **La référence cliquée** sépare les citations dans le panneau gauche,
+  montre le livre et le chapitre de chacune, et son crayon ouvre une fenêtre
+  flottante pour modifier une référence sans quitter le document.
+- Les **statistiques bibliques** listent les références réellement citées,
+  avec leur nombre d'occurrences — la mémoire des versets du document, pas
+  un classement des livres. Elles se cherchent, se trient dans l'ordre du
+  document ou dans l'ordre canonique, et un clic place le curseur sur la
+  citation.
+- L'**index des citations** s'insère par l'icône de la barre supérieure ou
+  la balise `{{index}}`, et se recalcule au rendu, comme la table des
+  matières.
+- Le survol d'un verset n'exige plus Ctrl : après un court repos, une boîte
+  de largeur maximale 420 px s'affiche au-dessus du curseur, centrée, et
+  bascule dessous si le haut manque de place. Le verset montré est celui qui
+  se trouve sous la souris, y compris dans une liste.
+
+### Les plugins et la bibliographie
+
+- Les **normes** gardent l'activation et la désactivation des add-ons.
+  Les paramètres des plugins ont leur propre panneau, ouvert par le bouton
+  correspondant de la barre d'outils : Bibliographie, Biblique, Glossaire
+  et Graphiques. Il reprend la fenêtre des normes — mêmes dimensions, même
+  rail, même pied — et se distingue par son contenu seul.
+- L'icône des **normes** n'est plus marquée active quand ce panneau est
+  ouvert ; chaque icône ne l'est que pour son propre panneau.
+- Le style bibliographique, l'import `.csl`, les styles Zotero et la forme
+  des références bibliques sont dans ce panneau, plus dans les normes.
+- La forme des livres, les chiffres (arabes ou romains) et les séparateurs
+  se règlent pour le projet. Une traduction ne s'affiche dans une citation
+  que si celle-ci la nomme (`{{Jn 3.16|lsg}}`, `{{Jn 3.16|darby}}`).
+- Une bibliographie ne s'ajoute plus dans le dos de l'auteur : ni le modèle
+  de projet ni le branchement automatique ne posent `#bibliography` sans
+  directive explicite. Le `.bib` seul n'est pas une instruction.
+
+### L'écriture et l'interface
+
+- Le sélecteur de couleur rapide prévisualise ; seule l'application écrit
+  la balise, une fois, puis ferme.
+- Les couleurs explicites (`#text(fill: …)`) ne sont plus écrasées par le
+  gabarit.
+- Toute fenêtre au premier plan bloque les clics derrière elle, et le
+  glossaire n'ouvre qu'une fenêtre à la fois — liste ou fiche.
+- La complétion ne s'ouvre plus sur `{` : la référence biblique s'ouvre
+  par un geste explicite, et le curseur se pose entre les accolades.
+- Les déclencheurs de guillemets se personnalisent (ouvrants et fermants) ;
+  la paire produite reste celle du niveau d'imbrication.
+- Le panneau des plugins et les fenêtres se conduisent au clavier, avec le
+  focus pris à l'ouverture.
+
+### Qualité
+
+- L'application est découpée en modules (`base`, `design`, `services`,
+  `plugins`, routeurs d'application) ; le dispatch central perd les
+  familles de messages au profit de routeurs dédiés.
+- Les états de plugins vivent par vue et suivent les changements d'onglet.
+- Les portes de vérification sont dans la CI : `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo deny check` et la
+  batterie applicative.
+- **598 tests réussis / 160 ignorés**, batterie **140/140**, clippy zéro.
+
+## 0.4.0 — une base de travail complète (2026-11-07)
+
+Version de transition : l'assistance à la frappe passe par **tinymist**,
+facultatif, l'application est découpée en modules (`rendu`,
+`rasterisation`, `saisie`, `fichiers`, `projet_dialogue`), les diagnostics
+du compilateur entrent dans le produit et la découverte des polices passe
+par `fontdb`. Cette version a été publiée sans notes détaillées ; les
+fonctionnalités R1–R8 restent décrites dans la section 0.3.0-alpha.3
+ci-dessous.
 
 ## 0.3.0-alpha.3 — le coffre-fort des documents et le quotidien
 

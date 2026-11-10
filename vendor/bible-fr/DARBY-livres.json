@@ -1,0 +1,398 @@
+[
+ {
+  "osis": "Gen",
+  "nom": "Genèse",
+  "abreviation": "Gen",
+  "testament": "OT"
+ },
+ {
+  "osis": "Exod",
+  "nom": "Exode",
+  "abreviation": "Exod",
+  "testament": "OT"
+ },
+ {
+  "osis": "Lev",
+  "nom": "Lévitique",
+  "abreviation": "Lev",
+  "testament": "OT"
+ },
+ {
+  "osis": "Num",
+  "nom": "Nombres",
+  "abreviation": "Num",
+  "testament": "OT"
+ },
+ {
+  "osis": "Deut",
+  "nom": "Deutéronome",
+  "abreviation": "Deut",
+  "testament": "OT"
+ },
+ {
+  "osis": "Josh",
+  "nom": "Josué",
+  "abreviation": "Josh",
+  "testament": "OT"
+ },
+ {
+  "osis": "Judg",
+  "nom": "Juges",
+  "abreviation": "Judg",
+  "testament": "OT"
+ },
+ {
+  "osis": "Ruth",
+  "nom": "Ruth",
+  "abreviation": "Ruth",
+  "testament": "OT"
+ },
+ {
+  "osis": "1Sam",
+  "nom": "1 Samuel",
+  "abreviation": "1Sam",
+  "testament": "OT"
+ },
+ {
+  "osis": "2Sam",
+  "nom": "2 Samuel",
+  "abreviation": "2Sam",
+  "testament": "OT"
+ },
+ {
+  "osis": "1Kgs",
+  "nom": "1 Rois",
+  "abreviation": "1Kgs",
+  "testament": "OT"
+ },
+ {
+  "osis": "2Kgs",
+  "nom": "2 Rois",
+  "abreviation": "2Kgs",
+  "testament": "OT"
+ },
+ {
+  "osis": "1Chr",
+  "nom": "1 Chroniques",
+  "abreviation": "1Chr",
+  "testament": "OT"
+ },
+ {
+  "osis": "2Chr",
+  "nom": "2 Chroniques",
+  "abreviation": "2Chr",
+  "testament": "OT"
+ },
+ {
+  "osis": "Ezra",
+  "nom": "Esdras",
+  "abreviation": "Ezra",
+  "testament": "OT"
+ },
+ {
+  "osis": "Neh",
+  "nom": "Néhémie",
+  "abreviation": "Neh",
+  "testament": "OT"
+ },
+ {
+  "osis": "Esth",
+  "nom": "Esther",
+  "abreviation": "Esth",
+  "testament": "OT"
+ },
+ {
+  "osis": "Job",
+  "nom": "Job",
+  "abreviation": "Job",
+  "testament": "OT"
+ },
+ {
+  "osis": "Ps",
+  "nom": "Psaumes",
+  "abreviation": "Ps",
+  "testament": "OT"
+ },
+ {
+  "osis": "Prov",
+  "nom": "Proverbes",
+  "abreviation": "Prov",
+  "testament": "OT"
+ },
+ {
+  "osis": "Eccl",
+  "nom": "Ecclésiaste",
+  "abreviation": "Eccl",
+  "testament": "OT"
+ },
+ {
+  "osis": "Song",
+  "nom": "Cantique des Cantiques",
+  "abreviation": "Song",
+  "testament": "OT"
+ },
+ {
+  "osis": "Isa",
+  "nom": "Ésaïe",
+  "abreviation": "Isa",
+  "testament": "OT"
+ },
+ {
+  "osis": "Jer",
+  "nom": "Jérémie",
+  "abreviation": "Jer",
+  "testament": "OT"
+ },
+ {
+  "osis": "Lam",
+  "nom": "Lamentations",
+  "abreviation": "Lam",
+  "testament": "OT"
+ },
+ {
+  "osis": "Ezek",
+  "nom": "Ézéchiel",
+  "abreviation": "Ezek",
+  "testament": "OT"
+ },
+ {
+  "osis": "Dan",
+  "nom": "Daniel",
+  "abreviation": "Dan",
+  "testament": "OT"
+ },
+ {
+  "osis": "Hos",
+  "nom": "Osée",
+  "abreviation": "Hos",
+  "testament": "OT"
+ },
+ {
+  "osis": "Joel",
+  "nom": "Joël",
+  "abreviation": "Joel",
+  "testament": "OT"
+ },
+ {
+  "osis": "Amos",
+  "nom": "Amos",
+  "abreviation": "Amos",
+  "testament": "OT"
+ },
+ {
+  "osis": "Obad",
+  "nom": "Abdias",
+  "abreviation": "Obad",
+  "testament": "OT"
+ },
+ {
+  "osis": "Jonah",
+  "nom": "Jonas",
+  "abreviation": "Jonah",
+  "testament": "OT"
+ },
+ {
+  "osis": "Mic",
+  "nom": "Michée",
+  "abreviation": "Mic",
+  "testament": "OT"
+ },
+ {
+  "osis": "Nah",
+  "nom": "Nahoum",
+  "abreviation": "Nah",
+  "testament": "OT"
+ },
+ {
+  "osis": "Hab",
+  "nom": "Habacuc",
+  "abreviation": "Hab",
+  "testament": "OT"
+ },
+ {
+  "osis": "Zeph",
+  "nom": "Sophonie",
+  "abreviation": "Zeph",
+  "testament": "OT"
+ },
+ {
+  "osis": "Hag",
+  "nom": "Aggée",
+  "abreviation": "Hag",
+  "testament": "OT"
+ },
+ {
+  "osis": "Zech",
+  "nom": "Zacharie",
+  "abreviation": "Zech",
+  "testament": "OT"
+ },
+ {
+  "osis": "Mal",
+  "nom": "Malachie",
+  "abreviation": "Mal",
+  "testament": "OT"
+ },
+ {
+  "osis": "Matt",
+  "nom": "Matthieu",
+  "abreviation": "Matt",
+  "testament": "NT"
+ },
+ {
+  "osis": "Mark",
+  "nom": "Marc",
+  "abreviation": "Mark",
+  "testament": "NT"
+ },
+ {
+  "osis": "Luke",
+  "nom": "Luc",
+  "abreviation": "Luke",
+  "testament": "NT"
+ },
+ {
+  "osis": "John",
+  "nom": "Jean",
+  "abreviation": "John",
+  "testament": "NT"
+ },
+ {
+  "osis": "Acts",
+  "nom": "Actes",
+  "abreviation": "Acts",
+  "testament": "NT"
+ },
+ {
+  "osis": "Rom",
+  "nom": "Romains",
+  "abreviation": "Rom",
+  "testament": "NT"
+ },
+ {
+  "osis": "1Cor",
+  "nom": "1 Corinthiens",
+  "abreviation": "1Cor",
+  "testament": "NT"
+ },
+ {
+  "osis": "2Cor",
+  "nom": "2 Corinthiens",
+  "abreviation": "2Cor",
+  "testament": "NT"
+ },
+ {
+  "osis": "Gal",
+  "nom": "Galates",
+  "abreviation": "Gal",
+  "testament": "NT"
+ },
+ {
+  "osis": "Eph",
+  "nom": "Éphésiens",
+  "abreviation": "Eph",
+  "testament": "NT"
+ },
+ {
+  "osis": "Phil",
+  "nom": "Philippiens",
+  "abreviation": "Phil",
+  "testament": "NT"
+ },
+ {
+  "osis": "Col",
+  "nom": "Colossiens",
+  "abreviation": "Col",
+  "testament": "NT"
+ },
+ {
+  "osis": "1Thess",
+  "nom": "1 Thessaloniciens",
+  "abreviation": "1Thess",
+  "testament": "NT"
+ },
+ {
+  "osis": "2Thess",
+  "nom": "2 Thessaloniciens",
+  "abreviation": "2Thess",
+  "testament": "NT"
+ },
+ {
+  "osis": "1Tim",
+  "nom": "1 Timothée",
+  "abreviation": "1Tim",
+  "testament": "NT"
+ },
+ {
+  "osis": "2Tim",
+  "nom": "2 Timothée",
+  "abreviation": "2Tim",
+  "testament": "NT"
+ },
+ {
+  "osis": "Titus",
+  "nom": "Tite",
+  "abreviation": "Titus",
+  "testament": "NT"
+ },
+ {
+  "osis": "Phlm",
+  "nom": "Philémon",
+  "abreviation": "Phlm",
+  "testament": "NT"
+ },
+ {
+  "osis": "Heb",
+  "nom": "Hébreux",
+  "abreviation": "Heb",
+  "testament": "NT"
+ },
+ {
+  "osis": "Jas",
+  "nom": "Jacques",
+  "abreviation": "Jas",
+  "testament": "NT"
+ },
+ {
+  "osis": "1Pet",
+  "nom": "1 Pierre",
+  "abreviation": "1Pet",
+  "testament": "NT"
+ },
+ {
+  "osis": "2Pet",
+  "nom": "2 Pierre",
+  "abreviation": "2Pet",
+  "testament": "NT"
+ },
+ {
+  "osis": "1John",
+  "nom": "1 Jean",
+  "abreviation": "1John",
+  "testament": "NT"
+ },
+ {
+  "osis": "2John",
+  "nom": "2 Jean",
+  "abreviation": "2John",
+  "testament": "NT"
+ },
+ {
+  "osis": "3John",
+  "nom": "3 Jean",
+  "abreviation": "3John",
+  "testament": "NT"
+ },
+ {
+  "osis": "Jude",
+  "nom": "Jude",
+  "abreviation": "Jude",
+  "testament": "NT"
+ },
+ {
+  "osis": "Rev",
+  "nom": "Apocalypse",
+  "abreviation": "Rev",
+  "testament": "NT"
+ }
+]

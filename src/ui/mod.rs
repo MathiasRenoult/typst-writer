@@ -1,4 +1,6 @@
 pub mod aide;
+pub mod bible;
+pub mod bible_edition;
 pub mod completion;
 pub mod confirmation;
 pub mod editor;
@@ -9,16 +11,18 @@ pub mod layout;
 pub mod note;
 pub mod onglets;
 pub mod picker_couleur;
+pub mod plugins;
 pub mod preview;
 pub mod projet;
 pub mod projets;
 pub mod recherche;
 pub mod reference;
 pub(crate) mod reglages;
-pub mod sidebar;
+pub(crate) mod sidebar;
+mod statistiques;
 pub mod status_bar;
 pub mod tableau;
-pub mod theme;
+pub use crate::design::theme;
 pub mod theme_editeur;
 pub mod toolbar;
 pub mod zotero;
@@ -83,8 +87,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         note_overlay(state),
         projets::view(state),
         reference::view(state),
-        glossaire::view(state),
+        bible_edition::view(state),
         glossaire_fenetre::view(state),
+        glossaire::view(state),
         zotero::view(state),
         recherche::view(state),
         reglages::view(state),

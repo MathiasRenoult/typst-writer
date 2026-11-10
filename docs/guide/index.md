@@ -8,10 +8,10 @@ dans `docs/design/`, et ne regardent pas l'usage.
 ## Au sommaire
 
 1. [Prise en main](prise-en-main.md) — lancer, écrire, voir, exporter.
-2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au graphique.
+2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au graphique, et les références bibliques.
 3. [La bibliographie](bibliographie.md) — les références, la fiche, Zotero.
 4. [Le glossaire](glossaire.md) — les termes, leurs formes, la liste finale.
-5. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied.
+5. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied, et les paramètres des plugins.
 6. [Rechercher et remplacer](recherche.md) — les expressions régulières.
 7. [Les raccourcis](raccourcis.md) — le clavier, entier.
 8. [Les fichiers](fichiers.md) — où tout vit, ce qu'on en garde, ce qui
@@ -23,7 +23,7 @@ dans `docs/design/`, et ne regardent pas l'usage.
 Un document se compose dans une couche simple, `document.tw` : du markdown
 qu'on lit et qu'on compare ligne à ligne. Le Typst reste le maître du
 rendu — l'aperçu est celui du document final, compilé par le vrai
-compilateur — et tout ce que la couche ne dit pas encore passe par un
+compilateur — et tout ce que la couche ne couvre pas passe par un
 bloc brut, sans jamais se perdre.
 
 La mise en page ne se porte pas sur les épaules de l'écrivain : les

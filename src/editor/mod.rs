@@ -123,7 +123,10 @@ fn syntax_for_path(path: &std::path::Path) -> &'static str {
 /// Trois choses dépendent du thème : les couleurs, les polices, et la palette de
 /// coloration syntaxique. Elles sont posées ensemble, en un seul endroit, pour
 /// qu'aucune ne puisse être oubliée quand on en ajoute une.
-fn apply_look(editor: &mut iced_code_editor::CodeEditor, resolved: &crate::ui::theme::Resolved) {
+fn apply_look(
+    editor: &mut iced_code_editor::CodeEditor,
+    resolved: &crate::design::theme::Resolved,
+) {
     match &resolved.editor {
         // Un thème de fichier décrit précisément l'éditeur.
         Some(look) => {
@@ -264,9 +267,9 @@ impl EditorState {
             EditorMessage::ToggleVimMode
             | EditorMessage::WriteRequested
             | EditorMessage::ArrowKey(..)
-            | EditorMessage::MouseClick(_)
+            | EditorMessage::MouseClick(..)
             | EditorMessage::MouseDrag(_)
-            | EditorMessage::MouseHover(_)
+            | EditorMessage::MouseHover(_, _)
             | EditorMessage::MouseRelease
             | EditorMessage::DoubleClick(_)
             | EditorMessage::TripleClick(_)
@@ -837,7 +840,7 @@ impl EditorState {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        crate::project::ecrire_atomique(&path, &self.content())?;
+        crate::services::stockage::ecrire_atomique(&path, &self.content())?;
 
         self.editor.mark_saved();
 
@@ -896,7 +899,7 @@ impl EditorState {
     }
 
     /// Réapplique les couleurs après un changement de thème.
-    pub fn retheme(&mut self, resolved: &crate::ui::theme::Resolved) {
+    pub fn retheme(&mut self, resolved: &crate::design::theme::Resolved) {
         apply_look(&mut self.editor, resolved);
     }
 }

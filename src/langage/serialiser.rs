@@ -160,6 +160,9 @@ pub fn serialiser(document: &Document) -> String {
             Bloc::Bibliographie => {
                 out.push_str("{bibliographie}\n");
             }
+            Bloc::IndexBiblique => {
+                out.push_str("{{index}}\n");
+            }
             Bloc::Sommaire => {
                 out.push_str("[[TOC]]\n");
             }
@@ -272,10 +275,37 @@ fn ecrire_ligne(contenu: &[Inline], out: &mut String) {
     }
 }
 
+/// Écrit une citation dans sa forme canonique : une référence par membre,
+/// le texte libre entre guillemets. La lecture regroupe ensuite les livres.
+fn ecrire_citation(elements: &[crate::langage::references::ElementCitation]) -> String {
+    crate::langage::references::ecrire_elements(
+        elements,
+        &crate::mise_en_page::modele::References::default(),
+    )
+}
+
 /// Écrit une suite d'éléments inline.
 fn ecrire_inline(inline: &[Inline], out: &mut String) {
     for element in inline {
         match element {
+            Inline::Bible(elements) => {
+                out.push_str("{{");
+                out.push_str(&ecrire_citation(elements));
+                out.push_str("}}");
+            }
+            Inline::BibleForme { elements, forme } => {
+                let suffixe = match forme {
+                    crate::langage::references::FormeLivre::FrancaiseLongue => "long",
+                    crate::langage::references::FormeLivre::FrancaiseCourte => "court",
+                    crate::langage::references::FormeLivre::Osis => "osis",
+                    crate::langage::references::FormeLivre::SansPoint => "sanspoint",
+                };
+                out.push_str("{{");
+                out.push_str(&ecrire_citation(elements));
+                out.push('|');
+                out.push_str(suffixe);
+                out.push_str("}}");
+            }
             Inline::Texte(texte) => echapper_texte(texte, out),
             Inline::Litteral(texte) => {
                 // Un littéral est ce que l'échappement a fait : chaque

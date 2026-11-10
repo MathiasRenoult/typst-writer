@@ -6,47 +6,8 @@
 //! couleurs de la palette iced plutôt que de coder des valeurs en dur, afin
 //! que basculer entre clair et sombre ne demande aucun changement de code.
 
+pub use crate::base::theme::ThemeMode;
 use iced::{Color, Theme};
-use serde::{Deserialize, Serialize};
-
-/// Comment le thème est choisi.
-///
-/// Le mode est enregistré dans la session : il doit donc être lisible et
-/// stable. Les variantes s'écrivent en minuscules dans le fichier, pour qu'il
-/// reste modifiable à la main sans surprendre.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ThemeMode {
-    /// Suit le réglage du système (défaut).
-    #[default]
-    System,
-
-    /// Clair, quoi que décide le système.
-    Light,
-
-    /// Sombre, quoi que décide le système.
-    Dark,
-}
-
-impl ThemeMode {
-    /// Le mode suivant, pour un bouton qui cycle.
-    pub fn next(self) -> Self {
-        match self {
-            ThemeMode::System => ThemeMode::Light,
-            ThemeMode::Light => ThemeMode::Dark,
-            ThemeMode::Dark => ThemeMode::System,
-        }
-    }
-
-    /// Libellé lisible, pour l'infobulle du bouton.
-    pub fn label(self) -> &'static str {
-        match self {
-            ThemeMode::System => "Thème : système",
-            ThemeMode::Light => "Thème : clair",
-            ThemeMode::Dark => "Thème : sombre",
-        }
-    }
-}
 
 /// Le mode du système, tel que le rapportent `iced::system::theme` et
 /// `theme_changes`. `None` signifie « pas de préférence déclarée ».
@@ -246,9 +207,13 @@ pub mod jetons {
 
     /// L'échelle des corps de texte, du plus discret au titre.
     pub const CHAPEAU: f32 = 10.0;
+    /// Texte secondaire, mentions et aides.
     pub const DETAIL: f32 = 11.0;
+    /// Corps courant des libellés.
     pub const CORPS: f32 = 12.0;
+    /// Libellé qui doit ressortir dans une liste.
     pub const SAILLANT: f32 = 13.0;
+    /// Titre de section ou de fenêtre.
     pub const TITRE: f32 = 15.0;
 }
 

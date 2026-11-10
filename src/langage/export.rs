@@ -117,7 +117,7 @@ pub fn vers_docx(source: &str, cible: &Path) -> Result<(), String> {
     let octets =
         std::fs::read(&produit).map_err(|e| format!("Le DOCX produit ne se lit pas : {e}."))?;
     let _ = std::fs::remove_dir_all(&atelier);
-    crate::project::ecrire_atomique_octets(cible, &octets)
+    crate::services::stockage::ecrire_atomique_octets(cible, &octets)
         .map_err(|e| format!("{} ne s'écrit pas : {e}.", cible.display()))
 }
 

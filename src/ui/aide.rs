@@ -112,7 +112,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
     let donnees = column![
         palette.label("Vos données").size(theme::jetons::TITRE),
         palette
-            .label(crate::project::work_dir().display().to_string())
+            .label(crate::services::stockage::work_dir().display().to_string())
             .size(theme::jetons::DETAIL)
             .color(palette.accent),
         row![

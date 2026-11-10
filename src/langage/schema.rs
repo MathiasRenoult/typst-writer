@@ -103,6 +103,9 @@ pub enum Bloc {
     Sommaire,
     /// La section bibliographie : `{bibliographie}` (bug-report-9).
     Bibliographie,
+    /// L'index des citations bibliques : `{{index}}`. Il est recalculé au
+    /// rendu, comme la table des matières — jamais une liste figée.
+    IndexBiblique,
 }
 
 /// L'alignement d'une colonne de tableau, écrit dans sa ligne de
@@ -274,6 +277,16 @@ pub enum Inline {
     Note(Vec<Inline>),
     /// Un lien : `[texte](https://…)`.
     Lien { texte: Vec<Inline>, cible: String },
+    /// Une ou plusieurs références bibliques : `{{Jean 3.16}}`, un groupe
+    /// `{{Jn 3.16 ; Gn 1.1-3}}`, et le texte libre entre guillemets.
+    Bible(Vec<crate::langage::references::ElementCitation>),
+    /// Une balise biblique qui choisit sa forme de livre : `{{…|long}}`,
+    /// `{{…|court}}`, `{{…|osis}}`, `{{…|sanspoint}}`. Une référence peut
+    /// porter sa traduction (`{{Jn 3.16|lsg}}`) avant ce suffixe de forme.
+    BibleForme {
+        elements: Vec<crate::langage::references::ElementCitation>,
+        forme: crate::langage::references::FormeLivre,
+    },
 }
 
 /// Une référence bibliographique dans un appel de citation.
@@ -420,6 +433,7 @@ impl Bloc {
             Bloc::Glossaire { .. } => true,
             Bloc::Sommaire => true,
             Bloc::Bibliographie => true,
+            Bloc::IndexBiblique => true,
             Bloc::Décor { proprietes, bloc } => {
                 // Un seul manteau, jamais deux : un décor dans un décor se
                 // rassemble à l'écriture.
@@ -437,6 +451,8 @@ impl Inline {
     #[allow(dead_code)] // API de contrat : éprouvée par les propriétés.
     pub fn est_canonique(&self) -> bool {
         match self {
+            Inline::Bible(elements) => !elements.is_empty(),
+            Inline::BibleForme { elements, .. } => !elements.is_empty(),
             Inline::Texte(texte) => {
                 // Les marqueurs vivent dans les littéraux : un texte nu n'en
                 // porte aucun, c'est ce qui rend l'écriture univoque.
@@ -719,6 +735,7 @@ impl Bloc {
             | Bloc::Graphique { .. }
             | Bloc::Glossaire { .. }
             | Bloc::Bibliographie
+            | Bloc::IndexBiblique
             | Bloc::Sommaire => String::new(),
             Bloc::Formule(texte) => texte.clone(),
         }
@@ -732,6 +749,19 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
     for element in inline {
         match element {
             Inline::Texte(texte) | Inline::Litteral(texte) => out.push_str(texte),
+            Inline::Bible(elements) => {
+                out.push_str(&crate::langage::references::afficher_elements(
+                    elements,
+                    &crate::mise_en_page::modele::References::default(),
+                ))
+            }
+            Inline::BibleForme { elements, forme } => {
+                out.push_str(&crate::langage::references::afficher_elements_forme(
+                    elements,
+                    &crate::mise_en_page::modele::References::default(),
+                    Some(*forme),
+                ))
+            }
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)

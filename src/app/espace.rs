@@ -15,10 +15,8 @@ pub type VueId = u64;
 /// Comment un document rejoint l'espace de travail.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Ouverture {
-    /// Réutiliser l'onglet existant si le document est déjà ouvert, sinon
-    /// nouvel onglet — l'ouverture d'un projet.
-    /// Réutiliser si déjà ouvert, sinon remplacer le contenu de l'onglet
-    /// actif — le clic simple sur un document.
+    /// Clic simple : basculer vers l'onglet si le document est déjà ouvert ;
+    /// sinon remplacer le contenu de l'onglet actif.
     Remplacer,
     /// Toujours un nouvel onglet — shift+clic ou duplication.
     Nouvel,
@@ -57,8 +55,12 @@ pub struct Disposition {
     pub vues: Vec<VueSauvee>,
 }
 
-/// Le contexte propre à une vue ; l'active est prêtée aux anciens domaines
-/// de l'application pour conserver une migration incrémentale sûre.
+/// Le contexte d'une vue non active.
+///
+/// Une vue rangée dans `Espace::vues` porte son éditeur, son rendu, son
+/// projet, sa bibliographie, son état Zotero, son mode, son Typst généré
+/// et ses plugins. La vue active, elle, vit dans les champs correspondants
+/// de `State` : [`Vue::echanger`] fait voyager ce contexte avec l'onglet.
 pub struct Vue {
     pub editor: crate::editor::EditorState,
     pub render: RenderState,
@@ -67,6 +69,7 @@ pub struct Vue {
     pub zotero: crate::zotero::Etat,
     pub mode: ModeVue,
     pub typst: String,
+    pub plugins: crate::plugins::Plugins,
 }
 
 impl Vue {
@@ -75,7 +78,7 @@ impl Vue {
         chemin: PathBuf,
         contenu: String,
         mode: ModeVue,
-        resolved: &crate::ui::theme::Resolved,
+        resolved: &crate::design::theme::Resolved,
     ) -> Self {
         let mut editor = crate::editor::EditorState::new_file(chemin, contenu);
         editor.retheme(resolved);
@@ -85,7 +88,6 @@ impl Vue {
             .map(crate::project::parse_bibliography)
             .unwrap_or_default();
         let zotero = crate::zotero::Etat {
-            lie: projet.zotero.is_some(),
             source: if projet.zotero.is_some() {
                 crate::zotero::Source::Zotero
             } else {
@@ -100,9 +102,17 @@ impl Vue {
             zotero,
             mode,
             typst: String::new(),
+            plugins: crate::plugins::Plugins::default(),
         }
     }
 
+    /// Échange le contexte de cette vue avec celui de l'état actif.
+    ///
+    /// Tout est échangé — éditeur, rendu, projet, bibliographie, Zotero, mode,
+    /// Typst généré et plugins —, pas copié : après l'appel, `state` porte
+    /// l'ancien contexte de la vue, et la vue porte celui de `state`. C'est ce
+    /// qui permet de changer d'onglet sans perdre curseur, défilement ni état
+    /// de plugin.
     pub fn echanger(&mut self, state: &mut super::State) {
         std::mem::swap(&mut self.editor, &mut state.editor);
         std::mem::swap(&mut self.render, &mut state.render);
@@ -111,6 +121,7 @@ impl Vue {
         std::mem::swap(&mut self.zotero, &mut state.zotero);
         std::mem::swap(&mut self.mode, &mut state.mode);
         std::mem::swap(&mut self.typst, &mut state.typst_genere);
+        self.plugins.echanger(&mut state.plugins);
     }
 }
 
@@ -118,6 +129,14 @@ pub struct Document {
     pub source: iced_code_editor::SourcePartagee,
 }
 
+/// L'espace de travail : la grille de panneaux et les contextes des vues.
+///
+/// `vues` ne contient que les vues **non actives** : la vue active vit dans
+/// les champs plats de `State`. `documents` partage une source par couple
+/// (projet, document) entre toutes les vues du même fichier. `verrous`
+/// tient un verrou par projet ouvert, y compris après que `State::verrou`
+/// a été vidé. `transaction` empêche qu'une transaction d'éditeur
+/// réentrante en ouvre une seconde.
 pub struct Espace {
     pub grille: pane_grid::State<Panneau>,
     pub focus: Pane,

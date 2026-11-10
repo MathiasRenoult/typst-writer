@@ -519,6 +519,7 @@ mod tests {
 
     /// Un serveur qui répond une fois, puis s'arrête : l'API de Zotero,
     /// telle qu'un test peut la fabriquer.
+    #[allow(dead_code)] // Utilisé par les épreuves du client.
     fn serveur(reponse: &'static str) -> String {
         let auditeur = TcpListener::bind("127.0.0.1:0").expect("écoute");
         let adresse = auditeur.local_addr().expect("adresse");

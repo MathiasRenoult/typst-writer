@@ -12,31 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Les fonctionnalités du projet : chacune se **débranche**, et son
-/// interface disparaît avec elle — ses boutons, ses sections de panneau
-/// (demande de l'auteur). Une ancienne mise en page sans ce bloc les
-/// porte toutes : le défaut est le confort, pas l'austérité.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Fonctionnalites {
-    /// La bibliographie : ses boutons, sa section, sa fenêtre.
-    pub bibliographie: bool,
-
-    /// Le glossaire : ses boutons, sa section, sa fenêtre.
-    pub glossaire: bool,
-
-    /// Les graphiques (cetz) : le bouton d' + q + 'insertion.
-    pub graphiques: bool,
-}
-
-impl Default for Fonctionnalites {
-    fn default() -> Self {
-        Self {
-            bibliographie: true,
-            glossaire: true,
-            graphiques: true,
-        }
-    }
-}
+/// Les fonctionnalités du projet (type partagé dans `base`).
+pub use crate::base::valeurs::AddOns as Fonctionnalites;
 
 /// La mise en page d'un document.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -56,7 +33,14 @@ pub struct MiseEnPage {
     /// pages — « p. {page} », « page {page} sur {pages} », « {page}/{pages} ».
     pub entete_pied: EntetePiedDePage,
 
-    /// Le texte courant.
+    /// Les références bibliques : forme des livres, chiffres, séparateurs et
+    /// traductions explicites.
+    pub references: References,
+
+    /// L'index des citations bibliques : pages, regroupement, forme, colonnes.
+    pub index: IndexCitations,
+
+    /// Le texte courant : police, corps, interligne, justification.
     pub texte: Texte,
 
     /// Les titres de chapitres.
@@ -240,7 +224,6 @@ impl Default for NumerotationPage {
     }
 }
 
-/// Le texte courant.
 /// L'en-tête et le pied de page : ce qu'ils portent, et comment le numéro
 /// s'écrit.
 ///
@@ -295,6 +278,95 @@ impl Default for EntetePiedDePage {
             images_hauteur: "80".to_string(),
         }
     }
+}
+
+/// La configuration de l'index des citations bibliques.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IndexCitations {
+    /// Montrer, après chaque référence, les pages où elle apparaît.
+    pub afficher_pages: bool,
+    /// Regrouper les références sous le nom de leur livre.
+    pub regrouper_par_livre: bool,
+    /// La forme des livres dans l'index ; `None` hérite des références.
+    pub forme: Option<SystemeAbreviation>,
+    /// Le nombre de colonnes de l'index (1 à 4).
+    pub colonnes: usize,
+}
+
+impl Default for IndexCitations {
+    fn default() -> Self {
+        Self {
+            afficher_pages: false,
+            regrouper_par_livre: false,
+            forme: None,
+            colonnes: 1,
+        }
+    }
+}
+
+/// La syntaxe des références bibliques : comment elles s'écrivent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct References {
+    /// Le système d'abréviation du livre.
+    pub livre: SystemeAbreviation,
+    /// Les chiffres des chapitres et des versets.
+    pub chiffres: Chiffres,
+    /// Le séparateur entre le chapitre et le verset : `.`, `:` ou `,`.
+    pub separateur_chapitre_verset: String,
+    /// Le séparateur d'une plage de versets : `-`, `–` ou ` à `.
+    pub separateur_plage: String,
+    /// Le séparateur entre les livres d'un groupe : `;` ou `; `.
+    pub separateur_livre: String,
+    /// Le séparateur entre deux occurrences du même livre : `, `.
+    pub separateur_occurrence: String,
+    /// Le mot qui relie deux chapitres entiers : ` à `.
+    pub separateur_chapitres: String,
+    /// Le gabarit d'une référence. Jetons : `{livre}`, `{chapitres}`,
+    /// `{versets}`, `{nombres}`, `{chapitre}`, `{chapitre_fin}`,
+    /// `{verset}`, `{verset_fin}`, `{reference}`.
+    pub gabarit: String,
+    /// Ranger toutes les références d'une balise dans l'ordre canonique.
+    pub ordre_canonique: bool,
+}
+
+impl Default for References {
+    fn default() -> Self {
+        Self {
+            livre: SystemeAbreviation::FrancaiseCourte,
+            chiffres: Chiffres::Arabes,
+            separateur_chapitre_verset: ".".to_string(),
+            separateur_plage: "-".to_string(),
+            separateur_livre: " ; ".to_string(),
+            separateur_occurrence: ", ".to_string(),
+            separateur_chapitres: " à ".to_string(),
+            gabarit: "{livre} {nombres}".to_string(),
+            ordre_canonique: false,
+        }
+    }
+}
+
+/// Le système d'abréviation du livre — les quatre usages les plus courants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SystemeAbreviation {
+    /// La forme française courte : « Gn », « Jn ».
+    FrancaiseCourte,
+    /// La forme française longue : « Genèse », « Jean ».
+    FrancaiseLongue,
+    /// La forme OSIS : « Gen », « John ».
+    Osis,
+    /// La forme courte sans point : « Gn », « Jn ».
+    SansPoint,
+}
+
+/// Les chiffres des chapitres et des versets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Chiffres {
+    /// « 3:16 ».
+    Arabes,
+    /// « III, 16 ».
+    Romains,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -504,6 +576,14 @@ pub struct Typographie {
     /// Les paires de guillemets par niveau d'imbrication : deux caractères
     /// par paire — ouvrant puis fermant — `«»`, `""`, `''`.
     pub guillemets: Vec<String>,
+
+    /// Les caractères que la frappe reconnaît comme guillemets ouvrants.
+    /// La paire produite reste celle de `guillemets` ; ces caractères ne
+    /// font que **déclencher** la composition (ÉVOLUTION-002).
+    pub guillemets_ouvrants: String,
+
+    /// Les caractères reconnus comme guillemets fermants.
+    pub guillemets_fermants: String,
 }
 
 impl Default for Typographie {
@@ -517,6 +597,8 @@ impl Default for Typographie {
             apres_virgule_point: base.apres_virgule_point.nom().to_string(),
             espace_guillemets: base.espace_guillemets.nom().to_string(),
             guillemets: paires_en_texte(&base.guillemets),
+            guillemets_ouvrants: "«".to_string(),
+            guillemets_fermants: "»".to_string(),
         }
     }
 }
@@ -558,7 +640,7 @@ impl Default for Dates {
 
 impl Typographie {
     /// Les règles de composition de ces normes.
-    pub fn regles(&self) -> crate::langage::typographie::Regles {
+    pub fn regles(&self, references: &References) -> crate::langage::typographie::Regles {
         crate::langage::typographie::Regles {
             avant_signes: crate::langage::typographie::Espace::depuis(&self.avant_signes),
             apres_signes: crate::langage::typographie::Espace::depuis(&self.apres_signes),
@@ -567,8 +649,12 @@ impl Typographie {
             ),
             espace_guillemets: crate::langage::typographie::Espace::depuis(&self.espace_guillemets),
             guillemets: paires_depuis(&self.guillemets),
+            guillemets_ouvrants: self.guillemets_ouvrants.chars().collect(),
+            guillemets_fermants: self.guillemets_fermants.chars().collect(),
             numerotation_figures: String::new(),
             dates: crate::langage::dates::Regles::default(),
+            references: references.clone(),
+            index: crate::mise_en_page::modele::IndexCitations::default(),
         }
     }
 
@@ -582,6 +668,10 @@ impl Typographie {
         self.apres_virgule_point = regles.apres_virgule_point.nom().to_string();
         self.espace_guillemets = regles.espace_guillemets.nom().to_string();
         self.guillemets = paires_en_texte(&regles.guillemets);
+        if let Some((ouvrant, fermant)) = regles.guillemets.first() {
+            self.guillemets_ouvrants = ouvrant.to_string();
+            self.guillemets_fermants = fermant.to_string();
+        }
     }
 }
 
@@ -918,6 +1008,8 @@ pub enum Champ {
     TypoGuillemets1,
     TypoGuillemets2,
     TypoGuillemets3,
+    TypoGuillemetsOuvrants,
+    TypoGuillemetsFermants,
     DecorCouleur,
     DecorEpaisseur,
     DecorRayon,
@@ -978,6 +1070,19 @@ pub enum Champ {
     CouleurItalique,
     CouleurFond,
     BibliographieStyle,
+    ReferencesLivre,
+    ReferencesChiffres,
+    ReferencesOrdreCanonique,
+    ReferencesSeparateurChapitreVerset,
+    ReferencesSeparateurPlage,
+    ReferencesSeparateurLivre,
+    ReferencesSeparateurOccurrence,
+    ReferencesSeparateurChapitres,
+    ReferencesGabarit,
+    IndexAfficherPages,
+    IndexRegrouperParLivre,
+    IndexForme,
+    IndexColonnes,
 }
 
 impl MiseEnPage {
@@ -1038,6 +1143,8 @@ impl MiseEnPage {
             Champ::TypoGuillemets1 => paire_lue(&self.typographie.guillemets, 0),
             Champ::TypoGuillemets2 => paire_lue(&self.typographie.guillemets, 1),
             Champ::TypoGuillemets3 => paire_lue(&self.typographie.guillemets, 2),
+            Champ::TypoGuillemetsOuvrants => self.typographie.guillemets_ouvrants.clone(),
+            Champ::TypoGuillemetsFermants => self.typographie.guillemets_fermants.clone(),
             Champ::TitresTaille1 => self.titres.taille_1.clone(),
             Champ::TitresTaille2 => self.titres.taille_2.clone(),
             Champ::TitresTaille3 => self.titres.taille_3.clone(),
@@ -1163,6 +1270,35 @@ impl MiseEnPage {
             Champ::CouleurItalique => self.couleurs.italique.clone(),
             Champ::CouleurFond => self.couleurs.fond.clone(),
             Champ::BibliographieStyle => self.bibliographie.style.clone().unwrap_or_default(),
+            Champ::ReferencesLivre => match self.references.livre {
+                SystemeAbreviation::FrancaiseCourte => "courte".to_string(),
+                SystemeAbreviation::FrancaiseLongue => "longue".to_string(),
+                SystemeAbreviation::Osis => "osis".to_string(),
+                SystemeAbreviation::SansPoint => "sans_point".to_string(),
+            },
+            Champ::ReferencesChiffres => match self.references.chiffres {
+                Chiffres::Arabes => "arabes".to_string(),
+                Chiffres::Romains => "romains".to_string(),
+            },
+            Champ::ReferencesOrdreCanonique => self.references.ordre_canonique.to_string(),
+            Champ::ReferencesSeparateurChapitreVerset => {
+                self.references.separateur_chapitre_verset.clone()
+            }
+            Champ::ReferencesSeparateurPlage => self.references.separateur_plage.clone(),
+            Champ::ReferencesSeparateurLivre => self.references.separateur_livre.clone(),
+            Champ::ReferencesSeparateurOccurrence => self.references.separateur_occurrence.clone(),
+            Champ::ReferencesSeparateurChapitres => self.references.separateur_chapitres.clone(),
+            Champ::ReferencesGabarit => self.references.gabarit.clone(),
+            Champ::IndexAfficherPages => self.index.afficher_pages.to_string(),
+            Champ::IndexRegrouperParLivre => self.index.regrouper_par_livre.to_string(),
+            Champ::IndexForme => match self.index.forme {
+                None => "herite".to_string(),
+                Some(SystemeAbreviation::FrancaiseCourte) => "courte".to_string(),
+                Some(SystemeAbreviation::FrancaiseLongue) => "longue".to_string(),
+                Some(SystemeAbreviation::Osis) => "osis".to_string(),
+                Some(SystemeAbreviation::SansPoint) => "sans_point".to_string(),
+            },
+            Champ::IndexColonnes => self.index.colonnes.to_string(),
         }
     }
 
@@ -1227,6 +1363,8 @@ impl MiseEnPage {
             Champ::TypoGuillemets1 => ecrire_paire(&mut self.typographie.guillemets, 0, valeur),
             Champ::TypoGuillemets2 => ecrire_paire(&mut self.typographie.guillemets, 1, valeur),
             Champ::TypoGuillemets3 => ecrire_paire(&mut self.typographie.guillemets, 2, valeur),
+            Champ::TypoGuillemetsOuvrants => self.typographie.guillemets_ouvrants = valeur,
+            Champ::TypoGuillemetsFermants => self.typographie.guillemets_fermants = valeur,
             Champ::TitresTaille1 => self.titres.taille_1 = valeur,
             Champ::TitresTaille2 => self.titres.taille_2 = valeur,
             Champ::TitresTaille3 => self.titres.taille_3 = valeur,
@@ -1329,6 +1467,43 @@ impl MiseEnPage {
             Champ::CouleurFond => self.couleurs.fond = valeur,
             Champ::BibliographieStyle => {
                 self.bibliographie.style = (!valeur.is_empty()).then_some(valeur)
+            }
+            Champ::ReferencesLivre => {
+                self.references.livre = match valeur.as_str() {
+                    "longue" => SystemeAbreviation::FrancaiseLongue,
+                    "osis" => SystemeAbreviation::Osis,
+                    "sans_point" => SystemeAbreviation::SansPoint,
+                    _ => SystemeAbreviation::FrancaiseCourte,
+                }
+            }
+            Champ::ReferencesChiffres => {
+                self.references.chiffres = match valeur.as_str() {
+                    "romains" => Chiffres::Romains,
+                    _ => Chiffres::Arabes,
+                }
+            }
+            Champ::ReferencesOrdreCanonique => self.references.ordre_canonique = valeur == "true",
+            Champ::ReferencesSeparateurChapitreVerset => {
+                self.references.separateur_chapitre_verset = valeur
+            }
+            Champ::ReferencesSeparateurPlage => self.references.separateur_plage = valeur,
+            Champ::ReferencesSeparateurLivre => self.references.separateur_livre = valeur,
+            Champ::ReferencesSeparateurOccurrence => self.references.separateur_occurrence = valeur,
+            Champ::ReferencesSeparateurChapitres => self.references.separateur_chapitres = valeur,
+            Champ::ReferencesGabarit => self.references.gabarit = valeur,
+            Champ::IndexAfficherPages => self.index.afficher_pages = valeur == "true",
+            Champ::IndexRegrouperParLivre => self.index.regrouper_par_livre = valeur == "true",
+            Champ::IndexForme => {
+                self.index.forme = match valeur.as_str() {
+                    "longue" => Some(SystemeAbreviation::FrancaiseLongue),
+                    "courte" => Some(SystemeAbreviation::FrancaiseCourte),
+                    "osis" => Some(SystemeAbreviation::Osis),
+                    "sans_point" => Some(SystemeAbreviation::SansPoint),
+                    _ => None,
+                }
+            }
+            Champ::IndexColonnes => {
+                self.index.colonnes = valeur.trim().parse::<usize>().unwrap_or(1).clamp(1, 4);
             }
         }
     }
@@ -1626,7 +1801,7 @@ mod tests {
 
         // Une reprise, sans toucher au reste.
         typo.guillemets[0] = "“”".to_string();
-        let regles = typo.regles();
+        let regles = typo.regles(&References::default());
         assert_eq!(regles.guillemets[0], ('“', '”'));
         assert_eq!(
             regles.avant_signes,
@@ -1744,5 +1919,59 @@ mod tests_des_fonctionnalites {
         assert!(normes.fonctionnalites.bibliographie);
         assert!(normes.fonctionnalites.glossaire);
         assert!(normes.fonctionnalites.graphiques);
+    }
+
+    /// La forme des livres, les chiffres et l'ordre canonique se règlent par
+    /// les champs du plugin biblique et survivent à l'écriture.
+    #[test]
+    fn la_forme_des_livres_se_regle_et_se_relit() {
+        let mut normes = MiseEnPage::default();
+        normes.modifier(Champ::ReferencesLivre, "longue".to_string());
+        normes.modifier(Champ::ReferencesChiffres, "romains".to_string());
+        normes.modifier(Champ::ReferencesOrdreCanonique, "true".to_string());
+        normes.modifier(Champ::ReferencesSeparateurChapitreVerset, ", ".to_string());
+        normes.modifier(Champ::ReferencesSeparateurOccurrence, " · ".to_string());
+        normes.modifier(
+            Champ::ReferencesGabarit,
+            "{livre} {chapitre}, {verset}".to_string(),
+        );
+        normes.modifier(Champ::IndexAfficherPages, "true".to_string());
+        normes.modifier(Champ::IndexRegrouperParLivre, "true".to_string());
+        normes.modifier(Champ::IndexForme, "longue".to_string());
+        normes.modifier(Champ::IndexColonnes, "3".to_string());
+
+        assert_eq!(normes.valeur(Champ::ReferencesLivre), "longue");
+        assert_eq!(normes.valeur(Champ::ReferencesChiffres), "romains");
+        assert_eq!(normes.valeur(Champ::ReferencesOrdreCanonique), "true");
+        assert_eq!(
+            normes.valeur(Champ::ReferencesSeparateurChapitreVerset),
+            ", "
+        );
+        assert!(normes.index.afficher_pages);
+        assert!(normes.index.regrouper_par_livre);
+        assert_eq!(
+            normes.index.forme,
+            Some(SystemeAbreviation::FrancaiseLongue)
+        );
+        assert_eq!(normes.index.colonnes, 3);
+
+        let relu = MiseEnPage::lire(&normes.ecrire().expect("sérialisé")).expect("relu");
+        assert_eq!(
+            relu.references.livre,
+            SystemeAbreviation::FrancaiseLongue,
+            "la forme choisie ne se perd pas"
+        );
+        assert_eq!(relu.references.chiffres, Chiffres::Romains);
+        assert!(
+            relu.references.ordre_canonique,
+            "l'ordre canonique se retient"
+        );
+        assert_eq!(relu.references.separateur_chapitre_verset, ", ");
+        assert_eq!(relu.references.separateur_occurrence, " · ");
+        assert_eq!(relu.references.gabarit, "{livre} {chapitre}, {verset}");
+        assert!(relu.index.afficher_pages);
+        assert!(relu.index.regrouper_par_livre);
+        assert_eq!(relu.index.forme, Some(SystemeAbreviation::FrancaiseLongue));
+        assert_eq!(relu.index.colonnes, 3, "le nombre de colonnes se retient");
     }
 }

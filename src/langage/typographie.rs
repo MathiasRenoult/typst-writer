@@ -91,6 +91,19 @@ pub struct Regles {
     /// contiennent. Le dernier niveau sert au-delà.
     pub guillemets: Vec<(char, char)>,
 
+    /// Les caractères de frappe qui **ouvrent** une citation. Ce sont des
+    /// déclencheurs : la paire produite reste celle de `guillemets`.
+    pub guillemets_ouvrants: Vec<char>,
+
+    /// Les caractères de frappe qui **ferment** une citation.
+    pub guillemets_fermants: Vec<char>,
+    /// La syntaxe des références bibliques, telle que les normes la
+    /// choisissent (le système de références).
+    pub references: crate::mise_en_page::modele::References,
+
+    /// La configuration de l'index des citations.
+    pub index: crate::mise_en_page::modele::IndexCitations,
+
     /// La forme de la numérotation des figures : "1", "A", "a", "I", "i", "1.1".
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
@@ -109,8 +122,12 @@ impl Regles {
             apres_virgule_point: Espace::Aucune,
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('«', '»'), ('"', '"'), ('\'', '\'')],
+            guillemets_ouvrants: vec!['«'],
+            guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
             dates: crate::langage::dates::Regles::default(),
+            references: crate::mise_en_page::modele::References::default(),
+            index: crate::mise_en_page::modele::IndexCitations::default(),
         }
     }
 
@@ -123,8 +140,12 @@ impl Regles {
             apres_virgule_point: Espace::Normale,
             espace_guillemets: Espace::Insécable,
             guillemets: vec![('«', '»'), ('‹', '›'), ('"', '"')],
+            guillemets_ouvrants: vec!['«'],
+            guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
             dates: crate::langage::dates::Regles::default(),
+            references: crate::mise_en_page::modele::References::default(),
+            index: crate::mise_en_page::modele::IndexCitations::default(),
         }
     }
 
@@ -136,8 +157,12 @@ impl Regles {
             apres_virgule_point: Espace::Normale,
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('"', '"'), ('\'', '\''), ('"', '"')],
+            guillemets_ouvrants: vec!['«'],
+            guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
             dates: crate::langage::dates::Regles::default(),
+            references: crate::mise_en_page::modele::References::default(),
+            index: crate::mise_en_page::modele::IndexCitations::default(),
         }
     }
 
@@ -150,8 +175,12 @@ impl Regles {
             apres_virgule_point: Espace::Normale,
             espace_guillemets: Espace::Aucune,
             guillemets: vec![('„', '“'), ('‚', '‘'), ('»', '«')],
+            guillemets_ouvrants: vec!['«'],
+            guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
             dates: crate::langage::dates::Regles::default(),
+            references: crate::mise_en_page::modele::References::default(),
+            index: crate::mise_en_page::modele::IndexCitations::default(),
         }
     }
 
@@ -316,36 +345,49 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 pousser_apres(regles.apres_virgule_point, suivant, &mut sortie);
             }
 
-            // Les guillemets s'écrivent `«` et `»` dans la syntaxe, et se
-            // **composent** avec les caractères choisis par niveau.
-            '«' => {
-                contexte.profondeur += 1;
-                let (ouvrant, _) = paire(regles, contexte.profondeur);
-                sortie.push(ouvrant);
-                contexte.venant_du_guillemet = true;
+            // Les déclencheurs de guillemets sont ceux des normes : par
+            // défaut `«` et `»`, mais l'auteur peut y ajouter les siens.
+            // Un caractère présent des deux côtés est **contextuel** :
+            // devant un blanc il ferme, sinon il ouvre.
+            c if regles.guillemets_ouvrants.contains(c)
+                || regles.guillemets_fermants.contains(c) =>
+            {
+                let ambigu = regles.guillemets_ouvrants.contains(c)
+                    && regles.guillemets_fermants.contains(c);
+                let ouvrir = if ambigu {
+                    suivant.is_some_and(|suivant| !suivant.is_whitespace())
+                } else {
+                    regles.guillemets_ouvrants.contains(c)
+                };
 
-                if let Some(espace) = regles.espace_guillemets.caractere()
-                    && suivant.is_some()
-                {
-                    sortie.push(espace);
+                if ouvrir {
+                    contexte.profondeur += 1;
+                    let (ouvrant, _) = paire(regles, contexte.profondeur);
+                    sortie.push(ouvrant);
+                    contexte.venant_du_guillemet = true;
+
+                    if let Some(espace) = regles.espace_guillemets.caractere()
+                        && suivant.is_some()
+                    {
+                        sortie.push(espace);
+                    }
+                } else {
+                    while sortie.ends_with(' ') {
+                        sortie.pop();
+                    }
+
+                    let (_, fermant) = paire(regles, contexte.profondeur.max(1));
+
+                    if let Some(espace) = regles.espace_guillemets.caractere()
+                        && !sortie.is_empty()
+                        && !sortie.ends_with(espace)
+                    {
+                        sortie.push(espace);
+                    }
+
+                    sortie.push(fermant);
+                    contexte.profondeur = contexte.profondeur.saturating_sub(1);
                 }
-            }
-            '»' => {
-                while sortie.ends_with(' ') {
-                    sortie.pop();
-                }
-
-                let (_, fermant) = paire(regles, contexte.profondeur.max(1));
-
-                if let Some(espace) = regles.espace_guillemets.caractere()
-                    && !sortie.is_empty()
-                    && !sortie.ends_with(espace)
-                {
-                    sortie.push(espace);
-                }
-
-                sortie.push(fermant);
-                contexte.profondeur = contexte.profondeur.saturating_sub(1);
             }
 
             // Le guillemet droit : celui du clavier. Il s'ouvre devant ce
@@ -537,6 +579,30 @@ mod tests {
         assert_eq!(
             appliquer("\"Double \"Insertion\" et quotes\"", &anglaise),
             "\"Double 'Insertion' et quotes\""
+        );
+    }
+
+    /// ÉVOLUTION-002 : les caractères de frappe se choisissent, et la paire
+    /// produite reste celle des niveaux. Un même caractère des deux côtés
+    /// se décide au contexte.
+    #[test]
+    fn des_declencheurs_personnalises_composent_la_paire() {
+        let mut regles = Regles::francaise();
+        regles.guillemets_ouvrants = vec!['§'];
+        regles.guillemets_fermants = vec!['µ'];
+
+        assert_eq!(
+            appliquer("§un §deuxµ finµ", &regles),
+            format!("«{INSECABLE}un ‹{INSECABLE}deux{INSECABLE}› fin{INSECABLE}»")
+        );
+
+        // Le même caractère des deux côtés : devant un blanc il ferme,
+        // devant un mot il ouvre.
+        regles.guillemets_ouvrants = vec!['°'];
+        regles.guillemets_fermants = vec!['°'];
+        assert_eq!(
+            appliquer("°un °deux° fin°", &regles),
+            format!("«{INSECABLE}un ‹{INSECABLE}deux{INSECABLE}› fin{INSECABLE}»")
         );
     }
 

@@ -12,61 +12,20 @@ pub mod glossaire;
 pub mod metadonnees;
 pub mod model;
 
-/// Le dossier des paquets Typst installés : `<ns>/<nom>/<version>/`.
-///
-/// C'est le premier jalon de l'architecture paquets (bug-report-7,
-/// point 4) : les `#import "@preview/cetz:…"` résolvent **localement**,
-/// sans réseau. `TYPST_WRITER_PAQUETS` détourne la racine (tests,
-/// installation partagée).
-pub fn packages_dir() -> std::path::PathBuf {
-    if let Ok(racine) = std::env::var("TYPST_WRITER_PAQUETS") {
-        return std::path::PathBuf::from(racine);
-    }
-    dossier_donnees().join("paquets")
-}
 pub mod portable;
 
 pub use model::*;
 
+/// Le fichier de la trace des références bibliques, à la racine du projet.
+pub const RELEVE: &str = "references.json";
+
 use crate::mise_en_page::modele::MiseEnPage;
+use crate::services::stockage::{
+    corbeille, ecrire_atomique, ecrire_atomique_octets, vers_la_corbeille, work_dir,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-/// Dossier de travail de l'application : les projets y vivent.
-pub fn work_dir() -> PathBuf {
-    let dir = dossier_donnees();
-
-    let _ = std::fs::create_dir_all(&dir);
-
-    dir
-}
-
-/// Où vivent les données, selon la plateforme.
-///
-/// Sous Unix — Linux comme macOS — c'est le chemin historique
-/// `~/.typst-writer`, où vivent déjà les projets existants : rien ne
-/// déménage sans qu'on l'ait décidé. Sous Windows, `%APPDATA%\typst-writer`,
-/// avec le profil comme repli.
-fn dossier_donnees() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            return PathBuf::from(appdata).join("typst-writer");
-        }
-        if let Ok(profil) = std::env::var("USERPROFILE") {
-            return PathBuf::from(profil).join(".typst-writer");
-        }
-        PathBuf::from(".typst-writer")
-    }
-    #[cfg(not(windows))]
-    {
-        match std::env::var("HOME") {
-            Ok(home) => PathBuf::from(home).join(".typst-writer"),
-            Err(_) => PathBuf::from(".typst-writer"),
-        }
-    }
-}
 
 /// Ouvre un fichier ou un dossier avec l'outil du système.
 pub fn ouvrir_chemin(cible: &std::path::Path) {
@@ -85,70 +44,6 @@ pub fn commande_ouverture(cible: &std::path::Path) -> std::process::Command {
 
     commande.arg(cible);
     commande
-}
-
-/// Le dossier des suppressions, à côté des projets.
-///
-/// Une suppression n'est pas une destruction : le fichier y va, et le
-/// chemin est rendu pour se raviser. C'est l'annulation du quotidien,
-/// celle qui ne demande pas de dialogue.
-pub fn corbeille() -> std::path::PathBuf {
-    let dossier = work_dir().join("corbeille");
-    let _ = std::fs::create_dir_all(&dossier);
-
-    dossier
-}
-
-/// Déplace un fichier vers la corbeille, et rend où il est allé.
-///
-/// Le nom y devient unique : deux « document.tw » supprimés ne se
-/// marchent pas dessus. La place se prend **atomiquement** — deux courses
-/// parallèles ne choisissent jamais le même nom.
-pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
-    let nom = chemin
-        .file_name()
-        .and_then(|nom| nom.to_str())
-        .unwrap_or("fichier")
-        .to_string();
-
-    let mut numero = 1;
-    loop {
-        let nom_unique = if numero == 1 {
-            nom.clone()
-        } else {
-            format!("{nom}-{numero}")
-        };
-        let destination = corbeille().join(&nom_unique);
-
-        // La place se prend atomiquement — un fichier se marque d'un
-        // fichier, un dossier d'un dossier vide : le renommage passe dans
-        // les deux cas, et deux courses parallèles ne choisissent jamais
-        // le même nom.
-        let pris = if chemin.is_dir() {
-            std::fs::create_dir(&destination).map(|_| ())
-        } else {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&destination)
-                .map(drop)
-        };
-
-        match pris {
-            Ok(()) => {
-                if let Err(erreur) = std::fs::rename(chemin, &destination) {
-                    let _ = std::fs::remove_file(&destination);
-                    let _ = std::fs::remove_dir(&destination);
-                    return Err(erreur);
-                }
-                return Ok(destination);
-            }
-            Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => {
-                numero += 1;
-            }
-            Err(erreur) => return Err(erreur),
-        }
-    }
 }
 
 /// Crée un projet au nom choisi — et jamais sur un dossier existant.
@@ -520,65 +415,17 @@ fn process_vivant(_pid: i32) -> bool {
     true
 }
 
-/// Écrit un fichier d'un seul tenant : temporaire unique, puis renommage.
+/// La trace des références bibliques citées dans le projet (le système de
+/// références) : chaque référence et son nombre, écrite dans le projet.
 ///
-/// Un ancien temporaire peut contenir une version à récupérer : il ne doit
-/// jamais être réutilisé. Le fichier temporaire est synchronisé avant le
-/// remplacement et les permissions du fichier existant sont conservées.
-pub fn ecrire_atomique(chemin: &std::path::Path, contenu: &str) -> std::io::Result<()> {
-    ecrire_atomique_octets(chemin, contenu.as_bytes())
-}
-
-/// La même voie, pour des octets qui ne sont pas du texte (un import).
-pub fn ecrire_atomique_octets(chemin: &std::path::Path, octets: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static PROCHAIN_TEMPORAIRE: AtomicU64 = AtomicU64::new(0);
-    let nom = chemin.file_name().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "nom de fichier absent")
-    })?;
-    let (temporaire, mut fichier) = loop {
-        let numero = PROCHAIN_TEMPORAIRE.fetch_add(1, Ordering::Relaxed);
-        let mut nom_temporaire = std::ffi::OsString::from(".");
-        nom_temporaire.push(nom);
-        nom_temporaire.push(format!(".tmp-{}-{numero}", std::process::id()));
-        let temporaire = chemin.with_file_name(nom_temporaire);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporaire)
-        {
-            Ok(fichier) => break (temporaire, fichier),
-            Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(erreur) => return Err(erreur),
-        }
-    };
-
-    let resultat = (|| {
-        match std::fs::metadata(chemin) {
-            Ok(metadata) => fichier.set_permissions(metadata.permissions())?,
-            Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => {}
-            Err(erreur) => return Err(erreur),
-        }
-        fichier.write_all(octets)?;
-        fichier.sync_all()?;
-        drop(fichier);
-        std::fs::rename(&temporaire, chemin)?;
-        // Le renommage lui-même doit survivre à une coupure : sans la
-        // synchronisation du dossier, la panne peut le perdre.
-        #[cfg(unix)]
-        if let Some(parent) = chemin.parent()
-            && let Ok(dossier) = std::fs::File::open(parent)
-        {
-            let _ = dossier.sync_all();
-        }
-        Ok(())
-    })();
-    if resultat.is_err() {
-        let _ = std::fs::remove_file(&temporaire);
-    }
-    resultat
+/// Le fichier `references.json` est remplacé atomiquement, jamais fusionné ;
+/// les clés sont triées par `BTreeMap`.
+pub fn ecrire_releve_references(
+    dossier: &std::path::Path,
+    releve: &std::collections::BTreeMap<String, usize>,
+) -> std::io::Result<()> {
+    let brut = serde_json::to_string_pretty(releve).unwrap_or_else(|_| "{}".to_string());
+    ecrire_atomique(&dossier.join(RELEVE), &brut)
 }
 
 /// Empreinte du contenu d'un fichier, pour reconnaître le nôtre au retour.
@@ -956,7 +803,7 @@ pub struct Session {
     /// À défaut, `default` : le mode système, et les thèmes natifs. Une session
     /// enregistrée avant les thèmes se relit donc sans rien perdre.
     #[serde(default)]
-    pub theme_mode: crate::ui::theme::ThemeMode,
+    pub theme_mode: crate::base::theme::ThemeMode,
 
     /// Les thèmes retenus pour chaque apparence.
     ///
@@ -1588,6 +1435,16 @@ fn vers_la_corbeille_texte(nom: &str, texte: &str) -> Result<std::path::PathBuf,
     Ok(destination)
 }
 
+/// Lit une bibliothèque `.bib` : une absence est un fichier vide, toute
+/// autre erreur se propage — on ne réécrit jamais après une lecture ratée.
+fn lire_bibliotheque(chemin: &std::path::Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(chemin) {
+        Ok(contenu) => Ok(contenu),
+        Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(erreur) => Err(erreur),
+    }
+}
+
 /// Remet dans la bibliographie la notice que la corbeille a recueillie.
 ///
 /// La copie s'ajoute telle quelle ; une clé déjà présente ne se dédouble
@@ -1600,7 +1457,8 @@ pub fn restaurer_reference(bibliotheque: &Path, copie: &Path) -> Result<String, 
         .next()
         .ok_or_else(|| "La copie ne contient aucune notice.".to_string())?;
 
-    let contenu = std::fs::read_to_string(bibliotheque).unwrap_or_default();
+    let contenu = lire_bibliotheque(bibliotheque)
+        .map_err(|erreur| format!("La bibliothèque est illisible : {erreur}"))?;
     if crate::project::parse_bibliography_text(&contenu)
         .iter()
         .any(|autre| autre.key == entree.key)
@@ -1792,7 +1650,7 @@ pub fn importer_bib(
 
 #[cfg(test)]
 mod epreuves_d_import_bib {
-    use super::{importer_bib, parse_bibliography_text};
+    use super::{ReferenceChamps, importer_bib, nouvelle_reference, parse_bibliography_text};
 
     fn dossier(nom: &str) -> std::path::PathBuf {
         let dossier =
@@ -1800,6 +1658,54 @@ mod epreuves_d_import_bib {
         let _ = std::fs::remove_dir_all(&dossier);
         std::fs::create_dir_all(&dossier).expect("dossier");
         dossier
+    }
+
+    fn champs(cle: &str) -> ReferenceChamps {
+        ReferenceChamps {
+            cle: cle.to_string(),
+            kind: "book".to_string(),
+            nom: "Dupont".to_string(),
+            prenom: "Jean".to_string(),
+            titre: "Un titre".to_string(),
+            titre_court: String::new(),
+            annee: "2026".to_string(),
+            editeur: "Éditions".to_string(),
+            lieu: "Paris".to_string(),
+        }
+    }
+
+    /// Une bibliothèque non UTF-8 n'est jamais lue comme vide puis réécrite.
+    #[test]
+    fn une_bibliotheque_non_utf8_n_est_pas_ecrasee() {
+        let projet = dossier("non-utf8");
+        let chemin = projet.join("references.bib");
+        let octets = [0xff, 0xfe, 0x00, 0x41];
+        std::fs::write(&chemin, octets).expect("bibliothèque fautive");
+
+        let resultat = nouvelle_reference(&chemin, &champs("neuve2026"));
+
+        assert!(resultat.is_err(), "la lecture illisible se propage");
+        assert_eq!(
+            std::fs::read(&chemin).expect("fichier"),
+            octets,
+            "la bibliothèque de l'auteur reste intacte"
+        );
+
+        let _ = std::fs::remove_dir_all(&projet);
+    }
+
+    /// Une bibliothèque absente est un cas légitime : le fichier naît.
+    #[test]
+    fn une_bibliotheque_absente_est_creee() {
+        let projet = dossier("absente");
+        let chemin = projet.join("references.bib");
+
+        let cle = nouvelle_reference(&chemin, &champs("neuve2026")).expect("création");
+
+        assert_eq!(cle, "neuve2026");
+        assert!(chemin.is_file(), "le fichier est né");
+
+        let _ = std::fs::remove_dir_all(&projet);
     }
 
     const DEUX: &str = "@book{dupont2023,\n  author = {Dupont},\n  title = {Un titre},\n}\n\n@article{martin2024,\n  author = {Martin},\n  title = {Un autre},\n}\n";
@@ -1902,7 +1808,7 @@ pub fn nouvelle_reference(
     chemin: &std::path::Path,
     champs: &ReferenceChamps,
 ) -> std::io::Result<String> {
-    let contenu = std::fs::read_to_string(chemin).unwrap_or_default();
+    let contenu = lire_bibliotheque(chemin)?;
     let existantes = parse_bibliography_text(&contenu);
 
     let mut cle = champs.cle.trim().to_string();
@@ -2983,7 +2889,7 @@ mod tests {
         // Les champs de thème, absents, retombent sur le mode système et les
         // thèmes natifs : une session écrite avant les thèmes se relit donc
         // sans rien perdre, et sans démarrer sur un thème inexistant.
-        assert_eq!(session.theme_mode, crate::ui::theme::ThemeMode::System);
+        assert_eq!(session.theme_mode, crate::base::theme::ThemeMode::System);
         assert_eq!(session.themes, crate::theming::Chosen::default());
     }
 
@@ -2998,7 +2904,7 @@ mod tests {
             espace: None,
             project: Some(PathBuf::from("/tmp/projet")),
             last_document: None,
-            theme_mode: crate::ui::theme::ThemeMode::Light,
+            theme_mode: crate::base::theme::ThemeMode::Light,
             themes: crate::theming::Chosen {
                 light: "Moka clair".to_string(),
                 dark: "Moka sombre".to_string(),
@@ -3013,7 +2919,7 @@ mod tests {
 
         let restored: Session = serde_json::from_str(&text).unwrap();
 
-        assert_eq!(restored.theme_mode, crate::ui::theme::ThemeMode::Light);
+        assert_eq!(restored.theme_mode, crate::base::theme::ThemeMode::Light);
         assert_eq!(restored.themes.light, "Moka clair");
         assert_eq!(restored.themes.dark, "Moka sombre");
     }
@@ -3038,7 +2944,7 @@ mod tests {
                 espace: None,
                 project: None,
                 last_document: None,
-                theme_mode: crate::ui::theme::ThemeMode::Dark,
+                theme_mode: crate::base::theme::ThemeMode::Dark,
                 themes: crate::theming::Chosen {
                     light: "Clair".to_string(),
                     dark: "Mon thème".to_string(),
@@ -3049,7 +2955,7 @@ mod tests {
         // 2. L'application redémarre et relit la session.
         let restored = load_session_from(&path).expect("session lisible");
 
-        assert_eq!(restored.theme_mode, crate::ui::theme::ThemeMode::Dark);
+        assert_eq!(restored.theme_mode, crate::base::theme::ThemeMode::Dark);
 
         // 3. Les thèmes disponibles sont relus du dossier, et le choix retrouvé.
         let mut themes = crate::theming::natives();
@@ -3075,7 +2981,7 @@ mod tests {
         let missing =
             load_session_from(&dir.join("absent.json")).expect("absente, et c'est normal");
 
-        assert_eq!(missing.theme_mode, crate::ui::theme::ThemeMode::System);
+        assert_eq!(missing.theme_mode, crate::base::theme::ThemeMode::System);
         assert_eq!(missing.themes, crate::theming::Chosen::default());
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -3085,9 +2991,9 @@ mod tests {
     #[test]
     fn the_theme_mode_is_written_in_lowercase() {
         for (mode, expected) in [
-            (crate::ui::theme::ThemeMode::System, "\"system\""),
-            (crate::ui::theme::ThemeMode::Light, "\"light\""),
-            (crate::ui::theme::ThemeMode::Dark, "\"dark\""),
+            (crate::base::theme::ThemeMode::System, "\"system\""),
+            (crate::base::theme::ThemeMode::Light, "\"light\""),
+            (crate::base::theme::ThemeMode::Dark, "\"dark\""),
         ] {
             let text = serde_json::to_string(&mode).unwrap();
 
@@ -3438,7 +3344,7 @@ mod epreuves_portabilite {
                 .map(|home| PathBuf::from(home).join(".typst-writer"))
                 .unwrap_or_else(|_| PathBuf::from(".typst-writer"))
         };
-        assert_eq!(dossier_donnees(), attendu);
+        assert_eq!(crate::services::stockage::dossier_donnees(), attendu);
     }
 
     /// La commande d'ouverture est celle de la plateforme — testée, pas
@@ -3678,5 +3584,21 @@ mod tests_de_la_base {
         );
 
         let _ = std::fs::remove_dir_all(&parent);
+    }
+
+    /// La trace des références bibliques (le système de références)
+    /// : chaque projet garde son relevé, écrit et relu.
+    #[test]
+    fn la_trace_des_references_est_ecrite() {
+        let dossier = std::env::temp_dir().join("tw-trace-references");
+        let _ = std::fs::remove_dir_all(&dossier);
+        std::fs::create_dir_all(&dossier).unwrap();
+        let mut releve = std::collections::BTreeMap::new();
+        releve.insert("Jn 3:16".to_string(), 3);
+        releve.insert("Gn 1:1-3".to_string(), 1);
+        ecrire_releve_references(&dossier, &releve).expect("écriture");
+        let brut = std::fs::read_to_string(dossier.join("references.json")).expect("fichier");
+        assert!(brut.contains("Jn 3:16"), "{brut}");
+        assert!(brut.contains("3"), "le compte y est : {brut}");
     }
 }

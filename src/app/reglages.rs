@@ -28,48 +28,8 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
     }
 
     match message {
-        Message::MiseEnPageOuvrir => {
-            let reglages = mise_en_page::charger(&state.project.dir);
-            let accroche_manquante = mise_en_page::accroche_manquante(&state.project.dir);
-            let apercu_style = crate::typst::styles::apercu_du_style(
-                &state.project.dir,
-                reglages
-                    .bibliographie
-                    .style
-                    .as_deref()
-                    .unwrap_or("chicago-notes"),
-            );
-            let styles_zotero = crate::zotero::data_dir()
-                .map(|dir| crate::zotero::styles::installed(&dir.join("styles")))
-                .unwrap_or_default();
-
-            // La norme que le document porte déjà : celle de la bibliothèque
-            // qui lui est exactement égale — sinon « Normes personnalisées »,
-            // et le panneau le dit (bug-report-9).
-            let norme_chargee = crate::project::norme_qui_correspond(&reglages).unwrap_or_default();
-
-            state.mise_en_page = Some(DialogueMiseEnPage {
-                metadonnees: crate::project::metadonnees::Metadonnees::charger(&state.project.dir),
-                norme: norme_chargee.clone(),
-                profil_nom: String::new(),
-                norme_originale: norme_chargee,
-                modifie: false,
-                reglages,
-                panneau: 0,
-                accrocher: accroche_manquante,
-                accroche_manquante,
-                regles_main: mise_en_page::regles_ecrites_a_la_main(&state.project.dir),
-                apercu_style,
-                styles_zotero,
-            });
-
-            // Le panneau prend les mains : l'éditeur derrière ne reçoit
-            // plus rien du clavier tant que les normes sont ouvertes
-            // (bug-report-9, T1.1).
-            state.editor.editor.lose_focus();
-
-            Task::none()
-        }
+        Message::MiseEnPageOuvrir => ouvrir_panneau(state, false),
+        Message::PluginsOuvrir => ouvrir_panneau(state, true),
 
         Message::MiseEnPageFermer => {
             state.mise_en_page = None;
@@ -278,18 +238,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             Task::none()
         }
 
-        Message::ReglagesFonctionnalite(nom, actif) => {
-            if let Some(dialogue) = state.mise_en_page.as_mut() {
-                match nom.as_str() {
-                    "bibliographie" => dialogue.reglages.fonctionnalites.bibliographie = actif,
-                    "glossaire" => dialogue.reglages.fonctionnalites.glossaire = actif,
-                    "graphiques" => dialogue.reglages.fonctionnalites.graphiques = actif,
-                    _ => {}
-                }
-            }
-
-            Task::none()
-        }
         Message::MiseEnPageAppliquer => appliquer(state),
 
         // L'ajout d'image : le sélecteur natif, les formats que Typst
@@ -402,7 +350,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         Message::MiseEnPageDestination(chemin, texte) => {
             let resultat = crate::app::fichiers::verifier_destination_export(state, &chemin)
                 .and_then(|()| {
-                    crate::project::ecrire_atomique(&chemin, &texte)
+                    crate::services::stockage::ecrire_atomique(&chemin, &texte)
                         .map_err(|erreur| format!("Écrire le fichier : {erreur}"))
                 });
             let note = match resultat {
@@ -421,6 +369,43 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         _ => return None,
     }
     .into()
+}
+
+/// Ouvre le panneau de travail — les normes, ou les paramètres des plugins.
+fn ouvrir_panneau(state: &mut State, plugins: bool) -> Task<Message> {
+    let reglages = mise_en_page::charger(&state.project.dir);
+    let accroche_manquante = mise_en_page::accroche_manquante(&state.project.dir);
+    let apercu_style = crate::typst::styles::apercu_du_style(
+        &state.project.dir,
+        reglages
+            .bibliographie
+            .style
+            .as_deref()
+            .unwrap_or("chicago-notes"),
+    );
+    let styles_zotero = crate::zotero::data_dir()
+        .map(|dir| crate::zotero::styles::installed(&dir.join("styles")))
+        .unwrap_or_default();
+    let norme_chargee = crate::project::norme_qui_correspond(&reglages).unwrap_or_default();
+
+    state.mise_en_page = Some(DialogueMiseEnPage {
+        metadonnees: crate::project::metadonnees::Metadonnees::charger(&state.project.dir),
+        norme: norme_chargee.clone(),
+        profil_nom: String::new(),
+        norme_originale: norme_chargee,
+        modifie: false,
+        reglages,
+        plugins,
+        panneau: 0,
+        accrocher: accroche_manquante,
+        accroche_manquante,
+        regles_main: mise_en_page::regles_ecrites_a_la_main(&state.project.dir),
+        apercu_style,
+        styles_zotero,
+    });
+
+    state.editor.editor.lose_focus();
+    Task::none()
 }
 
 /// Applique la copie de travail au projet.
@@ -444,10 +429,11 @@ fn appliquer(state: &mut State) -> Task<Message> {
     }
 
     let reglages = dialogue.reglages.clone();
+    let accrocher = dialogue.accrocher;
     // Les normes appliquées sont celles que l'interface lit pour
     // montrer ou cacher les fonctionnalités du projet.
     state.reglages = reglages.clone();
-    let accrocher = dialogue.accrocher;
+    state.rafraichir_statistiques_bibliques();
 
     match mise_en_page::appliquer(&state.project.dir, &reglages, accrocher) {
         Ok(mise_en_page::Applique::AccrocheAjoutee) => {

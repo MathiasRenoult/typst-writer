@@ -317,8 +317,8 @@ pub fn view(state: &crate::app::State, palette: crate::ui::theme::Palette) -> El
         row![
             container(
                 iced::widget::Space::new()
-                    .width(Length::Fixed(28.0))
-                    .height(Length::Fixed(28.0))
+                    .width(Length::Fixed(64.0))
+                    .height(Length::Fixed(64.0))
             )
             .style(move |_t| iced::widget::container::Style {
                 background: Some(iced::Background::Color(iced::Color::from_rgb8(r, g, b))),

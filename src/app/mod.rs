@@ -10,6 +10,7 @@ mod rasterisation;
 pub mod recherche;
 mod reglages;
 mod rendu;
+pub mod routeur;
 mod saisie;
 pub mod state;
 mod themes;
@@ -142,7 +143,6 @@ impl State {
             } else {
                 crate::zotero::Source::Locale
             },
-            lie: project.zotero.is_some(),
         };
 
         let mut state = Self {
@@ -154,8 +154,6 @@ impl State {
             projet_dialogue: None,
             controle_tenu: false,
             maj_tenu: false,
-            references_repliees: false,
-            references_filtre: String::new(),
             tableau: None,
             projets_vue: false,
             mode: crate::app::state::ModeVue::default(),
@@ -164,7 +162,6 @@ impl State {
             drag_etagere: None,
             editeur_theme: None,
             editeur_theme_textes: std::collections::HashMap::new(),
-            survol_reference: None,
             survol_onglet: None,
             survol_projet: None,
             zotero_recherche: String::new(),
@@ -172,9 +169,11 @@ impl State {
             etagere_brouillon: String::new(),
             projets_tous: false,
             projets_recherche: String::new(),
-            references_recherche_visible: false,
             projets_recherche_visible: false,
             survol_sommaire: None,
+            sommaire_replie: false,
+            chapitres_replie: false,
+            projets_section_replie: false,
             projets_etage: "Mon étagère".to_string(),
             note_dialogue: None,
             extension: None,
@@ -192,6 +191,7 @@ impl State {
             project,
             projects,
             etageres: Default::default(),
+            plugins: crate::plugins::Plugins::default(),
             window_size: iced::Size::new(1180.0, 780.0),
             window: None,
             // L'écran se déclare dans les millisecondes qui suivent ; d'ici là,
@@ -200,14 +200,6 @@ impl State {
             mise_en_page: None,
             composeur: None,
             note_overlay: None,
-            edition_reference: None,
-            glossaire: Vec::new(),
-            glossaire_replie: false,
-            glossaire_recherche_visible: false,
-            glossaire_filtre: String::new(),
-            survol_glossaire: None,
-            glossaire_fenetre: false,
-            edition_glossaire: None,
             zotero,
             renaming: None,
             jump: None,
@@ -226,7 +218,7 @@ impl State {
             // lequel.
             chosen: session.themes.clone(),
             theme: session.theme_mode,
-            resolved: crate::ui::theme::Resolved::of(&crate::theming::natives()[0]),
+            resolved: crate::design::theme::Resolved::of(&crate::theming::natives()[0]),
             liaison: None,
             recherche: None,
             note: note_de_migration,
@@ -314,6 +306,9 @@ impl State {
         // Le projet est relu depuis le disque : ses chapitres ont pu être
         // renommés, ajoutés ou supprimés depuis le dernier scan.
         self.project = crate::project::load(&self.project.dir);
+        // Les normes appartiennent au projet affiché : activer un add-on se
+        // règle dans les siennes, et le panneau latéral les lit.
+        self.reglages = crate::mise_en_page::charger(&self.project.dir);
 
         self.bibliography = self
             .project
@@ -322,7 +317,31 @@ impl State {
             .map(|bib| crate::project::parse_bibliography(bib))
             .unwrap_or_default();
 
-        self.glossaire = crate::project::glossaire::Glossaire::charger(&self.project.dir).entrees;
+        self.plugins.glossaire.entrees =
+            crate::plugins::glossaire::Glossaire::charger(&self.project.dir).entrees;
+
+        self.rafraichir_statistiques_bibliques();
+    }
+
+    /// Recalcule les statistiques bibliques du document ouvert.
+    ///
+    /// Les statistiques ne concernent que le document courant : le panneau
+    /// ne propose plus d'échelle « tous les projets ».
+    fn rafraichir_statistiques_bibliques(&mut self) {
+        if !self
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+        {
+            return;
+        }
+
+        let mut stats = crate::plugins::bible::Statistiques::default();
+        stats.ajouter(&self.editor.content());
+        self.plugins.bible.analyse = crate::plugins::bible::Analyse::depuis_releve(
+            &crate::plugins::bible::releve(&self.editor.content()),
+        );
+        self.plugins.bible.stats = stats;
     }
 
     /// Charge un chapitre dans l'éditeur, rendu vierge.
@@ -594,6 +613,23 @@ impl State {
         self.espace
             .disques
             .insert(cle, crate::project::empreinte_contenu(contenu.as_bytes()));
+
+        // La trace des références suit le document réellement écrit : la
+        // calculer avant la sauvegarde la ferait mentir en cas de conflit.
+        if self
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+            && let Err(erreur) = crate::project::ecrire_releve_references(
+                &self.project.dir,
+                &crate::plugins::bible::releve(&contenu),
+            )
+        {
+            self.note = Some(crate::app::state::Note::erreur(format!(
+                "Trace des références non écrite : {erreur}"
+            )));
+        }
+
         self.conflit_refuse = None;
         Ok(())
     }
@@ -638,7 +674,7 @@ enum SauvegardeRefusee {
 const FIRST_PROJECT: &str = "mon-travail";
 
 /// Un champ de fiche rempli devient une valeur ; le vide devient l'absence.
-fn champ_renseigne(valeur: &str) -> Option<String> {
+pub(crate) fn champ_renseigne(valeur: &str) -> Option<String> {
     let valeur = valeur.trim();
     if valeur.is_empty() {
         None
@@ -651,7 +687,26 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
     espace_runtime::update(state, message)
 }
 
+/// Le dispatch interne, après la transaction de l'espace.
+///
+/// Trois étages, dans cet ordre :
+/// 1. la porte d'activation — un message dont [`Message::plugin`] nomme un
+///    add-on désactivé est ignoré sans note ;
+/// 2. la garde d'écriture — un message classé « modifie le projet » est
+///    refusé tant qu'aucun verrou n'est tenu ;
+/// 3. les routeurs de domaine, puis le match central.
+///
+/// Les routeurs passent donc après les deux gardes : un message de plugin
+/// qui écrit ne contourne jamais la lecture seule.
 fn update_interne(state: &mut State, message: Message) -> Task<Message> {
+    // Un add-on désactivé ne reçoit plus ses messages : la vue disparaît,
+    // et ce qui resterait branché se tait.
+    if let Some(cle) = message.plugin()
+        && !state.reglages.fonctionnalites.actif(cle)
+    {
+        return Task::none();
+    }
+
     // Toutes les actions qui écrivent dans le projet doivent passer par le
     // même contrôle, y compris les messages issus d'une confirmation.
     let modifie_le_projet = match &message {
@@ -675,14 +730,16 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ZoteroExport(_, _, _, Ok(_))
         | Message::Format(_)
         | Message::NoteInserer
-        | Message::NoteTexte(_)
-        | Message::NoteAnnuler
+        | Message::NoteValider
         | Message::FigureInserer
         | Message::EtiquetteInserer
         | Message::RenvoiInserer
         | Message::TitreInserer(_)
         | Message::InsertCitation(_)
         | Message::SommaireInserer
+        | Message::BibleIndexInserer
+        | Message::BiblePanneauInserer
+        | Message::BibleEditionEnregistrer
         | Message::BibliographieSectionInserer
         | Message::GlossaireSectionInserer
         | Message::GlossaireInserer(_)
@@ -692,7 +749,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RechercheRemplacer
         | Message::RechercheRemplacerTout
         | Message::CompletionAccept
-        | Message::CompletionPick(_)
         | Message::ComposeurTerminer
         | Message::SauvegardeForcee(_)
         | Message::ImportAppliquer
@@ -718,6 +774,165 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         ));
         return Task::none();
     }
+
+    // Les routeurs de domaine passent après la garde : un message de plugin
+    // qui écrit dans le projet ne contourne jamais la lecture seule.
+    match message.plugin() {
+        Some(crate::base::valeurs::CLE_GLOSSAIRE) => {
+            return routeur::glossaire::traiter(state, message);
+        }
+        Some(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES) => {
+            return routeur::bible::traiter(state, message);
+        }
+        Some(crate::base::valeurs::CLE_BIBLIOGRAPHIE) => {
+            return routeur::bibliographie::traiter(state, message);
+        }
+        _ => {}
+    }
+
+    if matches!(
+        message,
+        Message::AideBasculer
+            | Message::OuvrirDossierDonnees
+            | Message::OuvrirCorbeille
+            | Message::OuvrirSauvegardes
+    ) {
+        return routeur::aide::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::OngletChoisir(_) | Message::OngletFermer(_)
+    ) {
+        return routeur::onglets::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::TableauOuvrir
+            | Message::TableauRangs(_)
+            | Message::TableauColonnes(_)
+            | Message::TableauAnnuler
+            | Message::TableauInserer
+    ) {
+        return routeur::tableaux::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::ProjetsVue
+            | Message::VignettesFaites(_)
+            | Message::DragCommencer(_)
+            | Message::ProjetsRechercheBascule
+            | Message::ProjetsEtageChoisie(_)
+            | Message::ProjetsFiltreBascule
+            | Message::ProjetsRecherche(_)
+            | Message::DragSurvol(_)
+            | Message::DragPoser(_)
+            | Message::EtagereBrouillon(_)
+            | Message::EtagereDefinir(_, _)
+            | Message::ProjetSupprimer(_)
+    ) {
+        return routeur::projets::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::PickerCouleurOuvrir
+            | Message::PickerCouleurFermer
+            | Message::PickerCouleurTeinte(_)
+            | Message::PickerCouleurSatVal(_, _)
+            | Message::PickerCouleurPourReglage(_)
+            | Message::PickerCouleurEnregistrer
+            | Message::PickerCouleurAppliquer
+            | Message::PickerCouleurHex(_)
+            | Message::PickerCouleurRapide(_)
+    ) {
+        return routeur::couleurs::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::ThemeEditeurOuvrir
+            | Message::ThemeEditeurChoisir(_)
+            | Message::ThemeEditeurColorPicker(_)
+            | Message::ThemeEditeurChamp(_, _)
+            | Message::ThemeEditeurReset
+            | Message::ThemeEditeurFermer
+            | Message::ThemeEditeurEnregistrer
+    ) {
+        return routeur::themes_editeur::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::NormesNom(_)
+            | Message::NormesAppliquer(_)
+            | Message::NormesEcraser
+            | Message::NormesEnregistrer(_)
+            | Message::NormesSupprimer(_)
+    ) {
+        return routeur::normes::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::NoteOverlayChamp(_) | Message::NoteOverlayEnregistrer | Message::NoteOverlayFermer
+    ) {
+        return routeur::notes::traiter(state, message);
+    }
+
+    if matches!(message, Message::ModeBasculer | Message::ModeTypst) {
+        return routeur::modes::traiter(state, message);
+    }
+
+    if matches!(message, Message::DeleteChapter(_) | Message::DeleteTheme(_)) {
+        return routeur::suppressions::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::ToggleSidebar
+            | Message::WindowResized(_)
+            | Message::WindowOpened(_)
+            | Message::ToggleFocusMode
+    ) {
+        return routeur::fenetre::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::ListeEnchainer
+            | Message::TitreSuivant
+            | Message::TitrePrecedent
+            | Message::GotoHeading(_)
+            | Message::GotoError(_, _)
+    ) {
+        return routeur::edition::traiter(state, message);
+    }
+
+    if matches!(message, Message::MemoryTick | Message::SaveTick) {
+        return routeur::ticks::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::ConfirmationConfirmer | Message::ConfirmationAnnuler
+    ) {
+        return routeur::confirmation::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::ModificateursTenus { .. } | Message::Molette(_)
+    ) {
+        return routeur::entrees::traiter(state, message);
+    }
+
+    if matches!(message, Message::ReglagesFonctionnalite(_, _)) {
+        return routeur::addons::traiter(state, message);
+    }
+
     match message {
         Message::FermetureDemandee => unreachable!("fermeture traitée par l’espace"),
         Message::RetourDocument(..)
@@ -734,70 +949,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::OngletPrendre(..)
         | Message::OngletCible(..)
         | Message::OngletPoser => unreachable!("messages traités par l’espace"),
-        // Une notice locale se supprime — vers la corbeille, avec son mot.
-        Message::ReferenceSupprimer(cle) => {
-            if !state.geste_confirme {
-                state.confirmation = Some(crate::app::state::Confirmation {
-                    question: format!("Supprimer la notice « {cle} » ? Elle part à la corbeille."),
-                    action: Message::ReferenceSupprimer(cle),
-                });
-
-                return Task::none();
-            }
-
-            state.geste_confirme = false;
-
-            // Une notice Zotero ne se supprime pas ici : elle est à Zotero.
-            if state.zotero.source == crate::zotero::Source::Zotero {
-                state.note = Some(crate::app::state::Note::erreur(
-                    "Une notice Zotero se supprime dans Zotero.".to_string(),
-                ));
-                return Task::none();
-            }
-
-            let Some(bibliotheque) = state.project.bibliography.clone() else {
-                return Task::none();
-            };
-
-            match crate::project::supprimer_reference(&bibliotheque, &cle) {
-                Ok(copie) => {
-                    state.bibliography = crate::project::parse_bibliography(&bibliotheque);
-                    state.edition_reference = None;
-                    state.derniere_notice_supprimee = Some(copie);
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "La notice « {cle} » part à la corbeille."
-                    )));
-                    state.refresh_context();
-                    Task::none()
-                }
-                Err(probleme) => {
-                    state.note = Some(crate::app::state::Note::erreur(probleme));
-                    Task::none()
-                }
-            }
-        }
-
-        Message::ReferenceRestaurer(copie) => {
-            let Some(bibliotheque) = state.project.bibliography.clone() else {
-                return Task::none();
-            };
-
-            match crate::project::restaurer_reference(&bibliotheque, &copie) {
-                Ok(cle) => {
-                    state.bibliography = crate::project::parse_bibliography(&bibliotheque);
-                    state.derniere_notice_supprimee = None;
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "La notice « {cle} » est de retour."
-                    )));
-                    state.refresh_context();
-                }
-                Err(probleme) => {
-                    state.note = Some(crate::app::state::Note::erreur(probleme));
-                }
-            }
-            Task::none()
-        }
-
         // Les projets : le nom en frappe, puis les trois gestes.
         Message::ProjetNom(..)
         | Message::ProjetMeta(..)
@@ -810,319 +961,13 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ProjetBase(..)
         | Message::ProjetFonctionnalite(..) => crate::app::projet_dialogue::update(state, message),
 
-        // Les métadonnées choisies à la création (bug-report-7, point 9).
-
-        // Le dialogue s'ouvre sur le vide, ou sur le nom du projet visé.
-        // L'éditeur de thème : une copie de travail, et le fichier ne
-        // bouge qu'à l'enregistrement — la règle de tout dialogue.
-        Message::ThemeEditeurOuvrir => {
-            // Le thème actif d'abord — éditer un autre que celui qu'on
-            // porte serait un contresens.
-            let actif = state.current_theme().map(|t| t.name.clone());
-            let premier = actif
-                .and_then(|nom| {
-                    state
-                        .themes
-                        .iter()
-                        .find(|t| t.name == nom && t.file.is_some())
-                        .and_then(|t| t.file.clone())
-                })
-                .or_else(|| {
-                    state
-                        .themes
-                        .iter()
-                        .find(|theme| theme.file.is_some())
-                        .and_then(|theme| theme.file.clone())
-                });
-
-            match premier {
-                Some(fichier) => {
-                    state.editeur_theme = Some(fichier);
-                }
-                None => {
-                    state.render.errors.push(crate::typst::render::Diagnostic {
-                        origine: crate::typst::render::Origine::RenduPdf,
-                        message: "Le PDF généré n'est pas lisible : le rendu reste en attente."
-                            .to_string(),
-                        line: None,
-                        column: None,
-                        file: None,
-                    });
-                    state.note = Some(crate::app::state::Note::erreur(
-                        "Aucun thème à éditer : les thèmes natifs n'ont pas de fichier."
-                            .to_string(),
-                    ));
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::ThemeEditeurChoisir(nom) => {
-            let fichier = state
-                .themes
-                .iter()
-                .find(|theme| theme.file.as_ref().is_some_and(|f| f.meta.name == nom))
-                .and_then(|theme| theme.file.clone());
-
-            if let Some(fichier) = fichier {
-                state.editeur_theme = Some(fichier);
-                state.editeur_theme_textes.clear();
-            }
-
-            Task::none()
-        }
-
-        Message::ThemeEditeurColorPicker(champ) => {
-            // La même roue que pour le texte, visée sur le champ du thème
-            // (bug-report-7, point 11). Elle s'ouvre par-dessus l'éditeur.
-            let valeur = state.editeur_theme_textes.get(champ).cloned();
-            let (teinte, saturation, valeur_v) = valeur
-                .as_deref()
-                .and_then(crate::ui::picker_couleur::hex_vers_hsv)
-                .unwrap_or((0.0, 0.0, 0.5));
-            state.picker_couleur = Some(crate::app::state::PickerCouleur {
-                teinte,
-                saturation,
-                valeur: valeur_v,
-                hex_saisi: valeur,
-                champ: Some(champ),
-                reglage: None,
-            });
-            Task::none()
-        }
-
-        Message::ThemeEditeurChamp(champ, valeur) => {
-            // La saisie brute reste dans le champ, même incomplète : c'est
-            // elle que l'utilisateur voit. La couleur n'est mise à jour
-            // que si la valeur se parse.
-            state
-                .editeur_theme_textes
-                .insert(champ.to_string(), valeur.clone());
-
-            if let Some(fichier) = state.editeur_theme.as_mut() {
-                let Ok(valeur) = crate::theming::HexColor::parse(valeur.trim()) else {
-                    return Task::none();
-                };
-
-                match champ {
-                    "background" => fichier.colors.background = valeur,
-                    "surface" => fichier.colors.surface = valeur,
-                    "text" => fichier.colors.text = valeur,
-                    "accent" => fichier.colors.accent = valeur,
-                    "text_muted" => fichier.colors.text_muted = Some(valeur),
-                    "border" => fichier.colors.border = Some(valeur),
-                    "danger" => fichier.colors.danger = Some(valeur),
-                    "warning" => fichier.colors.warning = Some(valeur),
-                    "success" => fichier.colors.success = Some(valeur),
-                    _ => {}
-                }
-            }
-
-            // Le thème s'applique en direct : l'éditeur suit le fond de
-            // l'application, même pendant l'édition du thème.
-            crate::app::themes::retheme(state);
-
-            Task::none()
-        }
-
-        Message::ThemeEditeurReset => {
-            // Recharge le fichier depuis le disque : les changements
-            // non enregistrés sont abandonnés.
-            let nom = state.editeur_theme.as_ref().map(|f| f.meta.name.clone());
-            if let Some(nom) = nom
-                && let Some(theme) = state
-                    .themes
-                    .iter()
-                    .find(|t| t.name == nom && t.file.is_some())
-                    .and_then(|t| t.file.clone())
-            {
-                state.editeur_theme = Some(theme);
-                state.editeur_theme_textes.clear();
-            }
-            Task::none()
-        }
-
-        Message::ThemeEditeurFermer => {
-            state.editeur_theme = None;
-            state.editeur_theme_textes.clear();
-            Task::none()
-        }
-
-        Message::ThemeEditeurEnregistrer => {
-            let Some(fichier) = state.editeur_theme.clone() else {
-                return Task::none();
-            };
-
-            match crate::theming::enregistrer(&fichier) {
-                Ok(avertissements) => {
-                    state.editeur_theme = None;
-                    // Le thème enregistré s'applique aussitôt : recharger
-                    // la liste et re-résoudre le thème courant.
-                    crate::app::themes::refresh_themes(state);
-                    crate::app::themes::retheme(state);
-                    let message = if avertissements.is_empty() {
-                        "Le thème est enregistré et appliqué.".to_string()
-                    } else {
-                        format!(
-                            "Le thème est enregistré et appliqué. Avertissement : {}",
-                            avertissements.join(" ; ")
-                        )
-                    };
-                    state.note = Some(crate::app::state::Note::info(message));
-                    Task::none()
-                }
-                Err(message) => {
-                    state.note = Some(crate::app::state::Note::erreur(message));
-                    Task::none()
-                }
-            }
-        }
-
-        // Les onglets : choisir un projet, c'est garder le monde de
-        // chacun — la session se persiste avant de partir, et le suivant
-        // se charge tout entier.
-        Message::OngletChoisir(dir) => {
-            if state.project.dir == dir {
-                return Task::none();
-            }
-
-            state.persist();
-
-            update(state, Message::OpenProject(dir))
-        }
-
-        Message::OngletFermer(dir) => {
-            state.onglets.retain(|onglet| *onglet != dir);
-
-            if state.project.dir == dir {
-                match state.onglets.first().cloned() {
-                    Some(suivant) => {
-                        state.persist();
-                        return update(state, Message::OpenProject(suivant));
-                    }
-                    None => {
-                        state.note = Some(crate::app::state::Note::info(
-                            "Dernier onglet fermé.".to_string(),
-                        ));
-                    }
-                }
-            }
-
-            Task::none()
-        }
-
+        // La recherche dans les collections Zotero.
         Message::ZoteroRecherche(filtre) => {
             state.zotero_recherche = filtre;
             Task::none()
         }
 
-        // La bibliographie locale : un projet qui n'en a pas la voit
-        // naître d'un geste, au modèle.
-        Message::BibliographieCreer => {
-            let dir = state.project.dir.clone();
-            let chemin = dir.join("references.bib");
-
-            if chemin.is_file() {
-                state.note = Some(crate::app::state::Note::info(
-                    "Le projet a déjà sa bibliographie.".to_string(),
-                ));
-                return Task::none();
-            }
-
-            match crate::project::ecrire_atomique(
-                &chemin,
-                crate::project::model::BIBLIOGRAPHY_TEMPLATE,
-            ) {
-                Ok(()) => {
-                    state.project = crate::project::load(&dir);
-                    state.bibliography = crate::project::parse_bibliography(&chemin);
-                    state.note = Some(crate::app::state::Note::info(
-                        "La bibliographie locale est créée — references.bib.".to_string(),
-                    ));
-                }
-                Err(erreur) => {
-                    state.note = Some(crate::app::state::Note::erreur(format!(
-                        "La bibliographie n'a pas pu naître : {erreur}"
-                    )));
-                }
-            }
-
-            Task::none()
-        }
-
-        // L'alternative sans plugin : Zotero sait exporter un `.bib` tout
-        // seul, et ce fichier rejoint la bibliothèque locale sans rien
-        // écraser.
-        Message::BibliographieImporter => Task::perform(
-            async {
-                rfd::AsyncFileDialog::new()
-                    .add_filter("Bibliographie BibLaTeX", &["bib"])
-                    .pick_file()
-                    .await
-                    .map(|fichier| fichier.path().to_path_buf())
-            },
-            Message::BibImporte,
-        ),
-
-        Message::BibImporte(result) => {
-            let Some(source) = result else {
-                return Task::none();
-            };
-
-            match crate::project::importer_bib(&state.project.dir, &source) {
-                Ok(rapport) => {
-                    let dir = state.project.dir.clone();
-                    let chemin = dir.join("references.bib");
-                    state.project = crate::project::load(&dir);
-                    state.bibliography = crate::project::parse_bibliography(&chemin);
-
-                    // Le rapport se lit entièrement : ce qui est entré, ce
-                    // qui était déjà là, ce qui s'est heurté.
-                    let mut parties = Vec::new();
-                    if !rapport.ajoutees.is_empty() {
-                        parties.push(format!(
-                            "{} entrée(s) : {}",
-                            rapport.ajoutees.len(),
-                            rapport.ajoutees.join(", ")
-                        ));
-                    }
-                    if !rapport.deja_la.is_empty() {
-                        parties.push(format!(
-                            "{} déjà là : {}",
-                            rapport.deja_la.len(),
-                            rapport.deja_la.join(", ")
-                        ));
-                    }
-                    if !rapport.conflits.is_empty() {
-                        parties.push(format!(
-                            "{} conflit(s), la première tient : {}",
-                            rapport.conflits.len(),
-                            rapport.conflits.join(", ")
-                        ));
-                    }
-
-                    let message = format!("Import BibLaTeX — {}.", parties.join(" ; "));
-                    state.note = Some(if rapport.conflits.is_empty() {
-                        crate::app::state::Note::info(message)
-                    } else {
-                        crate::app::state::Note::erreur(message)
-                    });
-                }
-                Err(probleme) => {
-                    // Rien n'a changé — la notice le dit déjà.
-                    state.note = Some(crate::app::state::Note::erreur(probleme));
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::SurvolReference(cle) => {
-            state.survol_reference = cle;
-            Task::none()
-        }
-
+        // Le survol d'un onglet ou d'un projet retient la cible.
         Message::SurvolOnglet(id) => {
             state.survol_onglet = id;
             Task::none()
@@ -1133,265 +978,24 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        // Les vignettes se rendent en arrière-plan : la vue les attend
-        // sans jamais bloquer l'écran.
-        // Le mode de la fenêtre : édition, rendu, Typst. `Ctrl+e`
-        // bascule rendu/édition, `Ctrl+Maj+e` ouvre le Typst — et le
-        // Typst ne sert que quand quelque chose refuse de se composer.
-        Message::ModeBasculer => {
-            let ancien = state.mode;
-            state.mode = match state.mode {
-                crate::app::state::ModeVue::Edition => crate::app::state::ModeVue::Rendu,
-                crate::app::state::ModeVue::Rendu => crate::app::state::ModeVue::Edition,
-                crate::app::state::ModeVue::Typst => crate::app::state::ModeVue::Edition,
-            };
-
-            // La bascule vers la vue rendu régénère systématiquement le PDF
-            // (bug-report-9) : l'aperçu affiche le fichier livré, il doit
-            // donc être neuf — jamais l'export d'une session précédente.
-            if state.mode == crate::app::state::ModeVue::Rendu
-                && ancien != crate::app::state::ModeVue::Rendu
-            {
-                let pdf = generer_le_pdf_du_rendu(state);
-
-                // Le texte affiché suit l'édition : au basculement, on
-                // compile d'entrée si le rendu est périmé — jamais l'image
-                // d'une frappe d'avant (bug-report-10, 6.2).
-                let frache =
-                    state.render.pending || state.render.content == state.compilation_fingerprint();
-
-                return if frache {
-                    pdf
-                } else {
-                    state.render.pending = true;
-                    Task::batch([pdf, compile_task(state)])
-                };
-            }
-
-            Task::none()
-        }
-
-        Message::ModeTypst => {
-            state.mode = if state.mode == crate::app::state::ModeVue::Typst {
-                crate::app::state::ModeVue::Edition
-            } else {
-                crate::app::state::ModeVue::Typst
-            };
-
-            Task::none()
-        }
-
-        Message::ProjetsVue => {
-            state.projets_vue = !state.projets_vue;
-
-            if state.projets_vue {
-                let dirs: Vec<std::path::PathBuf> = state
-                    .projects
-                    .iter()
-                    .map(|projet| projet.dir.clone())
-                    .collect();
-
-                return Task::perform(
-                    async move { crate::project::vignettes(&dirs) },
-                    Message::VignettesFaites,
-                );
-            }
-
-            Task::none()
-        }
-
-        Message::VignettesFaites(vignettes) => {
-            state.vignettes = vignettes;
-            Task::none()
-        }
-
-        // Le glisser-déposer : prendre un projet, survoler une étagère,
-        // poser. Le geste dit où il en est — une ombre suit le projet.
-        Message::DragCommencer(nom) => {
-            state.drag_projet = Some(nom);
-            Task::none()
-        }
-
-        // Les deux recherches ne se montrent que sur leur icône, et
-        // l'étagère se choisit au menu (bug-report 2026-11-03).
+        // Le survol d'une entrée de sommaire.
         Message::SommaireSurvol(rang) => {
             state.survol_sommaire = rang;
             Task::none()
         }
 
-        Message::ReferencesRechercheBascule => {
-            state.references_recherche_visible = !state.references_recherche_visible;
+        Message::SommaireReplier => {
+            state.sommaire_replie = !state.sommaire_replie;
             Task::none()
         }
 
-        Message::ProjetsRechercheBascule => {
-            state.projets_recherche_visible = !state.projets_recherche_visible;
+        Message::ChapitresReplier => {
+            state.chapitres_replie = !state.chapitres_replie;
             Task::none()
         }
 
-        Message::ProjetsEtageChoisie(choix) => {
-            state.projets_etage = choix;
-            Task::none()
-        }
-
-        // La liste des projets : étagère courante par défaut, tous sur
-        // demande — et la recherche filtre par nom (bug-report-7, 18).
-        Message::ProjetsFiltreBascule => {
-            state.projets_tous = !state.projets_tous;
-            Task::none()
-        }
-
-        Message::ProjetsRecherche(valeur) => {
-            state.projets_recherche = valeur;
-            Task::none()
-        }
-
-        Message::DragSurvol(etagere) => {
-            state.drag_etagere = Some(etagere);
-            Task::none()
-        }
-
-        Message::DragPoser(etagere) => {
-            if let Some(projet) = state.drag_projet.take() {
-                state.drag_etagere = None;
-
-                match crate::project::definir_etagere(&projet, &etagere) {
-                    Ok(()) => {
-                        state.note = Some(crate::app::state::Note::info(format!(
-                            "« {projet} » rejoint « {etagere} »."
-                        )));
-                    }
-                    Err(message) => {
-                        state.note = Some(crate::app::state::Note::erreur(message));
-                    }
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::EtagereBrouillon(valeur) => {
-            state.etagere_brouillon = valeur;
-            Task::none()
-        }
-
-        Message::EtagereDefinir(projet, etagere) => {
-            match crate::project::definir_etagere(&projet, &etagere) {
-                Ok(()) => {
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "« {projet} » rejoint « {etagere} »."
-                    )));
-                }
-                Err(message) => {
-                    state.note = Some(crate::app::state::Note::erreur(message));
-                }
-            }
-
-            Task::none()
-        }
-
-        // La création depuis une étagère : le dialogue s'ouvre déjà
-        // classé (bug 3 du rapport 2).
-        Message::ProjetSupprimer(dir) => {
-            if !state.geste_confirme {
-                state.confirmation = Some(crate::app::state::Confirmation {
-                    question: "Supprimer ce projet ? Il part à la corbeille.".to_string(),
-                    action: Message::ProjetSupprimer(dir),
-                });
-
-                return Task::none();
-            }
-
-            state.geste_confirme = false;
-
-            // La carte peut viser un projet autre que la vue courante. Un
-            // verrou propre à cette cible reste tenu jusqu'au déplacement.
-            let deja_verrouille = state.espace.verrous.contains_key(&dir)
-                || (state.project.dir == dir && state.verrou.is_some());
-            let mut temporaire = if deja_verrouille {
-                None
-            } else {
-                match crate::project::Verrou::prendre(&dir) {
-                    Ok(verrou) => Some(verrou),
-                    Err(probleme) => {
-                        state.note = Some(crate::app::state::Note::erreur(format!(
-                            "Suppression refusée : {probleme}"
-                        )));
-                        return Task::none();
-                    }
-                }
-            };
-
-            if let Err(probleme) = state.sauvegarder_avant_deplacer(&dir) {
-                state.note = Some(crate::app::state::Note::erreur(format!(
-                    "Suppression annulée : {probleme}. Corrigez la sauvegarde et réessayez."
-                )));
-                return Task::none();
-            }
-
-            if let Err(probleme) = state.preparer_suppression_projet(&dir) {
-                state.note = Some(crate::app::state::Note::erreur(format!(
-                    "Suppression annulée : {probleme}. Le projet reste en place."
-                )));
-                return Task::none();
-            }
-
-            match crate::project::supprimer(&dir) {
-                Ok(corbeille) => {
-                    if let Some(mut verrou) = temporaire.take() {
-                        verrou.suivre_deplacement(&corbeille);
-                    }
-                    if let Some(mut verrou) = state.espace.verrous.remove(&dir) {
-                        verrou.suivre_deplacement(&corbeille);
-                    }
-                    if state.project.dir == dir
-                        && let Some(mut verrou) = state.verrou.take()
-                    {
-                        verrou.suivre_deplacement(&corbeille);
-                    }
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "Le projet part à la corbeille : {}",
-                        corbeille.display()
-                    )));
-
-                    state.projects.retain(|projet| projet.dir != dir);
-                    state.retirer_projet_supprime(&dir);
-                    Task::none()
-                }
-                Err(probleme) => {
-                    state.note = Some(crate::app::state::Note::erreur(probleme));
-                    Task::none()
-                }
-            }
-        }
-
-        // Ce qui défait demande son mot — la corbeille est derrière, mais
-        // un geste qu'on fait parfois à tort mérite la question.
-        Message::DeleteChapter(path) => {
-            if state.geste_confirme {
-                state.geste_confirme = false;
-                return crate::app::fichiers::update(state, Message::DeleteChapter(path));
-            }
-
-            state.confirmation = Some(crate::app::state::Confirmation {
-                question: "Supprimer ce document ? Il part à la corbeille.".to_string(),
-                action: Message::DeleteChapter(path),
-            });
-
-            Task::none()
-        }
-
-        Message::DeleteTheme(name) => {
-            if state.geste_confirme {
-                state.geste_confirme = false;
-                return crate::app::themes::update(state, Message::DeleteTheme(name));
-            }
-
-            state.confirmation = Some(crate::app::state::Confirmation {
-                question: "Supprimer ce thème ? Il part à la corbeille.".to_string(),
-                action: Message::DeleteTheme(name),
-            });
-
+        Message::ProjetsSectionReplier => {
+            state.projets_section_replie = !state.projets_section_replie;
             Task::none()
         }
 
@@ -1413,290 +1017,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         // Un clic avalé par un voile de fenêtre.
         Message::Rien => Task::none(),
 
-        // La bibliothèque de normes : choisir, appliquer, enregistrer.
-        Message::NormesNom(nom) => {
-            if let Some(dialogue) = state.mise_en_page.as_mut() {
-                dialogue.norme = nom;
-            }
-
-            Task::none()
-        }
-
-        Message::NormesAppliquer(nom) => {
-            match crate::project::norme(&nom) {
-                Some(mise) => {
-                    if let Some(dialogue) = state.mise_en_page.as_mut() {
-                        dialogue.reglages = mise;
-                        dialogue.norme = nom.clone();
-                        dialogue.norme_originale = nom.clone();
-                        dialogue.modifie = false;
-                    }
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "La norme « {nom} » est appliquée au document."
-                    )));
-                }
-                None => {
-                    state.note = Some(crate::app::state::Note::erreur(format!(
-                        "La norme « {nom} » n'existe pas."
-                    )));
-                }
-            }
-
-            Task::none()
-        }
-
-        // Écraser la norme chargée : le premier temps de l'enregistrement,
-        // quand le document en porte une (bug-report-9).
-        Message::NormesEcraser => {
-            let Some((nom, reglages)) = state
-                .mise_en_page
-                .as_ref()
-                .filter(|dialogue| !dialogue.norme_originale.trim().is_empty())
-                .map(|dialogue| {
-                    (
-                        dialogue.norme_originale.trim().to_string(),
-                        dialogue.reglages.clone(),
-                    )
-                })
-            else {
-                state.note = Some(crate::app::state::Note::erreur(
-                    "Aucune norme chargée à écraser.".to_string(),
-                ));
-                return Task::none();
-            };
-
-            match crate::project::enregistrer_norme(&nom, &reglages) {
-                Ok(()) => {
-                    if let Some(dialogue) = state.mise_en_page.as_mut() {
-                        dialogue.modifie = false;
-                    }
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "La norme « {nom} » est remplacée."
-                    )));
-                }
-                Err(message) => {
-                    state.note = Some(crate::app::state::Note::erreur(message));
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::NormesEnregistrer(nom) => {
-            let nom = nom.trim();
-
-            if nom.is_empty() {
-                state.note = Some(crate::app::state::Note::erreur(
-                    "Une copie a un nom.".to_string(),
-                ));
-                return Task::none();
-            }
-
-            if crate::project::norme(nom).is_some() {
-                state.note = Some(crate::app::state::Note::erreur(format!(
-                    "« {nom} » existe déjà — donnez un autre nom à la copie,                      ou écrasez la norme chargée."
-                )));
-                return Task::none();
-            }
-
-            match crate::project::enregistrer_norme(
-                nom,
-                &state
-                    .mise_en_page
-                    .as_ref()
-                    .map(|d| d.reglages.clone())
-                    .unwrap_or_default(),
-            ) {
-                Ok(()) => {
-                    if let Some(dialogue) = state.mise_en_page.as_mut() {
-                        dialogue.norme = nom.to_string();
-                        dialogue.norme_originale = nom.to_string();
-                        dialogue.modifie = false;
-                    }
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "La copie « {nom} » est dans la bibliothèque."
-                    )));
-                }
-                Err(message) => {
-                    state.note = Some(crate::app::state::Note::erreur(message));
-                }
-            }
-
-            Task::none()
-        }
-
-        Message::NormesSupprimer(nom) => {
-            let nom = nom.trim();
-
-            if nom.is_empty() {
-                return Task::none();
-            }
-
-            match crate::project::supprimer_norme(nom) {
-                Ok(()) => {
-                    if let Some(dialogue) = state.mise_en_page.as_mut()
-                        && dialogue.norme_originale.trim() == nom
-                    {
-                        // La norme n'existe plus : le document redevient un
-                        // porteur de normes personnalisées.
-                        dialogue.norme_originale.clear();
-                        dialogue.norme.clear();
-                        dialogue.modifie = true;
-                    }
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "La norme « {nom} » a quitté la bibliothèque."
-                    )));
-                }
-                Err(message) => {
-                    state.note = Some(crate::app::state::Note::erreur(message));
-                }
-            }
-
-            Task::none()
-        }
-
-        // La grille de tableau : la taille choisie, la forme s'écrit.
-        Message::TableauOuvrir => {
-            state.tableau = Some(crate::app::state::TableauDialogue {
-                rangs: "3".to_string(),
-                colonnes: "3".to_string(),
-            });
-
-            Task::none()
-        }
-
-        Message::TableauRangs(valeur) => {
-            if let Some(tableau) = state.tableau.as_mut() {
-                tableau.rangs = valeur;
-            }
-
-            Task::none()
-        }
-
-        Message::TableauColonnes(valeur) => {
-            if let Some(tableau) = state.tableau.as_mut() {
-                tableau.colonnes = valeur;
-            }
-
-            Task::none()
-        }
-
-        Message::TableauAnnuler => {
-            state.tableau = None;
-            Task::none()
-        }
-
-        Message::TableauInserer => {
-            let Some(tableau) = state.tableau.take() else {
-                return Task::none();
-            };
-
-            let rangs: usize = tableau.rangs.trim().parse().unwrap_or(0).clamp(1, 200);
-            let colonnes: usize = tableau.colonnes.trim().parse().unwrap_or(0).clamp(1, 20);
-
-            if colonnes == 0 {
-                state.note = Some(crate::app::state::Note::erreur(
-                    "Un tableau a au moins une colonne.".to_string(),
-                ));
-                return Task::none();
-            }
-
-            let entete = format!("| {} |", vec![" "; colonnes].join(" | "));
-            let trait_ = format!("| {} |", vec!["---"; colonnes].join(" | "));
-            let rang = format!("| {} |", vec![" "; colonnes].join(" | "));
-
-            let mut grille = vec![entete, trait_];
-            grille.extend(std::iter::repeat_n(rang, rangs.saturating_sub(1)));
-            let grille = grille.join("\n");
-
-            state.editor.insert_at_cursor(&grille).map(Message::Editor)
-        }
-
-        Message::ReferencesReplier => {
-            state.references_repliees = !state.references_repliees;
-            Task::none()
-        }
-
-        Message::ReferencesFiltrer(filtre) => {
-            state.references_filtre = filtre;
-            Task::none()
-        }
-
-        Message::ModificateursTenus { controle, maj } => {
-            state.controle_tenu = controle;
-            state.maj_tenu = maj;
-            Task::none()
-        }
-
-        // Shift + molette : le défilement horizontal (bug-report-9).
-        Message::Molette(pas) => {
-            // Sans `Ctrl`, la molette est au défilement — et elle l'est
-            // déjà, prise par ce qui défile.
-            if !state.controle_tenu {
-                return Task::none();
-            }
-
-            update(
-                state,
-                Message::PreviewZoomStep(if pas > 0.0 { 1 } else { -1 }),
-            )
-        }
-
-        // La confirmation : le geste attendu part, l'autre s'efface. Le
-        // témoin fait passer le geste au travers de la question.
-        Message::ConfirmationConfirmer => match state.confirmation.take() {
-            Some(confirmation) => {
-                state.geste_confirme = true;
-                update(state, confirmation.action)
-            }
-            None => Task::none(),
-        },
-
-        Message::ConfirmationAnnuler => {
-            // Refuser d'écraser un changement extérieur est une réponse pour ce
-            // changement-ci : un autre en sera une question neuve.
-            if let Some(crate::app::state::Confirmation {
-                action: Message::SauvegardeForcee(empreinte),
-                ..
-            }) = state.confirmation.as_ref()
-            {
-                state.conflit_refuse = Some(*empreinte);
-            }
-            // Un import refusé ne laisse rien derrière lui.
-            state.importation = None;
-            state.confirmation = None;
-            Task::none()
-        }
-
-        // La carte des raccourcis : une bascule, rien de plus.
-        Message::AideBasculer => {
-            state.aide = !state.aide;
-            Task::none()
-        }
-
-        // Le chemin des données est visible dans l'aide, et s'ouvre d'un
-        // geste : voir où vivent ses documents n'est pas une devinette.
-        Message::OuvrirDossierDonnees => {
-            crate::project::ouvrir_chemin(&crate::project::work_dir());
-            Task::none()
-        }
-
-        // La récupération est à portée de geste : la corbeille garde ce qui
-        // a été retiré, les sauvegardes gardent ce qui a été remplacé.
-        Message::OuvrirCorbeille => {
-            crate::project::ouvrir_chemin(&crate::project::corbeille());
-            Task::none()
-        }
-
-        Message::OuvrirSauvegardes => {
-            let dir = crate::project::sauvegardes_dir(&state.project.dir);
-            let _ = std::fs::create_dir_all(&dir);
-            crate::project::ouvrir_chemin(&dir);
-            Task::none()
-        }
-
-        // Le domaine des réglages du document a son module.
+        // Les réglages de la mise en page et les métadonnées ont leur module.
         Message::MiseEnPageOuvrir
+        | Message::PluginsOuvrir
         | Message::MiseEnPageFermer
         | Message::MetaChamp(_, _, _)
         | Message::MetaAjouter
@@ -1763,10 +1086,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RenameChanged(..)
         | Message::StartRename(..)
         | Message::StyleCslImporter
-        | Message::BibliographieSectionInserer
         | Message::FileOpened(..)
-        | Message::GlossaireInserer(..)
-        | Message::GlossaireSectionInserer
         | Message::ImageChoisie(..)
         | Message::InsertCitation(..)
         | Message::NewChapter
@@ -1783,65 +1103,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::NoteAnnuler
         | Message::ExportDocxChoisi(_) => crate::app::fichiers::update(state, message),
 
-        // L'édition d'une référence : une fenêtre, des champs, et une
-        // bibliothèque locale à écrire — jamais une notice Zotero.
-        Message::ModifierReference(cle) => {
-            let entree = state
-                .bibliography
-                .iter()
-                .find(|entree| entree.key == cle)
-                .cloned();
-
-            let Some(entree) = entree else {
-                return Task::none();
-            };
-
-            let (nom, prenom) = entree
-                .auteurs
-                .first()
-                .cloned()
-                .unwrap_or((String::new(), String::new()));
-
-            // La bibliographie vient-elle de Zotero ? Seule une bibliothèque
-            // locale s'écrit : la règle tient dans le champ lui-même.
-            let locale = state.zotero.source == crate::zotero::Source::Locale;
-
-            state.edition_reference = Some(crate::app::state::EditionReference {
-                cle: entree.key,
-                kind: entree.kind,
-                nom,
-                prenom,
-                titre: entree.titre,
-                titre_court: entree.titre_court.unwrap_or_default(),
-                annee: entree.annee.unwrap_or_default(),
-                editeur: entree.editeur.unwrap_or_default(),
-                lieu: entree.lieu.unwrap_or_default(),
-                creation: false,
-                locale,
-            });
-
-            // La fiche s'ouvre sur son premier champ : le clavier a déjà
-            // quelqu'un à qui parler.
-            iced::widget::operation::focus(crate::ui::reference::id_premier_champ())
-        }
-        Message::EditionReferenceChamp(champ, valeur) => {
-            if let Some(edition) = state.edition_reference.as_mut() {
-                match champ.as_str() {
-                    "cle" => edition.cle = valeur,
-                    "kind" => edition.kind = valeur,
-                    "nom" => edition.nom = valeur,
-                    "prenom" => edition.prenom = valeur,
-                    "titre" => edition.titre = valeur,
-                    "titre_court" => edition.titre_court = valeur,
-                    "annee" => edition.annee = valeur,
-                    "editeur" => edition.editeur = valeur,
-                    "lieu" => edition.lieu = valeur,
-                    _ => {}
-                }
-            }
-
-            Task::none()
-        }
         Message::ZoteroLierOuvrir
         | Message::ZoteroCollections(_)
         | Message::ZoteroChoisir(_, _)
@@ -1850,255 +1111,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ZoteroSynchroniser
         | Message::ZoteroLiaisonFermer => liaison_zotero(state, message),
 
-        Message::EditionReferenceNouveau => {
-            // Seule une bibliothèque locale s'écrit : la création suppose
-            // d'écrire, donc un fichier à soi.
-            let locale = state.zotero.source == crate::zotero::Source::Locale;
-
-            if !locale {
-                return Task::none();
-            }
-
-            state.edition_reference = Some(crate::app::state::EditionReference {
-                cle: String::new(),
-                kind: "book".to_string(),
-                nom: String::new(),
-                prenom: String::new(),
-                titre: String::new(),
-                titre_court: String::new(),
-                annee: String::new(),
-                editeur: String::new(),
-                lieu: String::new(),
-                creation: true,
-                locale,
-            });
-
-            iced::widget::operation::focus(crate::ui::reference::id_premier_champ())
-        }
-        Message::EditionReferenceFermer => {
-            state.edition_reference = None;
-
-            Task::none()
-        }
-        // Le glossaire : la fiche, les gestes de la liste, la sauvegarde
-        // du `glossaire.toml`.
-        // La fenêtre du glossaire (bug-report-10, 5.3).
-        Message::GlossaireFenetreOuvrir => {
-            state.glossaire_fenetre = true;
-
-            Task::none()
-        }
-        Message::GlossaireFenetreFermer => {
-            state.glossaire_fenetre = false;
-            state.glossaire_filtre.clear();
-
-            Task::none()
-        }
-        Message::GlossaireCreer => {
-            state.edition_glossaire = Some(crate::app::state::EditionGlossaire {
-                cle: String::new(),
-                court: String::new(),
-                long: String::new(),
-                description: String::new(),
-                pluriel_court: String::new(),
-                pluriel_long: String::new(),
-                groupe: String::new(),
-                creation: true,
-            });
-
-            iced::widget::operation::focus(crate::ui::glossaire::id_premier_champ())
-        }
-        Message::GlossaireModifier(cle) => {
-            let entree = state
-                .glossaire
-                .iter()
-                .find(|entree| entree.key == cle)
-                .cloned();
-
-            let Some(entree) = entree else {
-                return Task::none();
-            };
-
-            state.edition_glossaire = Some(crate::app::state::EditionGlossaire {
-                cle: entree.key,
-                court: entree.short.unwrap_or_default(),
-                long: entree.long.unwrap_or_default(),
-                description: entree.description.unwrap_or_default(),
-                pluriel_court: entree.plural.unwrap_or_default(),
-                pluriel_long: entree.longplural.unwrap_or_default(),
-                groupe: entree.group.unwrap_or_default(),
-                creation: false,
-            });
-
-            iced::widget::operation::focus(crate::ui::glossaire::id_premier_champ())
-        }
-        Message::GlossaireSupprimer(cle) => {
-            let mut glossaire = crate::project::glossaire::Glossaire {
-                entrees: state.glossaire.clone(),
-            };
-
-            if glossaire.supprimer(&cle) {
-                match glossaire.sauver(&state.project.dir) {
-                    Ok(()) => {
-                        state.glossaire = glossaire.entrees;
-                        state.note = Some(crate::app::state::Note::info("Entrée supprimée."));
-                    }
-                    Err(erreur) => {
-                        state.note = Some(crate::app::state::Note::erreur(format!(
-                            "Suppression impossible : {erreur}"
-                        )));
-                    }
-                }
-            }
-
-            Task::none()
-        }
-        Message::SurvolGlossaire(cle) => {
-            state.survol_glossaire = cle;
-            Task::none()
-        }
-        Message::GlossaireRechercheBascule => {
-            state.glossaire_recherche_visible = !state.glossaire_recherche_visible;
-            Task::none()
-        }
-        Message::GlossaireReplier => {
-            state.glossaire_replie = !state.glossaire_replie;
-            Task::none()
-        }
-        Message::GlossaireFiltrer(filtre) => {
-            state.glossaire_filtre = filtre;
-            Task::none()
-        }
-        Message::EditionGlossaireChamp(champ, valeur) => {
-            if let Some(edition) = state.edition_glossaire.as_mut() {
-                match champ.as_str() {
-                    "cle" => edition.cle = valeur,
-                    "court" => edition.court = valeur,
-                    "long" => edition.long = valeur,
-                    "description" => edition.description = valeur,
-                    "pluriel_court" => edition.pluriel_court = valeur,
-                    "pluriel_long" => edition.pluriel_long = valeur,
-                    "groupe" => edition.groupe = valeur,
-                    _ => {}
-                }
-            }
-
-            Task::none()
-        }
-        Message::EditionGlossaireFermer => {
-            state.edition_glossaire = None;
-
-            Task::none()
-        }
-        Message::EditionGlossaireEnregistrer => {
-            let Some(edition) = state.edition_glossaire.clone() else {
-                return Task::none();
-            };
-
-            // La clé est un identifiant : une clé fausse se refuse, la
-            // fiche reste ouverte — elle ne jette jamais le travail.
-            if !crate::project::glossaire::EntreeGlossaire::cle_valide(&edition.cle) {
-                state.note = Some(crate::app::state::Note::erreur(
-                    "La clé d'un terme est un identifiant : lettres, chiffres, - _ . —                      sans espace ni deux-points.",
-                ));
-                return Task::none();
-            }
-
-            let entree = crate::project::glossaire::EntreeGlossaire {
-                key: edition.cle.clone(),
-                short: champ_renseigne(&edition.court),
-                long: champ_renseigne(&edition.long),
-                description: champ_renseigne(&edition.description),
-                plural: champ_renseigne(&edition.pluriel_court),
-                longplural: champ_renseigne(&edition.pluriel_long),
-                group: champ_renseigne(&edition.groupe),
-            };
-
-            let mut glossaire = crate::project::glossaire::Glossaire {
-                entrees: state.glossaire.clone(),
-            };
-            glossaire.definir(entree);
-
-            match glossaire.sauver(&state.project.dir) {
-                Ok(()) => {
-                    state.glossaire = glossaire.entrees;
-                    state.edition_glossaire = None;
-                    state.note = Some(crate::app::state::Note::info("Entrée enregistrée."));
-                }
-                Err(erreur) => {
-                    state.note = Some(crate::app::state::Note::erreur(format!(
-                        "Enregistrement impossible : {erreur}"
-                    )));
-                }
-            }
-
-            Task::none()
-        }
-        Message::EditionReferenceEnregistrer => {
-            let Some(edition) = state.edition_reference.clone() else {
-                return Task::none();
-            };
-
-            if !edition.locale {
-                // Une notice Zotero est à Zotero : on ne l'écrit pas ici.
-                state.edition_reference = None;
-
-                return Task::none();
-            }
-
-            let Some(chemin) = state.project.bibliography.clone() else {
-                state.edition_reference = None;
-
-                return Task::none();
-            };
-
-            let champs = crate::project::ReferenceChamps {
-                cle: edition.cle.clone(),
-                kind: edition.kind.clone(),
-                nom: edition.nom.clone(),
-                prenom: edition.prenom.clone(),
-                titre: edition.titre.clone(),
-                titre_court: edition.titre_court.clone(),
-                annee: edition.annee.clone(),
-                editeur: edition.editeur.clone(),
-                lieu: edition.lieu.clone(),
-            };
-
-            let ecrit: Result<(), String> = if edition.creation {
-                crate::project::nouvelle_reference(&chemin, &champs)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            } else {
-                crate::project::maj_reference(&chemin, &edition.cle, &champs)
-                    .map_err(|e| e.to_string())
-            };
-
-            if ecrit.is_ok() {
-                // La clé retenue se voit aussitôt : elle vient d'être
-                // citable, et c'est celle-là qu'on insérera.
-                state.bibliography = crate::project::parse_bibliography(&chemin);
-            }
-
-            match ecrit {
-                Err(erreur) => {
-                    // La saisie reste : un formulaire qui se ferme en
-                    // échec jette le travail de l'utilisateur.
-                    state.note = Some(crate::app::state::Note::erreur(format!(
-                        "Enregistrement de la référence impossible : {erreur}"
-                    )));
-                }
-                Ok(()) => {
-                    state.edition_reference = None;
-                    state.bibliography = crate::project::parse_bibliography(&chemin);
-                    state.note = Some(crate::app::state::Note::info("Référence enregistrée."));
-                }
-            }
-
-            Task::none()
-        }
-
-        // Le domaine des thèmes a son module. Le motif ne **rien** lier : c'est
-        // ce qui permet de repasser le message entier, sans le dupliquer.
         Message::SystemTheme(_)
         | Message::CycleTheme
         | Message::RefreshThemes
@@ -2107,187 +1119,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::LoadTheme
         | Message::ThemeLoaded(_) => crate::app::themes::update(state, message),
 
-        // Le sélecteur de couleur : la roue, la carte, et la couleur qui
-        // s'applique au texte. La fermeture n'écrit rien — l'annulation est
-        // le droit de changer d'avis.
-        Message::PickerCouleurOuvrir => {
-            let (teinte, saturation, valeur) = state
-                .derniere_couleur
-                .as_deref()
-                .and_then(crate::ui::picker_couleur::hex_vers_hsv)
-                .unwrap_or((0.0, 1.0, 1.0));
-            state.picker_couleur = Some(crate::app::state::PickerCouleur {
-                teinte,
-                saturation,
-                valeur,
-                hex_saisi: None,
-                champ: None,
-                reglage: None,
-            });
-            Task::none()
-        }
-
-        Message::PickerCouleurFermer => {
-            state.picker_couleur = None;
-            Task::none()
-        }
-
-        Message::PickerCouleurTeinte(teinte) => {
-            if let Some(picker) = state.picker_couleur.as_mut() {
-                picker.teinte = teinte;
-            }
-            Task::none()
-        }
-
-        Message::PickerCouleurSatVal(saturation, valeur) => {
-            if let Some(picker) = state.picker_couleur.as_mut() {
-                picker.saturation = saturation;
-                picker.valeur = valeur;
-            }
-            Task::none()
-        }
-
-        // La vignette d'une couleur des normes ouvre la roue, pour ce
-        // champ-là (demande du 2026-11-04).
-        Message::PickerCouleurPourReglage(champ) => {
-            let courante = state
-                .mise_en_page
-                .as_ref()
-                .map(|dialogue| dialogue.reglages.valeur(champ))
-                .unwrap_or_default();
-            // La roue s'ouvre **sur la couleur courante** — un nom (« gray »),
-            // un hex, ce que la pastille sait teindre (bug-report-8, T6.2).
-            let hex = crate::ui::reglages::couleur_depuis(&courante).map(|c| {
-                format!(
-                    "#{:02x}{:02x}{:02x}",
-                    (c.r * 255.0).round() as u8,
-                    (c.g * 255.0).round() as u8,
-                    (c.b * 255.0).round() as u8
-                )
-            });
-            let (teinte, saturation, valeur) = hex
-                .as_deref()
-                .and_then(crate::ui::picker_couleur::hex_vers_hsv)
-                .unwrap_or((0.0, 1.0, 1.0));
-            state.picker_couleur = Some(crate::app::state::PickerCouleur {
-                teinte,
-                saturation,
-                valeur,
-                hex_saisi: None,
-                champ: None,
-                reglage: Some(champ),
-            });
-            Task::none()
-        }
-
-        // Le choix d'une couleur personnalisée : elle s'enregistre pour
-        // la pastille de la barre — et rien ne va au texte tant qu'on ne
-        // l'applique pas (bug-report-10, 5.4).
-        Message::PickerCouleurEnregistrer => {
-            let Some(picker) = state.picker_couleur.as_ref() else {
-                return Task::none();
-            };
-
-            let hex = crate::ui::picker_couleur::hsv_vers_hex(
-                picker.teinte,
-                picker.saturation,
-                picker.valeur,
-            );
-            state.derniere_couleur = Some(hex.clone());
-            state.note = Some(crate::app::state::Note::info(format!(
-                "« {hex} » est votre dernière couleur — la pastille de la barre en insère la balise."
-            )));
-
-            Task::none()
-        }
-
-        Message::PickerCouleurAppliquer => {
-            let Some(picker) = state.picker_couleur.take() else {
-                return Task::none();
-            };
-            let hex = crate::ui::picker_couleur::hsv_vers_hex(
-                picker.teinte,
-                picker.saturation,
-                picker.valeur,
-            );
-            // La couleur employée devient la dernière — la pastille la
-            // garde, quel que soit le mode (bug-report-10, 5.4).
-            state.derniere_couleur = Some(hex.clone());
-            if let Some(reglage) = picker.reglage {
-                return update(state, Message::MiseEnPageChamp(reglage, hex));
-            }
-            match picker.champ {
-                // Le thème : le champ du thème reçoit le hex.
-                Some(champ) => update(state, Message::ThemeEditeurChamp(champ, hex)),
-                // Le texte : la sélection se teinte.
-                None => update(
-                    state,
-                    Message::Format(crate::app::message::FormatAction::Couleur(hex)),
-                ),
-            }
-        }
-
-        // Le code hex pilote la roue : ce qui se tape devient la couleur,
-        // et si la saisie n'est pas encore un hex, elle reste sous les
-        // doigts sans rien casser.
-        Message::PickerCouleurHex(texte) => {
-            if let Some(picker) = state.picker_couleur.as_mut() {
-                picker.hex_saisi = Some(texte.clone());
-                if let Some((teinte, saturation, valeur)) =
-                    crate::ui::picker_couleur::hex_vers_hsv(&texte)
-                {
-                    picker.teinte = teinte;
-                    picker.saturation = saturation;
-                    picker.valeur = valeur;
-                }
-            }
-            Task::none()
-        }
-
-        // Une couleur rapide suit la **cible de la roue** : le réglage
-        // des normes, le champ de thème, ou le texte — jamais le texte
-        // quand on règle le document (bug-report-9, T1.1). La roue reste
-        // ouverte pour la suite.
-        Message::PickerCouleurRapide(nom) => {
-            let cible = state
-                .picker_couleur
-                .as_ref()
-                .map(|picker| (picker.reglage, picker.champ));
-
-            match cible {
-                Some((Some(reglage), _)) => update(state, Message::MiseEnPageChamp(reglage, nom)),
-                Some((None, Some(champ))) => update(state, Message::ThemeEditeurChamp(champ, nom)),
-                _ => update(
-                    state,
-                    Message::Format(crate::app::message::FormatAction::Couleur(nom)),
-                ),
-            }
-        }
-
-        Message::NoteOverlayChamp(texte) => {
-            if let Some(note) = state.note_overlay.as_mut() {
-                note.contenu = texte;
-            }
-            Task::none()
-        }
-
-        Message::NoteOverlayEnregistrer => {
-            if let Some(note) = state.note_overlay.take() {
-                let nouveau = format!("^[{}]", note.contenu);
-                let tache = state
-                    .editor
-                    .replace_span(note.debut, note.fin, &nouveau)
-                    .map(Message::Editor);
-                return tache;
-            }
-            Task::none()
-        }
-
-        Message::NoteOverlayFermer => {
-            state.note_overlay = None;
-            Task::none()
-        }
-
+        // Le rendu : compilation, aperçu, zoom et défilement de la vue.
         Message::RenduInitialiser
         | Message::RenderTick
         | Message::RenderDone(..)
@@ -2303,37 +1135,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::SplitterReleased
         | Message::MouseMoved(..)
         | Message::ScaleFactor(..) => crate::app::rendu::update(state, message),
-
-        Message::MemoryTick => {
-            report_memory(state);
-
-            Task::none()
-        }
-
-        // Une fenêtre de rendu doit montrer son document : la première
-        // compilation, puis son lecteur (bug-report-9).
-
-        // La réponse de la génération du PDF lancée par la bascule vers la
-        // vue rendu : le lecteur s'installe, l'aperçu se refait au neuf.
-        Message::SaveTick => {
-            // Écriture différée : une seule par tick, et seulement si le
-            // document a réellement changé. **La compilation ne décide de
-            // rien** : un document en erreur Typst s'écrit quand même, et
-            // c'est même là qu'il en a le plus besoin — une coupure ne
-            // doit jamais emporter ce qui a été tapé.
-            if state.editor.is_modified() {
-                let _ecrit = state.persist();
-                state.refresh_context();
-            }
-
-            Task::none()
-        }
-
-        Message::ToggleSidebar => {
-            state.layout.sidebar_visible = !state.layout.sidebar_visible;
-
-            Task::none()
-        }
 
         Message::GoToDefinition => {
             // Le saut venait du serveur, qui part (feuille de route).
@@ -2355,88 +1156,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RechercheRemplacer
         | Message::RechercheRemplacerTout => recherche(state, message),
 
-        // Les gestes d'un élément de liste (bug-report-10, 3.2, 3.3, 3.6).
-        // `Entrée` crée l'élément suivant (bug-report-10, 3.4).
-        Message::ListeEnchainer => {
-            let contenu = state.editor.content();
-            let offset = state.editor.cursor_offset();
-
-            match marque_suivante(&contenu, offset) {
-                Some(marque) => state.editor.insert_at_cursor(&marque).map(Message::Editor),
-                None => Task::none(),
-            }
-        }
-
-        Message::TitreSuivant => sauter_titre(state, 1),
-        Message::TitrePrecedent => sauter_titre(state, -1),
-
-        Message::GotoHeading(index) => {
-            let Some(entry) = state.render.outline.get(index).cloned() else {
-                return Task::none();
-            };
-
-            // Le sommaire sert à se repérer dans **les deux** vues : le curseur
-            // va à la ligne, l'aperçu à la page.
-            state.render.followed_page = Some(entry.page);
-
-            let aller = match entry.file {
-                Some(path) => {
-                    crate::app::composeur::jump_to(state, &path, entry.line.saturating_sub(1), 0)
-                }
-                None => Task::none(),
-            };
-
-            Task::batch([aller, scroll_preview_to_page(state, entry.page)])
-        }
-
-        Message::WindowResized(size) => {
-            state.window_size = size;
-
-            Task::none()
-        }
-
-        Message::WindowOpened(id) => {
-            state.window = Some(id);
-
-            // L'échelle de l'écran est redemandée ici : une fenêtre peut
-            // s'ouvrir sur un écran dont l'échelle diffère de celle des autres,
-            // et c'est elle qui règle la densité du rendu.
-            iced::window::scale_factor(id).map(Message::ScaleFactor)
-        }
-
-        Message::ToggleFocusMode => {
-            state.layout.focus_mode = !state.layout.focus_mode;
-
-            // Le mode focus est un plein écran : masquer les panneaux ne suffit
-            // pas, la barre de titre et le reste du bureau resteraient dans le
-            // champ de vision.
-            let mode = if state.layout.focus_mode {
-                iced::window::Mode::Fullscreen
-            } else {
-                iced::window::Mode::Windowed
-            };
-
-            match state.window {
-                Some(id) => iced::window::set_mode(id, mode),
-                // La fenêtre n'est pas encore connue : on la demande, puis on
-                // appliquera le mode. Sans cela, la première bascule au tout
-                // début du démarrage resterait sans effet.
-                None => iced::window::latest().and_then(move |id| iced::window::set_mode(id, mode)),
-            }
-        }
-
+        // Émis par l'espace, traité dans la vue active.
         Message::ProjetModeleBascule => unreachable!("message traité par l’espace"),
-
-        Message::ReglagesFonctionnalite(nom, actif) => {
-            let f = &mut state.reglages.fonctionnalites;
-            match nom.as_str() {
-                "bibliographie" => f.bibliographie = actif,
-                "glossaire" => f.glossaire = actif,
-                "graphiques" => f.graphiques = actif,
-                _ => {}
-            }
-            Task::none()
-        }
 
         Message::Editor(..)
         | Message::TitreInserer(..)
@@ -2454,23 +1175,15 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeurChoisir(..)
         | Message::CompletionMove(..)
         | Message::CompletionAccept
+        | Message::CompletionChercher(..)
         | Message::CompletionPick(..)
         | Message::CompletionDismiss
         | Message::BlocMonter
         | Message::BlocDescendre => crate::app::saisie::update(state, message),
 
-        Message::GotoError(line, column) => {
-            // Les positions de typst sont 1-based ; l'éditeur attend du
-            // 0-based.
-            let _ = state.editor.update(iced_code_editor::Message::GotoPosition(
-                line.saturating_sub(1),
-                column.saturating_sub(1),
-            ));
-
-            Task::none()
-        }
-
         Message::RawKey(key, modifiers) => handle_shortcut(state, key, modifiers),
+
+        _ => Task::none(),
     }
 }
 
@@ -2694,7 +1407,7 @@ fn remplacer_tout(state: &mut State) -> Task<Message> {
     }
 }
 
-fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
+pub(crate) fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::ZoteroLierOuvrir => {
             // Seule une bibliothèque locale se lie : une notice Zotero
@@ -2869,7 +1582,8 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                     if let Ok(contenu) = std::fs::read_to_string(&main_typ)
                         && let Some(branche) =
                             crate::project::model::brancher_les_bibliographies(&dir, &contenu)
-                        && let Err(erreur) = crate::project::ecrire_atomique(&main_typ, &branche)
+                        && let Err(erreur) =
+                            crate::services::stockage::ecrire_atomique(&main_typ, &branche)
                     {
                         state.note = Some(crate::app::state::Note::erreur(format!(
                             "La bibliographie n'a pas pu être branchée dans main.typ : {erreur}"
@@ -2888,7 +1602,6 @@ fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
                         .unwrap_or_default();
                     state.zotero = crate::zotero::Etat {
                         source: crate::zotero::Source::Zotero,
-                        lie: true,
                     };
                     state.liaison = None;
 
@@ -2961,6 +1674,10 @@ struct Situation {
     fenetre: bool,
     /// La fiche de référence : `Entrée` y enregistre.
     fiche: bool,
+    /// La fenêtre du glossaire est ouverte — `Échap` la ferme.
+    glossaire: bool,
+    /// La fiche d'un terme du glossaire est ouverte — `Échap` la ferme.
+    glossaire_fiche: bool,
     /// Ce qui est au-dessus de la pile des fenêtres.
     aide: bool,
     recherche: bool,
@@ -2969,6 +1686,10 @@ struct Situation {
     note: bool,
     /// Le composeur d'extension — `Échap` annule.
     extension: bool,
+    /// Le panneau d'insertion biblique — `Échap` le ferme.
+    bible_panneau: bool,
+    /// La fiche flottante d'une référence biblique — `Échap` la ferme.
+    bible_edition: bool,
     /// La liste de complétion, le survol — et le mode focus.
     completion: bool,
     survol: bool,
@@ -2986,12 +1707,16 @@ impl Situation {
             sur_liste: est_sur_une_liste(&state.editor.content(), state.editor.cursor_offset()),
             composeur: state.composeur.is_some(),
             fenetre: fenetre_ouverte(state),
-            fiche: state.edition_reference.is_some(),
+            fiche: state.plugins.bibliographie.edition.is_some(),
+            glossaire: state.plugins.glossaire.fenetre,
+            glossaire_fiche: state.plugins.glossaire.edition.is_some(),
             aide: state.aide,
             recherche: state.recherche.is_some(),
             liaison: state.liaison.is_some(),
             note: state.note_dialogue.is_some(),
             extension: state.extension.is_some(),
+            bible_panneau: state.plugins.bible.panneau.is_some(),
+            bible_edition: state.plugins.bible.edition.is_some(),
             completion: false,
             survol: false,
             focus: state.layout.focus_mode,
@@ -3312,6 +2037,14 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
         return Message::ExtensionAnnuler;
     }
 
+    if etat.bible_edition {
+        return Message::BibleEditionAnnuler;
+    }
+
+    if etat.bible_panneau {
+        return Message::BiblePanneauFermer;
+    }
+
     if etat.projets {
         return Message::ProjetsVue;
     }
@@ -3340,11 +2073,17 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
     if etat.fiche {
         return Message::EditionReferenceFermer;
     }
+    if etat.glossaire_fiche {
+        return Message::EditionGlossaireFermer;
+    }
+    if etat.glossaire {
+        return Message::GlossaireFenetreFermer;
+    }
     Message::MiseEnPageFermer
 }
 
 /// Quelque fenêtre est-elle ouverte ?
-fn fenetre_ouverte(state: &State) -> bool {
+pub(crate) fn fenetre_ouverte(state: &State) -> bool {
     state.tableau.is_some()
         || state.note_dialogue.is_some()
         || state.extension.is_some()
@@ -3355,8 +2094,24 @@ fn fenetre_ouverte(state: &State) -> bool {
         || state.aide
         || state.recherche.is_some()
         || state.liaison.is_some()
-        || state.edition_reference.is_some()
+        || state.plugins.bibliographie.edition.is_some()
+        || state.plugins.glossaire.fenetre
+        || state.plugins.glossaire.edition.is_some()
+        || state.plugins.bible.panneau.is_some()
+        || state.plugins.bible.edition.is_some()
         || state.mise_en_page.is_some()
+}
+
+/// Le pointeur de l'éditeur doit-il être neutralisé ?
+///
+/// C'est plus large qu'une fenêtre au clavier : l'overlay d'une note, le
+/// sélecteur de couleur et le composeur flottent eux aussi au-dessus du
+/// texte, même s'ils ne prennent pas toute la fenêtre.
+pub(crate) fn pointeur_bloque(state: &State) -> bool {
+    fenetre_ouverte(state)
+        || state.note_overlay.is_some()
+        || state.picker_couleur.is_some()
+        || state.composeur.is_some()
 }
 
 fn handle_shortcut(
@@ -3467,10 +2222,10 @@ fn declencher_si_besoin(state: &mut State) -> Task<Message> {
     let Some(context) = crate::editor::completion::context(&texte, position) else {
         return Task::none();
     };
+
     if context.trigger == '@' {
         crate::app::composeur::ouvrir_composeur(state, &context)
     } else {
-        // La liste de complétion locale se rebranchera ici (feuille de route).
         Task::none()
     }
 }
@@ -4207,6 +2962,20 @@ mod tests {
             ),
             Action::Message(Message::RechercheFermer)
         ));
+
+        let edition_biblique = Situation {
+            fenetre: true,
+            bible_edition: true,
+            ..Situation::default()
+        };
+        assert!(matches!(
+            plan_touche(
+                edition_biblique,
+                &nomme(iced::keyboard::key::Named::Escape),
+                iced::keyboard::Modifiers::empty()
+            ),
+            Action::Message(Message::BibleEditionAnnuler)
+        ));
     }
 
     /// `Tabulation` circule dans les fenêtres — toutes, pas une seule.
@@ -4517,7 +3286,6 @@ mod tests_des_gestes_de_liste {
     }
 }
 
-#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Les projets marqués comme modèles : ce sont eux qui servent de base
 /// à un nouveau projet (demande de l'auteur).
 pub fn projet_bases(state: &State) -> Vec<String> {

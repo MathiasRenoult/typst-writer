@@ -48,9 +48,16 @@ l'étagère.
 - la **barre d'état**, en bas : le compte de mots, les diagnostics du
   compilateur, et ce que l'application a à dire (une erreur, une
   confirmation) — jamais de silence ;
-- à gauche, le **panneau de travail** : le sommaire du document en
-  arborescence (lignes de connexion, relations parent-enfant lisibles),
-  les références de la bibliographie, les autres projets ;
+- à gauche, le **panneau de travail** : un bloc **Repères** en tête (nom
+  du document, volume, références, notices, glossaire), puis le sommaire
+  en arborescence, les statistiques bibliques, la bibliographie, le
+  glossaire et les autres projets. Chaque section se replie ;
+- **survol** d'une référence biblique : après un court repos, son verset
+  s'affiche dans une boîte au-dessus du curseur, sans touche à maintenir ;
+- **cliquer sur une balise biblique** ouvre « La référence cliquée » dans le
+  panneau gauche : chaque citation y est séparée avec son livre et son
+  chapitre, chacune porte son extrait, et le crayon de sa ligne ouvre une
+  fenêtre flottante pour la corriger ;
 - les **touches** se découvrent d'elles-mêmes : `F1` ouvre la carte des
   raccourcis, et les infobulles de la barre d'outils portent leurs
   combinaisons.

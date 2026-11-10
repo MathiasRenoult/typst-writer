@@ -726,14 +726,14 @@ fn semer() {
         let chemin = themes_dir().join(nom);
 
         if !chemin.exists() {
-            let _ = crate::project::ecrire_atomique(&chemin, contenu);
+            let _ = crate::services::stockage::ecrire_atomique(&chemin, contenu);
         }
     }
 }
 
 /// Le dossier des thèmes locaux.
 pub fn themes_dir() -> PathBuf {
-    let dir = crate::project::work_dir().join("themes");
+    let dir = crate::services::stockage::work_dir().join("themes");
 
     let _ = std::fs::create_dir_all(&dir);
 
@@ -806,12 +806,15 @@ pub fn import(source: &Path) -> Result<ThemeFile, String> {
         ));
     }
 
-    let destination = themes_dir().join(format!("{}.toml", crate::project::slug(&file.meta.name)));
+    let destination = themes_dir().join(format!(
+        "{}.toml",
+        crate::services::stockage::slug(&file.meta.name)
+    ));
 
     // Un homonyme ne s'écrase pas : il part à la corbeille, d'où il se
     // ravise. Écraser un thème écrit à la main est du travail perdu.
     if destination.exists() {
-        crate::project::vers_la_corbeille(&destination)
+        crate::services::stockage::vers_la_corbeille(&destination)
             .map_err(|error| format!("l'ancien thème ne part pas : {error}"))?;
     }
 
@@ -835,7 +838,7 @@ pub fn remove(name: &str) -> Result<std::path::PathBuf, String> {
         ));
     }
 
-    let mut path = themes_dir().join(format!("{}.toml", crate::project::slug(name)));
+    let mut path = themes_dir().join(format!("{}.toml", crate::services::stockage::slug(name)));
 
     // Le nom du fichier suit le nom du thème : s'ils ont divergé — le nom
     // édité à la main — c'est le fichier que le thème occupe qui compte.
@@ -861,7 +864,7 @@ pub fn remove(name: &str) -> Result<std::path::PathBuf, String> {
 
     // La corbeille, jamais la destruction : un thème écrit à la main est
     // du travail, même quand on ne le veut plus sous les yeux.
-    crate::project::vers_la_corbeille(&path)
+    crate::services::stockage::vers_la_corbeille(&path)
         .map_err(|error| format!("suppression de {} : {error}", path.display()))
 }
 
@@ -887,7 +890,7 @@ pub fn write_example_depuis(dossier: &Path) -> Result<PathBuf, String> {
 
     std::fs::create_dir_all(dossier).map_err(|error| format!("{} : {error}", dossier.display()))?;
 
-    crate::project::ecrire_atomique(&path, EXAMPLE)
+    crate::services::stockage::ecrire_atomique(&path, EXAMPLE)
         .map_err(|error| format!("écriture de {} : {error}", path.display()))?;
 
     Ok(path)
@@ -1555,7 +1558,7 @@ pub fn enregistrer(fichier: &ThemeFile) -> Result<Vec<String>, String> {
     let texte = toml::to_string_pretty(fichier)
         .map_err(|erreur| format!("Le thème ne s'écrit pas : {erreur}."))?;
 
-    crate::project::ecrire_atomique(&chemin, &texte)
+    crate::services::stockage::ecrire_atomique(&chemin, &texte)
         .map_err(|erreur| format!("Le fichier du thème ne s'écrit pas : {erreur}."))?;
 
     Ok(avertissements)

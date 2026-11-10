@@ -83,19 +83,10 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
                 .label("Ce projet utilisera…")
                 .size(theme::jetons::DETAIL),
         );
-        for (nom, actif, libelle) in [
-            (
-                "bibliographie",
-                dialogue.fonctionnalites.bibliographie,
-                "Bibliographie",
-            ),
-            ("glossaire", dialogue.fonctionnalites.glossaire, "Glossaire"),
-            (
-                "graphiques",
-                dialogue.fonctionnalites.graphiques,
-                "Graphiques",
-            ),
-        ] {
+        for desc in crate::base::valeurs::PLUGINS {
+            let actif = dialogue.fonctionnalites.actif(desc.cle);
+            let nom = desc.cle;
+            let libelle = desc.nom;
             corps = corps.push(
                 iced::widget::checkbox(actif)
                     .label(libelle)

@@ -11,8 +11,12 @@ Chaque projet vit dans son dossier, sous `~/.typst-writer/projets/`
     ├── mise-en-page.toml      les normes, telles que vous les réglez
     ├── mise-en-page.typ       leur traduction pour Typst — générée
     ├── references.bib         la bibliographie locale
+    ├── references.json        le relevé des références bibliques citées
+    ├── glossaire.toml         les termes du glossaire
+    ├── styles/                les styles CSL importés
     ├── references-zotero.bib  l'export de la collection Zotero liée
     ├── zotero.json            la collection Zotero liée au projet
+    ├── sauvegardes/           les versions précédentes des documents
     └── chapitres/             les sources `.typ` héritées
 
 `document.tw` et `references.bib` sont les vôtres ; `mise-en-page.typ`

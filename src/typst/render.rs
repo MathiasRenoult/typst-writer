@@ -696,7 +696,7 @@ impl PreviewWorld {
         // local des paquets — jamais au hasard du projet, jamais au
         // réseau (bug-report-7, point 4).
         if let VirtualRoot::Package(paquet) = id.root() {
-            return crate::project::packages_dir()
+            return crate::services::stockage::packages_dir()
                 .join(paquet.namespace.as_str())
                 .join(paquet.name.as_str())
                 .join(paquet.version.to_string())

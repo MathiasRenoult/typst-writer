@@ -38,15 +38,26 @@ bouton « Synchroniser » reprend l'export quand la collection bouge.
 La liaison vit dans `zotero.json`, à côté du projet ; « Délier » la
 retire. Pour que la liaison trouve Zotero, l'application peut poser elle-
 même le réglage nécessaire — le panneau le propose d'un clic, et la note
-dit ce qui reste à faire.
+indique l'action à effectuer.
 
 ## La bibliographie imprimée
 
-Le style par défaut est `chicago-notes` ; un style défini explicitement
-dans `main.typ` reste prioritaire. Le choix et l'import de styles CSL ne
-sont pas encore exposés dans l'interface.
+La bibliographie ne s'ajoute pas dans le dos de l'auteur : c'est une
+**ligne explicite** dans le document qui la pose, à l'endroit voulu :
+
+    {bibliographie}
+
+Le style des citations et de la liste finale se choisit dans le
+**panneau des plugins**, onglet Bibliographie — pas dans les normes. Il
+peut venir du catalogue du moteur, d'un fichier `.csl` importé ou d'un
+style installé dans Zotero ; un style importé est copié dans `styles/`
+sans écraser l'original.
+
+Un style défini explicitement dans `main.typ` reste prioritaire. Une
+bibliographie sans directive n'apparaît pas, même si un `references.bib`
+existe : le fichier seul n'est pas une instruction.
 
 Attention : pour un projet lié à Zotero, la bibliothèque affichée et celle
 utilisée par l'assemblage Typst peuvent différer. Vérifiez les citations et
-la bibliographie dans le PDF final avant de le remettre ; la correction de
-cette divergence fait partie des priorités avant la bêta.
+la bibliographie dans le PDF final avant de le remettre, et synchronisez la
+collection si nécessaire.

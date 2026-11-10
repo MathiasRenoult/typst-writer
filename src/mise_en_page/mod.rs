@@ -10,10 +10,6 @@
 //! de l'utilisateur reste le sien, et la mise en page est un objet qu'on peut
 //! exporter, importer, et comparer.
 
-// Pièces posées avant d'être raccordées : la fenêtre de réglage les emploie
-// dès la tranche suivante. Cet attribut partira avec le raccordement.
-#![allow(dead_code)]
-
 pub mod gabarit;
 pub mod modele;
 
@@ -56,10 +52,10 @@ pub fn appliquer(
         .ecrire()
         .map_err(|erreur| format!("sérialiser les normes : {erreur}"))?;
 
-    crate::project::ecrire_atomique(&projet.join(REGLAGES), &texte)
+    crate::services::stockage::ecrire_atomique(&projet.join(REGLAGES), &texte)
         .map_err(|erreur| format!("écrire les réglages : {erreur}"))?;
 
-    crate::project::ecrire_atomique(
+    crate::services::stockage::ecrire_atomique(
         &projet.join(gabarit::FICHIER),
         &gabarit::generer(mise_en_page),
     )
@@ -80,7 +76,7 @@ pub fn appliquer(
         nouveau.push_str(reste);
     }
 
-    crate::project::ecrire_atomique(&main, &nouveau)
+    crate::services::stockage::ecrire_atomique(&main, &nouveau)
         .map_err(|erreur| format!("accrocher main.typ : {erreur}"))?;
 
     Ok(Applique::AccrocheAjoutee)
@@ -98,6 +94,7 @@ pub fn accroche_manquante(projet: &Path) -> bool {
 ///
 /// Le gabarit des normes passe par `overrides` : le dialogue montre ce
 /// qui sera, sans rien écrire au projet avant l'application.
+#[allow(dead_code)] // API de contrat : rendue par les épreuves du pipeline.
 pub fn apercu_titres(
     projet: &Path,
     mise_en_page: &modele::MiseEnPage,

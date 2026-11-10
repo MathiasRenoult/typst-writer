@@ -55,8 +55,8 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // système annonce une apparence sombre — on croirait que le clic
             // n'a rien fait.
             state.theme = match appearance {
-                crate::theming::Appearance::Light => crate::ui::theme::ThemeMode::Light,
-                crate::theming::Appearance::Dark => crate::ui::theme::ThemeMode::Dark,
+                crate::theming::Appearance::Light => crate::base::theme::ThemeMode::Light,
+                crate::theming::Appearance::Dark => crate::base::theme::ThemeMode::Dark,
             };
 
             retheme(state);
@@ -100,8 +100,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                         state.chosen.set(appearance, &name);
 
                         state.theme = match appearance {
-                            crate::theming::Appearance::Light => crate::ui::theme::ThemeMode::Light,
-                            crate::theming::Appearance::Dark => crate::ui::theme::ThemeMode::Dark,
+                            crate::theming::Appearance::Light => {
+                                crate::base::theme::ThemeMode::Light
+                            }
+                            crate::theming::Appearance::Dark => crate::base::theme::ThemeMode::Dark,
                         };
 
                         retheme(state);
@@ -182,7 +184,7 @@ pub(super) fn retheme(state: &mut State) {
         return;
     };
 
-    state.resolved = crate::ui::theme::Resolved::of(theme);
+    state.resolved = crate::design::theme::Resolved::of(theme);
 
     state.editor.retheme(&state.resolved);
 }

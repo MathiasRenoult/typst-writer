@@ -28,9 +28,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ProjetDepuisEtagere(etagere) => {
+            let bases = crate::app::projet_bases(state);
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
                 base: String::new(),
-                bases: Vec::new(),
+                bases,
                 fonctionnalites: Default::default(),
                 norme: String::new(),
                 etagere: etagere.clone(),
@@ -54,9 +55,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ProjetCreer => {
+            let bases = crate::app::projet_bases(state);
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
                 base: String::new(),
-                bases: Vec::new(),
+                bases,
                 fonctionnalites: Default::default(),
                 norme: String::new(),
                 etagere: String::new(),
@@ -76,9 +78,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .map(|projet| projet.name.clone())
                 .unwrap_or_default();
 
+            let bases = crate::app::projet_bases(state);
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
                 base: String::new(),
-                bases: Vec::new(),
+                bases,
                 fonctionnalites: Default::default(),
                 norme: String::new(),
                 etagere: String::new(),
@@ -170,7 +173,11 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                                 dialogue.auteur.trim().to_string(),
                             );
                         }
-                        let _ = meta.sauver(&dir);
+                        if let Err(erreur) = meta.sauver(&dir) {
+                            state.note = Some(crate::app::state::Note::erreur(format!(
+                                "Métadonnées non enregistrées : {erreur}"
+                            )));
+                        }
                     }
 
                     if let Some(mut verrou) = verrou_renommage.take() {
@@ -191,11 +198,22 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     // La norme choisie à la création devient celle du
                     // projet : elle s'y pose par la même voie que le
                     // panneau, et le modèle du document ne change pas.
-                    if dialogue.cible.is_none()
-                        && !dialogue.norme.is_empty()
-                        && let Some(mise) = crate::project::norme(&dialogue.norme)
-                    {
-                        let _ = crate::mise_en_page::appliquer(&dir, &mise, false);
+                    // Les add-ons cochés dans le dialogue sont posés dans
+                    // tous les cas — sans norme choisie, les valeurs par
+                    // défaut du projet les écraseraient.
+                    if dialogue.cible.is_none() {
+                        let mut reglages = if !dialogue.norme.is_empty() {
+                            crate::project::norme(&dialogue.norme)
+                                .unwrap_or_else(|| crate::mise_en_page::charger(&dir))
+                        } else {
+                            crate::mise_en_page::charger(&dir)
+                        };
+                        reglages.fonctionnalites = dialogue.fonctionnalites.clone();
+
+                        if let Err(erreur) = crate::mise_en_page::appliquer(&dir, &reglages, false)
+                        {
+                            state.note = Some(crate::app::state::Note::erreur(erreur));
+                        }
                     }
 
                     if dialogue.cible.is_none() && !dialogue.etagere.is_empty() {
@@ -203,7 +221,13 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                             .file_name()
                             .map(|nom| nom.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        let _ = crate::project::definir_etagere(&nom, &dialogue.etagere);
+                        if let Err(erreur) =
+                            crate::project::definir_etagere(&nom, &dialogue.etagere)
+                        {
+                            state.note = Some(crate::app::state::Note::erreur(format!(
+                                "Rangement non enregistré : {erreur}"
+                            )));
+                        }
                     }
 
                     crate::app::update(state, Message::OpenProject(dir))
@@ -232,13 +256,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::ProjetFonctionnalite(nom, actif) => {
             if let Some(dialogue) = state.projet_dialogue.as_mut() {
-                let f = &mut dialogue.fonctionnalites;
-                match nom.as_str() {
-                    "bibliographie" => f.bibliographie = actif,
-                    "glossaire" => f.glossaire = actif,
-                    "graphiques" => f.graphiques = actif,
-                    _ => {}
-                }
+                dialogue.fonctionnalites.basculer(&nom, actif);
             }
             Task::none()
         }

@@ -60,10 +60,14 @@
 <p>  la maîtrise, et la synchronisation reprendrait de toute façon ses   valeurs.</p>
 <h2>Lier un projet à Zotero</h2>
 <p>Le bouton « Lier à Zotero… » liste les <strong>collections</strong> de la bibliothèque Zotero ouverte — leur nom, leur chemin (« Thèse / Chapitre 2 »), leur nombre de notices. Une collection choisie s&#x27;exporte dans le projet, et le bouton « Synchroniser » reprend l&#x27;export quand la collection bouge.</p>
-<p>La liaison vit dans <code>zotero.json</code>, à côté du projet ; « Délier » la retire. Pour que la liaison trouve Zotero, l&#x27;application peut poser elle- même le réglage nécessaire — le panneau le propose d&#x27;un clic, et la note dit ce qui reste à faire.</p>
+<p>La liaison vit dans <code>zotero.json</code>, à côté du projet ; « Délier » la retire. Pour que la liaison trouve Zotero, l&#x27;application peut poser elle- même le réglage nécessaire — le panneau le propose d&#x27;un clic, et la note indique l&#x27;action à effectuer.</p>
 <h2>La bibliographie imprimée</h2>
-<p>Le style par défaut est <code>chicago-notes</code> ; un style défini explicitement dans <code>main.typ</code> reste prioritaire. Le choix et l&#x27;import de styles CSL ne sont pas encore exposés dans l&#x27;interface.</p>
-<p>Attention : pour un projet lié à Zotero, la bibliothèque affichée et celle utilisée par l&#x27;assemblage Typst peuvent différer. Vérifiez les citations et la bibliographie dans le PDF final avant de le remettre ; la correction de cette divergence fait partie des priorités avant la bêta.</p>
+<p>La bibliographie ne s&#x27;ajoute pas dans le dos de l&#x27;auteur : c&#x27;est une <strong>ligne explicite</strong> dans le document qui la pose, à l&#x27;endroit voulu :</p>
+<pre><code>{bibliographie}
+</code></pre>
+<p>Le style des citations et de la liste finale se choisit dans le <strong>panneau des plugins</strong>, onglet Bibliographie — pas dans les normes. Il peut venir du catalogue du moteur, d&#x27;un fichier <code>.csl</code> importé ou d&#x27;un style installé dans Zotero ; un style importé est copié dans <code>styles/</code> sans écraser l&#x27;original.</p>
+<p>Un style défini explicitement dans <code>main.typ</code> reste prioritaire. Une bibliographie sans directive n&#x27;apparaît pas, même si un <code>references.bib</code> existe : le fichier seul n&#x27;est pas une instruction.</p>
+<p>Attention : pour un projet lié à Zotero, la bibliothèque affichée et celle utilisée par l&#x27;assemblage Typst peuvent différer. Vérifiez les citations et la bibliographie dans le PDF final avant de le remettre, et synchronisez la collection si nécessaire.</p>
 </main>
 </div>
 </body>

@@ -17,11 +17,6 @@
 //! Ce qui vit ici, pour l'instant, ne parle à personne : la découverte de la
 //! bibliothèque et les styles enregistrés sont des lectures de disque.
 
-// Pièces posées avant d'être raccordées : les étapes suivantes du chantier
-// les emploient (le client, la synchronisation, le sélecteur). Cet attribut
-// partira avec le raccordement.
-#![allow(dead_code)]
-
 pub mod client;
 pub mod keys;
 
@@ -129,8 +124,9 @@ pub fn lien_du_projet(dir: &std::path::Path) -> Result<Option<Lien>, String> {
 }
 
 /// Lie un projet à une collection — et jamais à la place de l'utilisateur.
+#[allow(dead_code)] // API de contrat : éprouvée par les tests de liaison.
 pub fn lier(dir: &std::path::Path, lien: &Lien) -> std::io::Result<()> {
-    crate::project::ecrire_atomique(&dir.join(FICHIER), &lien.texte()?)
+    crate::services::stockage::ecrire_atomique(&dir.join(FICHIER), &lien.texte()?)
 }
 
 impl Lien {
@@ -145,7 +141,7 @@ impl Lien {
 /// La liaison part vers la corbeille, pas dans le vide : se délier est un
 /// geste qu'on fait parfois à tort.
 pub fn delier(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    crate::project::vers_la_corbeille(&dir.join(FICHIER)).ok()
+    crate::services::stockage::vers_la_corbeille(&dir.join(FICHIER)).ok()
 }
 
 /// Les préférences qui ouvrent l'API locale de Zotero.
@@ -198,7 +194,16 @@ pub fn activer_l_api_locale_depuis(
         }
 
         let user = dossier.join("user.js");
-        let existant = std::fs::read_to_string(&user).unwrap_or_default();
+        let existant = match std::fs::read_to_string(&user) {
+            Ok(texte) => texte,
+            Err(erreur) if erreur.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(erreur) => {
+                return Err(format!(
+                    "{} : lecture impossible, le fichier n'est pas modifié ({erreur})",
+                    user.display()
+                ));
+            }
+        };
 
         let mut nouveau = existant.clone();
 
@@ -212,7 +217,7 @@ pub fn activer_l_api_locale_depuis(
         }
 
         if nouveau != existant {
-            std::fs::write(&user, nouveau)
+            crate::services::stockage::ecrire_atomique(&user, &nouveau)
                 .map_err(|erreur| format!("{} : {erreur}", user.display()))?;
         }
 
@@ -231,9 +236,6 @@ pub fn activer_l_api_locale_depuis(
 pub struct Etat {
     /// D'où viennent les références montrées.
     pub source: Source,
-    /// Zotero est-il lié ? Sa collection est pointée, sauf décision
-    /// contraire : on peut toujours revenir à une bibliothèque locale.
-    pub lie: bool,
 }
 
 #[cfg(test)]

@@ -56,6 +56,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
         return container(Space::new()).into();
     };
 
+    if dialogue.plugins {
+        return crate::ui::plugins::view(state);
+    }
+
     let palette = state.resolved.palette;
     let reglages = &dialogue.reglages;
 
@@ -154,7 +158,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         (picto!(icon_layout), "En-tête et pied"),
         (picto!(icon_paintbrush), "Typographie"),
         (picto!(icon_palette), "Couleurs et décor"),
-        (picto!(icon_book), "Bibliographie"),
+        (picto!(icon_puzzle), "Add-ons"),
     ];
     let mut rail = column![].spacing(2);
     for (indice, (picto, nom)) in onglets.into_iter().enumerate() {
@@ -180,7 +184,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             corps_decor(palette, reglages)
         ]
         .spacing(20),
-        8 => corps_bibliographie(palette, dialogue),
+        8 => corps_addons(palette, dialogue),
         _ => column![corps_metadonnees(palette, dialogue)].spacing(20),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----
@@ -252,23 +256,25 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .height(Length::Fill);
 
     // Les fonctionnalités du projet : une débranchée, son interface
-    // disparaît (demande de l'auteur).
-    let fonctionnalites = row![
-        palette
-            .label("Fonctionnalités du projet :")
-            .size(theme::jetons::DETAIL),
-        iced::widget::checkbox(reglages.fonctionnalites.bibliographie)
-            .label("Bibliographie")
-            .on_toggle(|v| Message::ReglagesFonctionnalite("bibliographie".to_string(), v)),
-        iced::widget::checkbox(reglages.fonctionnalites.glossaire)
-            .label("Glossaire")
-            .on_toggle(|v| Message::ReglagesFonctionnalite("glossaire".to_string(), v)),
-        iced::widget::checkbox(reglages.fonctionnalites.graphiques)
-            .label("Graphiques")
-            .on_toggle(|v| Message::ReglagesFonctionnalite("graphiques".to_string(), v)),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
+    // disparaît (demande de l'auteur). La liste vient du registre : aucune
+    // case ne peut être oubliée ici.
+    let mut fonctionnalites = iced::widget::Row::new()
+        .push(
+            palette
+                .label("Fonctionnalités du projet :")
+                .size(theme::jetons::DETAIL),
+        )
+        .spacing(10)
+        .align_y(iced::Alignment::Center);
+
+    for desc in crate::base::valeurs::PLUGINS {
+        let cle = desc.cle;
+        fonctionnalites = fonctionnalites.push(
+            checkbox(reglages.fonctionnalites.actif(cle))
+                .label(desc.nom)
+                .on_toggle(move |v| Message::ReglagesFonctionnalite(cle.to_string(), v)),
+        );
+    }
 
     let fenetre = container(column![entete, modeles, fonctionnalites, etat, vu, pied].spacing(12))
         .padding(18)
@@ -1420,6 +1426,28 @@ fn corps_typographie(
                     .spacing(8)
                     .align_y(iced::Alignment::Center)
                 ),
+                ligne(
+                    palette,
+                    "Déclencheurs ouvrants",
+                    "Ce que la frappe reconnaît comme une ouverture ; la paire produite reste celle des niveaux.",
+                    saisie(
+                        palette,
+                        &typo.guillemets_ouvrants,
+                        Champ::TypoGuillemetsOuvrants,
+                        "«"
+                    )
+                ),
+                ligne(
+                    palette,
+                    "Déclencheurs fermants",
+                    "Ce que la frappe reconnaît comme une fermeture. Un même caractère des deux côtés devient contextuel.",
+                    saisie(
+                        palette,
+                        &typo.guillemets_fermants,
+                        Champ::TypoGuillemetsFermants,
+                        "»"
+                    )
+                ),
                 // L'aperçu de l'imbrication réelle des trois niveaux.
                 palette
                     .label(format!(
@@ -1452,8 +1480,37 @@ fn choix_defaut(valeur: &str) -> Element<'static, Message> {
     .into()
 }
 
+/// L'onglet Add-ons : les fonctionnalités que l'on active ou désactive à
+/// souhait — comme les plugins natifs.
+fn corps_addons(
+    _palette: Palette,
+    dialogue: &crate::app::state::DialogueMiseEnPage,
+) -> iced::widget::Column<'static, Message> {
+    let f = &dialogue.reglages.fonctionnalites;
+
+    let mut contenu = column![text("Les add-ons").size(16)]
+        .spacing(10)
+        .padding(16);
+    for desc in crate::base::valeurs::PLUGINS {
+        let actif = f.actif(desc.cle);
+        let cle = desc.cle;
+        let nom = desc.nom;
+        let aide = desc.aide;
+        contenu = contenu.push(
+            row![
+                checkbox(actif).label("").on_toggle(move |_| {
+                    Message::ReglagesFonctionnalite(cle.to_string(), !actif)
+                }),
+                column![text(nom).size(13), text(aide).size(11)],
+            ]
+            .spacing(8),
+        );
+    }
+    contenu
+}
+
 /// Un onglet vertical : son pictogramme, son nom — et l'élu, marqué.
-fn onglet_vertical<'a>(
+pub(crate) fn onglet_vertical<'a>(
     palette: Palette,
     pictogramme: impl Into<Element<'a, Message>>,
     nom: &'a str,
@@ -1500,7 +1557,7 @@ fn onglet_vertical<'a>(
 /// Le choix se fait parmi les styles que le moteur embarqué connaît — la
 /// vitrine est validée par lui, jamais tenue à la main — et « le document
 /// décide » laisse la directive du fichier faire autorité.
-fn corps_bibliographie(
+pub(crate) fn corps_bibliographie(
     palette: Palette,
     dialogue: &crate::app::state::DialogueMiseEnPage,
 ) -> iced::widget::Column<'static, Message> {

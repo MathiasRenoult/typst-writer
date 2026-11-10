@@ -23,15 +23,11 @@ pub struct Element {
 }
 
 impl Element {
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
     /// Ce qui s'insère, gabarits compris.
     pub fn insertion(&self) -> Option<&str> {
         self.insert.as_deref()
     }
 
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
     /// Le texte de filtre : le libellé, sauf choix contraire.
     pub fn filter(&self) -> &str {
         self.filtre.as_deref().unwrap_or(&self.label)
@@ -44,6 +40,10 @@ impl Element {
 /// Ce sont ceux que le serveur annonce comme déclencheurs : `#` ouvre ses
 /// commandes, `@` ses citations. L'application ne devine pas — elle reprend ce
 /// que le serveur a dit savoir faire.
+///
+/// L'accolade `{` n'en fait pas partie : la référence biblique s'ouvre par
+/// une commande explicite, jamais au fil de la frappe. Une accolade est un
+/// caractère de prose et de code Typst avant d'être une intention.
 pub const TRIGGERS: [char; 2] = ['#', '@'];
 
 #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
@@ -323,16 +323,11 @@ pub struct Completion {
     /// La sélection, dans [`Self::shown`].
     pub selected: usize,
 
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
     /// Ce qui a été tapé après le déclencheur.
     pub typed: String,
 
     /// Le caractère qui a ouvert la liste.
     pub trigger: char,
-
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
-    /// Le décalage, en octets, du début de ce qui serait remplacé.
-    pub start: usize,
 
     /// Position source du curseur à la dernière mise à jour de la liste.
     pub cursor_offset: usize,
@@ -345,7 +340,6 @@ impl Completion {
         !content_changed && cursor_offset != self.cursor_offset
     }
 
-    #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
     /// L'élément sélectionné, s'il y en a un.
     pub fn selected_item(&self) -> Option<&crate::editor::completion::Element> {
         self.shown
@@ -402,6 +396,10 @@ mod tests {
         assert_eq!(context("fig", 3), None);
         assert_eq!(context("", 0), None);
         assert_eq!(context("du texte ordinaire ", 20), None);
+
+        // L'accolade n'est plus un déclencheur : elle reste de la prose.
+        // La référence biblique s'ouvre par un geste explicite.
+        assert_eq!(context("{Gen", 4), None);
 
         // Le déclencheur seul, et rien derrière : la liste s'ouvre sur un mot
         // vide, avec tout à proposer.

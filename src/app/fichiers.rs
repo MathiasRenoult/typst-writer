@@ -550,6 +550,53 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             state.editor.insert_at_cursor(&texte).map(Message::Editor)
         }
 
+        Message::BibleIndexInserer => {
+            if sur_typst(&state.editor) {
+                // Dans un fichier Typst brut, le bloc `{{index}}` n'est pas
+                // interprété : on y pose la liste calculée, comme le ferait
+                // un index statique.
+                let mut texte = String::from("= Index des citations\n\n");
+                let references = state.plugins.bible.stats.plus_citees(usize::MAX);
+                if references.is_empty() {
+                    texte.push_str("_Aucune référence biblique citée._\n\n");
+                } else {
+                    for (reference, nombre) in references {
+                        texte.push_str("- ");
+                        texte.push_str(&reference);
+                        if nombre > 1 {
+                            texte.push_str(&format!(" ({nombre} citations)"));
+                        }
+                        texte.push('\n');
+                    }
+                    texte.push('\n');
+                }
+                return state.editor.insert_at_cursor(&texte).map(Message::Editor);
+            }
+
+            let contenu = state.editor.content();
+            let curseur = state.editor.cursor_offset().min(contenu.len());
+            let mut texte = String::new();
+            // L'index est un bloc : il lui faut sa propre ligne, séparée du
+            // paragraphe précédent. Sans la ligne vide, le paragraphe
+            // l'avalerait et la balise serait perdue au rendu.
+            if curseur > 0 {
+                if contenu[..curseur].ends_with("\n\n") {
+                    // Déjà séparé.
+                } else if contenu[..curseur].ends_with('\n') {
+                    texte.push('\n');
+                } else {
+                    texte.push_str("\n\n");
+                }
+            }
+            texte.push_str("{{index}}\n\n");
+            state.editor.insert_at_cursor(&texte).map(Message::Editor)
+        }
+
+        Message::StatsReplier => {
+            state.plugins.bible.repliees = !state.plugins.bible.repliees;
+            Task::none()
+        }
+
         Message::SommaireInserer => {
             let texte = if sur_typst(&state.editor) {
                 "#outline()".to_string()
@@ -800,7 +847,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // La copie ne devient pas la source du projet et ne marque pas
             // son tampon comme sauvé. On capture les dernières frappes après
             // le dialogue, jamais avant son ouverture.
-            match crate::project::ecrire_atomique(&path, &state.editor.content()) {
+            match crate::services::stockage::ecrire_atomique(&path, &state.editor.content()) {
                 Ok(()) => {
                     state.export_status = Some(format!("Copie enregistrée : {}", path.display()))
                 }
@@ -845,7 +892,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::PdfDestination(result) => {
             let resultat = result.and_then(|(path, bytes)| {
                 verifier_destination_export(state, &path)?;
-                crate::project::ecrire_atomique_octets(&path, &bytes)
+                crate::services::stockage::ecrire_atomique_octets(&path, &bytes)
                     .map(|_| path.display().to_string())
                     .map_err(|error| format!("Écriture du PDF : {error}"))
             });
@@ -1113,7 +1160,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             };
             let texte = crate::langage::export::vers_markdown(&state.editor.content());
-            match crate::project::ecrire_atomique(&cible, &texte) {
+            match crate::services::stockage::ecrire_atomique(&cible, &texte) {
                 Ok(()) => {
                     state.note = Some(crate::app::state::Note::info(format!(
                         "Markdown exporté : {}.",

@@ -187,8 +187,6 @@ fn texte(mise_en_page: &MiseEnPage) -> String {
         ));
     }
 
-    let proprietes = proprietes.join("\n");
-
     // La même typographie, posée deux fois et pour deux raisons.
     //
     // Le `set text` simple se lit à la portée d'élément : le moteur y
@@ -200,7 +198,20 @@ fn texte(mise_en_page: &MiseEnPage) -> String {
     // place qui l'emporte sur un `#set text` de l'assemblage (le
     // gabarit d'origine en portait un, la police ne changeait
     // jamais : bug-report-9, T1.4).
-    format!("  set text(\n{proprietes}\n  )\n  show text: set text(\n{proprietes}\n  )\n",)
+    //
+    // Il ne reprend **pas** la couleur de base : un `#text(fill: …)` écrit
+    // dans le document serait écrasé par cette règle, et les passages
+    // colorés reviendraient noirs (BUG-004). La couleur du corps reste sur
+    // le `set text` de portée d'élément, qui laisse l'explicite gagner.
+    let proprietes_show = proprietes
+        .iter()
+        .filter(|propriete| !propriete.trim_start().starts_with("fill:"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let proprietes = proprietes.join("\n");
+
+    format!("  set text(\n{proprietes}\n  )\n  show text: set text(\n{proprietes_show}\n  )\n",)
 }
 
 /// Les paragraphes : justification, interligne, espacement, retrait.
@@ -1103,6 +1114,38 @@ fn les_quick_parts_rendent_leurs_valeurs() {
         texte.contains("le-document"),
         "le nom du document se rend : {texte}"
     );
+}
+
+#[cfg(test)]
+mod tests_couleur_du_texte {
+    use super::super::modele::MiseEnPage;
+
+    /// BUG-004 : le `show text` du gabarit ne doit pas réappliquer la
+    /// couleur du corps, sinon il écrase les `#text(fill: …)` du document.
+    #[test]
+    fn la_couleur_explicite_n_est_pas_ecrasee_par_le_gabarit() {
+        let mut page = MiseEnPage::default();
+        page.couleurs.texte = "#112233".to_string();
+
+        let gabarit = super::generer(&page);
+        let apres_show = gabarit
+            .split("show text: set text(")
+            .nth(1)
+            .expect("la règle show text existe");
+
+        assert!(
+            !apres_show.contains("fill: rgb(\"#112233\")"),
+            "le show text ne fixe pas la couleur : {gabarit}"
+        );
+        let bloc_set = gabarit
+            .split("set text(")
+            .nth(1)
+            .expect("le set text existe");
+        assert!(
+            bloc_set.contains("fill: rgb(\"#112233\")"),
+            "la couleur de base reste sur le set text : {gabarit}"
+        );
+    }
 }
 
 #[cfg(test)]

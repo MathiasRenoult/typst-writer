@@ -17,16 +17,16 @@ const LARGEUR: f32 = 420.0;
 
 /// La couche : la fenêtre quand elle est ouverte, rien sinon.
 pub fn view(state: &State) -> Element<'_, Message> {
-    if !state.glossaire_fenetre {
+    if !state.plugins.glossaire.fenetre {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     }
 
     let palette = state.resolved.palette;
-    let filtre = state.glossaire_filtre.trim().to_lowercase();
+    let filtre = state.plugins.glossaire.filtre.trim().to_lowercase();
 
     let mut liste = column![].spacing(4);
 
-    for entree in &state.glossaire {
+    for entree in &state.plugins.glossaire.entrees {
         let cherche = filtre.is_empty()
             || entree.key.to_lowercase().contains(&filtre)
             || entree
@@ -97,7 +97,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let carte = column![
         palette.label("Glossaire").size(theme::jetons::TITRE),
-        text_input("chercher un terme", &state.glossaire_filtre)
+        text_input("chercher un terme", &state.plugins.glossaire.filtre)
             .on_input(Message::GlossaireFiltrer)
             .padding(6),
         iced::widget::scrollable(liste).height(Length::Fixed(300.0)),

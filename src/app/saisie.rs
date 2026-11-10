@@ -55,7 +55,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeurPrendre(_)
         | Message::ComposeurChoisir(_) => crate::app::composeur::composeur_update(state, message),
 
-        Message::CompletionDismiss => Task::none(),
+        Message::CompletionDismiss => {
+            state.completion = None;
+            Task::none()
+        }
 
         Message::CompletionPick(index) => {
             if let Some(open) = state.completion.as_mut()
@@ -66,7 +69,54 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
             Task::none()
         }
-        Message::CompletionAccept => Task::none(),
+        Message::CompletionChercher(t) => {
+            // La recherche : la liste se filtre à la frappe.
+            if let Some(open) = state.completion.as_mut() {
+                open.typed = t;
+                let cherche = open.typed.to_lowercase();
+                open.shown = open
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.filter().to_lowercase().contains(&cherche))
+                    .map(|(i, _)| i)
+                    .collect();
+                open.selected = 0;
+            }
+            Task::none()
+        }
+
+        Message::CompletionAccept => {
+            // L'insertion de l'élément choisi : `insert` porte la forme à
+            // écrire, le libellé n'est que l'affichage de la liste.
+            let insertion = {
+                let Some(open) = state.completion.as_ref() else {
+                    return Task::none();
+                };
+                let Some(element) = open.selected_item() else {
+                    return Task::none();
+                };
+                crate::editor::completion::insertion(element, &open.typed, None)
+            };
+            let recul = if insertion.text.ends_with("}}") { 2 } else { 0 };
+
+            let tache = state
+                .editor
+                .replace_before(insertion.backspaces, &insertion.text)
+                .map(Message::Editor);
+            let curseur = if recul > 0 {
+                let position = state.editor.cursor_offset().saturating_sub(recul);
+                state
+                    .editor
+                    .set_cursor_offset(position)
+                    .map(Message::Editor)
+            } else {
+                Task::none()
+            };
+            state.completion = None;
+
+            Task::batch([tache, curseur])
+        }
 
         Message::CompletionMove(delta) => {
             if let Some(open) = state.completion.as_mut() {
@@ -88,6 +138,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // Le bouton « citation » est un `@` tapé par la main de l'outil.
             let _declencheur_tape = matches!(action, crate::app::message::FormatAction::Citation);
 
+            // Les statistiques des livres cités suivent le document (le
+            // panneau, l add-on biblique).
+            state.rafraichir_statistiques_bibliques();
             state.render.words_pending = true;
             let edit = state.editor.apply_format(action).map(Message::Editor);
             let completion = super::declencher_si_besoin(state);
@@ -114,13 +167,85 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // Un clic dans le texte a le dernier mot sur le composeur.
             let clic_dans_le_texte = matches!(
                 message,
-                iced_code_editor::Message::MouseClick(_)
+                iced_code_editor::Message::MouseClick(..)
                     | iced_code_editor::Message::DoubleClick(_)
                     | iced_code_editor::Message::TripleClick(_)
             );
 
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
+            // Le survol des références bibliques : ce qui est sous la souris
+            // devient la cible de la bulle (le système de références).
+            if let iced_code_editor::Message::MouseClick(_, offset) = message
+                && state
+                    .reglages
+                    .fonctionnalites
+                    .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+                && !super::pointeur_bloque(state)
+            {
+                // Le clic sur une référence : sa place, ses parties, son texte.
+                let texte = state.editor.content();
+                let nouvelle = crate::plugins::bible::reference_au(&texte, offset).and_then(
+                    |(debut, fin, _)| {
+                        let contenu = &texte[debut + 2..fin - 2];
+                        crate::plugins::bible::lire_groupe_complet(contenu).map(
+                            |(elements, forme)| {
+                                let references = elements
+                                    .iter()
+                                    .filter_map(|element| element.reference().cloned())
+                                    .collect::<Vec<_>>();
+                                let extrait = crate::plugins::bible::extrait(
+                                    &references,
+                                    state.plugins.bible.traduction,
+                                );
+                                crate::plugins::bible::ReferenceCliquee {
+                                    intervalle: (debut, fin),
+                                    elements,
+                                    references,
+                                    forme,
+                                    extrait,
+                                }
+                            },
+                        )
+                    },
+                );
+                state.plugins.bible.reference_cliquee = nouvelle;
+                state.plugins.bible.edition = None;
+            }
+
+            if let iced_code_editor::Message::MouseHover(point, offset) = message
+                && state
+                    .reglages
+                    .fonctionnalites
+                    .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+                && !super::pointeur_bloque(state)
+            {
+                let texte = state.editor.content();
+                if let Some(reference) = crate::plugins::bible::reference_sous(&texte, offset) {
+                    let change = state
+                        .plugins
+                        .bible
+                        .survol
+                        .as_ref()
+                        .is_some_and(|(_, actuel)| actuel != &reference);
+                    if change {
+                        state.plugins.bible.survol = None;
+                    }
+                    let deja_jeune = state
+                        .plugins
+                        .bible
+                        .survol_candidat
+                        .as_ref()
+                        .is_some_and(|(_, actuel, _)| actuel == &reference);
+                    if !deja_jeune {
+                        state.plugins.bible.survol_candidat =
+                            Some((point, reference, std::time::Instant::now()));
+                    }
+                } else {
+                    state.plugins.bible.survol = None;
+                    state.plugins.bible.survol_candidat = None;
+                }
+            }
             state.render.words_pending = true;
 
             // L'aperçu suit ce qu'on lit — mais seulement quand le suivi est

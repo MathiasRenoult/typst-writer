@@ -14,6 +14,7 @@
 //! depuis `document.tw`. Les sources de chapitres héritées ne sont donc ni
 //! nécessaires à l'assemblage courant, ni supprimées lors de la migration.
 
+use crate::services::stockage::slug;
 use std::path::{Path, PathBuf};
 
 /// Un chapitre : un fichier du dossier `chapitres/`.
@@ -364,7 +365,11 @@ pub(super) fn create_avec_verrou(name: &str) -> std::io::Result<(PathBuf, super:
 fn creer_classique_verrou(name: &str) -> std::io::Result<(PathBuf, super::Verrou)> {
     let parent = projects_dir();
     let (dir, verrou) = super::creer_et_publier(&parent, &slug(name), true, MAIN_TEMPLATE)?;
-    let verrou = verrou.expect("le verrou était demandé");
+    let Some(verrou) = verrou else {
+        return Err(std::io::Error::other(
+            "création sans verrou : le projet n'a pas été publié",
+        ));
+    };
     std::fs::write(dir.join("document.tw"), DOCUMENT_CLASSIQUE)?;
     Ok((dir, verrou))
 }
@@ -943,10 +948,11 @@ fn relative_to_chapters(chapter: &Path) -> PathBuf {
     PathBuf::from("chapitres").join(name)
 }
 
-/// Trouve la bibliographie d'un projet.
-/// Branche les bibliothèques du projet dans l'appel `#bibliography` du
-/// document — et renvoie le document corrigé, ou `None` s'il est déjà
-/// branché.
+/// Branche les bibliothèques du projet dans l'appel `#bibliography` **déjà
+/// présent** dans le document, et renvoie le document corrigé.
+///
+/// `None` quand il n'y a pas d'appel — l'insertion reste un geste de
+/// l'auteur — ou quand l'appel porte déjà ces bibliothèques.
 ///
 /// Le lien Zotero écrit `references-zotero.bib` : tant que le document ne
 /// le cite pas, ses citations sont introuvables — et un fichier cité qui
@@ -984,22 +990,10 @@ pub fn brancher_les_bibliographies(dir: &Path, main: &str) -> Option<String> {
         )
     };
 
-    let Some((debut, fin)) = premier_argument_bibliographie(main) else {
-        // Aucun appel : le document reçoit le sien, à la fin.
-        let mut entry = main.to_string();
-
-        if !entry.is_empty() && !entry.ends_with("\n\n") {
-            if !entry.ends_with('\n') {
-                entry.push('\n');
-            }
-
-            entry.push('\n');
-        }
-
-        entry.push_str(&format!("#bibliography({argument})\n"));
-
-        return Some(entry);
-    };
+    // Aucun appel : le document n'a pas demandé de bibliographie. La
+    // fonctionnalité peut être active, mais son insertion reste un geste
+    // explicite de l'auteur — rien ne s'ajoute dans son dos.
+    let (debut, fin) = premier_argument_bibliographie(main)?;
 
     // L'appel existe : s'il portait déjà cette liste, rien ne bouge — la
     // comparaison se fait sur les noms, jamais sur la forme.
@@ -1114,56 +1108,6 @@ pub fn count_words(content: &str) -> usize {
         .count()
 }
 
-/// Transforme un titre en nom de fichier : minuscules, tirets, sans accent.
-pub fn slug(title: &str) -> String {
-    let mut slug = String::with_capacity(title.len());
-
-    let mut pending_dash = false;
-
-    for character in title.chars() {
-        // La casse est traitée avant le repli : sinon « État » perdrait sa
-        // majuscule accentuée, qui n'est ni alphanumérique ASCII ni repliée.
-        let folded = character
-            .to_lowercase()
-            .next()
-            .map(fold_accent)
-            .unwrap_or(character);
-
-        if folded.is_ascii_alphanumeric() {
-            if pending_dash && !slug.is_empty() {
-                slug.push('-');
-            }
-
-            slug.push(folded.to_ascii_lowercase());
-            pending_dash = false;
-        } else {
-            pending_dash = true;
-        }
-    }
-
-    if slug.is_empty() {
-        slug.push_str("chapitre");
-    }
-
-    slug
-}
-
-/// Réduit les lettres accentuées à leur équivalent sans accent.
-fn fold_accent(character: char) -> char {
-    match character {
-        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
-        'ç' => 'c',
-        'è' | 'é' | 'ê' | 'ë' => 'e',
-        'ì' | 'í' | 'î' | 'ï' => 'i',
-        'ñ' => 'n',
-        'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
-        'ù' | 'ú' | 'û' | 'ü' => 'u',
-        'ý' | 'ÿ' => 'y',
-        'œ' => 'o',
-        other => other,
-    }
-}
-
 /// Assemblage d'un nouveau projet.
 /// Le document d'écriture du projet classique : le vide accueillant.
 pub const DOCUMENT_CLASSIQUE: &str = "";
@@ -1173,7 +1117,6 @@ pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 
 // L'assemblage : les chapitres sont inclus ici, dans l'ordre.
 // Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
-#bibliography("references.bib", style: "chicago-notes")
 "#;
 
 pub const BIBLIOGRAPHY_TEMPLATE: &str = r#"% Une entrée par référence, au format BibTeX.
@@ -1643,7 +1586,11 @@ mod tests {
         let dir = scratch("roundtrip");
 
         std::fs::create_dir_all(dir.join("chapitres")).unwrap();
-        std::fs::write(dir.join("main.typ"), MAIN_TEMPLATE).unwrap();
+        std::fs::write(
+            dir.join("main.typ"),
+            format!("{MAIN_TEMPLATE}\n#bibliography(\"references.bib\")\n"),
+        )
+        .unwrap();
 
         let before = std::fs::read_to_string(dir.join("main.typ")).unwrap();
 
@@ -2325,16 +2272,13 @@ mod tests_du_branchement {
     }
 
     #[test]
-    fn sans_appel_le_document_recoit_le_sien() {
+    fn sans_appel_le_document_n_en_recoit_pas() {
         let root = racine("sans-appel");
         std::fs::write(root.join("references-zotero.bib"), "").expect("bib");
 
-        let branche = brancher_les_bibliographies(&root, "Du texte.\n").expect("branchement");
         assert!(
-            branche
-                .trim_end()
-                .ends_with("#bibliography(\"references-zotero.bib\")"),
-            "le document reçoit son appel : {branche}"
+            brancher_les_bibliographies(&root, "Du texte.\n").is_none(),
+            "aucune bibliographie ne s'ajoute sans instruction explicite"
         );
 
         std::fs::remove_dir_all(&root).ok();

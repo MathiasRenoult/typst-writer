@@ -323,7 +323,7 @@ pub fn importer_projet(
     let mut remplaces = Vec::new();
     for relatif in &collisions {
         let cible = destination.join(relatif);
-        let copie = crate::project::vers_la_corbeille(&cible)
+        let copie = crate::services::stockage::vers_la_corbeille(&cible)
             .map_err(|e| format!("{} ne part pas à la corbeille : {e}.", cible.display()))?;
         remplaces.push((relatif.clone(), copie));
     }
@@ -351,7 +351,7 @@ pub fn importer_projet(
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("{} ne se crée pas : {e}.", parent.display()))?;
             }
-            crate::project::ecrire_atomique_octets(&posee, octets)
+            crate::services::stockage::ecrire_atomique_octets(&posee, octets)
                 .map_err(|e| format!("{} ne se pose pas : {e}.", posee.display()))?;
         }
         // Puis chaque fichier rejoint la destination, d'un renommage.

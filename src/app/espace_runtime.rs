@@ -186,9 +186,17 @@ impl State {
             return false;
         };
         let ancien = self.espace.active;
+        let ancien_projet = self.project.dir.clone();
         vue.echanger(self);
         self.espace.vues.insert(ancien, vue);
         self.espace.active = id;
+
+        // Le panneau latéral lit les normes **du projet affiché** : changer
+        // de vue peut changer de projet, et donc d'add-ons actifs. Le
+        // contexte relu recharge les normes avec le reste.
+        if self.project.dir != ancien_projet {
+            self.refresh_context();
+        }
         true
     }
 

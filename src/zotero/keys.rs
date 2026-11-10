@@ -35,8 +35,9 @@ impl Keyring {
     }
 
     /// Écrit le trousseau, tel qu'il sera relu.
+    #[allow(dead_code)] // API de contrat : employée par la transaction d'export.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        crate::project::ecrire_atomique(path, &self.texte()?)
+        crate::services::stockage::ecrire_atomique(path, &self.texte()?)
     }
 
     /// Le trousseau, en texte — pour la transaction d'export.

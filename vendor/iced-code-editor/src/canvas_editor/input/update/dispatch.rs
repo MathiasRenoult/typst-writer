@@ -112,9 +112,9 @@ impl CodeEditor {
             Message::PageDown(shift) => self.handle_page_down(*shift),
 
             // Mouse and selection operations
-            Message::MouseClick(point) => self.handle_mouse_click_msg(*point),
+            Message::MouseClick(point, _) => self.handle_mouse_click_msg(*point),
             Message::MouseDrag(point) => self.handle_mouse_drag_msg(*point),
-            Message::MouseHover(point) => self.handle_mouse_drag_msg(*point),
+            Message::MouseHover(point, _offset) => self.handle_mouse_drag_msg(*point),
             Message::MouseRelease => self.handle_mouse_release_msg(),
             Message::DoubleClick(point) => self.handle_double_click_msg(*point),
             Message::TripleClick(point) => self.handle_triple_click_msg(*point),

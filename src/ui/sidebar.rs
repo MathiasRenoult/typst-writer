@@ -4,8 +4,7 @@ use crate::project::{BibliographyEntry, Chapter};
 use crate::ui::theme::{self, Palette};
 use iced::widget::canvas;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, row, scrollable, text, text_input,
-    tooltip,
+    Space, button, column, container, mouse_area, pick_list, row, scrollable, text_input, tooltip,
 };
 use iced::{Alignment, Element, Fill, Length, Theme};
 
@@ -18,6 +17,12 @@ const ENTRY_HEIGHT: f32 = 32.0;
 /// chiffres d'un seul regard, sans que les nombres dansent d'une ligne à
 /// l'autre.
 const COUNT_WIDTH: f32 = 58.0;
+
+/// L'identifiant du champ de recherche biblique : le panneau lui donne le
+/// clavier dès qu'il s'ouvre, au lieu de laisser la frappe à l'éditeur.
+pub(crate) fn id_recherche_biblique() -> iced::widget::Id {
+    iced::widget::Id::new("statistiques-bibliques-recherche")
+}
 
 /// Le panneau de travail : où en est le projet.
 ///
@@ -32,72 +37,124 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
+    // Les repères sont en tête : le nom du document, son volume, et ce
+    // qu'il mobilise. Le reste du panneau (sommaire, notices, projets) vient
+    // après — on doit savoir où l'on est avant de chercher une section.
+    content = content.push(
+        container(
+            column![
+                palette.label(&project.name).size(theme::jetons::SAILLANT),
+                row![
+                    palette
+                        .label(format!("{} mots", format_count(project.words())))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                    Space::new().width(Length::Fill),
+                    palette
+                        .label(format!(
+                            "{} références bibliques",
+                            state.plugins.bible.stats.par_reference.len()
+                        ))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .align_y(Alignment::Center),
+                row![
+                    palette
+                        .label(format!("{} notices", project.bibliography_entries))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                    Space::new().width(Length::Fill),
+                    palette
+                        .label(format!("{} termes", state.plugins.glossaire.entrees.len()))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .align_y(Alignment::Center),
+            ]
+            .spacing(3),
+        )
+        .padding(8)
+        .style(move |_| iced::widget::container::Style {
+            background: Some(palette.surface_hover.into()),
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: crate::ui::theme::jetons::RAYON.into(),
+            },
+            ..Default::default()
+        }),
+    );
+    content = content.push(Space::new().height(10));
+
     // TOPBAR-06-01 : le bouton de fermeture est dans la top bar,
     // pas dans le panneau. Le sommaire commence directement.
     content = content.push(Space::new().height(2));
 
     // SIDEBAR-06-02 : le sommaire est le premier élément du panneau.
     if !state.render.outline.is_empty() {
-        content = content.push(section_title("Sommaire", palette));
-        let mut sommaire = column![].spacing(0);
+        content = content.push(section_header(
+            "Sommaire",
+            state.sommaire_replie,
+            Message::SommaireReplier,
+            palette,
+        ));
 
-        for (index, entry) in state.render.outline.iter().enumerate() {
-            let level = entry.level.saturating_sub(1);
-            let est_dernier = state.render.outline[index + 1..]
+        if state.sommaire_replie {
+            // Replié : le titre seul reste, et la section suivante reprend
+            // sa place sans laisser un grand vide.
+        } else {
+            let mut sommaire = column![].spacing(0);
+            let niveaux: Vec<usize> = state
+                .render
+                .outline
                 .iter()
-                .all(|e| e.level <= entry.level);
+                .map(|entree| entree.level.saturating_sub(1))
+                .collect();
 
-            // Les guides des ancêtres : un trait vertical là où la branche
-            // continue en dessous, rien là où elle s'achève. Les **traits**,
-            // pas les glyphes de boîte — dans une police proportionnelle
-            // ils dérivent, et la liste partait en diagonale
-            // (bug-report-7, point 13).
-            let mut guides = Vec::with_capacity(level);
-            for ancetre in 0..level {
-                let parent_dernier = state.render.outline[..index]
-                    .iter()
-                    .rev()
-                    .find(|e| e.level.saturating_sub(1) == ancetre)
-                    .map(|e| {
-                        state.render.outline[index..]
-                            .iter()
-                            .all(|s| s.level <= e.level || s.level.saturating_sub(1) > ancetre)
-                    })
-                    .unwrap_or(true);
-                guides.push(!parent_dernier);
+            for (index, entry) in state.render.outline.iter().enumerate() {
+                let level = niveaux[index];
+                let est_dernier = niveaux[index + 1..].iter().all(|suivant| *suivant <= level);
+
+                // Les guides des ancêtres : un trait vertical là où la branche
+                // continue en dessous, rien là où elle s'achève. Les **traits**,
+                // pas les glyphes de boîte — dans une police proportionnelle
+                // ils dérivent, et la liste partait en diagonale
+                // (bug-report-7, point 13).
+                let guides = guides_du_sommaire(&niveaux, index);
+
+                // Du **texte cliquable**, pas un bouton : les boutons
+                // s'espacent entre eux et la hiérarchie part en escalier. Les
+                // traits sont dessinés, le texte est nu — et sous la main, il
+                // se teinte, le curseur pointe (bug-report 2026-11-03).
+                let survole = state.survol_sommaire == Some(index);
+                sommaire = sommaire.push(
+                    mouse_area(
+                        row![
+                            barres_hiérarchiques(&guides, est_dernier, palette),
+                            palette
+                                .label(entry.text.trim())
+                                .size(theme::jetons::CORPS)
+                                .color(if survole {
+                                    palette.accent
+                                } else {
+                                    palette.text
+                                }),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .height(Length::Fixed(ENTRY_HEIGHT)),
+                    )
+                    .on_press(Message::GotoHeading(index))
+                    .on_enter(Message::SommaireSurvol(Some(index)))
+                    .on_exit(Message::SommaireSurvol(None))
+                    .interaction(iced::mouse::Interaction::Pointer),
+                );
             }
 
-            // Du **texte cliquable**, pas un bouton : les boutons
-            // s'espacent entre eux et la hiérarchie part en escalier. Les
-            // traits sont dessinés, le texte est nu — et sous la main, il
-            // se teinte, le curseur pointe (bug-report 2026-11-03).
-            let survole = state.survol_sommaire == Some(index);
-            sommaire = sommaire.push(
-                mouse_area(
-                    row![
-                        barres_hiérarchiques(&guides, est_dernier, palette),
-                        palette
-                            .label(entry.text.trim())
-                            .size(theme::jetons::CORPS)
-                            .color(if survole {
-                                palette.accent
-                            } else {
-                                palette.text
-                            }),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .height(Length::Fixed(ENTRY_HEIGHT)),
-                )
-                .on_press(Message::GotoHeading(index))
-                .on_enter(Message::SommaireSurvol(Some(index)))
-                .on_exit(Message::SommaireSurvol(None))
-                .interaction(iced::mouse::Interaction::Pointer),
-            );
+            content = content.push(sommaire);
+            content = content.push(Space::new().height(12));
         }
-
-        content = content.push(sommaire);
-        content = content.push(Space::new().height(12));
     }
 
     // LEFT-04-02 : la section « Document » est supprimée — le nom du
@@ -118,93 +175,148 @@ pub fn view(state: &State) -> Element<'_, Message> {
     } else {
         // Projet ancien en cours de migration : il reste navigable tant que le
         // document unique n'a pas pu être créé.
-        content = content.push(section_title("Chapitres", palette));
+        content = content.push(section_header(
+            "Chapitres",
+            state.chapitres_replie,
+            Message::ChapitresReplier,
+            palette,
+        ));
 
-        if project.chapters.is_empty() {
-            content = content.push(
-                palette
-                    .label("Aucun chapitre.")
-                    .size(theme::jetons::CORPS)
-                    .color(palette.text_muted),
-            );
-        }
-
-        let active = state.editor.path.clone();
-
-        for (rang, chapter) in project.chapters.iter().enumerate() {
-            if rang > 0 {
-                content = content.push(separation(palette));
+        if !state.chapitres_replie {
+            if project.chapters.is_empty() {
+                content = content.push(
+                    palette
+                        .label("Aucun chapitre.")
+                        .size(theme::jetons::CORPS)
+                        .color(palette.text_muted),
+                );
             }
 
-            content = content.push(chapter_row(
-                chapter,
-                state.renaming.as_ref(),
-                active.as_deref() == Some(chapter.path.as_path()),
-                palette,
-            ));
-        }
+            let active = state.editor.path.clone();
 
-        let orphans = project.orphan_chapters().count();
+            for (rang, chapter) in project.chapters.iter().enumerate() {
+                if rang > 0 {
+                    content = content.push(separation(palette));
+                }
 
-        if orphans > 0 {
+                content = content.push(chapter_row(
+                    chapter,
+                    state.renaming.as_ref(),
+                    active.as_deref() == Some(chapter.path.as_path()),
+                    palette,
+                ));
+            }
+
+            let orphans = project.orphan_chapters().count();
+
+            if orphans > 0 {
+                content = content.push(Space::new().height(8));
+                content = content.push(
+                    palette
+                        .label(format!(
+                            "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
+                        ))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.warning),
+                );
+            }
+
             content = content.push(Space::new().height(8));
             content = content.push(
-                palette
-                    .label(format!(
-                        "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
-                    ))
-                    .size(theme::jetons::DETAIL)
-                    .color(palette.warning),
+                button(
+                    row![
+                        theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
+                        palette
+                            .label("Nouveau chapitre")
+                            .size(theme::jetons::SAILLANT),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::NewChapter)
+                .width(Fill)
+                .padding([7, 10])
+                .style(move |t, status| primary_style(t, status, palette)),
             );
         }
-
-        content = content.push(Space::new().height(8));
-        content = content.push(
-            button(
-                row![
-                    theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
-                    palette
-                        .label("Nouveau chapitre")
-                        .size(theme::jetons::SAILLANT),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::NewChapter)
-            .width(Fill)
-            .padding([7, 10])
-            .style(move |t, status| primary_style(t, status, palette)),
-        );
     }
 
-    if state.reglages.fonctionnalites.bibliographie {
+    if let Some(cliquee) = &state.plugins.bible.reference_cliquee {
+        content = content.push(separation(palette));
+        content = content.push(Space::new().height(12));
+        content = content.push(reference_cliquee_section(state, cliquee, palette));
+    }
+
+    if state
+        .reglages
+        .fonctionnalites
+        .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+    {
+        // ---- Les statistiques des versets cités (l'add-on biblique) ----
+        let replie = state.plugins.bible.repliees;
+        content = content.push(separation(palette));
+        content = content.push(Space::new().height(12));
+        content = content.push(section_header(
+            "Statistiques bibliques",
+            replie,
+            Message::StatsReplier,
+            palette,
+        ));
+        if !replie {
+            let mut gestes = row![].spacing(2).align_y(Alignment::Center);
+            gestes = gestes.push(stat_icon(
+                lucide_icons::iced::icon_search::<Theme>(),
+                "Chercher une référence",
+                Message::BibleRechercheBascule,
+                palette,
+                state.plugins.bible.recherche_active,
+            ));
+            gestes = gestes.push(stat_icon(
+                lucide_icons::iced::icon_list_ordered::<Theme>(),
+                "Trier dans l'ordre du document",
+                Message::BibleTri(crate::plugins::bible::TriReferences::Apparition),
+                palette,
+                state.plugins.bible.tri == crate::plugins::bible::TriReferences::Apparition,
+            ));
+            gestes = gestes.push(stat_icon(
+                lucide_icons::iced::icon_book_open::<Theme>(),
+                "Trier dans l'ordre canonique des livres",
+                Message::BibleTri(crate::plugins::bible::TriReferences::Canonique),
+                palette,
+                state.plugins.bible.tri == crate::plugins::bible::TriReferences::Canonique,
+            ));
+            content = content.push(gestes);
+            if state.plugins.bible.recherche_active {
+                content = content.push(
+                    text_input("Chercher une référence", &state.plugins.bible.recherche)
+                        .id(id_recherche_biblique())
+                        .on_input(Message::BibleFiltrer)
+                        .padding([4, 6]),
+                );
+            }
+            content = content.push(Space::new().height(6));
+            content = content.push(crate::ui::statistiques::view(state));
+        }
+    }
+
+    if state
+        .reglages
+        .fonctionnalites
+        .actif(crate::base::valeurs::CLE_BIBLIOGRAPHIE)
+    {
         // ---- La bibliographie ----
-        content = content.push(Space::new().height(18));
+        content = content.push(separation(palette));
+        content = content.push(Space::new().height(12));
 
         // Le titre replie la liste, et le filtre la cherche : une thèse a
         // des centaines de notices, et une liste qui ne se cherche pas est un
         // mur.
-        content = content.push(
-            button(
-                row![
-                    theme::icon(
-                        if state.references_repliees {
-                            lucide_icons::iced::icon_chevron_right::<Theme>()
-                        } else {
-                            lucide_icons::iced::icon_chevron_down::<Theme>()
-                        },
-                        12.0,
-                        palette.text_muted,
-                    ),
-                    palette.label("Bibliographie").size(theme::jetons::SAILLANT),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::ReferencesReplier)
-            .padding([2, 4])
-            .style(move |t, status| entry_style(t, status, palette, false)),
-        );
+        content = content.push(section_header(
+            "Bibliographie",
+            state.plugins.bibliographie.repliees,
+            Message::ReferencesReplier,
+            palette,
+        ));
 
         // Les gestes de la bibliographie, **en icônes** (bug-report
         // 2026-11-03) : création, import, recherche — et le lien Zotero
@@ -287,15 +399,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
 
         // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
-        if !state.references_repliees
-            && (state.references_recherche_visible || !state.references_filtre.is_empty())
+        if !state.plugins.bibliographie.repliees
+            && (state.plugins.bibliographie.recherche_visible
+                || !state.plugins.bibliographie.filtre.is_empty())
         {
             content = content.push(
-                text_input("chercher une référence", &state.references_filtre)
-                    .on_input(Message::ReferencesFiltrer)
-                    .padding(5)
-                    .size(theme::jetons::DETAIL)
-                    .width(Fill),
+                text_input(
+                    "chercher une référence",
+                    &state.plugins.bibliographie.filtre,
+                )
+                .on_input(Message::ReferencesFiltrer)
+                .padding(5)
+                .size(theme::jetons::DETAIL)
+                .width(Fill),
             );
         }
 
@@ -387,7 +503,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         // Les clés citables, quand la bibliographie en contient : un clic insère
         // `@clé` au curseur. Le filtre cherche l'auteur, le titre ou la clé.
-        let filtre = state.references_filtre.trim().to_lowercase();
+        let filtre = state.plugins.bibliographie.filtre.trim().to_lowercase();
 
         let visibles = state.bibliography.iter().filter(|entry| {
             filtre.is_empty()
@@ -406,44 +522,35 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         // La recherche trouve ses résultats même la section repliée
         // (bug-report-10, 2.2).
-        if !state.references_repliees || !filtre.is_empty() {
+        if !state.plugins.bibliographie.repliees || !filtre.is_empty() {
             for (rang, entry) in visibles.enumerate() {
                 if rang > 0 {
                     content = content.push(separation(palette));
                 }
 
-                let survolee = state.survol_reference.as_deref() == Some(entry.key.as_str());
+                let survolee =
+                    state.plugins.bibliographie.survol.as_deref() == Some(entry.key.as_str());
                 content = content.push(citation_row(entry, palette, survolee));
             }
         }
     }
 
-    if state.reglages.fonctionnalites.glossaire {
+    if state
+        .reglages
+        .fonctionnalites
+        .actif(crate::base::valeurs::CLE_GLOSSAIRE)
+    {
         // ---- Le glossaire ----
-        content = content.push(Space::new().height(18));
+        content = content.push(separation(palette));
+        content = content.push(Space::new().height(12));
 
         // Le titre replie la liste, et le filtre la cherche.
-        content = content.push(
-            button(
-                row![
-                    theme::icon(
-                        if state.glossaire_replie {
-                            lucide_icons::iced::icon_chevron_right::<Theme>()
-                        } else {
-                            lucide_icons::iced::icon_chevron_down::<Theme>()
-                        },
-                        12.0,
-                        palette.text_muted,
-                    ),
-                    palette.label("Glossaire").size(theme::jetons::SAILLANT),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::GlossaireReplier)
-            .padding([2, 4])
-            .style(move |t, status| entry_style(t, status, palette, false)),
-        );
+        content = content.push(section_header(
+            "Glossaire",
+            state.plugins.glossaire.replie,
+            Message::GlossaireReplier,
+            palette,
+        ));
 
         // Les gestes : un terme s'ajoute, la liste se cherche — en icônes,
         // comme la bibliographie.
@@ -477,11 +584,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
         content = content.push(gestes);
 
         // La recherche ne se montre que sur son icône (bug-report 2026-11-03).
-        if !state.glossaire_replie
-            && (state.glossaire_recherche_visible || !state.glossaire_filtre.is_empty())
+        if !state.plugins.glossaire.replie
+            && (state.plugins.glossaire.recherche_visible
+                || !state.plugins.glossaire.filtre.is_empty())
         {
             content = content.push(
-                text_input("chercher un terme", &state.glossaire_filtre)
+                text_input("chercher un terme", &state.plugins.glossaire.filtre)
                     .on_input(Message::GlossaireFiltrer)
                     .padding(5)
                     .size(theme::jetons::DETAIL)
@@ -497,16 +605,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 palette.text_muted,
             ),
             "Termes du glossaire".to_string(),
-            if state.glossaire.is_empty() {
+            if state.plugins.glossaire.entrees.is_empty() {
                 "aucun".to_string()
             } else {
-                format!("{} terme(s)", state.glossaire.len())
+                format!("{} terme(s)", state.plugins.glossaire.entrees.len())
             },
-            state.glossaire.is_empty(),
+            state.plugins.glossaire.entrees.is_empty(),
             palette,
         ));
 
-        if state.glossaire.is_empty() {
+        if state.plugins.glossaire.entrees.is_empty() {
             content = content.push(
                 palette
                     .label(
@@ -521,9 +629,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // Les termes citables : un clic insère `{glo:clé}` (ou `#gls("clé")`,
         // selon le dialecte du tampon). Le filtre cherche la clé, les formes
         // ou la définition.
-        let filtre = state.glossaire_filtre.trim().to_lowercase();
+        let filtre = state.plugins.glossaire.filtre.trim().to_lowercase();
 
-        let visibles = state.glossaire.iter().filter(|entree| {
+        let visibles = state.plugins.glossaire.entrees.iter().filter(|entree| {
             filtre.is_empty()
                 || entree.key.to_lowercase().contains(&filtre)
                 || entree
@@ -543,13 +651,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .unwrap_or(false)
         });
 
-        if !state.glossaire_replie {
+        if !state.plugins.glossaire.replie {
             for (rang, entree) in visibles.enumerate() {
                 if rang > 0 {
                     content = content.push(separation(palette));
                 }
 
-                let survolee = state.survol_glossaire.as_deref() == Some(entree.key.as_str());
+                let survolee =
+                    state.plugins.glossaire.survol.as_deref() == Some(entree.key.as_str());
                 content = content.push(glossaire_row(entree, palette, survolee));
             }
         }
@@ -558,164 +667,173 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // ---- Les projets ----
 
     content = content.push(Space::new().height(18));
-    content = content.push(section_title("Projets", palette));
+    content = content.push(section_header(
+        "Projets",
+        state.projets_section_replie,
+        Message::ProjetsSectionReplier,
+        palette,
+    ));
 
-    // La liste des projets : l'étagère se choisit **au menu** (pas une
-    // bascule), et la recherche ne se montre que sur son icône
-    // (bug-report 2026-11-03).
-    let etageres = &state.etageres;
-    let mut choix_etages = vec!["Mon étagère".to_string(), "Tous".to_string()];
-    let mut noms: Vec<String> = etageres
-        .values()
-        .filter(|etagere| !etagere.trim().is_empty())
-        .cloned()
-        .collect();
-    noms.sort();
-    noms.dedup();
-    choix_etages.extend(noms);
+    if !state.projets_section_replie {
+        // La liste des projets : l'étagère se choisit **au menu** (pas une
+        // bascule), et la recherche ne se montre que sur son icône
+        // (bug-report 2026-11-03).
+        let etageres = &state.etageres;
+        let mut choix_etages = vec!["Mon étagère".to_string(), "Tous".to_string()];
+        let mut noms: Vec<String> = etageres
+            .values()
+            .filter(|etagere| !etagere.trim().is_empty())
+            .cloned()
+            .collect();
+        noms.sort();
+        noms.dedup();
+        choix_etages.extend(noms);
 
-    content = content.push(
-        row![
-            button(theme::icon(
-                lucide_icons::iced::icon_search::<Theme>(),
-                13.0,
-                palette.text,
-            ))
-            .on_press(Message::ProjetsRechercheBascule)
-            .padding([4, 6])
-            .style(move |t, status| entry_style(t, status, palette, false)),
-            // La bibliothèque, vue étagères — l’accès depuis la
-            // section Projets (bug-report-10, 2.3).
-            tooltip(
-                button(theme::icon(
-                    lucide_icons::iced::icon_library::<Theme>(),
-                    13.0,
-                    if state.projets_vue {
-                        palette.accent
-                    } else {
-                        palette.text
-                    },
-                ))
-                .on_press(Message::ProjetsVue)
-                .padding([4, 6])
-                .style(move |t, status| { entry_style(t, status, palette, state.projets_vue) }),
-                container(palette.label("La bibliothèque, vue étagères").size(12)).padding([4, 8]),
-                tooltip::Position::Bottom,
-            ),
-            pick_list(
-                choix_etages,
-                Some(state.projets_etage.clone()),
-                Message::ProjetsEtageChoisie
-            )
-            .text_size(theme::jetons::DETAIL)
-            .padding([3, 6])
-            .width(Fill),
-        ]
-        .spacing(6),
-    );
-    if state.projets_recherche_visible || !state.projets_recherche.is_empty() {
         content = content.push(
-            text_input("chercher un projet…", &state.projets_recherche)
-                .on_input(Message::ProjetsRecherche)
-                .padding([3, 8])
-                .size(theme::jetons::DETAIL)
+            row![
+                button(theme::icon(
+                    lucide_icons::iced::icon_search::<Theme>(),
+                    13.0,
+                    palette.text,
+                ))
+                .on_press(Message::ProjetsRechercheBascule)
+                .padding([4, 6])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+                // La bibliothèque, vue étagères — l’accès depuis la
+                // section Projets (bug-report-10, 2.3).
+                tooltip(
+                    button(theme::icon(
+                        lucide_icons::iced::icon_library::<Theme>(),
+                        13.0,
+                        if state.projets_vue {
+                            palette.accent
+                        } else {
+                            palette.text
+                        },
+                    ))
+                    .on_press(Message::ProjetsVue)
+                    .padding([4, 6])
+                    .style(move |t, status| { entry_style(t, status, palette, state.projets_vue) }),
+                    container(palette.label("La bibliothèque, vue étagères").size(12))
+                        .padding([4, 8]),
+                    tooltip::Position::Bottom,
+                ),
+                pick_list(
+                    choix_etages,
+                    Some(state.projets_etage.clone()),
+                    Message::ProjetsEtageChoisie
+                )
+                .text_size(theme::jetons::DETAIL)
+                .padding([3, 6])
                 .width(Fill),
+            ]
+            .spacing(6),
         );
-    }
-
-    let visibles = projets_visibles(
-        &state.projects,
-        project,
-        etageres,
-        &state.projets_etage,
-        &state.projets_recherche,
-    );
-
-    // Le projet courant en tête : la liste sert à en changer, pas à se repérer.
-    for (rang, other) in visibles.iter().enumerate() {
-        if rang > 0 {
-            content = content.push(separation(palette));
+        if state.projets_recherche_visible || !state.projets_recherche.is_empty() {
+            content = content.push(
+                text_input("chercher un projet…", &state.projets_recherche)
+                    .on_input(Message::ProjetsRecherche)
+                    .padding([3, 8])
+                    .size(theme::jetons::DETAIL)
+                    .width(Fill),
+            );
         }
 
-        let is_current = other.dir == project.dir;
-        let survole = state.survol_projet.as_deref() == Some(other.dir.as_path());
+        let visibles = projets_visibles(
+            &state.projects,
+            project,
+            etageres,
+            &state.projets_etage,
+            &state.projets_recherche,
+        );
 
-        let mut ligne = row![
+        // Le projet courant en tête : la liste sert à en changer, pas à se repérer.
+        for (rang, other) in visibles.iter().enumerate() {
+            if rang > 0 {
+                content = content.push(separation(palette));
+            }
+
+            let is_current = other.dir == project.dir;
+            let survole = state.survol_projet.as_deref() == Some(other.dir.as_path());
+
+            let mut ligne = row![
+                button(
+                    row![palette.label(other.name.clone()).size(theme::jetons::CORPS)]
+                        .align_y(Alignment::Center)
+                        .height(Length::Fill),
+                )
+                .on_press(Message::OpenProject(other.dir.clone()))
+                .width(Fill)
+                .height(Length::Fixed(ENTRY_HEIGHT))
+                .padding([4, 8])
+                .style(move |t, status| entry_style(t, status, palette, is_current)),
+            ]
+            .spacing(2);
+
+            if survole {
+                ligne = ligne.push(
+                    button(theme::icon(
+                        lucide_icons::iced::icon_pencil::<Theme>(),
+                        12.0,
+                        palette.text_muted,
+                    ))
+                    .on_press(Message::ProjetRenommer(other.dir.clone()))
+                    .padding([4, 6])
+                    .style(move |t, status| entry_style(t, status, palette, false)),
+                );
+                ligne = ligne.push(
+                    button(theme::icon(
+                        lucide_icons::iced::icon_trash_2::<Theme>(),
+                        12.0,
+                        palette.text_muted,
+                    ))
+                    .on_press(Message::ProjetSupprimer(other.dir.clone()))
+                    .padding([4, 6])
+                    .style(move |t, status| delete_style(t, status, palette)),
+                );
+            }
+
+            let dir_clone = other.dir.clone();
+            content = content.push(
+                iced::widget::mouse_area(ligne)
+                    .on_enter(Message::SurvolProjet(Some(dir_clone.clone())))
+                    .on_exit(Message::SurvolProjet(None)),
+            );
+        }
+
+        // Un seul bouton : la création ouvre sa fenêtre, plutôt que de tenir
+        // champs et boutons en permanence dans le panneau.
+        content = content.push(
             button(
-                row![palette.label(other.name.clone()).size(theme::jetons::CORPS)]
-                    .align_y(Alignment::Center)
-                    .height(Length::Fill),
+                row![
+                    theme::icon(
+                        lucide_icons::iced::icon_plus::<Theme>(),
+                        13.0,
+                        palette.text_muted
+                    ),
+                    palette.label("Nouveau projet").size(theme::jetons::CORPS),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .height(Length::Fill),
             )
-            .on_press(Message::OpenProject(other.dir.clone()))
+            .on_press(Message::ProjetCreer)
             .width(Fill)
             .height(Length::Fixed(ENTRY_HEIGHT))
             .padding([4, 8])
-            .style(move |t, status| entry_style(t, status, palette, is_current)),
-        ]
-        .spacing(2);
-
-        if survole {
-            ligne = ligne.push(
-                button(theme::icon(
-                    lucide_icons::iced::icon_pencil::<Theme>(),
-                    12.0,
-                    palette.text_muted,
-                ))
-                .on_press(Message::ProjetRenommer(other.dir.clone()))
-                .padding([4, 6])
-                .style(move |t, status| entry_style(t, status, palette, false)),
-            );
-            ligne = ligne.push(
-                button(theme::icon(
-                    lucide_icons::iced::icon_trash_2::<Theme>(),
-                    12.0,
-                    palette.text_muted,
-                ))
-                .on_press(Message::ProjetSupprimer(other.dir.clone()))
-                .padding([4, 6])
-                .style(move |t, status| delete_style(t, status, palette)),
-            );
-        }
-
-        let dir_clone = other.dir.clone();
-        content = content.push(
-            iced::widget::mouse_area(ligne)
-                .on_enter(Message::SurvolProjet(Some(dir_clone.clone())))
-                .on_exit(Message::SurvolProjet(None)),
+            .style(move |t, status| entry_style(t, status, palette, false)),
         );
     }
 
-    // Un seul bouton : la création ouvre sa fenêtre, plutôt que de tenir
-    // champs et boutons en permanence dans le panneau.
-    content = content.push(
-        button(
-            row![
-                theme::icon(
-                    lucide_icons::iced::icon_plus::<Theme>(),
-                    13.0,
-                    palette.text_muted
-                ),
-                palette.label("Nouveau projet").size(theme::jetons::CORPS),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .height(Length::Fill),
-        )
-        .on_press(Message::ProjetCreer)
-        .width(Fill)
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .padding([4, 8])
-        .style(move |t, status| entry_style(t, status, palette, false)),
-    );
-
-    container(scrollable(content).width(Fill).height(Fill))
+    let sortie: Element<'_, Message> = container(scrollable(content).width(Fill).height(Fill))
         .width(Length::Fill)
         .height(Fill)
         .style(move |_| container::Style {
             background: Some(palette.surface.into()),
             ..Default::default()
         })
-        .into()
+        .into();
+    sortie
 }
 
 /// Une ligne de chapitre : son numéro, son titre, son compte de mots, et de
@@ -847,6 +965,146 @@ fn renaming_row<'a>(
     .into()
 }
 
+/// Une commande de statistiques réduite à une icône : recherche ou tri.
+fn stat_icon<'a>(
+    glyph: iced::widget::Text<'a, Theme>,
+    tooltip_text: &'static str,
+    message: Message,
+    palette: Palette,
+    active: bool,
+) -> Element<'a, Message> {
+    tooltip(
+        button(theme::icon(
+            glyph,
+            13.0,
+            if active {
+                palette.accent
+            } else {
+                palette.text_muted
+            },
+        ))
+        .on_press(message)
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0))
+        .padding([3, 3])
+        .style(move |_, status| button::Style {
+            background: match status {
+                button::Status::Hovered | button::Status::Pressed => {
+                    Some(palette.surface_hover.into())
+                }
+                _ => None,
+            },
+            border: iced::Border {
+                radius: 5.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        container(
+            palette
+                .label(tooltip_text)
+                .size(theme::jetons::DETAIL)
+                .color(palette.text),
+        )
+        .padding([4, 8])
+        .style(move |_| tooltip_style(palette)),
+        tooltip::Position::Bottom,
+    )
+    .gap(6)
+    .into()
+}
+
+/// La référence cliquée : ses citations séparées, leur livre, leur chapitre,
+/// l'édition de l'une d'elles et la traduction de l'extrait.
+fn reference_cliquee_section<'a>(
+    state: &'a State,
+    cliquee: &'a crate::plugins::bible::ReferenceCliquee,
+    palette: Palette,
+) -> Element<'a, Message> {
+    let mut liste = column![].spacing(2);
+    for (index, element) in cliquee.elements.iter().enumerate() {
+        match element {
+            crate::plugins::bible::ElementCitation::Reference(reference) => {
+                let livre = crate::langage::references::nom_du_livre(
+                    &reference.livre,
+                    crate::langage::references::FormeLivre::FrancaiseLongue,
+                );
+                let nombres = crate::langage::references::afficher_nombres(
+                    reference,
+                    &state.reglages.references,
+                );
+                let mention = crate::langage::references::mention_traduction(reference);
+                let extrait = crate::plugins::bible::extrait(
+                    std::slice::from_ref(reference),
+                    state.plugins.bible.traduction,
+                );
+                let mut entete = row![
+                    palette.label(livre).size(theme::jetons::CORPS),
+                    palette
+                        .label(nombres)
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center);
+                if !mention.is_empty() {
+                    entete = entete.push(
+                        palette
+                            .label(mention)
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted),
+                    );
+                }
+                entete = entete
+                    .push(Space::new().width(Length::Fill))
+                    .push(icon_action(
+                        lucide_icons::iced::icon_pencil::<Theme>(),
+                        "Modifier cette référence",
+                        Message::BibleReferenceModifier(index),
+                        palette,
+                    ));
+                liste = liste.push(
+                    column![
+                        entete.width(Length::Fill),
+                        palette
+                            .label(extrait)
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted),
+                    ]
+                    .spacing(4),
+                );
+            }
+            crate::plugins::bible::ElementCitation::Texte(texte) => {
+                liste = liste.push(
+                    palette
+                        .label(format!("\"{texte}\""))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                );
+            }
+        }
+    }
+
+    let corps = column![
+        palette.label("La référence cliquée").size(13),
+        liste,
+        pick_list(
+            vec!["Louis Segond 1910", "J.N. Darby"],
+            Some(state.plugins.bible.traduction.nom()),
+            |choix| {
+                Message::BibleTraduction(if choix == "J.N. Darby" {
+                    crate::plugins::bible::Traduction::Darby
+                } else {
+                    crate::plugins::bible::Traduction::Lsg
+                })
+            },
+        )
+        .width(Length::Fill),
+    ]
+    .spacing(6);
+    corps.into()
+}
+
 /// Une action discrète, réduite à une icône.
 fn icon_action<'a>(
     glyph: iced::widget::Text<'a, Theme>,
@@ -946,7 +1204,7 @@ fn info_row<'a>(
 /// Un terme du glossaire : un clic insère sa référence au curseur,
 /// l'icône l'ouvre pour le corriger.
 fn glossaire_row<'a>(
-    entree: &'a crate::project::glossaire::EntreeGlossaire,
+    entree: &'a crate::plugins::glossaire::EntreeGlossaire,
     palette: Palette,
     survolee: bool,
 ) -> Element<'a, Message> {
@@ -1153,12 +1411,37 @@ fn tronquer(texte: &str, largeur: usize) -> String {
     format!("{coupe}…")
 }
 
-/// Titre de section, en petites capitales discrètes.
-fn section_title(title: &str, palette: Palette) -> text::Text<'_> {
-    palette
-        .label(title.to_uppercase())
-        .size(theme::jetons::CHAPEAU)
-        .color(palette.text_muted)
+/// Le titre d'une section, avec son chevron et son geste de repli.
+///
+/// Sommaire, Chapitres, Bibliographie, Glossaire et Projets partagent
+/// exactement la même typographie, le même espacement et le même indicateur
+/// d'état : c'est ce qui fait du panneau un ensemble, pas cinq interfaces.
+fn section_header<'a>(
+    title: &'a str,
+    replie: bool,
+    action: Message,
+    palette: Palette,
+) -> Element<'a, Message> {
+    button(
+        row![
+            theme::icon(
+                if replie {
+                    lucide_icons::iced::icon_chevron_right::<Theme>()
+                } else {
+                    lucide_icons::iced::icon_chevron_down::<Theme>()
+                },
+                12.0,
+                palette.text_muted,
+            ),
+            palette.label(title).size(theme::jetons::SAILLANT),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .on_press(action)
+    .padding([2, 4])
+    .style(move |t, status| entry_style(t, status, palette, false))
+    .into()
 }
 
 /// Nombre de mots, groupé par milliers pour rester lisible.
@@ -1291,6 +1574,26 @@ fn segments(guides: &[bool], est_dernier: bool, hauteur: f32) -> Vec<(f32, f32, 
     segments.push((x, 0.0, x, fin));
     segments.push((x, hauteur / 2.0, x + PAS / 2.0 + 4.0, hauteur / 2.0));
     segments
+}
+
+/// Les guides d'une entrée de sommaire, à partir des niveaux (0 = niveau 1).
+///
+/// Un guide d'ancêtre continue tant que l'entrée suivante reste dans le
+/// sous-arbre ; dès qu'on remonte au niveau de l'ancêtre ou au-dessus, il
+/// s'arrête. C'est cette règle, et non « toutes les entrées suivantes », qui
+/// raccorde les branches entre deux enfants d'un même parent.
+fn guides_du_sommaire(niveaux: &[usize], index: usize) -> Vec<bool> {
+    let level = niveaux.get(index).copied().unwrap_or(0);
+
+    (0..level)
+        .map(|ancetre| {
+            niveaux[index + 1..]
+                .iter()
+                .take_while(|suivant| **suivant > ancetre)
+                .next()
+                .is_some()
+        })
+        .collect()
 }
 
 /// La largeur de la zone de barres, pour un nombre de guides.
@@ -1554,7 +1857,28 @@ mod tests_menu_etagere {
 
 #[cfg(test)]
 mod tests_barres {
-    use super::{largeur_barres, segments};
+    use super::{guides_du_sommaire, largeur_barres, segments};
+
+    /// AMÉLIORATION-005 : deux enfants d'un même parent gardent le trait de
+    /// leur parent ; le trait s'arrête quand on quitte le sous-arbre.
+    #[test]
+    fn les_guides_ne_coupent_pas_entre_deux_enfants() {
+        // Niveau 1, deux enfants (niveau 2), puis un autre niveau 1.
+        let niveaux = [0, 1, 1, 1, 0];
+
+        assert_eq!(guides_du_sommaire(&niveaux, 0), Vec::<bool>::new());
+        assert_eq!(guides_du_sommaire(&niveaux, 1), vec![true]);
+        assert_eq!(
+            guides_du_sommaire(&niveaux, 2),
+            vec![true],
+            "le parent continue vers son second enfant"
+        );
+        assert_eq!(
+            guides_du_sommaire(&niveaux, 3),
+            vec![false],
+            "le dernier enfant ferme la branche"
+        );
+    }
 
     /// La géométrie des barres (bug-report 2026-11-03) : un niveau = une
     /// colonne, tous les verticaux au **même x** d'une ligne à l'autre,

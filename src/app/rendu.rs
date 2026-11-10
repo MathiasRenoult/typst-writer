@@ -55,6 +55,15 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::RenderTick => {
+            // Le survol d'une référence devient une bulle après un court
+            // repos : on ne la voit pas clignoter au passage de la souris.
+            if let Some((point, reference, depuis)) = state.plugins.bible.survol_candidat.as_ref()
+                && depuis.elapsed() >= std::time::Duration::from_millis(450)
+            {
+                state.plugins.bible.survol = Some((*point, reference.clone()));
+                state.plugins.bible.survol_candidat = None;
+            }
+
             // Le geste de zoom est fini : le rendu net part, une seule
             // fois, et non un rendu par cran de molette.
             if state

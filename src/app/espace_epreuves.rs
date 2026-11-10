@@ -36,7 +36,7 @@ fn la_migration_a_plat_reprend_les_documents_dun_premier_lancement() {
     );
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     assert!(home.starts_with(std::env::temp_dir()));
-    let ancien = crate::project::work_dir().join("ancien.typ");
+    let ancien = crate::services::stockage::work_dir().join("ancien.typ");
     std::fs::write(&ancien, "= Chapitre\n\nTexte conservé.\n").expect("source synthétique");
     let state = etat_isole();
     let texte =
@@ -684,7 +684,7 @@ fn un_temporaire_de_creation_abandonne_part_a_la_corbeille() {
         "le temporaire abandonné ne reste pas à la place"
     );
     assert!(en_cours.exists(), "une création en cours ne se touche pas");
-    let recuperee = std::fs::read_dir(crate::project::corbeille())
+    let recuperee = std::fs::read_dir(crate::services::stockage::corbeille())
         .expect("corbeille")
         .filter_map(Result::ok)
         .map(|entree| entree.path().join("document.tw"))
@@ -1184,7 +1184,7 @@ fn supprimer_le_dernier_projet_ouvre_un_remplacement_sans_recreer_la_cible() {
     );
     assert_eq!(
         std::fs::read_to_string(
-            crate::project::corbeille()
+            crate::services::stockage::corbeille()
                 .join(ancien.file_name().unwrap())
                 .join("document.tw")
         )
@@ -1232,7 +1232,7 @@ fn supprimer_un_projet_retire_toutes_ses_vues_et_reponses_tardives() {
     assert!(!ancien.exists(), "le projet a été déplacé");
     assert_eq!(
         std::fs::read_to_string(
-            crate::project::corbeille()
+            crate::services::stockage::corbeille()
                 .join(ancien.file_name().unwrap())
                 .join("document.tw")
         )
@@ -1372,7 +1372,7 @@ fn supprimer_un_projet_conserve_les_dernieres_frappes_dans_la_corbeille() {
     let contenu = state.editor.content();
     state.geste_confirme = true;
     let _ = update(&mut state, Message::ProjetSupprimer(dir.clone()));
-    let destination = crate::project::corbeille().join(nom);
+    let destination = crate::services::stockage::corbeille().join(nom);
     assert!(!dir.exists());
     assert_eq!(
         std::fs::read_to_string(destination.join("document.tw")).unwrap(),
@@ -1698,8 +1698,10 @@ La liste se compose elle-même, d'après vos citations.
     .expect("chapitre");
 
     // Le même chemin que l'application : l'assemblage du modèle, le
-    // document d'écriture, et ses diagnostics.
-    let main = std::fs::read_to_string(dir.join("main.typ")).expect("assemblage");
+    // document d'écriture, et ses diagnostics. La bibliographie est un geste
+    // explicite — ce test l'écrit comme le ferait l'auteur.
+    let mut main = std::fs::read_to_string(dir.join("main.typ")).expect("assemblage");
+    main.push_str("\n#bibliography(\"references.bib\")\n");
     let (entry, corrections, rapports) =
         crate::langage::pipeline::compilation_unit_avec_diagnostics(&dir, &main, "");
 
@@ -1822,7 +1824,10 @@ fn la_these_synthetique_tient_ses_promesses() {
     };
     let _ = crate::mise_en_page::appliquer(&dir, &normes, true).expect("normes");
 
-    let main = std::fs::read_to_string(dir.join("main.typ")).expect("assemblage");
+    // La bibliographie est un geste explicite de l'auteur : ce test l'écrit
+    // dans l'assemblage, comme l'application le ferait.
+    let mut main = std::fs::read_to_string(dir.join("main.typ")).expect("assemblage");
+    main.push_str("\n#bibliography(\"references.bib\")\n");
     let (entry, corrections, rapports) =
         crate::langage::pipeline::compilation_unit_avec_diagnostics(&dir, &main, "");
 
@@ -1939,13 +1944,21 @@ fn la_selection_de_bibliographie_ouvre_la_bonne_notice() {
 
     // La sélection : la **bonne** notice s'ouvre dans la fiche.
     let _ = update(&mut state, Message::ModifierReference("seconde".into()));
-    let fiche = state.edition_reference.as_ref().expect("fiche ouverte");
+    let fiche = state
+        .plugins
+        .bibliographie
+        .edition
+        .as_ref()
+        .expect("fiche ouverte");
     assert_eq!(fiche.cle, "seconde", "la bonne notice est sélectionnée");
     assert_eq!(fiche.kind, "article", "c'est bien elle");
 
     // Fermer sans rien écrire ne touche pas la bibliothèque.
     let _ = update(&mut state, Message::EditionReferenceFermer);
-    assert!(state.edition_reference.is_none(), "la fiche se ferme");
+    assert!(
+        state.plugins.bibliographie.edition.is_none(),
+        "la fiche se ferme"
+    );
     let bibliotheque = std::fs::read_to_string(dir.join("references.bib")).expect("bibliographie");
     assert!(bibliotheque.contains("premiere") && bibliotheque.contains("seconde"));
     assert_eq!(
@@ -2064,7 +2077,10 @@ fn une_longue_liste_bibliographique_restee_vivante() {
 
     // Le filtre vit sur la liste, et ne perd aucune entrée.
     let _ = update(&mut state, Message::ReferencesFiltrer("notice123".into()));
-    assert_eq!(state.references_filtre, "notice123", "le filtre tient");
+    assert_eq!(
+        state.plugins.bibliographie.filtre, "notice123",
+        "le filtre tient"
+    );
 }
 
 #[test]
@@ -2625,7 +2641,7 @@ fn une_notice_supprimee_vraiment_a_la_corbeille() {
             .contains("exemple"),
         "la notice quitte la bibliographie"
     );
-    let corbeille = crate::project::corbeille();
+    let corbeille = crate::services::stockage::corbeille();
     let conservee = std::fs::read_dir(&corbeille)
         .expect("corbeille")
         .filter_map(Result::ok)
@@ -2748,7 +2764,7 @@ fn fermer_la_fenetre_garde_le_tampon_si_la_sauvegarde_echoue() {
 fn la_migration_a_plat_ne_touche_pas_un_projet_existant_verrouille() {
     let premiere = etat_isole();
     let dossier = premiere.project.dir.clone();
-    let source = crate::project::work_dir().join("ancien.typ");
+    let source = crate::services::stockage::work_dir().join("ancien.typ");
     let assemblage = std::fs::read(&premiere.project.main).expect("assemblage initial");
     std::fs::write(&source, "= Ancien\n\nTexte à conserver.\n").expect("source synthétique");
 
@@ -2805,7 +2821,10 @@ fn les_documents_les_vues_et_la_session_restent_coherents() {
     let premiere_source = state.editor.content();
     let _ = update(
         &mut state,
-        Message::Editor(iced_code_editor::Message::MouseClick(iced::Point::ORIGIN)),
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            0,
+        )),
     );
     let _ = update(
         &mut state,
@@ -2820,7 +2839,10 @@ fn les_documents_les_vues_et_la_session_restent_coherents() {
     assert_eq!(state.espace.vues[&premier].editor.content(), source);
     let _ = update(
         &mut state,
-        Message::Editor(iced_code_editor::Message::MouseClick(iced::Point::ORIGIN)),
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            0,
+        )),
     );
     let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Undo));
     assert_eq!(state.editor.content(), premiere_source);
@@ -2851,7 +2873,10 @@ fn les_documents_les_vues_et_la_session_restent_coherents() {
     let deuxieme_source = state.editor.content();
     let _ = update(
         &mut state,
-        Message::Editor(iced_code_editor::Message::MouseClick(iced::Point::ORIGIN)),
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            0,
+        )),
     );
     let _ = update(
         &mut state,
@@ -3021,7 +3046,7 @@ fn l_aide_se_bascule_et_dit_le_chemin_des_donnees() {
 
     // Le chemin qu'elle montre est celui des données : réel, créé, et
     // reconnaissable à l'œil.
-    let chemin = crate::project::work_dir();
+    let chemin = crate::services::stockage::work_dir();
     assert!(chemin.is_dir(), "le dossier des données existe");
     assert!(
         chemin.to_string_lossy().contains("typst-writer"),
@@ -3547,8 +3572,10 @@ fn la_roue_s_entend_avec_le_hex_et_les_rapides() {
         state.editor.content()
     );
 
-    // Une couleur rapide touche le texte et laisse la roue ouverte.
+    // Une couleur rapide **montre** sa couleur dans la roue ; elle ne touche
+    // pas encore le texte.
     let _ = update(&mut state, Message::PickerCouleurOuvrir);
+    let avant = state.editor.content();
     let _ = update(
         &mut state,
         Message::PickerCouleurRapide("#e74c3c".to_string()),
@@ -3557,9 +3584,25 @@ fn la_roue_s_entend_avec_le_hex_et_les_rapides() {
         state.picker_couleur.is_some(),
         "la roue reste ouverte pour la suite"
     );
+    assert_eq!(
+        state.editor.content(),
+        avant,
+        "un clic de pastille ne modifie pas le texte"
+    );
+    assert_eq!(
+        state
+            .picker_couleur
+            .as_ref()
+            .and_then(|picker| picker.hex_saisi.as_deref()),
+        Some("#e74c3c"),
+        "la pastille devient la couleur proposée"
+    );
+
+    // C'est « Appliquer » qui l'emploie.
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
     assert!(
         state.editor.content().contains("#e74c3c"),
-        "la rapide s'applique : {:?}",
+        "la couleur s'applique au texte : {:?}",
         state.editor.content()
     );
 }
@@ -3746,7 +3789,10 @@ fn le_glossaire_se_gere_du_panneau() {
 
     // Une entrée neuve : la fiche s'ouvre, la clé se choisit.
     let _ = update(&mut state, Message::GlossaireCreer);
-    assert!(state.edition_glossaire.is_some(), "la fiche s'ouvre");
+    assert!(
+        state.plugins.glossaire.edition.is_some(),
+        "la fiche s'ouvre"
+    );
 
     let _ = update(
         &mut state,
@@ -3762,12 +3808,15 @@ fn le_glossaire_se_gere_du_panneau() {
     );
     let _ = update(&mut state, Message::EditionGlossaireEnregistrer);
 
-    assert!(state.edition_glossaire.is_none(), "la fiche se referme");
-    assert_eq!(state.glossaire.len(), 1, "le terme est là");
-    assert_eq!(state.glossaire[0].key, "sdo");
+    assert!(
+        state.plugins.glossaire.edition.is_none(),
+        "la fiche se referme"
+    );
+    assert_eq!(state.plugins.glossaire.entrees.len(), 1, "le terme est là");
+    assert_eq!(state.plugins.glossaire.entrees[0].key, "sdo");
 
     // Le fichier porte tout — la persistance est au projet.
-    let relu = crate::project::glossaire::Glossaire::charger(&state.project.dir);
+    let relu = crate::plugins::glossaire::Glossaire::charger(&state.project.dir);
     assert_eq!(relu.entrees.len(), 1, "le fichier est écrit");
     assert_eq!(relu.entrees[0].long.as_deref(), Some("docteur scolastique"));
 
@@ -3786,12 +3835,19 @@ fn le_glossaire_se_gere_du_panneau() {
         Message::EditionGlossaireChamp("cle".into(), "deux mots".into()),
     );
     let _ = update(&mut state, Message::EditionGlossaireEnregistrer);
-    assert!(state.edition_glossaire.is_some(), "la fiche reste ouverte");
+    assert!(
+        state.plugins.glossaire.edition.is_some(),
+        "la fiche reste ouverte"
+    );
     assert!(
         state.note.as_ref().is_some_and(|n| n.erreur),
         "le refus se dit"
     );
-    assert_eq!(state.glossaire.len(), 1, "rien n'a été écrit");
+    assert_eq!(
+        state.plugins.glossaire.entrees.len(),
+        1,
+        "rien n'a été écrit"
+    );
 
     // La correction se fait en place.
     let _ = update(&mut state, Message::EditionGlossaireFermer);
@@ -3801,17 +3857,28 @@ fn le_glossaire_se_gere_du_panneau() {
         Message::EditionGlossaireChamp("long".into(), "docteur de l'École".into()),
     );
     let _ = update(&mut state, Message::EditionGlossaireEnregistrer);
-    assert_eq!(state.glossaire.len(), 1, "pas de doublon");
+    assert_eq!(state.plugins.glossaire.entrees.len(), 1, "pas de doublon");
     assert_eq!(
-        state.glossaire[0].long.as_deref(),
+        state.plugins.glossaire.entrees[0].long.as_deref(),
         Some("docteur de l'École"),
         "le terme est corrigé en place"
     );
 
-    // Et la suppression part pour de bon.
+    // Et la suppression part pour de bon — après confirmation.
     let _ = update(&mut state, Message::GlossaireSupprimer("sdo".into()));
-    assert!(state.glossaire.is_empty(), "le terme est parti");
-    let relu = crate::project::glossaire::Glossaire::charger(&state.project.dir);
+    assert_eq!(
+        state.plugins.glossaire.entrees.len(),
+        1,
+        "la suppression demande d'abord confirmation"
+    );
+    assert!(state.confirmation.is_some(), "la question est posée");
+
+    let _ = update(&mut state, Message::ConfirmationConfirmer);
+    assert!(
+        state.plugins.glossaire.entrees.is_empty(),
+        "le terme est parti"
+    );
+    let relu = crate::plugins::glossaire::Glossaire::charger(&state.project.dir);
     assert!(relu.entrees.is_empty(), "le fichier suit");
 }
 
@@ -3830,9 +3897,10 @@ fn les_normes_prennent_les_mains() {
     // sans le correctif.
     let _ = update(
         &mut state,
-        Message::Editor(iced_code_editor::Message::MouseClick(iced::Point::new(
-            4.0, 4.0,
-        ))),
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::new(4.0, 4.0),
+            0,
+        )),
     );
     let avant = state.editor.content().to_string();
 
@@ -3849,17 +3917,19 @@ fn les_normes_prennent_les_mains() {
         "le clavier n'arrive plus au document"
     );
 
-    // Une couleur rapide de la roue va au réglage visé — pas au texte.
+    // Une couleur rapide de la roue **montre** la couleur ; « Appliquer »
+    // l'écrit dans le réglage visé — jamais dans le texte.
     let _ = update(
         &mut state,
         Message::PickerCouleurPourReglage(Champ::CouleurTexte),
     );
     let _ = update(&mut state, Message::PickerCouleurRapide("#112233".into()));
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
     let dialogue = state.mise_en_page.as_ref().expect("le panneau");
     assert_eq!(
         dialogue.reglages.valeur(Champ::CouleurTexte),
         "#112233",
-        "la couleur rapide va au réglage visé"
+        "« Appliquer » écrit la couleur rapide dans le réglage visé"
     );
     assert_eq!(state.editor.content(), avant, "le texte ne bouge pas");
 
@@ -4050,6 +4120,447 @@ fn au_demarrage_les_fenetres_de_rendu_se_remplissent() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_couleur_sur_une_selection_ne_perd_pas_le_texte() {
+    let mut state = etat_isole();
+
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Un passage.".into())),
+    );
+    let _ = state.editor.selectionner_plage(0, "Un passage.".len());
+
+    let _ = update(&mut state, Message::PickerCouleurOuvrir);
+    let _ = update(&mut state, Message::PickerCouleurHex("#e74c3c".into()));
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+
+    assert_eq!(
+        state.editor.content(),
+        "{#e74c3c:Un passage.}",
+        "la sélection est teintée, jamais remplacée par du vide"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_biblique_construit_une_seule_balise() {
+    let mut state = etat_isole();
+
+    // Le bouton de la barre ouvre le panneau de construction, pas une liste
+    // de complétion : le geste est explicite et l'éditeur rend le clavier.
+    let _ = update(&mut state, Message::ReferenceBibliqueInserer);
+    assert!(
+        state.plugins.bible.panneau.is_some(),
+        "le bouton ouvre le panneau de construction"
+    );
+    assert!(
+        state.completion.is_none(),
+        "la complétion du serveur n'a rien à voir ici"
+    );
+    assert!(
+        !state.editor.editor.is_focused(),
+        "l'éditeur rend le focus : la frappe ne part pas dans le document"
+    );
+
+    let livres = crate::plugins::bible::livres(crate::plugins::bible::Traduction::Lsg);
+    let genese = livres
+        .iter()
+        .position(|livre| livre.osis == "Gen")
+        .expect("Genèse est dans la liste");
+    let marc = livres
+        .iter()
+        .position(|livre| livre.osis == "Mark")
+        .expect("Marc est dans la liste");
+    let jean = livres
+        .iter()
+        .position(|livre| livre.osis == "John")
+        .expect("Jean est dans la liste");
+
+    // Trois références de trois livres, ajoutées une à une au même panneau.
+    for (livre, chapitre, verset) in [(genese, "3", "15"), (marc, "2", "8"), (jean, "3", "16")] {
+        let _ = update(&mut state, Message::BiblePanneauLivre(livre));
+        let _ = update(&mut state, Message::BiblePanneauChapitre(chapitre.into()));
+        let _ = update(&mut state, Message::BiblePanneauVersets(verset.into()));
+        let _ = update(&mut state, Message::BiblePanneauAjouter);
+    }
+
+    let panneau = state
+        .plugins
+        .bible
+        .panneau
+        .as_ref()
+        .expect("le panneau reste ouvert pendant la construction");
+    assert_eq!(
+        panneau.references.len(),
+        3,
+        "les trois références sont retenues"
+    );
+
+    let _ = update(&mut state, Message::BiblePanneauInserer);
+
+    let contenu = state.editor.content();
+    assert!(
+        contenu.starts_with("{{") && contenu.ends_with("}}"),
+        "{contenu:?}"
+    );
+    assert_eq!(
+        contenu.matches("{{").count(),
+        1,
+        "une seule balise, jamais trois : {contenu:?}"
+    );
+    let interieur = &contenu[2..contenu.len() - 2];
+    let (references, forme) =
+        crate::plugins::bible::lire_groupe(interieur).expect("la balise se relit");
+    assert_eq!(
+        references.len(),
+        3,
+        "les trois versets tiennent dans la balise"
+    );
+    assert_eq!(forme, None, "la forme héritée n'écrit aucun suffixe");
+    assert_eq!(
+        state.editor.cursor_offset(),
+        contenu.len() - 2,
+        "le curseur attend entre les accolades fermantes"
+    );
+    assert!(
+        state.plugins.bible.panneau.is_none(),
+        "le panneau se referme après l'insertion"
+    );
+
+    // Une seconde validation ne doit rien insérer : le panneau est déjà pris.
+    let _ = update(&mut state, Message::BiblePanneauInserer);
+    assert_eq!(
+        state.editor.content(),
+        contenu,
+        "l'insertion est idempotente"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_insere_des_chapitres_entiers_et_un_texte_libre() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::ReferenceBibliqueInserer);
+    let livres = crate::plugins::bible::livres(crate::plugins::bible::Traduction::Lsg);
+    let genese = livres
+        .iter()
+        .position(|livre| livre.osis == "Gen")
+        .expect("Genèse est dans la liste");
+    let _ = update(&mut state, Message::BiblePanneauLivre(genese));
+    let _ = update(&mut state, Message::BiblePanneauChapitre("1-11".into()));
+    let _ = update(&mut state, Message::BiblePanneauAjouter);
+    let _ = update(&mut state, Message::BiblePanneauTexte("cf. aussi".into()));
+    let _ = update(&mut state, Message::BiblePanneauInserer);
+
+    assert_eq!(
+        state.editor.content(),
+        "{{Gn 1 à 11 ; \"cf. aussi\"}}",
+        "les chapitres entiers et le texte libre tiennent dans une balise"
+    );
+    let (elements, _) = crate::plugins::bible::lire_groupe_complet("Gn 1 à 11 ; \"cf. aussi\"")
+        .expect("la balise se relit");
+    assert_eq!(elements.len(), 2);
+    assert_eq!(
+        elements[0].reference(),
+        Some(&crate::plugins::bible::Reference::chapitres("Gen", 1, 11))
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_respecte_la_forme_choisie_sans_toucher_aux_normes() {
+    let mut state = etat_isole();
+    let normes_avant = state.reglages.references.clone();
+
+    let _ = update(&mut state, Message::ReferenceBibliqueInserer);
+    let livres = crate::plugins::bible::livres(crate::plugins::bible::Traduction::Lsg);
+    let genese = livres
+        .iter()
+        .position(|livre| livre.osis == "Gen")
+        .expect("Genèse est dans la liste");
+    let _ = update(&mut state, Message::BiblePanneauLivre(genese));
+    let _ = update(&mut state, Message::BiblePanneauChapitre("3".into()));
+    let _ = update(&mut state, Message::BiblePanneauVersets("15".into()));
+    let _ = update(&mut state, Message::BiblePanneauAjouter);
+    let _ = update(
+        &mut state,
+        Message::BiblePanneauForme(Some(crate::plugins::bible::FormeLivre::FrancaiseLongue)),
+    );
+    let _ = update(&mut state, Message::BiblePanneauInserer);
+
+    let attendu = format!(
+        "{{{{{}|long}}}}",
+        crate::plugins::bible::afficher_groupe_forme(
+            &[crate::plugins::bible::Reference::verset("Gen", 3, 15)],
+            &normes_avant,
+            Some(crate::plugins::bible::FormeLivre::FrancaiseLongue),
+        )
+    );
+    assert_eq!(state.editor.content(), attendu);
+    assert_eq!(
+        state.reglages.references, normes_avant,
+        "la forme ponctuelle ne modifie pas les normes du document"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn cliquer_une_reference_des_statistiques_y_place_le_curseur() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "{{Jn 3:16}}\n\n{{Gn 1:1}}".to_string(),
+        )),
+    );
+
+    let _ = update(&mut state, Message::BibleAllerReference("Gn 1:1".into()));
+
+    let contenu = state.editor.content();
+    let debut = contenu
+        .rfind("{{Gn 1:1}}")
+        .expect("la seconde balise est là");
+    assert_eq!(
+        state.editor.cursor_offset(),
+        debut + "{{Gn 1:1}}".len(),
+        "le curseur est placé dans la citation cliquée, pas au début du document"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn changer_de_projet_recharge_les_addons_du_panneau() {
+    let mut state = etat_isole();
+    let premier = state.project.dir.clone();
+    assert!(
+        state.reglages.fonctionnalites.references_bibliques,
+        "le projet de départ a le plugin biblique"
+    );
+
+    let _ = update(&mut state, Message::ProjetCreer);
+    let _ = update(&mut state, Message::ProjetNom("sans-bible".to_string()));
+    let _ = update(
+        &mut state,
+        Message::ProjetFonctionnalite(
+            crate::base::valeurs::CLE_REFERENCES_BIBLIQUES.to_string(),
+            false,
+        ),
+    );
+    let _ = update(&mut state, Message::ProjetValider);
+    let second = state.project.dir.clone();
+    assert!(
+        !state.reglages.fonctionnalites.references_bibliques,
+        "le second projet est créé sans le plugin biblique"
+    );
+
+    let _ = update(&mut state, Message::OpenProject(premier));
+    assert!(
+        state.reglages.fonctionnalites.references_bibliques,
+        "revenir au premier projet rend ses add-ons au panneau"
+    );
+
+    let _ = update(&mut state, Message::OpenProject(second));
+    assert!(
+        !state.reglages.fonctionnalites.references_bibliques,
+        "revenir au second les retire : le panneau suit le projet affiché"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_traduction_choisie_change_l_extrait_de_la_reference() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("{{Jn 3:16}}".to_string())),
+    );
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            4,
+        )),
+    );
+    let segond = state
+        .plugins
+        .bible
+        .reference_cliquee
+        .as_ref()
+        .expect("le clic ouvre la consultation")
+        .extrait
+        .clone();
+
+    let _ = update(
+        &mut state,
+        Message::BibleTraduction(crate::plugins::bible::Traduction::Darby),
+    );
+    let darby = &state
+        .plugins
+        .bible
+        .reference_cliquee
+        .as_ref()
+        .expect("la consultation reste ouverte")
+        .extrait;
+    assert_ne!(
+        &segond, darby,
+        "les deux traductions ne disent pas la même chose"
+    );
+    assert_eq!(
+        state.plugins.bible.traduction,
+        crate::plugins::bible::Traduction::Darby,
+        "le choix de traduction est retenu"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn modifier_une_reference_depuis_la_consultation_reécrit_la_balise() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "{{Jn 3.16 ; Gn 1.1}}".to_string(),
+        )),
+    );
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            4,
+        )),
+    );
+    let cliquee = state
+        .plugins
+        .bible
+        .reference_cliquee
+        .as_ref()
+        .expect("le clic ouvre la consultation");
+    assert_eq!(
+        cliquee.elements.len(),
+        2,
+        "les deux citations sont séparées"
+    );
+    assert_eq!(cliquee.references.len(), 2);
+
+    // La première référence se modifie depuis le panneau.
+    let _ = update(&mut state, Message::BibleReferenceModifier(0));
+    let edition = state
+        .plugins
+        .bible
+        .edition
+        .as_ref()
+        .expect("la fiche d'édition est ouverte");
+    assert_eq!(edition.chapitre, "3");
+    assert_eq!(edition.versets, "16");
+
+    let _ = update(&mut state, Message::BibleEditionChapitre("4".into()));
+    let _ = update(&mut state, Message::BibleEditionVersets("2".into()));
+    let _ = update(&mut state, Message::BibleEditionEnregistrer);
+
+    assert_eq!(
+        state.editor.content(),
+        "{{Jn 4.2 ; Gn 1.1}}",
+        "la référence est remplacée dans la même balise"
+    );
+    assert!(
+        state.plugins.bible.edition.is_none(),
+        "la fiche se referme après l'enregistrement"
+    );
+    assert!(
+        state
+            .plugins
+            .bible
+            .reference_cliquee
+            .as_ref()
+            .is_some_and(|cliquee| cliquee.intervalle.0 == 0
+                && cliquee.intervalle.1 == state.editor.content().len()),
+        "l'intervalle de la consultation suit la nouvelle balise"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn modifier_une_reference_conserve_le_texte_libre() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "{{Jn 3.16 ; \"cf. aussi\" ; Gn 1.1}}".to_string(),
+        )),
+    );
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            4,
+        )),
+    );
+    assert_eq!(
+        state
+            .plugins
+            .bible
+            .reference_cliquee
+            .as_ref()
+            .expect("la consultation est ouverte")
+            .elements
+            .len(),
+        3,
+        "la consultation sépare deux références et le texte libre"
+    );
+
+    let _ = update(&mut state, Message::BibleReferenceModifier(0));
+    let _ = update(&mut state, Message::BibleEditionChapitre("4".into()));
+    let _ = update(&mut state, Message::BibleEditionVersets("2".into()));
+    let _ = update(&mut state, Message::BibleEditionEnregistrer);
+
+    assert_eq!(
+        state.editor.content(),
+        "{{Jn 4.2 ; \"cf. aussi\" ; Gn 1.1}}",
+        "le texte libre garde ses guillemets et sa place"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn modifier_une_reference_conserve_sa_traduction() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "{{Jn 3.16|darby}}".to_string(),
+        )),
+    );
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::MouseClick(
+            iced::Point::ORIGIN,
+            4,
+        )),
+    );
+
+    let _ = update(&mut state, Message::BibleReferenceModifier(0));
+    assert_eq!(
+        state
+            .plugins
+            .bible
+            .edition
+            .as_ref()
+            .expect("la fiche d'édition")
+            .traduction,
+        Some(crate::plugins::bible::Traduction::Darby),
+        "la fiche reprend la traduction de la référence"
+    );
+    let _ = update(&mut state, Message::BibleEditionChapitre("4".into()));
+    let _ = update(&mut state, Message::BibleEditionEnregistrer);
+
+    assert_eq!(
+        state.editor.content(),
+        "{{Jn 4.16|darby}}",
+        "la traduction reste attachée à la référence réécrite"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn le_choix_de_couleur_n_insere_rien() {
     let mut state = etat_isole();
 
@@ -4078,13 +4589,20 @@ fn le_choix_de_couleur_n_insere_rien() {
 
     // L'application : là, la balise va au texte.
     let _ = update(&mut state, Message::PickerCouleurAppliquer);
-    assert!(
-        state.editor.content() != avant,
-        "l'appliquée touche le texte"
-    );
+    let apres = state.editor.content();
+    assert!(apres != avant, "l'appliquée touche le texte");
     assert!(
         state.picker_couleur.is_none(),
         "l'application ferme le sélecteur"
+    );
+
+    // Une seconde validation ne doit rien ajouter : le sélecteur est fermé,
+    // la touche Entrée ne peut pas produire une deuxième balise.
+    let _ = update(&mut state, Message::PickerCouleurAppliquer);
+    assert_eq!(
+        state.editor.content(),
+        apres,
+        "aucune seconde insertion après la fermeture"
     );
 }
 
@@ -4094,17 +4612,106 @@ fn la_fenetre_du_glossaire_s_ouvre_et_se_ferme() {
     let mut state = etat_isole();
 
     let _ = update(&mut state, Message::GlossaireFenetreOuvrir);
-    assert!(state.glossaire_fenetre, "la fenêtre s'ouvre");
+    assert!(state.plugins.glossaire.fenetre, "la fenêtre s'ouvre");
 
     // La recherche vit dans la fenêtre.
     let _ = update(&mut state, Message::GlossaireFiltrer("un".to_string()));
-    assert_eq!(state.glossaire_filtre, "un", "la recherche y vit");
+    assert_eq!(state.plugins.glossaire.filtre, "un", "la recherche y vit");
 
     let _ = update(&mut state, Message::GlossaireFenetreFermer);
-    assert!(!state.glossaire_fenetre, "la fenêtre se ferme");
+    assert!(!state.plugins.glossaire.fenetre, "la fenêtre se ferme");
     assert!(
-        state.glossaire_filtre.is_empty(),
+        state.plugins.glossaire.filtre.is_empty(),
         "la recherche ne sert plus à rien"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_creation_d_un_terme_remplace_la_liste_du_glossaire() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::GlossaireFenetreOuvrir);
+    let _ = update(&mut state, Message::GlossaireCreer);
+
+    assert!(
+        !state.plugins.glossaire.fenetre,
+        "la liste s'efface devant la fiche de création"
+    );
+    assert!(
+        state
+            .plugins
+            .glossaire
+            .edition
+            .as_ref()
+            .is_some_and(|edition| edition.creation),
+        "la fiche de création est au premier plan"
+    );
+
+    let _ = update(&mut state, Message::GlossaireFenetreOuvrir);
+    assert!(
+        state.plugins.glossaire.edition.is_none(),
+        "ouvrir la liste referme la fiche"
+    );
+    assert!(state.plugins.glossaire.fenetre);
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_sections_du_panneau_se_replient_independamment() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::SommaireReplier);
+    let _ = update(&mut state, Message::ProjetsSectionReplier);
+
+    assert!(state.sommaire_replie, "le sommaire se replie");
+    assert!(
+        state.projets_section_replie,
+        "les projets se replient indépendamment"
+    );
+
+    let _ = update(&mut state, Message::SommaireReplier);
+    assert!(!state.sommaire_replie, "le sommaire se déplie");
+    assert!(
+        state.projets_section_replie,
+        "l'autre section garde son état"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_completion_ecrit_la_forme_et_pas_le_libelle() {
+    let mut state = etat_isole();
+
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Avant {Gen".into())),
+    );
+    let contenu = state.editor.content();
+
+    state.completion = Some(crate::editor::completion::Completion {
+        items: vec![crate::editor::completion::Element {
+            label: "Genèse — Gn".to_string(),
+            insert: Some("Genèse ".to_string()),
+            filtre: None,
+        }],
+        shown: vec![0],
+        selected: 0,
+        typed: "Gen".to_string(),
+        trigger: '{',
+        cursor_offset: contenu.len(),
+    });
+
+    let _ = update(&mut state, Message::CompletionAccept);
+    let contenu = state.editor.content();
+
+    assert_eq!(
+        contenu, "Avant {Genèse ",
+        "le libellé d'affichage n'entre pas dans le document"
+    );
+    assert!(
+        !contenu.contains('—'),
+        "la forme insérée est celle d'insertion, pas le libellé de liste"
     );
 }
 
@@ -4120,4 +4727,150 @@ fn un_arrobase_au_curseur_ouvre_le_composeur() {
         state.composeur.is_some(),
         "le @ tapé ouvre le composeur de notes"
     );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_confirmation_non_destructrice_ne_laisse_pas_le_drapeau_arme() {
+    let mut state = etat_isole();
+    state.confirmation = Some(crate::app::state::Confirmation {
+        question: "Question de test ?".to_string(),
+        action: Message::Rien,
+    });
+
+    let _ = update(&mut state, Message::ConfirmationConfirmer);
+
+    assert!(
+        state.confirmation.is_none(),
+        "la confirmation est consommée"
+    );
+    assert!(
+        !state.geste_confirme,
+        "le drapeau à usage unique retombe après le rejeu"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_projet_cree_porte_les_addons_choisis() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::ProjetCreer);
+    let _ = update(&mut state, Message::ProjetNom("sans-bible".to_string()));
+    let _ = update(
+        &mut state,
+        Message::ProjetFonctionnalite(
+            crate::base::valeurs::CLE_REFERENCES_BIBLIQUES.to_string(),
+            false,
+        ),
+    );
+    let _ = update(&mut state, Message::ProjetValider);
+
+    let reglages = crate::mise_en_page::charger(&state.project.dir);
+    assert!(
+        !reglages.fonctionnalites.references_bibliques,
+        "le choix fait à la création survit dans les normes du projet"
+    );
+    assert!(
+        reglages.fonctionnalites.glossaire,
+        "les autres add-ons restent à leur valeur par défaut"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn l_index_des_citations_reprend_les_references_du_document() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "{{Jn 3:16}}\n\n{{Jn 3:16 ; Gn 1:1}}".to_string(),
+        )),
+    );
+
+    let _ = update(&mut state, Message::BibleIndexInserer);
+
+    let contenu = state.editor.content();
+    assert!(
+        contenu.contains("{{index}}"),
+        "l index est un bloc recalculé au rendu : {contenu}"
+    );
+
+    let document = crate::langage::parse::parse(&contenu);
+    let typst = crate::langage::generer::generer(&document);
+    assert!(
+        typst.contains("= Index des citations"),
+        "l index a son titre : contenu={contenu:?}\ntypst={typst}"
+    );
+    assert!(
+        typst.contains("- Jn 3.16 (2 citations)"),
+        "le verset cité deux fois est compté : {typst}"
+    );
+    assert!(
+        typst.contains("- Gn 1.1"),
+        "la seconde référence est reprise : {typst}"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn l_apercu_du_verset_s_affiche_apres_un_repos_sans_ctrl() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "{{Jn 3:16, 17}}".to_string(),
+        )),
+    );
+
+    let contenu = state.editor.content();
+    let offset = contenu.find("17").expect("le second verset est là");
+    let point = iced::Point::new(20.0, 20.0);
+
+    // Le survol seul ne montre rien tout de suite : il attend un repos. Il
+    // n'exige aucune touche — le geste doit être naturel.
+    state.controle_tenu = false;
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::MouseHover(point, offset)),
+    );
+    assert!(
+        state.plugins.bible.survol.is_none(),
+        "une bulle instantanée clignoterait au passage de la souris"
+    );
+    assert!(
+        state.plugins.bible.survol_candidat.is_some(),
+        "le survol est retenu pour devenir une bulle"
+    );
+
+    // Après le repos, la bulle dit le verset exactement sous la souris.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = update(&mut state, Message::RenderTick);
+    let (_, reference) = state
+        .plugins
+        .bible
+        .survol
+        .as_ref()
+        .expect("le repos ouvre l'aperçu, sans Ctrl");
+    assert_eq!(
+        reference,
+        &crate::plugins::bible::Reference::verset("John", 3, 17),
+        "c est le verset sous la souris, pas le premier de la liste"
+    );
+    assert!(!state.controle_tenu, "aucune touche n'est nécessaire");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_parametres_des_plugins_sont_un_panneau_distinct_des_normes() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::PluginsOuvrir);
+    let panneau = state.mise_en_page.as_ref().expect("le panneau est ouvert");
+    assert!(panneau.plugins, "c est le panneau des plugins");
+    assert_eq!(panneau.panneau, 0, "il s ouvre sur la bibliographie");
+
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    let panneau = state.mise_en_page.as_ref().expect("le panneau est ouvert");
+    assert!(!panneau.plugins, "les normes ne sont pas les plugins");
 }

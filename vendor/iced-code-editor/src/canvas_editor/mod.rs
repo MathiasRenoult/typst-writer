@@ -401,11 +401,12 @@ pub enum Message {
     /// Arrow key pressed (direction, shift_pressed)
     ArrowKey(ArrowDirection, bool),
     /// Mouse clicked at position
-    MouseClick(iced::Point),
+    MouseClick(iced::Point, usize),
     /// Mouse drag for selection
     MouseDrag(iced::Point),
     /// Mouse moved within the editor without dragging
-    MouseHover(iced::Point),
+    /// Le point survolé, et le décalage du texte sous la souris.
+    MouseHover(iced::Point, usize),
     /// Mouse released
     MouseRelease,
     /// Double-click: select the word under the cursor

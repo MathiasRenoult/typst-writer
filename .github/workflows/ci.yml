@@ -25,6 +25,22 @@ jobs:
       - name: Tests
         run: cargo test --release
 
+      - name: Formatage
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Licences et avis
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Batterie applicative
+        run: >
+          python3 scripts/batterie-epreuves.py
+          --prefix app::espace_runtime::epreuves::
+          --env TYPST_WRITER_TEST_ESPACE=1
+          --timeout 60
+
       # Les épreuves qui parlent au vrai serveur de langage ne tournent pas ici :
       # elles demandent tinymist, qu'une machine de CI n'a pas. À lancer à la
       # main :

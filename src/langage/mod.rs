@@ -15,10 +15,12 @@
 pub mod blocs;
 pub mod export;
 pub mod generer;
+pub mod index_citations;
 pub mod marques;
 pub mod migration;
 pub mod parse;
 pub mod pipeline;
+pub mod references;
 // Le format `.tw` transportable : écrit avant ses appelants (les jalons
 // 2 et 3 — l'export et la lecture) — voir `format-tw-transportable`.
 #[allow(dead_code)]

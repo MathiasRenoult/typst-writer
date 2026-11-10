@@ -179,6 +179,8 @@ pub enum Message {
 
     /// On accepte l'élément sélectionné.
     CompletionAccept,
+    /// La recherche dans le panneau d'insertion.
+    CompletionChercher(String),
 
     /// On accepte l'élément désigné par la souris.
     CompletionPick(usize),
@@ -250,6 +252,38 @@ pub enum Message {
     /// La section glossaire, insérée au curseur (bug-report-9).
     /// La table des matières, insérée au curseur (bug-report-10, 1.3).
     SommaireInserer,
+    ReferenceBibliqueInserer,
+    /// Le panneau de construction d'une citation biblique.
+    BiblePanneauRecherche(String),
+    BiblePanneauLivre(usize),
+    BiblePanneauChapitre(String),
+    BiblePanneauVersets(String),
+    BiblePanneauTexte(String),
+    BiblePanneauAjouter,
+    BiblePanneauRetirer(usize),
+    BiblePanneauForme(Option<crate::plugins::bible::FormeLivre>),
+    BiblePanneauInserer,
+    BiblePanneauFermer,
+    /// La recherche et le tri des statistiques bibliques.
+    BibleRechercheBascule,
+    BibleFiltrer(String),
+    BibleTri(crate::plugins::bible::TriReferences),
+    /// Aller à la première occurrence de cette référence dans l'éditeur.
+    BibleAllerReference(String),
+    /// Choisir la traduction de la consultation biblique.
+    BibleTraduction(crate::plugins::bible::Traduction),
+    /// Ouvrir l'édition d'une référence de la consultation.
+    BibleReferenceModifier(usize),
+    BibleEditionLivre(usize),
+    BibleEditionChapitre(String),
+    BibleEditionVersets(String),
+    BibleEditionEnregistrer,
+    BibleEditionAnnuler,
+    /// Insérer l'index des citations bibliques du document au curseur.
+    BibleIndexInserer,
+    /// Le repli de la section statistiques.
+    StatsReplier,
+    /// L'insertion d'une référence biblique : la forme s'ouvre.
     GlossaireSectionInserer,
     GlossaireInserer(String),
     /// La fenêtre du glossaire : la liste, ses gestes (bug-report-10, 5.3).
@@ -313,6 +347,12 @@ pub enum Message {
     ProjetsVue,
     /// Une entrée de sommaire est survolée (ou quittée).
     SommaireSurvol(Option<usize>),
+    /// Le sommaire du panneau se replie ou se déplie.
+    SommaireReplier,
+    /// La section « Chapitres » se replie ou se déplie.
+    ChapitresReplier,
+    /// La section « Projets » du panneau se replie ou se déplie.
+    ProjetsSectionReplier,
     /// La recherche des références se montre ou se cache.
     ReferencesRechercheBascule,
     /// La recherche des projets se montre ou se cache.
@@ -495,6 +535,9 @@ pub enum Message {
 
     /// Ouvre la fenêtre de mise en page.
     MiseEnPageOuvrir,
+    /// Ouvrir les paramètres des plugins (bibliographie, biblique,
+    /// glossaire, graphiques) séparément des normes.
+    PluginsOuvrir,
 
     /// La ferme sans rien appliquer.
     MiseEnPageFermer,
@@ -551,7 +594,7 @@ pub enum Message {
     MemoryTick,
 
     /// Le mode de thème du système a été lu au démarrage ou a changé.
-    SystemTheme(crate::ui::theme::SystemMode),
+    SystemTheme(crate::design::theme::SystemMode),
 
     /// Affiche ou masque la bibliothèque.
     ToggleSidebar,
@@ -611,4 +654,94 @@ pub enum Message {
 
     /// Événement clavier non consommé par les widgets (raccourcis globaux).
     RawKey(iced::keyboard::Key, iced::keyboard::Modifiers),
+}
+
+impl Message {
+    /// Le plugin propriétaire du message, s'il y en a un.
+    ///
+    /// La porte d'activation s'appuie dessus : un add-on désactivé ne reçoit
+    /// plus aucun de ses messages, même si une vue ancienne en émet encore.
+    pub fn plugin(&self) -> Option<&'static str> {
+        match self {
+            Message::GlossaireReplier
+            | Message::GlossaireRechercheBascule
+            | Message::GlossaireFiltrer(_)
+            | Message::GlossaireSectionInserer
+            | Message::GlossaireInserer(_)
+            | Message::GlossaireFenetreOuvrir
+            | Message::GlossaireFenetreFermer
+            | Message::GlossaireCreer
+            | Message::GlossaireModifier(_)
+            | Message::GlossaireSupprimer(_)
+            | Message::SurvolGlossaire(_)
+            | Message::EditionGlossaireChamp(_, _)
+            | Message::EditionGlossaireEnregistrer
+            | Message::EditionGlossaireFermer => Some(crate::base::valeurs::CLE_GLOSSAIRE),
+
+            Message::ReferenceBibliqueInserer
+            | Message::BiblePanneauRecherche(_)
+            | Message::BiblePanneauLivre(_)
+            | Message::BiblePanneauChapitre(_)
+            | Message::BiblePanneauVersets(_)
+            | Message::BiblePanneauTexte(_)
+            | Message::BiblePanneauAjouter
+            | Message::BiblePanneauRetirer(_)
+            | Message::BiblePanneauForme(_)
+            | Message::BiblePanneauInserer
+            | Message::BiblePanneauFermer
+            | Message::BibleRechercheBascule
+            | Message::BibleFiltrer(_)
+            | Message::BibleTri(_)
+            | Message::BibleAllerReference(_)
+            | Message::BibleTraduction(_)
+            | Message::BibleReferenceModifier(_)
+            | Message::BibleEditionLivre(_)
+            | Message::BibleEditionChapitre(_)
+            | Message::BibleEditionVersets(_)
+            | Message::BibleEditionEnregistrer
+            | Message::BibleEditionAnnuler
+            | Message::BibleIndexInserer
+            | Message::StatsReplier => Some(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES),
+
+            Message::ReferencesReplier
+            | Message::ReferencesFiltrer(_)
+            | Message::BibliographieSectionInserer
+            | Message::BibliographieImporter
+            | Message::BibliographieCreer
+            | Message::BibImporte(_)
+            | Message::ReferenceSupprimer(_)
+            | Message::ReferenceRestaurer(_)
+            | Message::EditionReferenceChamp(_, _)
+            | Message::EditionReferenceEnregistrer
+            | Message::EditionReferenceNouveau
+            | Message::EditionReferenceFermer
+            | Message::ReferencesRechercheBascule
+            | Message::SurvolReference(_)
+            | Message::ModifierReference(_) => Some(crate::base::valeurs::CLE_BIBLIOGRAPHIE),
+
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod epreuves_de_plugin {
+    use super::*;
+
+    #[test]
+    fn chaque_famille_de_messages_a_son_plugin() {
+        assert_eq!(
+            Message::GlossaireReplier.plugin(),
+            Some(crate::base::valeurs::CLE_GLOSSAIRE)
+        );
+        assert_eq!(
+            Message::BiblePanneauInserer.plugin(),
+            Some(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
+        );
+        assert_eq!(
+            Message::ReferencesReplier.plugin(),
+            Some(crate::base::valeurs::CLE_BIBLIOGRAPHIE)
+        );
+        assert_eq!(Message::ProjetNom(String::new()).plugin(), None);
+    }
 }
