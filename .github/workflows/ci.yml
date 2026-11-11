@@ -36,10 +36,13 @@ jobs:
 
       - name: Batterie applicative
         run: >
+          bin="$(find target/release/deps -maxdepth 1 -type f -executable -name 'typst_writer-*' | head -1)";
+          test -n "$bin";
           python3 scripts/batterie-epreuves.py
           --prefix app::espace_runtime::epreuves::
           --env TYPST_WRITER_TEST_ESPACE=1
           --timeout 60
+          --binary "$bin"
 
       # Les épreuves qui parlent au vrai serveur de langage ne tournent pas ici :
       # elles demandent tinymist, qu'une machine de CI n'a pas. À lancer à la
