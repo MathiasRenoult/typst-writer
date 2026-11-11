@@ -595,7 +595,7 @@ mod tests {
         match message {
             Some(
                 Message::MouseClick(position, _)
-                | Message::MouseHover(position)
+                | Message::MouseHover(position, _)
                 | Message::MouseDrag(position)
                 | Message::AltClick(position)
                 | Message::JumpClick(position)
@@ -629,7 +629,7 @@ mod tests {
         let message =
             mouse_message(&editor, &LEFT_PRESS, &cursor_at(30.0, 40.0));
         assert!(
-            matches!(message, Some(Message::MouseClick(_))),
+            matches!(message, Some(Message::MouseClick(..))),
             "expected a MouseClick, got {message:?}"
         );
         assert_position(&message, 30.0, 40.0);
@@ -705,7 +705,7 @@ mod tests {
         assert!(!editor.is_dragging);
         let message = mouse_message(&editor, &moved, &cursor);
         assert!(
-            matches!(message, Some(Message::MouseHover(_))),
+            matches!(message, Some(Message::MouseHover(..))),
             "expected a MouseHover, got {message:?}"
         );
         assert_position(&message, 50.0, 60.0);
@@ -762,7 +762,7 @@ mod tests {
         editor.set_vim_enabled(true);
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor),
-            Some(Message::MouseClick(_))
+            Some(Message::MouseClick(..))
         ));
     }
 
@@ -797,7 +797,7 @@ mod tests {
 
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor),
-            Some(Message::MouseClick(_))
+            Some(Message::MouseClick(..))
         ));
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor),
@@ -811,7 +811,7 @@ mod tests {
         // triple.
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor),
-            Some(Message::MouseClick(_))
+            Some(Message::MouseClick(..))
         ));
     }
 
@@ -821,12 +821,12 @@ mod tests {
 
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor_at(20.0, 5.0)),
-            Some(Message::MouseClick(_))
+            Some(Message::MouseClick(..))
         ));
         // Beyond the 6px tolerance, so this is a new click sequence.
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor_at(120.0, 80.0)),
-            Some(Message::MouseClick(_))
+            Some(Message::MouseClick(..))
         ));
     }
 
@@ -867,7 +867,7 @@ mod tests {
             cursor_at(editor.gutter_width() + 20.0, editor.line_height * 0.5);
         assert!(matches!(
             mouse_message(&editor, &LEFT_PRESS, &cursor),
-            Some(Message::MouseClick(_))
+            Some(Message::MouseClick(..))
         ));
     }
 
