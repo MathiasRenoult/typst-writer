@@ -72,7 +72,7 @@ pub fn generer_avec(
 fn contient_index(bloc: &Bloc) -> bool {
     match bloc {
         Bloc::IndexBiblique => true,
-        Bloc::Décor { bloc, .. } => contient_index(bloc),
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_index(bloc),
         _ => false,
     }
 }
@@ -81,7 +81,7 @@ fn contient_index(bloc: &Bloc) -> bool {
 fn contient_chart(bloc: &Bloc) -> bool {
     match bloc {
         Bloc::Chart(_) | Bloc::Graphique { .. } => true,
-        Bloc::Décor { bloc, .. } => contient_chart(bloc),
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_chart(bloc),
         _ => false,
     }
 }
@@ -92,6 +92,7 @@ fn contient_callout(bloc: &Bloc) -> bool {
         Bloc::Décor { proprietes, bloc } => {
             crate::langage::callout::est_callout(proprietes) || contient_callout(bloc)
         }
+        Bloc::Canonique(bloc) => contient_callout(bloc),
         _ => false,
     }
 }

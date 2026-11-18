@@ -9,8 +9,8 @@
 use std::collections::BTreeMap;
 
 use super::references::{
-    Reference, afficher, afficher_nombres, forme_du_livre, lire_groupe, mention_traduction,
-    nom_du_livre, rang_du_livre,
+    Reference, afficher, afficher_nombres, forme_du_livre, mention_traduction, nom_du_livre,
+    rang_du_livre,
 };
 use crate::mise_en_page::modele::{IndexCitations, References};
 
@@ -67,7 +67,7 @@ impl IndexBiblique {
             let Some(fin) = apres.find("}}") else {
                 break;
             };
-            if let Some((du_groupe, _)) = lire_groupe(&apres[..fin]) {
+            if let Some((du_groupe, _)) = super::references::lire_groupe_de_balise(&apres[..fin]) {
                 for reference in du_groupe {
                     let cle = reference.cle();
                     references

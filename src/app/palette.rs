@@ -13,7 +13,7 @@ use iced::Task;
 use iced_code_editor::Message as EditorMessage;
 
 use crate::app::{Message, State};
-use crate::base::texte::normaliser_recherche as normaliser;
+use crate::base::texte::{normaliser_recherche as normaliser, offset_sur_caractere};
 
 /// Le mode de la palette : ce qu'elle cherche.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -844,26 +844,28 @@ pub fn ouvrir_si_declencheur(state: &mut State) -> Task<Message> {
 
 /// Le déclencheur reconnu à la fin du texte, avec sa plage.
 pub fn declencheur(contenu: &str, curseur: usize, mode: ModePalette) -> Option<(usize, usize)> {
-    let curseur = curseur.min(contenu.len());
+    let curseur = offset_sur_caractere(contenu, curseur.min(contenu.len()));
 
     match mode {
         ModePalette::Balises => {
-            if curseur < 2 || &contenu[curseur - 2..curseur] != ".." {
+            let debut = offset_sur_caractere(contenu, curseur.saturating_sub(2));
+            if &contenu[debut..curseur] != ".." {
                 return None;
             }
-            if !frontiere(contenu, curseur - 2) {
+            if !frontiere(contenu, debut) {
                 return None;
             }
-            Some((curseur - 2, curseur))
+            Some((debut, curseur))
         }
         ModePalette::Systeme => {
-            if curseur < 1 || &contenu[curseur - 1..curseur] != "/" {
+            let debut = offset_sur_caractere(contenu, curseur.saturating_sub(1));
+            if &contenu[debut..curseur] != "/" {
                 return None;
             }
-            if !frontiere(contenu, curseur - 1) {
+            if !frontiere(contenu, debut) {
                 return None;
             }
-            Some((curseur - 1, curseur))
+            Some((debut, curseur))
         }
     }
 }
@@ -1219,6 +1221,23 @@ mod tests_de_la_palette {
             declencheur("phrase...", 9, ModePalette::Balises),
             None,
             "une ellipse collée à un mot ne déclenche rien"
+        );
+    }
+
+    #[test]
+    fn un_decalage_dans_un_accent_n_ouvre_pas_la_palette() {
+        // Le curseur peut désigner le milieu d'un caractère accentué ;
+        // le déclencheur doit se replier sur la frontière, pas découper
+        // la chaîne au milieu de l'accent.
+        assert_eq!(
+            declencheur("TEXTE NON SAUVÉ ", 15, ModePalette::Balises),
+            None,
+            "un décalage dans É ne panique pas et n'ouvre rien"
+        );
+        assert_eq!(
+            declencheur("É ..", 5, ModePalette::Balises),
+            Some((3, 5)),
+            "un déclencheur après un accent reste reconnu"
         );
     }
 

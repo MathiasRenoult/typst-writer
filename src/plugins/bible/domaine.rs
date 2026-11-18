@@ -15,7 +15,8 @@ use std::sync::OnceLock;
 use crate::langage::references::nom_du_livre;
 pub use crate::langage::references::{
     ElementCitation, FormeLivre, Reference, Traduction, abreviation_francaise, afficher,
-    afficher_groupe, afficher_groupe_forme, depuis_texte, lire_groupe, lire_groupe_complet,
+    afficher_groupe, afficher_groupe_forme, contenu_de_balise, depuis_texte,
+    lire_groupe_complet_de_balise, lire_groupe_de_balise,
 };
 
 /// Un livre de la Bible, tel que les textes le nomment.
@@ -373,7 +374,7 @@ pub fn reference_au(texte: &str, offset: usize) -> Option<(usize, usize, Vec<Ref
             let fin = debut + 2 + fin + 2;
             if offset >= debut && offset <= fin {
                 let contenu = &texte[debut + 2..fin - 2];
-                if let Some((references, _)) = lire_groupe(contenu)
+                if let Some((references, _)) = lire_groupe_de_balise(contenu)
                     && !references.is_empty()
                 {
                     return Some((debut, fin, references));
@@ -392,8 +393,8 @@ pub fn reference_au(texte: &str, offset: usize) -> Option<(usize, usize, Vec<Ref
 /// que le survol de `{{Jn 3:16, 17}}` dit Jean 3:17 au second verset.
 pub fn reference_sous(texte: &str, offset: usize) -> Option<Reference> {
     let (debut, fin, references) = reference_au(texte, offset)?;
-    let contenu = &texte[debut + 2..fin - 2];
-    let relatif = offset.saturating_sub(debut + 2);
+    let (contenu, prefixe) = contenu_de_balise(&texte[debut + 2..fin - 2]);
+    let relatif = offset.saturating_sub(debut + 2 + prefixe);
     let positions = crate::langage::references::references_situees(contenu);
 
     if let Some((_, _, reference)) = positions
@@ -1055,7 +1056,9 @@ mod tests {
             "Jn 3.16 (LSG)"
         );
 
-        let (elements, forme) = lire_groupe_complet("Jn 3.16|darby ; 3.17|lsg").expect("le groupe");
+        let (elements, forme) =
+            crate::langage::references::lire_groupe_complet("Jn 3.16|darby ; 3.17|lsg")
+                .expect("le groupe");
         assert_eq!(forme, None);
         assert_eq!(
             elements[0].reference().unwrap().traduction,
@@ -1092,7 +1095,8 @@ mod tests {
         );
 
         let (avec_forme, forme) =
-            lire_groupe_complet("Jn 3.16|lsg ; Gn 1.1|darby|long").expect("le groupe");
+            crate::langage::references::lire_groupe_complet("Jn 3.16|lsg ; Gn 1.1|darby|long")
+                .expect("le groupe");
         assert_eq!(forme, Some(FormeLivre::FrancaiseLongue));
         assert_eq!(avec_forme.len(), 2);
         assert_eq!(

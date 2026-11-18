@@ -1446,6 +1446,40 @@ fn lire_versets(livre: &str, chapitre: u32, queue: &str) -> Option<Reference> {
     Some(Reference::verset(livre, chapitre, verset))
 }
 
+/// Lit les références d'une balise `{{…}}` sans son enveloppe, dans la
+/// forme historique (`Jn 3.16`) comme dans la forme canonique (`b Jn 3.16`).
+pub fn lire_groupe_de_balise(texte: &str) -> Option<(Vec<Reference>, Option<FormeLivre>)> {
+    let (contenu, _) = contenu_de_balise(texte);
+    lire_groupe(contenu)
+}
+
+/// Lit un groupe complet dans une balise `{{…}}`, nom canonique compris.
+pub fn lire_groupe_complet_de_balise(
+    texte: &str,
+) -> Option<(Vec<ElementCitation>, Option<FormeLivre>)> {
+    let (contenu, _) = contenu_de_balise(texte);
+    lire_groupe_complet(contenu)
+}
+
+/// Le contenu utile d'une balise et la longueur de son préfixe canonique.
+///
+/// `b Jn 3.16` et `bible Jn 3.16` désignent la même citation que
+/// `Jn 3.16` ; les positions relatives au contenu doivent retirer ce nom.
+pub fn contenu_de_balise(texte: &str) -> (&str, usize) {
+    let sans_debut = texte.trim_start();
+    let (nom, reste) = sans_debut
+        .split_once(char::is_whitespace)
+        .unwrap_or((sans_debut, ""));
+
+    if matches!(nom.to_lowercase().as_str(), "b" | "bible") && !reste.is_empty() {
+        let contenu = reste.trim_start();
+        let prefixe = texte.len() - contenu.len();
+        (contenu, prefixe)
+    } else {
+        (texte, 0)
+    }
+}
+
 /// Lit une **liste de références** dans une balise `{{…}}`.
 ///
 /// Les membres se séparent par `;`. Un membre peut omettre le livre et le

@@ -3926,7 +3926,7 @@ fn le_panneau_du_graphique_insere_une_balise_chart() {
     assert!(state.chart.is_none(), "le panneau se referme");
     let contenu = state.editor.content();
     assert!(
-        contenu.contains("{chart pie \"Répartition\""),
+        contenu.contains("{{ch pie \"Répartition\"}}"),
         "la balise compacte et le type sont posés : {contenu}"
     );
     assert!(
@@ -4048,7 +4048,7 @@ fn le_glossaire_se_gere_du_panneau() {
     // Un clic insère la référence, dans le dialecte du tampon (`.tw`).
     let _ = update(&mut state, Message::GlossaireInserer("sdo".into()));
     assert!(
-        state.editor.content().contains("{glo:sdo}"),
+        state.editor.content().contains("{{g sdo}}"),
         "la balise est insérée : {}",
         state.editor.content()
     );
@@ -4360,7 +4360,7 @@ fn une_couleur_sur_une_selection_ne_perd_pas_le_texte() {
 
     assert_eq!(
         state.editor.content(),
-        "{#e74c3c:Un passage.}",
+        "{{c #e74c3c|Un passage.}}",
         "la sélection est teintée, jamais remplacée par du vide"
     );
 }
@@ -4385,7 +4385,7 @@ fn le_panneau_prend_les_champs_sans_cliquer_ajouter() {
 
     assert_eq!(state.editor.content(), "{{Gn 3.16}}");
     let (references, _) =
-        crate::plugins::bible::lire_groupe("Gn 3.16").expect("la balise se relit");
+        crate::langage::references::lire_groupe("Gn 3.16").expect("la balise se relit");
     assert_eq!(references.len(), 1);
     assert_eq!(references[0].livre, "Gen");
 }
@@ -4475,7 +4475,7 @@ fn le_panneau_biblique_construit_une_seule_balise() {
     );
     let interieur = &contenu[2..contenu.len() - 2];
     let (references, forme) =
-        crate::plugins::bible::lire_groupe(interieur).expect("la balise se relit");
+        crate::langage::references::lire_groupe(interieur).expect("la balise se relit");
     assert_eq!(
         references.len(),
         3,
@@ -4522,8 +4522,9 @@ fn le_panneau_insere_des_chapitres_entiers_et_un_texte_libre() {
         "{{Gn 1 à 11 ; \"cf. aussi\"}}",
         "les chapitres entiers et le texte libre tiennent dans une balise"
     );
-    let (elements, _) = crate::plugins::bible::lire_groupe_complet("Gn 1 à 11 ; \"cf. aussi\"")
-        .expect("la balise se relit");
+    let (elements, _) =
+        crate::langage::references::lire_groupe_complet("Gn 1 à 11 ; \"cf. aussi\"")
+            .expect("la balise se relit");
     assert_eq!(elements.len(), 2);
     assert_eq!(
         elements[0].reference(),
@@ -5253,7 +5254,7 @@ fn l_index_des_citations_reprend_les_references_du_document() {
 
     let contenu = state.editor.content();
     assert!(
-        contenu.contains("{{index}}"),
+        contenu.contains("{{idx}}"),
         "l index est un bloc recalculé au rendu : {contenu}"
     );
 

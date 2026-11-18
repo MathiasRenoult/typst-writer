@@ -240,7 +240,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 let nouvelle = crate::plugins::bible::reference_au(&texte, offset).and_then(
                     |(debut, fin, _)| {
                         let contenu = &texte[debut + 2..fin - 2];
-                        crate::plugins::bible::lire_groupe_complet(contenu).map(
+                        crate::plugins::bible::lire_groupe_complet_de_balise(contenu).map(
                             |(elements, forme)| {
                                 let references = elements
                                     .iter()
