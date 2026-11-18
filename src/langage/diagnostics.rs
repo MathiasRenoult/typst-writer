@@ -59,6 +59,19 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// Ce diagnostic concerne-t-il le document actuellement ouvert ?
+    ///
+    /// Un diagnostic sans fichier (erreur de rendu PDF, avertissement global)
+    /// est rattaché au document courant : c'est celui que l'écran montre. Un
+    /// diagnostic venu d'un chapitre inclus ne concerne que ce chapitre.
+    pub fn concerne(&self, ouvert: Option<&std::path::Path>) -> bool {
+        match (&self.file, ouvert) {
+            (Some(fichier), Some(ouvert)) => crate::project::same_file(fichier, ouvert),
+            (Some(_), None) => false,
+            (None, _) => true,
+        }
+    }
+
     /// Le diagnostic vient-il du fichier généré ? Alors il parle du
     /// document source : le générateur garde les numéros de ligne
     /// (feuille de route, phase 2, point 2.5), et la position reste

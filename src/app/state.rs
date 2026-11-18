@@ -13,9 +13,12 @@ use crate::typst::texte::{DocumentTexte, SelectionApercu};
 
 /// Délai de repos avant que l'aperçu ne se mette à jour.
 ///
-/// C'est le réglage qui gouverne tout le coût du rendu : deux secondes sans
-/// écrire déclenchent la compilation, la frappe ne la déclenche jamais.
-pub const IDLE_DELAY_MS: u64 = 1500;
+/// C'est le réglage qui gouverne tout le coût du rendu : trois dixièmes de
+/// seconde sans écrire déclenchent la compilation, la frappe ne la déclenche
+/// jamais. Une compilation de moins de dix pages coûte quelques dizaines de
+/// millisecondes ; attendre plus longtemps ne protège plus rien et donne
+/// l'impression que l'aperçu ne suit pas.
+pub const IDLE_DELAY_MS: u64 = 300;
 
 use iced::widget::image::Handle;
 use typst_layout::PagedDocument;
@@ -383,6 +386,12 @@ pub struct State {
     pub typst_genere: String,
     pub editor: EditorState,
 
+    /// Les numéros de ligne de l'éditeur sont-ils affichés ?
+    ///
+    /// Réglage d'application, conservé dans la session : c'est une
+    /// préférence de lecture, pas une propriété du document.
+    pub numeros_de_ligne: bool,
+
     /// Statut du dernier export PDF (`None` tant qu'aucun export n'a eu lieu).
     pub export_status: Option<String>,
 
@@ -484,7 +493,8 @@ pub struct State {
     pub survol_sommaire: Option<usize>,
     /// Le sommaire du panneau, replié par l'auteur.
     pub sommaire_replie: bool,
-    /// La section « Chapitres » (projet ancien), repliée par l'auteur.
+    /// La section « Chapitres » — document courant ou projet ancien —
+    /// repliée par l'auteur.
     pub chapitres_replie: bool,
     /// La section « Projets » du panneau, repliée par l'auteur.
     pub projets_section_replie: bool,
@@ -564,6 +574,12 @@ pub struct State {
 
     /// La recherche en cours, quand elle est ouverte.
     pub recherche: Option<crate::app::recherche::Recherche>,
+
+    /// L'écran de restauration des versions antérieures.
+    pub restauration: Option<crate::app::restauration::Restauration>,
+
+    /// La corbeille ouverte, quand l'écran de récupération la montre.
+    pub corbeille: Option<crate::app::corbeille::Corbeille>,
 
     /// Le panneau de liaison à Zotero, quand il est ouvert.
     pub liaison: Option<LiaisonZotero>,
@@ -1102,6 +1118,16 @@ pub struct RenderState {
     /// l'aperçu s'y lit pour savoir quelle page porte la ligne qu'on lit.
     pub outline: Vec<crate::typst::render::OutlineEntry>,
 
+    /// Les chapitres du document, têtes de niveau 1 du sommaire.
+    ///
+    /// La liste est complète même quand la vue ne montre qu'un chapitre :
+    /// c'est elle qui alimente le sélecteur, tandis que `outline` peut être
+    /// filtré par la tranche active.
+    pub chapitres: Vec<crate::app::chapitres::Chapitre>,
+
+    /// Le chapitre dont le rendu est montré, `None` pour le document entier.
+    pub chapitre: Option<crate::app::chapitres::Chapitre>,
+
     /// Dernière page suivie par le suivi de l'aperçu.
     ///
     /// Sans elle, chaque défilement renverrait la même opération de défilement
@@ -1134,11 +1160,11 @@ pub struct RenderState {
     /// Pages dont l'image doit être (re)produite.
     ///
     /// Une page entre ici quand le document vient d'être recompilé, ou
-    /// quand elle apparaît dans le viewport sans image valide.
+    /// quand elle apparaît dans la fenêtre sans image valide.
     /// `rasterize_visible` ne travaille que sur l'intersection de cet
-    /// ensemble avec le viewport : un défilement sur des images à jour ne
-    /// coûte rien, et une page périmée reste affichée avec son ancienne
-    /// image jusqu'à l'arrivée de la nouvelle (aucun cadre gris).
+    /// ensemble avec la plage matérialisée : un défilement sur des images à
+    /// jour ne coûte rien, et une page périmée reste affichée avec son
+    /// ancienne image jusqu'à l'arrivée de la nouvelle (aucun cadre gris).
     pub stale: HashSet<usize>,
 
     /// Pages entrées dans la fenêtre pendant un défilement. Leur rendu
@@ -1150,8 +1176,9 @@ pub struct RenderState {
     pub visible: Option<(usize, usize)>,
 
     /// Les pages qui touchent réellement la fenêtre, sans la marge de
-    /// préchargement. C'est cette plage, et non la précédente, qui a le droit
-    /// de lancer des rasterisations.
+    /// préchargement. C'est cette plage qui décide de la région complète à
+    /// rasteriser ; la plage [`Self::visible`] ne sert qu'aux widgets et à
+    /// une bande de préchargement par voisin.
     pub visible_exact: Option<(usize, usize)>,
 
     /// Place que le panneau laisse à une page, telle que la vue la mesure.
@@ -1172,6 +1199,33 @@ pub struct RenderState {
     /// panneau déjà retirée). C'est lui qui désigne la région visible —
     /// la seule qu'il faut rasteriser.
     pub scroll: (f32, f32),
+
+    /// Page à rejoindre quand la vue de rendu s'ouvrira après une compilation.
+    ///
+    /// Une bascule depuis l'édition peut désigner une page avant que le
+    /// document ne soit compilé. La consigne survit alors à la compilation et
+    /// s'applique dès que le document est là, au lieu de laisser la vue au
+    /// début du fichier.
+    pub reprise_page: Option<usize>,
+
+    /// La page doit être recalculée depuis la ligne de lecture dès que le
+    /// sommaire composé sera connu.
+    ///
+    /// C'est le cas d'une première ouverture du rendu : avant la compilation,
+    /// aucune correspondance ligne → page n'existe encore.
+    pub reprise_apres_compilation: bool,
+
+    /// Le prochain affichage de l'aperçu doit restaurer son ancre exacte.
+    ///
+    /// Le scrollable est reconstruit avec la vue ; la tâche de défilement
+    /// partie avant la reconstruction peut ne plus avoir de cible. La vue
+    /// elle-même signale son premier affichage, qui est le moment sûr.
+    pub reprise_apercu: bool,
+
+    /// Le sens du dernier défilement : `1` vers le bas, `-1` vers le haut,
+    /// `0` immobile. Il sert à précharger d'abord la page vers laquelle on
+    /// va, comme le fait un lecteur de PDF.
+    pub scroll_direction: i8,
 
     /// La fenêtre du scrollable, dans les coordonnées de la fenêtre :
     /// c'est elle qui convertit la position du curseur en position de
@@ -1228,6 +1282,13 @@ pub struct RenderState {
     /// Une tâche qui démarre après une invalidation n'a plus de travail à
     /// faire : elle le constate avant de payer le rendu.
     pub generation: Arc<AtomicU64>,
+
+    /// Génération de la **vue** : elle change à chaque défilement ou zoom.
+    ///
+    /// La révision précédente invalide les pixels ; celle-ci invalide le
+    /// travail d'une fenêtre qu'on a déjà quittée. Les tâches en attente
+    /// s'arrêtent avant de lire une page devenue inutile.
+    pub vue_generation: Arc<AtomicU64>,
 
     /// Page où commence le chapitre en cours, telle que la dernière
     /// compilation l'a rapportée.
@@ -1371,7 +1432,14 @@ impl RenderState {
     /// Les pages dont l'image reste en mémoire : celles qu'on voit, plus leur
     /// voisinage.
     pub fn pages_to_keep(&self) -> std::ops::RangeInclusive<usize> {
-        let (first, last) = self.visible.unwrap_or((0, 2));
+        let (first, last) = self.visible.unwrap_or_else(|| {
+            let total = self
+                .document
+                .as_deref()
+                .map_or(0, crate::typst::render::page_count);
+            let plage = crate::app::chapitres::plage_pages(self.chapitre.as_ref(), total);
+            (plage.start, plage.end.saturating_sub(1))
+        });
 
         first.saturating_sub(Self::CACHE_MARGIN)..=last.saturating_add(Self::CACHE_MARGIN)
     }
@@ -1593,6 +1661,7 @@ impl RenderState {
         self.export_en_cours = false;
         self.export_tente = false;
         self.scroll = (0.0, 0.0);
+        self.scroll_direction = 0;
         self.zoom_depuis = None;
         self.content.clear();
         self.pending = false;
@@ -1620,10 +1689,16 @@ impl RenderState {
         self.qualite_rapide.clear();
         self.visible = None;
         self.visible_exact = None;
+        self.fenetre = None;
         // La place du panneau appartient à la disposition, pas au document :
         // elle survit à un changement de chapitre.
         self.requested = 0;
         self.chapter_page = None;
+        self.chapitres.clear();
+        self.chapitre = None;
+        self.reprise_page = None;
+        self.reprise_apres_compilation = false;
+        self.reprise_apercu = false;
         // Le compte de mots est un fait du document qu'on quitte : la valeur
         // s'efface, et un recomptage est dû. Le chiffre affiché pendant ce temps
         // vient du projet, comme pour tout chapitre non ouvert.
@@ -2367,7 +2442,7 @@ mod tests {
     /// Tant qu'on tape, rien ne compile.
     ///
     /// Dix frappes par seconde pendant trois secondes : la frappe ne
-    /// déclenche jamais le rendu — seuls l'arrêt de frappe de 1,5 s,
+    /// déclenche jamais le rendu — seuls l'arrêt de frappe de trois dixièmes de seconde,
     /// `Entrée` et le basculement de mode le font (bug-report-10, 6.2).
     #[test]
     fn typing_never_triggers_a_compile() {
@@ -2425,7 +2500,7 @@ mod tests {
     /// Un retour à la ligne montre le résultat sans attendre le repos.
     ///
     /// C'est la frontière demandée : on revient à la ligne, et l'aperçu suit au
-    /// tick suivant, sans attendre les deux secondes.
+    /// tick suivant, sans attendre le repos.
     ///
     /// Le déclenchement se compte en **retours de plus** qu'à la dernière
     /// compilation, ce qui le rend robuste à ce qu'on écrit ensuite : on
@@ -2441,7 +2516,7 @@ mod tests {
         // suite.
         assert!(
             render.compile_due(two_lines, 1, start),
-            "un retour à la ligne doit montrer le résultat sans attendre les deux secondes"
+            "un retour à la ligne doit montrer le résultat sans attendre le repos"
         );
 
         // La compilation faite, la frontière est acquise.

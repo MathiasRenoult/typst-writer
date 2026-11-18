@@ -988,9 +988,34 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .file_name()
                 .map(|nom| nom.to_string_lossy().to_string())
                 .unwrap_or_else(|| "projet".into());
+            let versions: Vec<String> = crate::langage::versions::indices()
+                .into_iter()
+                .filter_map(crate::langage::versions::code)
+                .collect();
 
             Task::perform(
                 async move {
+                    let mut joindre = Vec::new();
+                    if !versions.is_empty() {
+                        let reponse = rfd::AsyncMessageDialog::new()
+                            .set_title("Archive et versions bibliques")
+                            .set_level(rfd::MessageLevel::Warning)
+                            .set_description(
+                                "Joindre les versions bibliques ajoutées à l'archive ? \
+                                 Oui : les textes voyagent avec le projet, mais l'archive \
+                                 contient alors des textes dont vous devez détenir les droits. \
+                                 Non : l'archive ne contient que le projet ; vous pourrez \
+                                 exporter les versions séparément.",
+                            )
+                            .set_buttons(rfd::MessageButtons::YesNoCancel)
+                            .show()
+                            .await;
+                        match reponse {
+                            rfd::MessageDialogResult::Yes => joindre = versions,
+                            rfd::MessageDialogResult::No => {}
+                            _ => return Err("Export annulé".to_string()),
+                        }
+                    }
                     let Some(file) = rfd::AsyncFileDialog::new()
                         .add_filter("Sauvegarde de projet", &["zip"])
                         .set_file_name(format!("{nom}.zip"))
@@ -1000,14 +1025,31 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                         return Err("Export annulé".to_string());
                     };
 
-                    crate::project::portable::exporter_projet(&dir, file.path()).map(|inventaire| {
+                    let resultat = if joindre.is_empty() {
+                        crate::project::portable::exporter_projet(&dir, file.path())
+                    } else {
+                        crate::project::portable::exporter_projet_avec_versions(
+                            &dir,
+                            file.path(),
+                            &joindre,
+                        )
+                    };
+                    resultat.map(|inventaire| {
                         let manques = if inventaire.manquantes.is_empty() {
                             String::new()
                         } else {
                             format!(" Manque(nt) : {}.", inventaire.manquantes.join(", "))
                         };
+                        let bibles = if inventaire.bibles.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                " {} version(s) biblique(s) jointe(s).",
+                                inventaire.bibles.len()
+                            )
+                        };
                         format!(
-                            "Projet exporté : {} fichier(s).{manques}",
+                            "Projet exporté : {} fichier(s).{bibles}{manques}",
                             inventaire.fichiers().len()
                         )
                     })
@@ -1046,15 +1088,33 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
             let ouverture = crate::project::portable::lire_manifeste(&archive).map(|manifeste| {
                 let destination = crate::project::projects_dir().join(&manifeste.nom);
-                (manifeste.nom, destination)
+                (
+                    manifeste.nom,
+                    destination,
+                    !manifeste.inventaire.bibles.is_empty(),
+                )
             });
-            let (nom, destination) = match ouverture {
+            let (nom, destination, a_des_versions) = match ouverture {
                 Ok(destin) => destin,
                 Err(e) => {
                     state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")));
                     return Task::none();
                 }
             };
+
+            // Les textes bibliques joints à l'archive ne s'installent pas
+            // sans un mot explicite sur les droits.
+            if a_des_versions && !state.geste_confirme {
+                state.confirmation = Some(crate::app::state::Confirmation {
+                    question: format!(
+                        "« {nom} » contient des versions bibliques. N'importez ces textes que \
+                         si vous détenez les droits sur eux. Continuer l'import ?"
+                    ),
+                    action: Message::ProjetImportChoisi(Some(archive)),
+                });
+                return Task::none();
+            }
+            state.geste_confirme = false;
 
             // La question vient avant les écritures : la vérification ne
             // pose rien, elle reste synchrone ; les écritures, elles,
@@ -1083,10 +1143,14 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                         &destination,
                         crate::project::portable::PolitiqueCollision::Refuser,
                     ) {
-                        Ok(rapport) => crate::project::portable::SortieImport::Fait(
-                            destination,
-                            format!("Sauvegarde importée : {} fichier(s).", rapport.ecrits.len()),
-                        ),
+                        Ok(rapport) => {
+                            let note = format!(
+                                "Sauvegarde importée : {} fichier(s).",
+                                rapport.ecrits.len()
+                            );
+                            let note = note_avec_versions(note, &archive);
+                            crate::project::portable::SortieImport::Fait(destination, note)
+                        }
                         Err(e) => {
                             crate::project::portable::SortieImport::Erreur(format!("Import : {e}"))
                         }
@@ -1108,16 +1172,20 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 crate::project::portable::PolitiqueCollision::VersCorbeille,
             ) {
                 Ok(rapport) => {
+                    let note = format!(
+                        "Sauvegarde importée : {} fichier(s), {} remplacé(s) — dans la corbeille.",
+                        rapport.ecrits.len(),
+                        rapport.remplaces.len()
+                    );
+                    // Les versions jointes sont installées avant d'ouvrir le
+                    // projet : le premier rendu doit déjà les connaître.
+                    let note = note_avec_versions(note, &archive);
                     state.projects = crate::project::list_projects();
                     state.ouvrir_projet_espace(
                         destination,
                         crate::app::espace::Ouverture::Remplacer,
                     );
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "Sauvegarde importée : {} fichier(s), {} remplacé(s) — dans la corbeille.",
-                        rapport.ecrits.len(),
-                        rapport.remplaces.len()
-                    )));
+                    state.note = Some(crate::app::state::Note::info(note));
                 }
                 Err(e) => {
                     state.note = Some(crate::app::state::Note::erreur(format!("Import : {e}")))
@@ -1181,6 +1249,20 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
         Message::ExportDocx => Task::perform(
             async move {
+                let reponse = rfd::AsyncMessageDialog::new()
+                    .set_title("Exporter en DOCX")
+                    .set_level(rfd::MessageLevel::Warning)
+                    .set_description(
+                        "Le DOCX passe par LibreOffice : les titres, tableaux et images \
+                         sont conservés, mais les notes de bas de page deviennent du texte \
+                         « [note: …] ». Pour un document final, préférez le PDF.",
+                    )
+                    .set_buttons(rfd::MessageButtons::OkCancel)
+                    .show()
+                    .await;
+                if reponse != rfd::MessageDialogResult::Ok {
+                    return None;
+                }
                 rfd::AsyncFileDialog::new()
                     .add_filter("DOCX", &["docx"])
                     .set_file_name("document.docx")
@@ -1294,6 +1376,17 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         // L'appelant ne route ici que les messages de fichiers ; ce bras
         // n'existe que pour que le match soit complet.
         _ => Task::none(),
+    }
+}
+
+/// Ajoute à la note d'import ce qu'il est advenu des versions bibliques
+/// jointes. Une archive sans versions ne change rien ; une archive abîmée le
+/// dit sans effacer le compte rendu de l'import.
+fn note_avec_versions(note: String, archive: &std::path::Path) -> String {
+    match crate::project::portable::restaurer_versions(archive) {
+        Ok(0) => note,
+        Ok(nombre) => format!("{note} {nombre} version(s) biblique(s) jointe(s) restaurée(s)."),
+        Err(erreur) => format!("{note} Versions bibliques non restaurées : {erreur}"),
     }
 }
 

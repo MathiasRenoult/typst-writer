@@ -14,12 +14,12 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::langage::references::nom_du_livre;
 pub use crate::langage::references::{
     ElementCitation, FormeLivre, Reference, Traduction, abreviation_francaise, afficher,
     afficher_groupe, afficher_groupe_forme, contenu_de_balise, depuis_texte,
     lire_groupe_complet_de_balise, lire_groupe_de_balise,
 };
+use crate::langage::references::{nom_du_livre, nom_du_livre_dans};
 
 /// Un livre de la Bible, tel que les textes le nomment.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -259,7 +259,11 @@ impl Statistiques {
                 break;
             };
             for reference in references {
-                let livre = nom_du_livre(&reference.livre, FormeLivre::FrancaiseCourte);
+                let livre = nom_du_livre_dans(
+                    &reference.livre,
+                    FormeLivre::FrancaiseCourte,
+                    reference.traduction,
+                );
                 *self.par_livre.entry(livre).or_insert(0) += 1;
                 let cle = afficher(
                     &reference,
@@ -291,7 +295,11 @@ impl Statistiques {
             let Some(reference) = depuis_texte(forme) else {
                 continue;
             };
-            let livre = nom_du_livre(&reference.livre, FormeLivre::FrancaiseCourte);
+            let livre = nom_du_livre_dans(
+                &reference.livre,
+                FormeLivre::FrancaiseCourte,
+                reference.traduction,
+            );
             *stats.par_livre.entry(livre).or_insert(0) += nombre;
             if !stats.par_reference.contains_key(forme) {
                 stats.ordre_apparition.push(forme.clone());
@@ -363,7 +371,11 @@ impl Analyse {
             let Some(reference) = depuis_texte(forme) else {
                 continue;
             };
-            let livre = nom_du_livre(&reference.livre, FormeLivre::FrancaiseCourte);
+            let livre = nom_du_livre_dans(
+                &reference.livre,
+                FormeLivre::FrancaiseCourte,
+                reference.traduction,
+            );
             cites.insert(reference.livre.clone());
             *chapitres
                 .entry(format!("{livre} {}", reference.chapitre))

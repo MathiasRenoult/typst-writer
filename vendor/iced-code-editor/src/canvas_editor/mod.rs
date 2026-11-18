@@ -65,6 +65,22 @@ pub(crate) struct ImePreedit {
     pub(crate) selection: Option<Range<usize>>,
 }
 
+/// Un soulignement d'erreur posé dans l'éditeur.
+///
+/// Les colonnes sont des index de caractères dans la ligne logique ; la
+/// couleur vient de l'hôte, qui connaît le thème.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoulignementDiagnostic {
+    /// Ligne logique, à partir de 0.
+    pub ligne: usize,
+    /// Première colonne, en caractères, à partir de 0.
+    pub debut: usize,
+    /// Colonne qui suit la dernière, en caractères.
+    pub fin: usize,
+    /// Couleur du trait.
+    pub couleur: iced::Color,
+}
+
 /// Conservative logical-line range captured immediately before an edit.
 ///
 /// It lets LSP synchronization send one incremental range replacement without
@@ -200,6 +216,8 @@ pub struct CodeEditor {
     pub(crate) marques: Vec<marques::Marque>,
     /// Monotonic revision counter for the annotation marks.
     pub(crate) marques_revision: u64,
+    /// Soulignements d'erreurs, dessinés dans la couche d'overlay.
+    pub(crate) soulignements: Vec<SoulignementDiagnostic>,
     /// La marque touchée par le dernier clic, s'il a visé un glyphe.
     ///
     /// (ligne, début, fin) de la plage : l'hôte y retrouve sa note, et lui
@@ -210,6 +228,12 @@ pub struct CodeEditor {
         RefCell<Option<(u64, Rc<Vec<folding::FoldRegion>>)>>,
     /// Search state
     pub(crate) search_state: search::SearchState,
+    /// Whether search matches stay highlighted without the built-in dialog.
+    ///
+    /// The application owns its search bar: it sets the query to draw
+    /// matches, but must not open the crate's dialog. Keeping this separate
+    /// from `search_state.is_open` is what allows one without the other.
+    pub(crate) search_highlights_enabled: bool,
     /// Custom entries displayed before the built-in context-menu actions.
     custom_context_menu_entries: Vec<ContextMenuEntry>,
     /// Whether the built-in editing actions are shown in the context menu.
@@ -709,9 +733,11 @@ impl CodeEditor {
             fold_revision: 0,
             marques: Vec::new(),
             marques_revision: 0,
+            soulignements: Vec::new(),
             dernier_clic_marque: None,
             foldable_regions_cache: RefCell::new(None),
             search_state: search::SearchState::new(),
+            search_highlights_enabled: false,
             custom_context_menu_entries: Vec::new(),
             default_context_menu_enabled: true,
             reveal_in_file_manager_enabled: false,

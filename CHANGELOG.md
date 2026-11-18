@@ -4,6 +4,97 @@ Les versions sont classées de la plus récente à la plus ancienne. Chaque
 entrée décrit les fonctionnalités et les corrections livrées avec la version
 correspondante.
 
+## 0.6.2 — gérer les versions bibliques (2026-11-18)
+
+- Les versions ajoutées apparaissent dans le panneau gauche avec leur nombre
+  de livres, de chapitres et leur provenance : un clic choisit la version,
+  **Dossier** ouvre le dossier local, la flèche copie le JSON pour le
+  transporter, la corbeille retire une version vers la corbeille du système.
+- Un écran **Restaurer une version** liste les copies de `sauvegardes/` avec
+  date locale, taille, empreinte et aperçu, et restaure la copie choisie après
+  confirmation ; le texte actuel est conservé avant le remplacement et le
+  document affiché est réellement rechargé.
+- Les versions bibliques s'installent hors du fil d'affichage ; un lot
+  d'archives ne recharge le registre qu'une fois.
+- Un bouton **modèle** enregistre un JSON minimal à remplir.
+- Supprimer la version consultée remet la lecture sur Louis Segond sans
+  laisser de référence orpheline.
+- L'ajout ou le retrait d'une version ne décale plus les références déjà
+  ouvertes : les versions ajoutées gardent leur indice stable ; le nom d'un
+  livre cité suit la version qui le nomme.
+- Le script `scripts/convertir-version-biblique.py` convertit un JSONL de
+  versets ou un USFM simple vers le format local, avec les trous de
+  numérotation préservés.
+- L'export d'archive peut joindre les versions bibliques sur demande explicite,
+  avec avertissement de droits, empreinte et restauration à l'import.
+- La recherche peut parcourir tous les fichiers `.tw` et `.typ` du projet,
+  afficher les résultats avec leur chemin et leur ligne, et ouvrir l'occurrence
+  choisie ; le remplacement reste limité au document courant.
+- Les erreurs de compilation sont soulignées dans l'éditeur et restent
+  listées dans le panneau gauche quand l'aperçu est fermé ; un clic les ouvre
+  à leur position dans la source.
+- L'export DOCX rappelle avant le choix du fichier que les notes deviennent
+  du texte, au lieu de ne le dire qu'après.
+- L'index des citations sépare désormais deux traductions d'un même livre :
+  une citation en Louis Segond et la même en Darby ne fusionnent plus sous
+  une seule entrée.
+- Les divisions de corpus de l'index sont des titres de niveau 2, et un
+  titre de livre reste solidaire de sa première référence : il ne peut plus
+  rester seul en bas d'une colonne.
+- Les archives portables calculent une empreinte stable d'une exécution à
+  l'autre ; une empreinte qui ne correspond pas est refusée avant toute
+  installation.
+- La recherche dans le projet attend la fin de la frappe (180 ms) et arrête
+  un parcours devenu périmé avant de continuer à lire les fichiers.
+- L'aperçu ne recompile plus pour produire son PDF quand le document compilé
+  est déjà en mémoire ; sur un document de neuf pages, la compilation mesure
+  ~30 ms et l'export PDF ~7 ms en release.
+- Le rendu précharge une bande de la page voisine, garde le papier sous les
+  textures et ne colle plus aucun texte de chargement sur les pages : un
+  défilement rapide n'ouvre plus sur une page blanche ou un « Rendu… ».
+  Les pages sont centrées horizontalement, les erreurs occupent toute la
+  largeur du panneau, et les messages de compilation ou de PDF ne s'affichent
+  plus au-dessus du document.
+- Le planificateur de rasterisation sert d'abord les pages visibles, puis la
+  page vers laquelle on va ; une génération de vue annule les tâches encore
+  en attente pour une fenêtre quittée.
+- **Aide → Corbeille et suppressions…** liste les entrées avec leur date,
+  leur taille et leur origine, et les restaure à leur emplacement d'origine
+  sans jamais écraser un fichier existant.
+- La recherche du document n'ouvre plus la boîte de recherche propre à
+  l'éditeur : une seule barre reste à l'écran. Elle n'est plus modale, on peut
+  cliquer et faire défiler l'éditeur pendant qu'elle est ouverte ; « suivant »
+  et « précédent » amènent réellement l'occurrence dans la fenêtre.
+- Changer de mode ne renvoie plus au début : l'édition retrouve son défilement
+  exact et le rendu sa position exacte. À la première ouverture du rendu, la
+  page suit le haut de la vue d'édition.
+- La **palette de commandes** couvre désormais les formats du texte (gras,
+  italique, souligné, barré, gras italique, code, formules, titres, listes,
+  citation, note, bloc Typst), les teintes orange/vert/rouge/bleu/violet/gris/
+  noir et la dernière couleur choisie, ainsi que la roue des couleurs. Elle
+  expose les imports et exports de fichiers, les thèmes, les normes de la
+  bibliothèque (appliquer ou exporter), les bascules de plugins et les
+  déplacements de blocs, titres et listes.
+- Les liens internes peuvent afficher la numérotation réelle du document :
+  `[[titre-adoption-coutume|"chapitre"]]` donne « chapitre 2.3 »,
+  `[[figure-planche|"figure"]]` donne « Figure 4 » et
+  `[[titre-adoption-coutume|"page"]]` donne la page composée. Le numéro du
+  chapitre suit la numérotation des titres, le préfixe de la figure suit le
+  libellé des légendes, et la page suit la pagination. La forme courte
+  `adoption-coutume` suffit quand elle est unique.
+- Les **pages de garde** s'écrivent entre `{{garde}}` et `{{/garde}}` : elles
+  précèdent le sommaire, ne portent aucun numéro et n'entrent pas dans la
+  table des matières, même quand elles contiennent des titres. Plusieurs blocs
+  donnent plusieurs pages ; le menu `..` les insère et la page de titre des
+  normes reste elle aussi sans numéro.
+- Les citations collées au mot (`famille@grudem…`) et celles qui terminent un
+  paragraphe sont reconnues comme citations Typst ; la typographie ne mange
+  plus les espaces du paragraphe, et un guillemet fermant après une citation
+  retrouve son insécable. Une adresse électronique reste du texte.
+- Vérification : 755 tests réussis, 0 échec, 210 ignorés ; batterie applicative
+  178/178 ; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo build --release` et `git diff --check` verts.
+
 ## 0.6.1 — les balises bibliques de bout en bout (2026-11-18)
 
 La 0.6.0 a livré la palette et les formes canoniques. Cette version corrige
@@ -67,8 +158,24 @@ applicative 167/167 ; `cargo fmt --check`, `cargo build --release`,
 - Les références viennent de la bibliographie locale, d'un fichier `.bib` ou
   d'une collection Zotero en lecture seule ; les styles de citation Zotero
   sont reconnus.
+- Le panneau de bibliographie permet, pour une bibliothèque locale, de
+  **tout supprimer** d'un coup — copie complète à la corbeille, commentaires
+  du `.bib` conservés —, de **changer de collection Zotero** sans rupture
+  préalable et de **rompre le lien**. Les boutons d'édition et de suppression
+  d'une entrée restent affichés au lieu de disparaître au survol.
 - Le curseur revient dans le document après une insertion, sans perdre le
   fil de l'écriture.
+
+### Chapitres et sommaire
+
+- Une tête de niveau 1 (`# Titre`) ouvre un chapitre ; le panneau gauche les
+  liste sous **Chapitres**, avec **Document entier** en tête.
+- Choisir un chapitre ne réécrit jamais `document.tw` : le rendu ne montre
+  que ses pages, et le **Sommaire** se réduit à ses têtes. Le retour au
+  document entier se fait par la même ligne.
+- Les pages d'un chapitre sont celles du PDF réel, lues dans le sommaire
+  composé ; le numéro de page reste celui du document, pas un numéro local
+  qui changerait selon la vue.
 
 ### La Bible, jusqu'aux livres hors canon
 

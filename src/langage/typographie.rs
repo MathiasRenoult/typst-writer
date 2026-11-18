@@ -108,6 +108,9 @@ pub struct Regles {
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
 
+    /// Le mot qui précède le numéro d'une figure : « Figure », « Fig. ».
+    pub legende_prefixe: String,
+
     /// Les callouts prédéfinis du document, pour que `{callout note}` trouve
     /// ses couleurs et ses mesures dans la norme.
     pub callouts: crate::mise_en_page::modele::ParametresCallouts,
@@ -129,6 +132,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            legende_prefixe: "Figure".to_string(),
             callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
@@ -148,6 +152,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            legende_prefixe: "Figure".to_string(),
             callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
@@ -166,6 +171,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            legende_prefixe: "Figure".to_string(),
             callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
@@ -185,6 +191,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            legende_prefixe: "Figure".to_string(),
             callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
@@ -232,6 +239,13 @@ pub struct Contexte {
     /// collerait le mot d'avant.
     pub suivant_texte: Option<char>,
 
+    /// L'élément suivant est une citation bibliographique.
+    ///
+    /// Une citation vaut un mot pour la typographie, mais elle n'est pas un
+    /// mot de texte : un guillemet juste avant elle la ferme, au lieu de
+    /// croire qu'elle ouvre une nouvelle citation.
+    pub suivant_citation: bool,
+
     /// Le niveau d'imbrication des guillemets.
     pub profondeur: usize,
 
@@ -246,6 +260,7 @@ impl Contexte {
             precedent: None,
             suivant: None,
             suivant_texte: None,
+            suivant_citation: false,
             profondeur: 0,
             venant_du_guillemet: false,
         }
@@ -305,11 +320,21 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 }
 
                 // Ce que la suite posera elle-même n'en veut pas deux — sauf
-                // un nombre, que l'on ne touche pas.
-                if matches!(
-                    contexte.suivant_texte,
-                    Some(';' | ':' | '!' | '?' | ',' | '.' | '»')
-                ) && !est_un_nombre(&caracteres, position, contexte.precedent, contexte.suivant)
+                // un nombre, que l'on ne touche pas. La règle ne vaut qu'à la
+                // **fin de ce texte** : `suivant_texte` décrit l'élément qui
+                // vient après, pas le caractère suivant à l'intérieur de la
+                // phrase. Sans cette borne, une citation suivie d'un point
+                // absorbait toutes les espaces du paragraphe.
+                let fin_du_texte = position + 1 == caracteres.len();
+                if fin_du_texte
+                    && contexte
+                        .suivant
+                        .is_some_and(|c| matches!(c, ';' | ':' | '!' | '?' | ',' | '.' | '»' | '›'))
+                    && matches!(
+                        contexte.suivant_texte,
+                        Some(';' | ':' | '!' | '?' | ',' | '.' | '»' | '›')
+                    )
+                    && !est_un_nombre(&caracteres, position, contexte.precedent, contexte.suivant)
                 {
                     continue;
                 }
@@ -391,7 +416,8 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                     let (_, fermant) = paire(regles, contexte.profondeur.max(1));
 
                     if let Some(espace) = regles.espace_guillemets.caractere()
-                        && !sortie.is_empty()
+                        && (!sortie.is_empty()
+                            || contexte.precedent.is_some_and(|c| !c.is_whitespace()))
                         && !sortie.ends_with(espace)
                     {
                         sortie.push(espace);
@@ -470,13 +496,14 @@ fn ferme_apres_suite(
         .find(|caractere| *caractere != marque)
         .or(contexte.suivant);
     let precede_du_texte = precedent.is_some_and(|caractere| !caractere.is_whitespace());
-    let suite_ferme = suivant.is_none_or(|caractere| {
-        caractere.is_whitespace()
-            || matches!(
-                caractere,
-                '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '…' | '»' | '›'
-            )
-    });
+    let suite_ferme = (contexte.suivant_citation && position + 1 == caracteres.len())
+        || suivant.is_none_or(|caractere| {
+            caractere.is_whitespace()
+                || matches!(
+                    caractere,
+                    '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '…' | '»' | '›'
+                )
+        });
 
     precede_du_texte && suite_ferme
 }

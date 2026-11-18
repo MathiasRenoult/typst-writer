@@ -1,4 +1,6 @@
+pub mod chapitres;
 pub mod composeur;
+pub mod corbeille;
 pub mod epreuves;
 pub mod espace;
 mod espace_runtime;
@@ -12,6 +14,7 @@ pub mod recherche;
 pub mod recherche_apercu;
 mod reglages;
 mod rendu;
+pub mod restauration;
 pub mod routeur;
 mod saisie;
 pub mod state;
@@ -31,7 +34,7 @@ use iced::{Subscription, Task, time};
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Intervalle de recompilation automatique après la dernière frappe.
 const RENDER_INTERVAL_MS: u64 = 100;
@@ -49,7 +52,9 @@ const RENDER_INTERVAL_IDLE_MS: u64 = 1_000;
 
 /// Combien de temps le geste de zoom attend avant le rendu net : la
 /// molette dix fois ne relance pas dix rendus, mais un seul (bug-report-9).
-const DUREE_GESTE_ZOOM: std::time::Duration = std::time::Duration::from_millis(150);
+/// Cent millisecondes suffisent à distinguer une rafale d'un geste fini, et
+/// laissent le rendu sous le budget de 200 ms demandé pour un zoom.
+const DUREE_GESTE_ZOOM: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// La marge de rendu autour de la fenêtre visible, en fraction de fenêtre :
 /// défiler dans la marge ne coûte aucun rendu.
@@ -204,6 +209,7 @@ impl State {
             verrou,
             aide: false,
             editor: crate::editor::EditorState::default(),
+            numeros_de_ligne: session.line_numbers,
             export_status: None,
             bibliography: Vec::new(),
             project,
@@ -245,6 +251,8 @@ impl State {
             resolved: crate::design::theme::Resolved::of(&crate::theming::natives()[0]),
             liaison: None,
             recherche: None,
+            restauration: None,
+            corbeille: None,
             note: note_de_migration,
         };
 
@@ -295,6 +303,7 @@ impl State {
         {
             state.editor = crate::editor::EditorState::new_file(path, content);
         }
+        state.appliquer_les_numeros_de_ligne();
 
         state.refresh_context();
         // Les thèmes sont lus après le contexte : c'est le premier endroit où
@@ -352,6 +361,44 @@ impl State {
         // l'interface, l'éditeur et les plugins suivent le document ouvert.
         self.configurer_les_plugins_selon_les_normes();
         self.rafraichir_statistiques_bibliques();
+        self.rafraichir_chapitres();
+    }
+
+    /// Recalcule la liste des chapitres à partir du texte et, si un rendu
+    /// existe, des pages réelles du sommaire composé.
+    ///
+    /// La source reste la vérité pour les titres et les lignes ; le sommaire
+    /// n'apporte que la page. Un chapitre actif est retrouvé par son titre et
+    /// sa ligne : une insertion avant lui ne doit pas le remplacer par le
+    /// chapitre voisin.
+    pub(crate) fn rafraichir_chapitres(&mut self) {
+        let Some(document) = self.editor.document_pour_lecture() else {
+            self.render.chapitres.clear();
+            self.render.chapitre = None;
+            return;
+        };
+
+        let source = self.editor.content();
+        let total = self
+            .render
+            .document
+            .as_deref()
+            .map_or(0, crate::typst::render::page_count);
+
+        self.render.chapitres = if self.render.outline.is_empty() {
+            crate::app::chapitres::depuis_source(&source, &document)
+        } else {
+            crate::app::chapitres::depuis_outline(&self.render.outline, total)
+        };
+
+        if let Some(actif) = self.render.chapitre.as_ref() {
+            self.render.chapitre = self
+                .render
+                .chapitres
+                .iter()
+                .find(|chapitre| chapitre.ligne == actif.ligne && chapitre.titre == actif.titre)
+                .cloned();
+        }
     }
 
     /// Configure les plugins de la vue active d'après les normes du projet.
@@ -440,6 +487,42 @@ impl State {
         self.plugins.bible.stats = stats;
     }
 
+    /// Remplace le texte du document actif par une version relue, sans
+    /// rouvrir l'onglet : le tampon, l'historique de la source partagée, le
+    /// rendu et l'empreinte disque repartent de cette copie.
+    ///
+    /// `open_document` ne suffit pas ici : lorsqu'on restaure le document
+    /// déjà ouvert, `ouvrir_vue` retourne sans toucher au tampon. Le disque
+    /// serait restauré, mais l'écran continuerait de montrer l'ancien texte.
+    pub(crate) fn recharger_document(&mut self, path: PathBuf, content: String) -> Task<Message> {
+        if self.editor.path.as_ref() != Some(&path) {
+            self.open_document(path, content, false);
+            return Task::none();
+        }
+
+        let tache = self.editor.remplacer_contenu(&content);
+        if let Some(cle) = self.cle_document() {
+            self.espace.documents.insert(
+                cle.clone(),
+                crate::app::espace::Document {
+                    source: iced_code_editor::SourcePartagee::nouvelle(&self.editor.editor),
+                },
+            );
+            self.espace
+                .disques
+                .insert(cle, crate::project::empreinte_contenu(content.as_bytes()));
+        }
+        self.render.reset();
+        self.render.words = Some(self.content_word_count(&self.editor.content()));
+        self.editor
+            .set_diagnostics(&[], self.resolved.palette.danger);
+        self.refresh_context();
+        self.actualiser_typst();
+        self.save_session();
+        self.editor.editor.request_focus();
+        tache.map(Message::Editor)
+    }
+
     /// Charge un chapitre dans l'éditeur, rendu vierge.
     ///
     /// Les images du chapitre précédent ne doivent pas survivre au changement :
@@ -461,6 +544,8 @@ impl State {
             return;
         }
         self.editor = crate::editor::EditorState::new_file(path.clone(), content.clone());
+        self.editor
+            .afficher_les_numeros_de_ligne(self.numeros_de_ligne);
         // Ce que le tampon vient de recevoir est ce que le disque contenait :
         // c'est la référence dont tout changement extérieur s'écartera.
         self.espace
@@ -480,6 +565,23 @@ impl State {
         self.save_session();
     }
 
+    /// Applique le réglage des numéros de ligne à l'éditeur actif et à tous
+    /// les onglets — la préférence est globale, pas propre à une vue.
+    pub(crate) fn appliquer_les_numeros_de_ligne(&mut self) {
+        let actifs = self.numeros_de_ligne;
+        self.editor.afficher_les_numeros_de_ligne(actifs);
+        for vue in self.espace.vues.values_mut() {
+            vue.editor.afficher_les_numeros_de_ligne(actifs);
+        }
+    }
+
+    /// Bascule le réglage, l'applique et le retient dans la session.
+    pub(crate) fn basculer_les_numeros_de_ligne(&mut self) {
+        self.numeros_de_ligne = !self.numeros_de_ligne;
+        self.appliquer_les_numeros_de_ligne();
+        self.save_session();
+    }
+
     /// Retient le projet et le chapitre ouverts pour le prochain démarrage.
     fn save_session(&self) {
         crate::project::save_session(&crate::project::Session {
@@ -488,6 +590,7 @@ impl State {
             last_document: self.editor.path.clone(),
             theme_mode: self.theme,
             themes: self.chosen.clone(),
+            line_numbers: self.numeros_de_ligne,
         });
     }
 
@@ -816,6 +919,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
     // même contrôle, y compris les messages issus d'une confirmation.
     let modifie_le_projet = match &message {
         Message::ReferenceSupprimer(_)
+        | Message::ReferencesSupprimerTout
         | Message::ReferenceRestaurer(_)
         | Message::BibliographieCreer
         | Message::EditionReferenceEnregistrer
@@ -833,8 +937,10 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::DeleteChapter(_)
         | Message::RenameCommit
         | Message::ZoteroDelier
+        | Message::ZoteroChoisir(_, _)
         | Message::ZoteroExport(_, _, _, Ok(_))
         | Message::Format(_)
+        | Message::FormatDerniereCouleur
         | Message::NoteInserer
         | Message::NoteValider
         | Message::FigureInserer
@@ -856,6 +962,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::BlocDescendre
         | Message::RechercheRemplacer
         | Message::RechercheRemplacerTout
+        | Message::RestaurationRestaurer
         | Message::CompletionAccept
         | Message::ComposeurTerminer
         | Message::SauvegardeForcee(_)
@@ -913,8 +1020,16 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         message,
         Message::AideBasculer
             | Message::OuvrirDossierDonnees
-            | Message::OuvrirCorbeille
             | Message::OuvrirSauvegardes
+            | Message::RestaurationOuvrir
+            | Message::RestaurationFermer
+            | Message::RestaurationChoisir(_)
+            | Message::RestaurationRestaurer
+            | Message::CorbeilleOuvrir
+            | Message::CorbeilleFermer
+            | Message::CorbeilleChoisir(_)
+            | Message::CorbeilleRestaurer
+            | Message::CorbeilleDossier
     ) {
         return routeur::aide::traiter(state, message);
     }
@@ -1059,7 +1174,10 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         return routeur::callout::traiter(state, message);
     }
 
-    if matches!(message, Message::ModeBasculer | Message::ModeTypst) {
+    if matches!(
+        message,
+        Message::ModeBasculer | Message::ModeTypst | Message::NumerosDeLigneBascule
+    ) {
         return routeur::modes::traiter(state, message);
     }
 
@@ -1084,6 +1202,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             | Message::TitrePrecedent
             | Message::GotoHeading(_)
             | Message::GotoError(_, _)
+            | Message::ChapitreChoisir(_)
     ) {
         return routeur::edition::traiter(state, message);
     }
@@ -1106,7 +1225,10 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         return routeur::entrees::traiter(state, message);
     }
 
-    if matches!(message, Message::ReglagesFonctionnalite(_, _)) {
+    if matches!(
+        message,
+        Message::ReglagesFonctionnalite(_, _) | Message::BasculerFonctionnalite(_)
+    ) {
         return routeur::addons::traiter(state, message);
     }
 
@@ -1355,6 +1477,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RechercheFermer
         | Message::RechercheMotif(_)
         | Message::RechercheBasculerMode
+        | Message::RechercheBasculerPortee
+        | Message::RechercheProjetOuvrir(..)
+        | Message::RechercheProjetResultats(..)
         | Message::RechercheRemplacement(_)
         | Message::RechercheSuivant
         | Message::RecherchePrecedent
@@ -1367,6 +1492,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Message::Editor(..)
         | Message::TitreInserer(..)
         | Message::Format(..)
+        | Message::FormatDerniereCouleur
         | Message::ListeIndenter
         | Message::ListeDesindenter
         | Message::ListeMonter
@@ -1434,13 +1560,33 @@ fn next_project_name(projects: &[crate::project::Project]) -> String {
 fn recherche(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::RechercheOuvrir => {
+            // La commande a le même sens que `Ctrl+F` : en rendu, elle ouvre
+            // la recherche du PDF, pas celle de la source.
+            if state.mode == crate::app::state::ModeVue::Rendu {
+                if let Some(etat) = state.recherche.as_mut() {
+                    etat.jeton
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                state.recherche = None;
+                state.editor.editor.effacer_recherche_silencieuse();
+                state.render.recherche_apercu.ouvrir();
+                return iced::widget::operation::focus(crate::ui::preview::id_recherche_apercu());
+            }
             state.recherche = Some(crate::app::recherche::Recherche::default());
+            // La boîte de dialogue propre à l'éditeur ne doit pas s'ajouter
+            // à la nôtre : on la referme avant d'installer le surlignage.
+            let _ = state.editor.editor.close_search_dialog();
 
             return iced::widget::operation::focus(crate::ui::recherche::id_du_motif());
         }
 
         Message::RechercheFermer => {
+            if let Some(etat) = state.recherche.as_mut() {
+                etat.jeton
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             state.recherche = None;
+            state.editor.editor.effacer_recherche_silencieuse();
         }
 
         Message::RechercheMotif(motif) => {
@@ -1457,6 +1603,59 @@ fn recherche(state: &mut State, message: Message) -> Task<Message> {
             }
 
             return rafraichir_la_recherche(state);
+        }
+
+        Message::RechercheBasculerPortee => {
+            if let Some(etat) = state.recherche.as_mut() {
+                etat.portee_projet = !etat.portee_projet;
+                etat.resultats_projet.clear();
+                etat.occurrences.clear();
+                etat.apercu.clear();
+                etat.courante = 0;
+            }
+
+            return rafraichir_la_recherche(state);
+        }
+
+        Message::RechercheProjetOuvrir(chemin, debut, fin) => {
+            let chemin = state.project.dir.join(chemin);
+            let Ok(contenu) = std::fs::read_to_string(&chemin) else {
+                state.note = Some(crate::app::state::Note::erreur(format!(
+                    "{} ne se lit pas : le résultat n'est plus là.",
+                    chemin.display()
+                )));
+                return Task::none();
+            };
+            state.recherche = None;
+            state.open_document(chemin, contenu, false);
+            state.editor.editor.request_focus();
+            return state
+                .editor
+                .selectionner_plage(debut, fin)
+                .map(Message::Editor);
+        }
+
+        Message::RechercheProjetResultats(projet, generation, resultats) => {
+            let projet_actuel = state.project.dir.clone();
+            let Some(etat) = state.recherche.as_mut() else {
+                return Task::none();
+            };
+            if etat.generation != generation || !etat.portee_projet || projet != projet_actuel {
+                return Task::none();
+            }
+            etat.occurrences.clear();
+            etat.apercu.clear();
+            etat.courante = 0;
+            match resultats {
+                Ok(resultats) => {
+                    etat.resultats_projet = resultats;
+                    etat.erreur = None;
+                }
+                Err(erreur) => {
+                    etat.resultats_projet = Vec::new();
+                    etat.erreur = Some(erreur);
+                }
+            }
         }
 
         Message::RechercheRemplacement(remplacement) => {
@@ -1476,19 +1675,60 @@ fn recherche(state: &mut State, message: Message) -> Task<Message> {
     Task::none()
 }
 
-/// Recompte les occurrences du motif dans le texte.
+/// Recompte les occurrences du motif dans le texte, ou lance la recherche
+/// projet hors du fil d'affichage. Seule la réponse de la dernière
+/// génération est appliquée.
 fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
-    let Some(etat) = state.recherche.as_mut() else {
+    let Some((portee, mode, motif, remplacement)) = state.recherche.as_ref().map(|etat| {
+        (
+            etat.portee_projet,
+            etat.mode_regex,
+            etat.motif.clone(),
+            etat.remplacement.clone(),
+        )
+    }) else {
         return Task::none();
     };
 
+    if portee {
+        let (generation, jeton) = {
+            let etat = state.recherche.as_mut().expect("recherche ouverte");
+            etat.generation = etat.generation.wrapping_add(1);
+            let generation = etat.generation;
+            etat.jeton.store(generation, Ordering::Relaxed);
+            etat.resultats_projet.clear();
+            etat.erreur = None;
+            (generation, etat.jeton.clone())
+        };
+        let dossier = state.project.dir.clone();
+        let projet = dossier.clone();
+        let _ = state.editor.editor.close_search_dialog();
+        return Task::perform(
+            async move {
+                // L'anti-rebond : une frappe coupée par la suivante n'ouvre
+                // pas un scan. Si une autre frappe arrive pendant l'attente,
+                // le jeton a changé et cette tâche s'arrête sans lire.
+                smol::Timer::after(std::time::Duration::from_millis(180)).await;
+                if jeton.load(Ordering::Relaxed) != generation {
+                    return Ok(Vec::new());
+                }
+                crate::app::recherche::chercher_dans_projet_annulable(
+                    &dossier, mode, &motif, &jeton, generation,
+                )
+            },
+            move |resultats| {
+                Message::RechercheProjetResultats(projet.clone(), generation, resultats)
+            },
+        );
+    }
+
     let texte = state.editor.content();
-    let trouve = crate::app::recherche::occurrences(etat.mode_regex, &etat.motif, &texte);
-    let apercu =
-        crate::app::recherche::apercu(etat.mode_regex, &etat.motif, &etat.remplacement, &texte);
+    let trouve = crate::app::recherche::occurrences(mode, &motif, &texte);
+    let apercu = crate::app::recherche::apercu(mode, &motif, &remplacement, &texte);
 
     let etat = state.recherche.as_mut().expect("recherche ouverte");
     etat.courante = 0;
+    etat.resultats_projet.clear();
 
     match trouve {
         Ok(occurrences) => {
@@ -1508,10 +1748,10 @@ fn rafraichir_la_recherche(state: &mut State) -> Task<Message> {
     // FIND-02 : surligner les occurrences dans l'éditeur — le motif
     // effectif : la regex du motif, ou le littéral échappé.
     if etat.motif.is_empty() {
-        let _ = state.editor.editor.close_search_dialog();
+        state.editor.editor.effacer_recherche_silencieuse();
     } else {
         let motif = crate::app::recherche::motif_effectif(etat.mode_regex, &etat.motif);
-        state.editor.editor.set_search_query(motif);
+        state.editor.editor.set_search_query_silencieux(motif);
     }
 
     sauter_dans_la_recherche(state, 0)
@@ -1523,7 +1763,7 @@ fn sauter_dans_la_recherche(state: &mut State, direction: i8) -> Task<Message> {
         return Task::none();
     };
 
-    if etat.occurrences.is_empty() {
+    if etat.portee_projet || etat.occurrences.is_empty() {
         return Task::none();
     }
 
@@ -1615,12 +1855,9 @@ fn remplacer_tout(state: &mut State) -> Task<Message> {
 pub(crate) fn liaison_zotero(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::ZoteroLierOuvrir => {
-            // Seule une bibliothèque locale se lie : une notice Zotero
-            // déjà pointée n'a pas de deuxième chef.
-            if state.zotero.source != crate::zotero::Source::Locale {
-                return Task::none();
-            }
-
+            // Le panneau sert aussi à changer de collection : une collection
+            // déjà liée n'est pas un deuxième chef, c'est un lien qu'on
+            // remplace. L'écriture n'a lieu qu'après le choix et l'export.
             state.liaison = Some(crate::app::state::LiaisonZotero::Chargement);
 
             Task::perform(
@@ -1696,6 +1933,22 @@ pub(crate) fn liaison_zotero(state: &mut State, message: Message) -> Task<Messag
         }
 
         Message::ZoteroChoisir(cle, nom) => {
+            // Changer de collection remplace la bibliographie liée : les
+            // citations de l'ancienne collection peuvent ne plus se résoudre.
+            // Le choix est donc confirmé quand un lien existe déjà.
+            if state.project.zotero.is_some() && !state.geste_confirme {
+                state.confirmation = Some(crate::app::state::Confirmation {
+                    question: format!(
+                        "Remplacer la collection Zotero liée par « {nom} » ? Les citations écrites depuis l'ancienne collection peuvent ne plus se résoudre."
+                    ),
+                    action: Message::ZoteroChoisir(cle, nom),
+                });
+
+                return Task::none();
+            }
+
+            state.geste_confirme = false;
+
             // L'export vient de Zotero : on le demande avant d'écrire quoi
             // que ce soit au projet.
             state.liaison = Some(crate::app::state::LiaisonZotero::Chargement);
@@ -1893,6 +2146,10 @@ struct Situation {
     /// Ce qui est au-dessus de la pile des fenêtres.
     aide: bool,
     recherche: bool,
+    /// L'écran de restauration est ouvert.
+    restauration: bool,
+    /// L'écran de la corbeille est ouvert.
+    corbeille: bool,
     /// La vue active est le document rendu.
     apercu: bool,
     /// La recherche du document rendu est ouverte.
@@ -1935,6 +2192,8 @@ impl Situation {
             glossaire_fiche: state.plugins.glossaire.edition.is_some(),
             aide: state.aide,
             recherche: state.recherche.is_some(),
+            restauration: state.restauration.is_some(),
+            corbeille: state.corbeille.is_some(),
             apercu: state.mode == crate::app::state::ModeVue::Rendu,
             recherche_apercu: state.render.recherche_apercu.visible,
             liaison: state.liaison.is_some(),
@@ -2351,6 +2610,12 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
     if etat.aide {
         return Message::AideBasculer;
     }
+    if etat.restauration {
+        return Message::RestaurationFermer;
+    }
+    if etat.corbeille {
+        return Message::CorbeilleFermer;
+    }
     if etat.recherche {
         return Message::RechercheFermer;
     }
@@ -2383,6 +2648,8 @@ pub(crate) fn fenetre_ouverte(state: &State) -> bool {
         || state.confirmation.is_some()
         || state.aide
         || state.recherche.is_some()
+        || state.restauration.is_some()
+        || state.corbeille.is_some()
         || state.liaison.is_some()
         || state.plugins.bibliographie.edition.is_some()
         || state.plugins.glossaire.fenetre
@@ -2604,13 +2871,35 @@ fn rendre_les_fenetres_de_rendu(state: &mut State) -> Option<Task<Message>> {
 }
 
 fn generer_le_pdf_du_rendu(state: &mut State) -> Task<Message> {
+    // Le document compilé est déjà là : l'aperçu n'a aucune raison de faire
+    // une seconde compilation Typst pour produire son PDF. La même sortie
+    // s'obtient par `pdf_du_document`, et cette étape est la plus chère du
+    // chemin d'affichage.
+    let document = state.render.document.clone();
+    let empreinte = if document.is_some() {
+        state.render.content.clone()
+    } else {
+        state.compilation_fingerprint()
+    };
+
+    state.render.export_en_cours = true;
+    state.render.export_empreinte = Some(empreinte.clone());
+
+    if let Some(document) = document {
+        return Task::perform(
+            async move { crate::typst::render::pdf_du_document(&document) },
+            |octets| {
+                Message::PdfApercu(
+                    octets.ok_or_else(|| "Le PDF du document n'a pas pu être généré.".to_string()),
+                )
+            },
+        );
+    }
+
+    // Filet de sécurité pour une vue sans document en mémoire : le chemin
+    // complet compile, exporte et signale ses erreurs comme avant.
     let dir = state.document_dir();
     let (entry, overrides) = state.compilation_unit();
-    state.render.export_en_cours = true;
-    // L'empreinte du texte exporté : le registre s'en souvient, et les
-    // autres fenêtres du même fichier prendront ce PDF (bug-report-10).
-    state.render.export_empreinte = Some(state.compilation_fingerprint());
-
     Task::perform(
         async move { crate::typst::render::render_pdf(&dir, &entry, &overrides) },
         |octets| {
@@ -2629,19 +2918,9 @@ fn generer_le_pdf_du_rendu(state: &mut State) -> Task<Message> {
 /// domine, et c'est sa page qu'on montre : exacte aux titres près, et c'est la
 /// seule correspondance que la composition donne.
 fn follow_editor_scroll(state: &mut State) -> Task<Message> {
-    let Some(path) = state.editor.path.clone() else {
+    let Some(page) = page_de_lecture(state) else {
         return Task::none();
     };
-
-    let hauteur = f64::from(state.editor.editor.line_height()).max(1.0);
-    let ligne = (f64::from(state.editor.editor.viewport_scroll()) / hauteur).ceil() as usize + 1;
-
-    let Some(index) = crate::typst::render::entry_covering(&state.render.outline, &path, ligne)
-    else {
-        return Task::none();
-    };
-
-    let page = state.render.outline[index].page;
 
     // Déjà là : ne rien faire. Sans cette garde, chaque défilement renverrait la
     // même opération à l'aperçu, soixante fois par seconde.
@@ -2652,10 +2931,25 @@ fn follow_editor_scroll(state: &mut State) -> Task<Message> {
     state.render.followed_page = Some(page);
 
     if crate::app::epreuves::actif("vue") {
-        println!("[vue] suivi : ligne {ligne} → page {}", page + 1);
+        println!("[vue] suivi : page {}", page + 1);
     }
 
     scroll_preview_to_page(state, page)
+}
+
+/// La page du sommaire qui correspond au haut de la vue d'édition.
+///
+/// Typst ne relie pas une ligne à une page ; il relie chaque **titre** à la
+/// sienne. La ligne du haut de la zone de rédaction désigne donc le titre qui
+/// la domine, et c'est sa page qu'on montre : exacte aux titres près, et c'est
+/// la seule correspondance que la composition donne.
+pub(crate) fn page_de_lecture(state: &State) -> Option<usize> {
+    let path = state.editor.path.clone()?;
+    let hauteur = f64::from(state.editor.editor.line_height()).max(1.0);
+    let ligne = (f64::from(state.editor.editor.viewport_scroll()) / hauteur).ceil() as usize + 1;
+
+    let index = crate::typst::render::entry_covering(&state.render.outline, &path, ligne)?;
+    Some(state.render.outline[index].page)
 }
 
 /// Fait défiler l'aperçu jusqu'à une page.
@@ -2664,30 +2958,51 @@ fn follow_editor_scroll(state: &mut State) -> Task<Message> {
 /// n'en produit aucun, mais c'est ainsi qu'elle se raccorde à la boucle de
 /// messages.
 pub(crate) fn scroll_preview_to_page(state: &State, page: usize) -> Task<Message> {
-    let Some(document) = state.render.document.clone() else {
+    if state.render.document.is_none() {
+        return Task::none();
+    }
+
+    // La vue peut ne montrer qu'un chapitre : une page hors de sa tranche
+    // n'a pas de place dans le défilement. On convertit d'abord la page du
+    // document en position dans la tranche.
+    let Some(position) = crate::ui::preview::position_dans_la_vue(&state.render, page) else {
         return Task::none();
     };
 
-    let sizes = crate::ui::preview::sizes_of_with_zoom(
-        &document,
-        state
-            .render
-            .viewport
-            .unwrap_or_else(crate::ui::preview::default_viewport),
-        state.render.zoom,
-    );
+    let sizes = crate::ui::preview::sizes_de_la_vue(&state.render);
 
-    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, page);
+    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, position);
 
+    scroll_preview_to_position(state, offset)
+}
+
+/// Fait défiler l'aperçu à un décalage absolu donné.
+///
+/// C'est l'ancre exacte d'une vue : au retour en mode rendu, le scrollable
+/// est reconstruit et repart de zéro ; cette opération le remet là où il
+/// était, sans arrondir à une page.
+fn scroll_preview_to_position(state: &State, y: f32) -> Task<Message> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
         Message,
     >(
         id_du_scrollable(state),
         iced::advanced::widget::operation::scrollable::AbsoluteOffset {
             x: None,
-            y: Some(offset),
+            y: Some(y.max(0.0)),
         },
     ))
+}
+
+/// Rend la position verticale de l'aperçu, quand il a déjà été déplacé.
+pub(crate) fn restaurer_l_apercu(state: &State) -> Task<Message> {
+    if state.render.document.is_none() || state.render.fenetre.is_none() {
+        return Task::none();
+    }
+
+    scroll_preview_to_position(
+        state,
+        crate::ui::preview::offset_absolu(state.render.scroll.1),
+    )
 }
 
 /// Amène l'aperçu sur le chapitre en cours d'écriture, une fois par chapitre.
@@ -2753,23 +3068,40 @@ fn set_preview_zoom(state: &mut State, zoom: crate::app::state::PreviewZoomMode)
     );
 
     // Le rapport ancien → nouveau, lu sur la page qui porte l'ancre.
-    let facteur = document
+    // La page appartient à la tranche affichée : en vue de chapitre, les
+    // coordonnées de défilement ne commencent pas à la page 0 du document.
+    let pages = crate::ui::preview::pages_de_la_vue(&state.render);
+    let avant = crate::ui::preview::sizes_de_la_vue(&state.render);
+    let apres: Vec<(f32, f32)> = document
         .as_deref()
         .map(|document| {
-            let avant =
-                crate::ui::preview::sizes_of_with_zoom(document, box_size, state.render.zoom);
-            let apres = crate::ui::preview::sizes_of_with_zoom(document, box_size, zoom);
-            let y = state.render.scroll.1 + cy;
-            let index = (0..avant.len())
-                .find(|index| {
-                    crate::ui::preview::scroll_offset_for_page(&avant, *index) + avant[*index].1 > y
-                })
-                .unwrap_or(0);
-            apres[index].1 / avant[index].1.max(1.0)
+            let toutes = crate::ui::preview::sizes_of_with_zoom(document, box_size, zoom);
+            pages
+                .iter()
+                .filter_map(|index| toutes.get(*index).copied())
+                .collect()
         })
-        .unwrap_or(1.0);
+        .unwrap_or_default();
+
+    let facteur = if avant.is_empty() || apres.is_empty() {
+        1.0
+    } else {
+        let y = state.render.scroll.1 + cy;
+        let position = (0..avant.len())
+            .find(|position| {
+                crate::ui::preview::scroll_offset_for_page(&avant, *position) + avant[*position].1
+                    > y
+            })
+            .unwrap_or(0);
+        apres[position].1 / avant[position].1.max(1.0)
+    };
 
     state.render.zoom = zoom;
+    state.render.scroll_direction = 0;
+    state
+        .render
+        .vue_generation
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let total = state
         .render
         .document
@@ -2777,12 +3109,24 @@ fn set_preview_zoom(state: &mut State, zoom: crate::app::state::PreviewZoomMode)
         .map_or(0, crate::typst::render::page_count);
     // La fenêtre montre d'autres pages à la nouvelle taille : la visibilité
     // se recalcule, sans attendre un défilement (feuille de route, phase 3).
-    if let Some(document) = document.as_deref() {
-        let apres = crate::ui::preview::sizes_of_with_zoom(document, box_size, zoom);
-        state.render.visible = Some(crate::ui::preview::pages_visibles(
+    if !apres.is_empty() {
+        let (debut, fin) =
+            crate::ui::preview::pages_visibles(&apres, fenetre.height, state.render.scroll.1);
+        state.render.visible = Some((
+            pages.get(debut).copied().unwrap_or(0),
+            pages.get(fin).copied().unwrap_or(0),
+        ));
+        // La plage exacte commande les rendus de la fenêtre, la marge ceux
+        // du préchargement : les deux suivent le nouveau zoom immédiatement,
+        // sans attendre un événement de défilement.
+        let (debut, fin) = crate::ui::preview::visible_pages_exact(
             &apres,
-            fenetre.height,
             state.render.scroll.1,
+            state.render.scroll.1 + fenetre.height,
+        );
+        state.render.visible_exact = Some((
+            pages.get(debut).copied().unwrap_or(0),
+            pages.get(fin).copied().unwrap_or(0),
         ));
     }
     state.render.invalidate_rasterization(total);
@@ -2798,18 +3142,13 @@ fn set_preview_zoom(state: &mut State, zoom: crate::app::state::PreviewZoomMode)
     let cible_x = (state.render.scroll.0 + cx) * facteur - cx;
     let cible_y = (state.render.scroll.1 + cy) * facteur - cy;
 
-    let (largeur_contenu, hauteur_contenu) = document
-        .as_deref()
-        .map(|document| {
-            let apres = crate::ui::preview::sizes_of_with_zoom(document, box_size, zoom);
-            let mut largeur: f32 = 0.0;
-            for (l, _) in &apres {
-                largeur = largeur.max(*l);
-            }
-            let hauteur: f32 = apres.iter().map(|(_, h)| *h).sum();
-            (largeur, hauteur)
-        })
-        .unwrap_or((0.0, 0.0));
+    let (largeur_contenu, hauteur_contenu) = if apres.is_empty() {
+        (0.0, 0.0)
+    } else {
+        let largeur = crate::ui::preview::largeur_colonne(&apres, fenetre.width);
+        let hauteur: f32 = apres.iter().map(|(_, h)| *h).sum();
+        (largeur, hauteur)
+    };
 
     let cible_x = cible_x.clamp(0.0, (largeur_contenu - fenetre.width).max(0.0));
     let cible_y = cible_y.clamp(0.0, (hauteur_contenu - fenetre.height).max(0.0));

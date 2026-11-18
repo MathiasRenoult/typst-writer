@@ -394,19 +394,20 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
         }
 
         Message::MiseEnPageExporter => {
-            let texte = match state
-                .mise_en_page
-                .as_ref()
-                .map(|dialogue| dialogue.reglages.ecrire())
-            {
-                Some(Ok(texte)) => texte,
-                Some(Err(erreur)) => {
+            // Le panneau peut être fermé : les normes courantes restent
+            // exportables depuis une commande, sans ouvrir la fenêtre.
+            let resultat = match state.mise_en_page.as_ref() {
+                Some(dialogue) => dialogue.reglages.ecrire(),
+                None => state.reglages.ecrire(),
+            };
+            let texte = match resultat {
+                Ok(texte) => texte,
+                Err(erreur) => {
                     return update(
                         state,
                         Message::MiseEnPageNote(format!("Export impossible : {erreur}")),
                     );
                 }
-                None => return None,
             };
 
             Task::future(async move {

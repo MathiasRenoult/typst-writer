@@ -118,17 +118,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::BibleAllerReference(reference) => aller_a_la_reference(state, &reference),
         Message::BibleTraduction(traduction) => {
-            let tous = livres(traduction);
-            state.plugins.bible.traduction = traduction;
-            if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
-                let forme = panneau.forme;
-                panneau.renouveler_choix(&tous, forme);
-                panneau.livre = None;
-                panneau.saisie_modifiee = true;
-            }
-            if let Some(cliquee) = state.plugins.bible.reference_cliquee.as_mut() {
-                cliquee.extrait = extrait(&cliquee.references, traduction);
-            }
+            appliquer_traduction(state, traduction);
             Task::none()
         }
         Message::BibleVersionImporter => Task::perform(
@@ -154,15 +144,15 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             },
             Message::BibleVersionImported,
         ),
-        Message::BibleVersionImported(Some(chemin)) => {
-            match crate::langage::versions::installer(&chemin) {
+        Message::BibleVersionImported(Some(chemin)) => Task::perform(
+            async move { crate::langage::versions::installer(&chemin) },
+            Message::BibleVersionInstallee,
+        ),
+        Message::BibleVersionInstallee(resultat) => {
+            match resultat {
                 Ok(version) => {
                     let traduction = Traduction::depuis_code(&version.id).unwrap_or_default();
-                    state.plugins.bible.traduction = traduction;
-                    if state.plugins.bible.panneau.is_some() {
-                        state.plugins.bible.panneau =
-                            Some(BiblePanneau::avec_livres(&livres(traduction)));
-                    }
+                    appliquer_traduction(state, traduction);
                     state.note = Some(crate::app::state::Note::info(format!(
                         "Version « {} » installée : {} livre(s), {} chapitre(s).",
                         version.nom,
@@ -175,14 +165,94 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
                     )));
                 }
                 Err(erreur) => {
-                    state.note = Some(crate::app::state::Note::info(format!(
-                        "Version biblique non installée : {erreur}"
+                    state.note = Some(crate::app::state::Note::erreur(format!(
+                        "Version biblique non installée : {erreur} Corrigez le fichier JSON ou \
+                         choisissez-en un autre ; le dossier des versions s'ouvre par « Dossier »."
                     )));
                 }
             }
             Task::none()
         }
         Message::BibleVersionImported(None) => Task::none(),
+        Message::BibleVersionDossier => {
+            let dossier = crate::langage::versions::VersionBiblique::dossier();
+            let _ = std::fs::create_dir_all(&dossier);
+            crate::project::ouvrir_chemin(&dossier);
+            Task::none()
+        }
+        Message::BibleVersionSupprimer(code) => {
+            if !state.geste_confirme {
+                state.confirmation = Some(crate::app::state::Confirmation {
+                    question: format!(
+                        "Supprimer la version biblique « {code} » ? Son fichier part à la corbeille."
+                    ),
+                    action: Message::BibleVersionSupprimer(code),
+                });
+                return Task::none();
+            }
+            state.geste_confirme = false;
+            supprimer_la_version(state, &code)
+        }
+        Message::BibleVersionExporter(code) => Task::perform(
+            async move {
+                let Some(fichier) = rfd::AsyncFileDialog::new()
+                    .add_filter("Version biblique (JSON)", &["json"])
+                    .set_file_name(format!("{code}.json"))
+                    .save_file()
+                    .await
+                else {
+                    return Ok(None);
+                };
+                crate::langage::versions::exporter(&code, fichier.path()).map(|()| {
+                    Some(format!(
+                        "Version exportée vers {}. Joignez ce fichier à votre archive si vous \
+                         voulez transporter les textes : l'archive seule ne les contient pas.",
+                        fichier.path().display()
+                    ))
+                })
+            },
+            Message::BibleVersionExportee,
+        ),
+        Message::BibleVersionExportee(resultat) => {
+            state.note = Some(match resultat {
+                Ok(Some(message)) => crate::app::state::Note::info(message),
+                Ok(None) => return Task::none(),
+                Err(erreur) => crate::app::state::Note::erreur(format!(
+                    "Version biblique non exportée : {erreur}"
+                )),
+            });
+            Task::none()
+        }
+        Message::BibleVersionModele => Task::perform(
+            async {
+                let Some(fichier) = rfd::AsyncFileDialog::new()
+                    .add_filter("Version biblique (JSON)", &["json"])
+                    .set_file_name("modele-version-biblique.json")
+                    .save_file()
+                    .await
+                else {
+                    return Ok(None);
+                };
+                crate::services::stockage::ecrire_atomique(
+                    fichier.path(),
+                    &crate::langage::versions::modele(),
+                )
+                .map_err(|erreur| format!("Modèle non écrit : {erreur}"))?;
+                Ok(Some(format!(
+                    "Modèle écrit vers {}. Remplissez-le, puis installez-le avec « + ».",
+                    fichier.path().display()
+                )))
+            },
+            Message::BibleVersionModeleEcrit,
+        ),
+        Message::BibleVersionModeleEcrit(resultat) => {
+            state.note = Some(match resultat {
+                Ok(Some(message)) => crate::app::state::Note::info(message),
+                Ok(None) => return Task::none(),
+                Err(erreur) => crate::app::state::Note::erreur(erreur),
+            });
+            Task::none()
+        }
         Message::BibleReferenceModifier(index) => preparer_edition(state, index),
         Message::BibleEditionLivre(index) => {
             if let Some(edition) = state.plugins.bible.edition.as_mut() {
@@ -216,6 +286,53 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
         }
 
         _ => Task::none(),
+    }
+}
+
+/// Supprime une version et remet la consultation sur la traduction par défaut
+/// si c'était elle qu'on lisait.
+fn supprimer_la_version(state: &mut State, code: &str) -> Task<Message> {
+    // L'identité d'une version supprimée disparaît du registre : son indice
+    // ne rend plus son code. La comparaison doit donc être faite avant le
+    // retrait, pour remettre la consultation sur Louis Segond si c'était
+    // elle qu'on lisait.
+    let etait_lue = state
+        .plugins
+        .bible
+        .traduction
+        .code()
+        .eq_ignore_ascii_case(code);
+    match crate::langage::versions::supprimer(code) {
+        Ok(nombre) => {
+            if etait_lue {
+                appliquer_traduction(state, Traduction::default());
+            }
+            state.note = Some(crate::app::state::Note::info(format!(
+                "Version biblique supprimée ({nombre} fichier(s) à la corbeille)."
+            )));
+        }
+        Err(erreur) => {
+            state.note = Some(crate::app::state::Note::erreur(format!(
+                "Version biblique non supprimée : {erreur}"
+            )));
+        }
+    }
+    Task::none()
+}
+
+/// Applique une nouvelle traduction à toute la consultation : le panneau
+/// garde sa forme et son brouillon, la référence cliquée se relit.
+fn appliquer_traduction(state: &mut State, traduction: Traduction) {
+    let tous = livres(traduction);
+    state.plugins.bible.traduction = traduction;
+    if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
+        let forme = panneau.forme;
+        panneau.renouveler_choix(&tous, forme);
+        panneau.livre = None;
+        panneau.saisie_modifiee = true;
+    }
+    if let Some(cliquee) = state.plugins.bible.reference_cliquee.as_mut() {
+        cliquee.extrait = extrait(&cliquee.references, traduction);
     }
 }
 

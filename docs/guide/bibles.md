@@ -5,6 +5,49 @@ supplémentaire s'ajoute **localement**, à partir d'un fichier JSON que vous
 fournissez : l'application ne télécharge aucun texte et n'en distribue aucun.
 N'installez donc qu'une version que vous avez le droit d'utiliser.
 
+## Convertir un fichier courant
+
+Le script `scripts/convertir-version-biblique.py` traduit vers ce format un
+JSONL de versets ou un fichier USFM simple (`\id`, `\h`, `\c`, `\v`) :
+
+    python3 scripts/convertir-version-biblique.py \
+        --entree ma-bible.usfm --id vulgate --nom "Vulgate" \
+        --source "Texte que je possède" --sortie vulgate.json
+
+Le JSONL accepte une ligne par verset, avec `osis`, `nom`, `abreviation`,
+`chapitre`, `verset` et `texte`. Les numéros absents deviennent des chaînes
+vides : la numérotation de l'édition reste intacte. Le script ne télécharge
+rien et refuse les identifiants réservés ou les livres en double. Un USFM
+complet contient souvent des notes et des titres de section : le convertisseur
+les ignore et ne conserve que le texte des versets.
+
+## Gérer les versions installées
+
+La liste **Versions ajoutées** apparaît sous les boutons de tri dès qu'une
+version existe. Elle indique le nombre de livres de chaque version.
+
+- Cliquer sur un nom choisit cette version pour la consultation.
+- Le nombre de livres et de chapitres, puis la provenance (`source`) déclarée
+  par le fichier, restent visibles sous le nom.
+- Le bouton **modèle** (à côté du `+`) enregistre un JSON minimal valide,
+  qu'il suffit de remplir et de réinstaller avec le `+`.
+- **Dossier** ouvre `~/.typst-writer/bibles/` dans le gestionnaire de fichiers.
+- La flèche de téléchargement copie le fichier JSON à l'endroit choisi.
+- À l'export d'une archive de projet, une question propose de joindre les
+  versions ajoutées. **Oui** les copie dans l'archive avec leur empreinte et
+  les restaure à l'import ; **Non** laisse l'archive au projet seul. Dans les
+  deux cas, l'export JSON séparé reste disponible pour transporter un fichier
+  isolé. À l'import d'une archive qui contient des versions, une confirmation
+  rappelle que vous devez détenir les droits sur ces textes.
+- La corbeille retire la version : son fichier part à la corbeille du système,
+  il n'est pas effacé. La consultation revient à Louis Segond si c'était la
+  version supprimée.
+
+Les références déjà ouvertes ne sont pas déplacées quand on ajoute ou retire
+une autre version : les versions ajoutées reçoivent un emplacement stable pour
+la durée de la session, et une version remplacée par un fichier de même
+identifiant garde le sien.
+
 ## Le geste
 
 Dans le panneau de gauche, ouvrez **Statistiques bibliques**, puis cliquez sur

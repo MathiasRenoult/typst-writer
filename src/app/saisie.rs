@@ -68,6 +68,28 @@ fn tabulation_sur_liste(
     Some(decaler_la_liste(state, indenter))
 }
 
+/// Applique une mise en forme à la sélection, en tenant la couleur courante
+/// et les compteurs qui dépendent du texte.
+fn appliquer_le_format(
+    state: &mut State,
+    action: crate::app::message::FormatAction,
+) -> Task<Message> {
+    if !state.editor.is_intermediate() {
+        return Task::none();
+    }
+
+    // TOPBAR-04-07 : toute couleur choisie devient la couleur courante.
+    if let crate::app::message::FormatAction::Couleur(ref nom) = action {
+        state.derniere_couleur = Some(nom.clone());
+    }
+
+    // Les statistiques des livres cités suivent le document (le panneau,
+    // l add-on biblique).
+    state.rafraichir_statistiques_bibliques();
+    state.mots_a_recalculer();
+    state.editor.apply_format(action).map(Message::Editor)
+}
+
 pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::BlocDescendre => state.editor.deplacer_le_bloc(false).map(Message::Editor),
@@ -165,21 +187,13 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
             Task::none()
         }
-        Message::Format(action) => {
-            if !state.editor.is_intermediate() {
-                return Task::none();
-            }
-
-            // TOPBAR-04-07 : toute couleur choisie devient la couleur courante.
-            if let crate::app::message::FormatAction::Couleur(ref nom) = action {
-                state.derniere_couleur = Some(nom.clone());
-            }
-
-            // Les statistiques des livres cités suivent le document (le
-            // panneau, l add-on biblique).
-            state.rafraichir_statistiques_bibliques();
-            state.mots_a_recalculer();
-            state.editor.apply_format(action).map(Message::Editor)
+        Message::Format(action) => appliquer_le_format(state, action),
+        Message::FormatDerniereCouleur => {
+            let couleur = state
+                .derniere_couleur
+                .clone()
+                .unwrap_or_else(|| "red".to_string());
+            appliquer_le_format(state, crate::app::message::FormatAction::Couleur(couleur))
         }
         Message::TitreInserer(niveau) => {
             // L'insertion simple au curseur : `#` × n + espace. Pas de

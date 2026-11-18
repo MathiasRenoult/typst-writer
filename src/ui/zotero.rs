@@ -30,6 +30,7 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         liaison,
         state.resolved.palette,
         &state.zotero_recherche,
+        state.project.zotero.is_some(),
     ))
 }
 
@@ -38,9 +39,22 @@ fn fenetre<'a>(
     liaison: &'a LiaisonZotero,
     palette: Palette,
     recherche: &'a str,
+    remplacement: bool,
 ) -> Element<'a, Message> {
+    let (titre, explication) = if remplacement {
+        (
+            "Changer de collection Zotero",
+            "La nouvelle collection remplace la bibliographie Zotero du projet — lue, jamais écrite.",
+        )
+    } else {
+        (
+            "Lier à Zotero",
+            "La collection choisie devient la bibliographie du projet — lue, jamais écrite.",
+        )
+    };
+
     let entete = row![
-        palette.label("Lier à Zotero").size(theme::jetons::TITRE),
+        palette.label(titre).size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         button(text("Fermer").size(12))
             .on_press(Message::ZoteroLiaisonFermer)
@@ -111,7 +125,7 @@ fn fenetre<'a>(
 
     let pied = row![
         palette
-            .label("La collection choisie devient la bibliographie du projet — lue, jamais écrite.")
+            .label(explication)
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
         Space::new().width(Length::Fill),

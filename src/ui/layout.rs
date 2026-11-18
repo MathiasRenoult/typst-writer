@@ -12,7 +12,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
         return match state.mode {
             ModeVue::Edition => super::editor::view(state),
             ModeVue::Rendu => {
-                let (first, last) = state.render.visible.unwrap_or((0, 2));
+                let pages = super::preview::pages_de_la_vue(&state.render);
+                let (first, last) = state.render.visible.unwrap_or((
+                    pages.first().copied().unwrap_or(0),
+                    pages
+                        .get(2)
+                        .copied()
+                        .or_else(|| pages.last().copied())
+                        .unwrap_or(0),
+                ));
                 iced::widget::container(
                     iced::widget::sensor::Sensor::new(super::preview::vue(
                         state,
@@ -287,7 +295,15 @@ fn contenu_vue(state: &State, id: VueId) -> Element<'_, Message> {
     match mode {
         ModeVue::Edition => super::editor::vue(state, editor, active),
         ModeVue::Rendu => {
-            let (first, last) = render.visible.unwrap_or((0, 2));
+            let pages = super::preview::pages_de_la_vue(render);
+            let (first, last) = render.visible.unwrap_or((
+                pages.first().copied().unwrap_or(0),
+                pages
+                    .get(2)
+                    .copied()
+                    .or_else(|| pages.last().copied())
+                    .unwrap_or(0),
+            ));
             iced::widget::sensor::Sensor::new(super::preview::vue(state, render, editor, Some(id)))
                 .key(id)
                 .on_show(move |size| {

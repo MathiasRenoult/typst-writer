@@ -2455,7 +2455,7 @@ mod tests_modeles_visibles {
 
         let gabarit = crate::mise_en_page::gabarit::generer(&normes);
         assert!(
-            gabarit.contains("page(header: none, footer: none)"),
+            gabarit.contains("page(numbering: none, header: none, footer: none)"),
             "le gabarit compose la page de titre : {gabarit}"
         );
 

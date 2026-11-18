@@ -22,8 +22,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let (render, render_color): (String, iced::Color) = if state.render.pending {
         ("Compilation…".to_string(), palette.text_muted)
     } else if !state.render.errors.is_empty() {
+        let suffixe = if state.render.apercu_perime() {
+            " — aperçu ancien"
+        } else {
+            ""
+        };
         (
-            format!("{} erreur(s)", state.render.errors.len()),
+            format!("{} erreur(s){suffixe}", state.render.errors.len()),
             palette.danger,
         )
     } else if !state.render.warnings.is_empty() {

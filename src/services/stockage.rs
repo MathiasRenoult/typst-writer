@@ -77,6 +77,9 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
         .and_then(|nom| nom.to_str())
         .unwrap_or("fichier")
         .to_string();
+    // Le chemin d'origine est figé avant le déplacement : après, il n'existe
+    // plus et `canonicalize` ne pourrait que revenir au chemin relatif.
+    let origine = std::fs::canonicalize(chemin).unwrap_or_else(|_| chemin.to_path_buf());
 
     let mut numero = 1;
     loop {
@@ -108,6 +111,10 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
                     let _ = std::fs::remove_dir(&destination);
                     return Err(erreur);
                 }
+                // La corbeille ne perd pas l'adresse d'origine : l'écran de
+                // récupération peut ainsi proposer un vrai retour, pas
+                // seulement l'ouverture du dossier.
+                let _ = std::fs::write(fiche_origine(&destination), origine.display().to_string());
                 return Ok(destination);
             }
             Err(erreur) if erreur.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -118,9 +125,62 @@ pub fn vers_la_corbeille(chemin: &std::path::Path) -> std::io::Result<std::path:
     }
 }
 
+/// La fiche d'origine d'une entrée de corbeille.
+fn fiche_origine(entree: &std::path::Path) -> std::path::PathBuf {
+    // Le point initial garde la fiche hors de la liste de l'écran ; le
+    // suffixe la rend reconnaissable même dans un dossier ouvert à la main.
+    let mut nom = std::ffi::OsString::from(".");
+    if let Some(nom_entree) = entree.file_name() {
+        nom.push(nom_entree);
+    }
+    nom.push(".origine");
+    entree.with_file_name(nom)
+}
+
+/// Le chemin d'origine inscrit à côté d'une entrée de corbeille.
+pub fn origine_de(entree: &std::path::Path) -> Option<std::path::PathBuf> {
+    let fiche = fiche_origine(entree);
+    let texte = std::fs::read_to_string(fiche).ok()?;
+    let chemin = texte.trim();
+    (!chemin.is_empty()).then(|| std::path::PathBuf::from(chemin))
+}
+
+/// Une entrée de corbeille est-elle la fiche d'origine d'une autre ?
+pub fn est_une_fiche(nom: &str) -> bool {
+    nom.ends_with(".origine")
+}
+
+/// Remet une entrée de corbeille à son emplacement d'origine.
+///
+/// Rien n'est écrasé : si l'emplacement est déjà occupé, la corbeille garde
+/// l'entrée et le dit. La fiche d'origine ne survit pas au retour réussi.
+pub fn restaurer_depuis_la_corbeille(
+    entree: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    let Some(origine) = origine_de(entree) else {
+        return Err("Cette entrée ne dit pas d'où elle vient.".to_string());
+    };
+    if !entree.exists() {
+        return Err("Cette entrée n'existe plus dans la corbeille.".to_string());
+    }
+    if origine.exists() {
+        return Err(format!(
+            "{} existe déjà : rien n'a été restauré.",
+            origine.display()
+        ));
+    }
+    if let Some(parent) = origine.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|erreur| format!("{} ne se crée pas : {erreur}.", parent.display()))?;
+    }
+    std::fs::rename(entree, &origine)
+        .map_err(|erreur| format!("Restauration impossible : {erreur}."))?;
+    let _ = std::fs::remove_file(fiche_origine(entree));
+    Ok(origine)
+}
+
 /// Écrit un texte par la voie atomique : temporaire voisin puis renommage.
 ///
-/// Le temporaire est créé dans le dossier de la cible, synchronisé sur disque,
 /// puis renommé. Les permissions de la cible existante sont conservées ; sous
 /// Unix, le dossier parent est lui aussi synchronisé pour que le renommage
 /// survive à une coupure. Une erreur supprime le temporaire et laisse la cible

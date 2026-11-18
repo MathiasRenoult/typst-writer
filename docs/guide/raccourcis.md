@@ -26,6 +26,11 @@ barre d'outils portent leurs combinaisons.
 | `@` | ouvrir le composeur de citation au curseur |
 | `Tab` après `@…` | ouvrir aussi le menu contextuel de citation, sans quitter le document |
 
+Un lien interne peut afficher une numérotation calculée : `[[adoption-coutume|"chapitre"]]`
+donne « chapitre 2.3 », `[[planche|"figure"]]` donne « Figure 4 » et
+`[[adoption-coutume|"page"]]` donne la page du document. Le mot clé doit être
+entre guillemets ; sans guillemets, le texte reste un texte ordinaire.
+
 ## La palette des commandes
 
 | Touches | Effet |
@@ -37,6 +42,14 @@ barre d'outils portent leurs combinaisons.
 | `Entrée` | insérer avec les valeurs par défaut |
 | `Tab` | ouvrir le formulaire de la balise sélectionnée |
 | `Échap` | fermer la palette sans insérer |
+
+La même palette expose les formats du texte — `gras`, `italique`,
+`souligné`, `barré`, `gras italique`, `code`, `formule`, `titre 1` à
+`titre 6`, listes et citations —, les teintes `orange`, `vert`, `rouge`,
+`bleu`, `violet`, `gris`, `noir`, `dernière couleur`, et la roue des
+couleurs. On y trouve aussi les imports et exports de fichiers, les thèmes,
+les normes de la bibliothèque et l'activation ou la désactivation des
+plugins. Tape simplement le nom ou un alias après `Ctrl+K`.
 
 Dans une balise, `Entrée` insère avec les valeurs du formulaire ; `Échap`
 annule. Les balises ont des noms courts : `c` (couleur), `g` (glossaire),
@@ -66,6 +79,7 @@ document.
 | `Ctrl+=` / `Ctrl+-` | agrandir / réduire l'aperçu (ou Ctrl+molette) |
 | `Ctrl+0` | ajuster l'aperçu à la largeur |
 | `Ctrl+Maj+L` | l'aperçu suit le chapitre — ou ne le suit plus |
+| bouton des numéros | afficher ou masquer les numéros de ligne de l'éditeur |
 | survol | l'extrait d'une référence biblique sous la souris, après un court repos |
 
 ## L'espace de travail

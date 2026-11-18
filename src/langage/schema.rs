@@ -57,6 +57,14 @@ pub enum Bloc {
     Commentaire(String),
     /// Un saut de page : trois lignes vides consécutives.
     SautDePage,
+
+    /// Une ou plusieurs pages de garde : `{{garde}}` … `{{/garde}}`.
+    ///
+    /// Elles sont composées **avant le sommaire**, sans numéro de page et
+    /// sans entrée dans la table des matières. Le contenu est un document
+    /// ordinaire (titres, paragraphes, images), mais ses titres sont rendus
+    /// hors sommaire.
+    Garde(Vec<Bloc>),
     /// Un tableau : `| A | B |`, sa ligne de séparation, ses lignes.
     Tableau {
         /// L'en-tête, cellule par cellule — jamais vide.
@@ -510,6 +518,9 @@ impl Bloc {
             Bloc::Separateur | Bloc::SautDePage => true,
             Bloc::Commentaire(_) => true,
             Bloc::Brut(_) => true,
+            // Une page de garde est un document imbriqué : ses blocs suivent
+            // exactement les mêmes règles, y compris vide (une page blanche).
+            Bloc::Garde(contenu) => contenu.iter().all(Bloc::est_canonique),
             // La formule est opaque : sa barre de dollars n'y paraît pas.
             Bloc::Formule(texte) => !texte.contains('$') && !texte.trim().is_empty(),
             Bloc::Tableau {
@@ -882,6 +893,12 @@ impl Bloc {
                 .collect::<Vec<_>>()
                 .join(" "),
             Bloc::Separateur | Bloc::Commentaire(_) | Bloc::SautDePage => String::new(),
+            Bloc::Garde(contenu) => contenu
+                .iter()
+                .map(Bloc::texte_nu)
+                .filter(|texte| !texte.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
             Bloc::Brut(_)
             | Bloc::Graphique { .. }
             | Bloc::Chart(_)

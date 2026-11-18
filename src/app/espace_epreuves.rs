@@ -5730,3 +5730,349 @@ fn un_fichier_de_normes_importe_entre_dans_la_bibliotheque() {
     assert_eq!(importee.parametres_plugins.biblique.traduction, "darby");
     assert_eq!(importee.parametres_plugins.biblique.tri, "canonique");
 }
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_entree_de_corbeille_se_restaure_a_son_origine() {
+    let _state = etat_isole();
+    let dossier = std::env::temp_dir().join(format!("tw-corbeille-origine-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dossier);
+    std::fs::create_dir_all(&dossier).expect("dossier");
+    let fichier = dossier.join("document.tw");
+    std::fs::write(&fichier, "LE TEXTE À RETROUVER").expect("fichier");
+
+    let dans_la_corbeille =
+        crate::services::stockage::vers_la_corbeille(&fichier).expect("corbeille");
+    assert_eq!(
+        crate::services::stockage::origine_de(&dans_la_corbeille),
+        Some(fichier.clone()),
+        "la fiche dit d'où vient l'entrée"
+    );
+    assert!(
+        crate::app::corbeille::ouvrir()
+            .expect("lecture")
+            .entrees
+            .iter()
+            .any(|entree| entree.chemin == dans_la_corbeille
+                && entree.origine == Some(fichier.clone()))
+    );
+
+    // Rien ne s'écrase : l'emplacement occupé fait échouer le retour et
+    // laisse l'entrée dans la corbeille.
+    std::fs::write(&fichier, "OCCUPÉ").expect("occupation");
+    let echec = crate::services::stockage::restaurer_depuis_la_corbeille(&dans_la_corbeille);
+    assert!(
+        echec.is_err(),
+        "un fichier existant doit arrêter la restauration"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&fichier).expect("occupant"),
+        "OCCUPÉ"
+    );
+    assert!(
+        dans_la_corbeille.exists(),
+        "l'entrée reste dans la corbeille"
+    );
+    std::fs::remove_file(&fichier).expect("libération");
+
+    let retour = crate::services::stockage::restaurer_depuis_la_corbeille(&dans_la_corbeille)
+        .expect("restauration");
+    assert_eq!(retour, fichier);
+    assert_eq!(
+        std::fs::read_to_string(&fichier).expect("fichier restauré"),
+        "LE TEXTE À RETROUVER"
+    );
+    assert!(
+        !dans_la_corbeille.exists(),
+        "l'entrée a quitté la corbeille"
+    );
+
+    let _ = std::fs::remove_dir_all(&dossier);
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn restaurer_une_version_recharge_le_document_ouvert() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "restauration");
+
+    let cible = state.editor.path.clone().expect("document ouvert");
+    assert_eq!(
+        std::fs::read_to_string(&cible).expect("document sur disque"),
+        state.editor.content()
+    );
+
+    let sauvegardes = crate::project::sauvegardes_dir(&state.project.dir);
+    std::fs::create_dir_all(&sauvegardes).expect("dossier des sauvegardes");
+    std::fs::write(
+        sauvegardes.join(format!(
+            "{}.100",
+            cible.file_name().unwrap().to_string_lossy()
+        )),
+        "VERSION ANCIENNE\n",
+    )
+    .expect("copie antérieure");
+
+    let _ = update(&mut state, Message::RestaurationOuvrir);
+    assert!(state.restauration.is_some(), "l'écran s'ouvre");
+
+    let _ = update(&mut state, Message::RestaurationRestaurer);
+    assert!(state.confirmation.is_some(), "la restauration se demande");
+    let _ = update(&mut state, Message::ConfirmationConfirmer);
+
+    assert_eq!(
+        state.editor.content(),
+        "VERSION ANCIENNE\n",
+        "le tampon montre la copie restaurée, pas seulement le disque"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&cible).expect("document restauré"),
+        "VERSION ANCIENNE\n"
+    );
+    assert!(state.restauration.is_none(), "l'écran se referme");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn choisir_un_chapitre_puis_revenir_au_document_entier() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "chapitres");
+
+    let chemin = state.project.document.clone().expect("document du projet");
+    let contenu = "# Ouverture\n\nLe début.\n\n## Section\n\n# Suite\n\nLa fin.\n";
+    std::fs::write(&chemin, contenu).expect("document synthétique");
+    let _ = state.recharger_document(chemin, contenu.to_string());
+    state.rafraichir_chapitres();
+
+    assert_eq!(state.render.chapitres.len(), 2, "deux têtes de niveau 1");
+    assert_eq!(state.render.chapitres[0].titre, "Ouverture");
+    assert_eq!(state.render.chapitres[1].titre, "Suite");
+    assert!(
+        state.render.chapitre.is_none(),
+        "la vue commence sur le document entier"
+    );
+
+    let _ = update(&mut state, Message::ChapitreChoisir(Some(1)));
+    assert_eq!(
+        state
+            .render
+            .chapitre
+            .as_ref()
+            .map(|chapitre| chapitre.titre.as_str()),
+        Some("Suite")
+    );
+    assert_eq!(state.render.scroll, (0.0, 0.0), "la tranche repart en haut");
+
+    let _ = update(&mut state, Message::ChapitreChoisir(None));
+    assert!(
+        state.render.chapitre.is_none(),
+        "le document entier revient"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_recherche_du_document_n_ouvre_pas_celle_de_l_editeur() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "recherche-un-seul-panneau");
+    state.editor = crate::editor::EditorState::new_file(
+        state.project.document.clone().unwrap(),
+        "Un chat et un autre chat.\n".to_string(),
+    );
+
+    let _ = update(&mut state, Message::RechercheOuvrir);
+    assert!(
+        !state.editor.editor.is_search_open(),
+        "la boîte de recherche du crate ne double pas la nôtre"
+    );
+    let _ = update(&mut state, Message::RechercheMotif("chat".to_string()));
+    assert_eq!(
+        state
+            .recherche
+            .as_ref()
+            .expect("recherche ouverte")
+            .occurrences
+            .len(),
+        2
+    );
+    assert!(
+        state.editor.editor.recherche_surlignee(),
+        "les occurrences sont surlignées sans ouvrir la boîte du crate"
+    );
+
+    let _ = update(&mut state, Message::RechercheSuivant);
+    let attendu = "Un chat et un autre chat.\n"
+        .rfind("chat")
+        .expect("seconde occurrence")
+        + "chat".len();
+    assert_eq!(
+        state.editor.cursor_offset(),
+        attendu,
+        "« suivant » amène bien le curseur sur l'occurrence suivante"
+    );
+
+    let _ = update(&mut state, Message::RechercheFermer);
+    assert!(!state.editor.editor.recherche_surlignee());
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_numeros_de_ligne_se_basculent_et_se_conservent() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "numeros-de-ligne");
+
+    assert!(!state.numeros_de_ligne, "masqués par défaut en prose");
+    assert!(!state.editor.editor.line_numbers_enabled());
+
+    let _ = update(&mut state, Message::NumerosDeLigneBascule);
+    assert!(state.numeros_de_ligne);
+    assert!(state.editor.editor.line_numbers_enabled());
+
+    let session = crate::project::load_session();
+    assert!(
+        session.line_numbers,
+        "le choix est retenu dans la session, pas seulement à l'écran"
+    );
+
+    let _ = update(&mut state, Message::NumerosDeLigneBascule);
+    assert!(!state.numeros_de_ligne);
+    assert!(!state.editor.editor.line_numbers_enabled());
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn l_ancre_d_edition_revient_au_pixel_pres() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "ancre-edition");
+
+    let _ = state.editor.editor.defiler_vers_offset(240.0);
+    state.editor.memoriser_defilement();
+    let _ = state.editor.editor.defiler_vers_offset(0.0);
+
+    let _ = state.editor.restaurer_defilement();
+
+    assert!(
+        (state.editor.editor.viewport_scroll() - 240.0).abs() < 0.5,
+        "la vue d'édition retrouve son décalage, pas le début du document"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn changer_de_mode_ferme_la_recherche_de_l_autre_mode() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "recherche-et-mode");
+
+    let _ = update(&mut state, Message::RechercheOuvrir);
+    assert!(state.recherche.is_some());
+    let _ = update(&mut state, Message::ModeBasculer);
+    assert!(
+        state.recherche.is_none(),
+        "en rendu, seule la recherche du PDF reste ouverte"
+    );
+    assert!(!state.editor.editor.recherche_surlignee());
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn l_aller_retour_de_mode_restaure_le_defilement_d_edition() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "ancre-aller-retour");
+
+    let _ = state.editor.editor.defiler_vers_offset(240.0);
+    let _ = update(&mut state, Message::ModeBasculer);
+    assert_eq!(state.mode, crate::app::state::ModeVue::Rendu);
+
+    let _ = update(&mut state, Message::ModeBasculer);
+    assert_eq!(state.mode, crate::app::state::ModeVue::Edition);
+    assert!(
+        (state.editor.editor.viewport_scroll() - 240.0).abs() < 0.5,
+        "le retour en édition ne repart pas du début du document"
+    );
+}
+
+/// Une commande de plugin est un vrai geste : elle est écrite dans les normes,
+/// pas seulement affichée dans l'état courant.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_commande_active_ou_desactive_un_plugin() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "commande-plugin");
+
+    assert!(state.reglages.fonctionnalites.bibliographie);
+    let _ = update(
+        &mut state,
+        Message::BasculerFonctionnalite("bibliographie".to_string()),
+    );
+    assert!(!state.reglages.fonctionnalites.bibliographie);
+
+    let normes = crate::mise_en_page::charger(&state.project.dir);
+    assert!(
+        !normes.fonctionnalites.bibliographie,
+        "la bascule du plugin est écrite dans les normes du projet"
+    );
+
+    let _ = update(
+        &mut state,
+        Message::BasculerFonctionnalite("bibliographie".to_string()),
+    );
+    assert!(state.reglages.fonctionnalites.bibliographie);
+}
+
+/// La dernière couleur est une commande de texte, et elle applique bien la
+/// couleur mémorisée à la sélection.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_derniere_couleur_est_une_commande_de_texte() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "commande-couleur");
+    state.editor = crate::editor::EditorState::new_file(
+        state.project.dir.join("document.tw"),
+        "mot".to_string(),
+    );
+    state.derniere_couleur = Some("orange".to_string());
+
+    let _ = state.editor.update(iced_code_editor::Message::SelectAll);
+    let _ = update(&mut state, Message::FormatDerniereCouleur);
+
+    assert_eq!(state.editor.content(), "{{c orange|mot}}");
+}
+
+/// La palette exposed les thèmes et les normes comme de vraies commandes,
+/// pas seulement les commandes statiques du catalogue.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_palette_liste_les_themes_et_les_normes() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "palette-listes");
+
+    let _ = update(
+        &mut state,
+        Message::PaletteOuvrir(crate::app::palette::ModePalette::Systeme),
+    );
+    let palette = state
+        .palette
+        .as_ref()
+        .expect("la palette est ouverte")
+        .clone();
+
+    let mut themes = palette.clone();
+    themes.requete = "theme".to_string();
+    assert!(
+        themes
+            .resultats(&state)
+            .iter()
+            .any(|item| item.titre.starts_with("Thème ·")),
+        "un thème est une commande"
+    );
+
+    let mut normes = palette;
+    normes.requete = "norme".to_string();
+    assert!(
+        normes
+            .resultats(&state)
+            .iter()
+            .any(|item| item.titre.starts_with("Norme ·")),
+        "une norme de la bibliothèque est une commande"
+    );
+}

@@ -1,7 +1,7 @@
 # iced-code-editor — copie vendorisée
 
 Ce dossier est une copie de `iced-code-editor` 0.5.2, dans laquelle ce projet
-apporte **dix-sept modifications**. Le reste du fichier est la version amont.
+apporte **dix-neuf modifications**. Le reste du fichier est la version amont.
 
 Le raccordement se fait par `[patch.crates-io]` dans le `Cargo.toml` racine :
 
@@ -319,16 +319,48 @@ est d'abord emportée — la note entière avec, comme partout.
 `input/update/mod.rs` (liste des opérations d'édition),
 `input/update/deletion.rs` (`handle_delete_word`).
 
-### 17. `set_search_query` : surlignage depuis l'extérieur
+### 17. Recherche externe : surligner sans ouvrir la boîte du crate
 
 > **Note :** deux tests du mode vim (`vim_slash_search_and_n_capital_n_repeat`
 > et `vim_command_line_backspace_edits_search_text`) échouent depuis avant
 > cette série de correctifs. La recherche vim `/` ne positionne pas le
 > curseur. Problème amont, non régressif.
 
-`set_search_query(query: String)` définit le motif de recherche et
-surligne les correspondances, sans ouvrir la boîte de dialogue de
-recherche. Permet de brancher une barre de recherche externe sur le
-surlignage de l'éditeur.
+`set_search_query` ouvre la boîte de dialogue du crate en même temps qu'il
+surligne : l'application, qui a sa propre barre de recherche, se retrouvait
+avec **deux panneaux**. Une seconde voie, `set_search_query_silencieux`,
+définit le motif et les correspondances sans toucher à `is_open` ;
+`search_highlights_enabled` porte alors le surlignage, et
+`effacer_recherche_silencieuse` l'efface. `recherche_surlignee` expose cet
+état à l'hôte.
 
-`canvas_editor/features/search/mod.rs` (`set_search_query`).
+`canvas_editor/mod.rs` (`search_highlights_enabled`),
+`canvas_editor/features/search/mod.rs` (`set_search_query_silencieux`,
+`effacer_recherche_silencieuse`, `recherche_surlignee`,
+`search_matches_visible`), `canvas_editor/features/search/update.rs`
+(`handle_close_search_msg`).
+
+### 18. Soulignements de diagnostics
+
+`set_soulignements` reçoit des plages de caractères (ligne, début, fin) et une
+couleur. Elles sont dessinées dans la couche d'overlay, sous forme de traits
+fins, sans invalider la géométrie du texte. L'application pose ainsi les
+erreurs du compilateur directement dans la page, en plus de sa liste.
+
+`canvas_editor/mod.rs` (`SoulignementDiagnostic`, champ `soulignements`),
+`canvas_editor/marques.rs` (`set_soulignements`),
+`canvas_editor/render/overlays.rs` (`draw_soulignements`),
+`canvas_editor/render/canvas.rs` (appel après les surlignages de recherche),
+`src/lib.rs` (export public).
+
+### 19. Défilement exact et révélation d'une occurrence
+
+`defiler_vers_offset(offset)` remet le scrollable à une position verticale
+absolue, et met `viewport_scroll` à jour avant même l'événement de
+défilement ; l'hôte s'en sert pour retrouver la vue d'édition au pixel près
+après un changement de mode. `defiler_vers_curseur()` amène le curseur dans
+la fenêtre sans le déplacer : une occurrence de recherche hors écran est
+ainsi réellement montrée, pas seulement sélectionnée.
+
+`canvas_editor/features/search/mod.rs` (`defiler_vers_offset`,
+`defiler_vers_curseur`).

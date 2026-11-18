@@ -535,7 +535,9 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             || debut.starts_with('>')
             || debut.starts_with("- ")
             || est_numero(ligne)
-            || debut.starts_with("```"))
+            || debut.starts_with("```")
+            || ligne.trim() == "{{garde}}"
+            || ligne.trim() == "{{/garde}}")
 }
 
 #[cfg(test)]

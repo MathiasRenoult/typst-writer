@@ -123,6 +123,14 @@ pub fn serialiser(document: &Document) -> String {
             Bloc::SautDePage => {
                 out.push_str("\n\n\n");
             }
+            Bloc::Garde(contenu) => {
+                out.push_str("{{garde}}\n");
+                let document = Document {
+                    blocs: contenu.clone(),
+                };
+                out.push_str(&serialiser(&document));
+                out.push_str("{{/garde}}\n");
+            }
             Bloc::Image { légende, cible } => {
                 out.push_str("![");
                 ecrire_inline(légende, &mut out);

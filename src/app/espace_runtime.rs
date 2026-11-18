@@ -103,7 +103,7 @@ impl State {
         self.actualiser_typst();
     }
 
-    fn cle_document(&self) -> Option<(PathBuf, PathBuf)> {
+    pub(crate) fn cle_document(&self) -> Option<(PathBuf, PathBuf)> {
         Some((self.project.dir.clone(), self.editor.path.clone()?))
     }
 
@@ -491,6 +491,8 @@ impl State {
         let id = self.espace.prochain;
         self.espace.prochain = self.espace.prochain.saturating_add(1);
         let mut vue = Vue::nouvelle(projet, chemin, contenu, ModeVue::Edition, &self.resolved);
+        vue.editor
+            .afficher_les_numeros_de_ligne(self.numeros_de_ligne);
         let cle = (vue.project.dir.clone(), vue.editor.path.clone().unwrap());
         if let Some(document) = self.espace.documents.get(&cle) {
             document.source.projeter_force(&mut vue.editor.editor);

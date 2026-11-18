@@ -10,6 +10,9 @@ use super::{generer::generer_avec, parse};
 /// Nom stable du fichier Typst temporaire injecté dans l'assemblage.
 pub const GENERATED_FILE: &str = "document.generated.typ";
 
+/// Nom stable du fichier des pages de garde.
+pub const GARDE_FILE: &str = "document.garde.typ";
+
 /// Assemble l'en-tête existant et le corps généré, prêt pour le compilateur.
 ///
 /// Le fichier `.tw` reste la source sur disque ; le Typst est un override en
@@ -118,6 +121,11 @@ pub fn compilation_unit_document_avec_diagnostics(
     let mut regles = normes.typographie.regles(&normes.references);
     regles.index = normes.index.clone();
     regles.numerotation_figures = normes.numerotation_figures.clone();
+    regles.legende_prefixe = if normes.legende_prefixe.trim().is_empty() {
+        "Figure".to_string()
+    } else {
+        normes.legende_prefixe.clone()
+    };
     regles.callouts = normes.parametres_plugins.callouts.clone();
     // Les mots de la balise `{date:...}` viennent des normes (2026-11-03).
     regles.dates = crate::langage::dates::Regles {
@@ -129,6 +137,56 @@ pub fn compilation_unit_document_avec_diagnostics(
         langue: normes.dates.langue.clone(),
     };
     let generated = generer_avec(document, &regles, &normes.decor);
+
+    // Une page de titre ancienne ne doit pas porter de numéro : le gabarit
+    // généré avant cette version est corrigé en mémoire, sans toucher au
+    // fichier du projet.
+    if normes.page_de_titre
+        && let Some(gabarit) = gabarit_du_projet(root, &corrections)
+        && let Some(gabarit) = sans_numero_de_la_page_de_titre(&gabarit)
+    {
+        corrections.push((root.join(crate::mise_en_page::gabarit::FICHIER), gabarit));
+    }
+
+    // Les pages de garde sont hors du corps : elles se composent avant le
+    // sommaire, sans numéro, et leurs titres ne descendent pas dans la table
+    // des matières. Le gabarit les reçoit par un petit fichier Typst dédié.
+    let mut generated = generated;
+    if crate::langage::generer::a_des_pages_de_garde(document) {
+        let mut front =
+            crate::langage::generer::generer_front_matter(document, &regles, &normes.decor);
+        front = corriger_le_typst(
+            root,
+            &front,
+            &cles,
+            &cles_glossaire,
+            &etiquettes,
+            &root.join(GARDE_FILE),
+            &mut rapports,
+        );
+        // Les imports éventuels (graphiques, callouts) restent au niveau du
+        // fichier : ils ne sont pas du contenu de page.
+        let (imports, corps) = separer_les_imports(&front);
+        let garde = format!(
+            "{imports}#let garde-corps = [\n  #set page(numbering: none, header: none, footer: none)\n  #set heading(numbering: none, outlined: false)\n{corps}  #pagebreak()\n  #counter(page).update(1)\n  #counter(heading).update(0)\n  #counter(figure).update(0)\n]\n"
+        );
+        corrections.push((root.join(GARDE_FILE), garde));
+
+        // Le gabarit du projet est généré par l'application : on lui ajoute
+        // l'import et l'appel, sans toucher au fichier sur le disque.
+        let gabarit = gabarit_du_projet(root, &corrections);
+        match gabarit.as_deref().and_then(brancher_les_pages_de_garde) {
+            Some(gabarit) => {
+                corrections.push((root.join(crate::mise_en_page::gabarit::FICHIER), gabarit));
+            }
+            None => {
+                // Un gabarit personnalisé peut ne pas ressembler au nôtre.
+                // Le contenu ne doit jamais disparaître : il revient au début
+                // du corps, quitte à ne pas être détaché du sommaire.
+                generated = format!("{front}\n{generated}");
+            }
+        }
+    }
 
     // La guérison des `.bib` court enfin : la bibliographie
     // conventionnelle existe déjà, et ses chemins sont vivants.
@@ -163,6 +221,112 @@ pub fn compilation_unit_document_avec_diagnostics(
     corrections.push((root.join(GENERATED_FILE), generated));
 
     (entry, corrections, rapports)
+}
+
+/// Le gabarit `mise-en-page.typ` tel que l'assemblage doit le voir :
+/// la dernière correction en mémoire, sinon le fichier du projet.
+fn gabarit_du_projet(root: &Path, corrections: &[(PathBuf, String)]) -> Option<String> {
+    corrections
+        .iter()
+        .rev()
+        .find(|(chemin, _)| chemin == &root.join(crate::mise_en_page::gabarit::FICHIER))
+        .map(|(_, contenu)| contenu.clone())
+        .or_else(|| std::fs::read_to_string(root.join(crate::mise_en_page::gabarit::FICHIER)).ok())
+}
+
+/// Retire le numéro de la page de titre des gabarits générés avant la prise
+/// en charge des pages de garde. L'opération est idempotente : un gabarit
+/// déjà corrigé ne contient plus le motif.
+fn sans_numero_de_la_page_de_titre(gabarit: &str) -> Option<String> {
+    let ancien = "page(header: none, footer: none)[";
+    let nouveau = "page(numbering: none, header: none, footer: none)[";
+    if !gabarit.contains(ancien) {
+        return None;
+    }
+
+    let mut out = gabarit.replacen(ancien, nouveau, 1);
+    let debut = out.find(nouveau)?;
+    let apres = &out[debut..];
+    let saut = apres.find("  pagebreak()\n")?;
+    let insertion = debut + saut + "  pagebreak()\n".len();
+    out.insert_str(insertion, "  counter(page).update(1)\n");
+    Some(out)
+}
+
+/// Sépare les imports Typst de tête du contenu de garde.
+fn separer_les_imports(front: &str) -> (String, String) {
+    let mut imports = String::new();
+    let mut corps = String::new();
+    let mut en_tete = true;
+
+    for ligne in front.lines() {
+        if en_tete && ligne.starts_with("#import ") {
+            imports.push_str(ligne);
+            imports.push('\n');
+        } else if en_tete && ligne.trim().is_empty() {
+            // Une ligne vide entre deux imports ne change rien.
+        } else {
+            en_tete = false;
+            corps.push_str(ligne);
+            corps.push('\n');
+        }
+    }
+
+    (imports, corps)
+}
+
+/// Branche les pages de garde dans le gabarit généré par l'application.
+///
+/// Le fichier `mise-en-page.typ` est réécrit à chaque changement de normes :
+/// on le corrige **en mémoire**, sans toucher au disque, en ajoutant l'import
+/// de `document.garde.typ` et l'appel de `garde-corps` juste avant le sommaire. Un
+/// gabarit personnalisé qui ne contient ni `outline()` ni `doc` n'est pas
+/// modifié : le contenu est alors rendu au début du corps.
+fn brancher_les_pages_de_garde(gabarit: &str) -> Option<String> {
+    let mut out = format!("#import \"{GARDE_FILE}\": garde-corps\n{gabarit}");
+
+    // Chercher la ligne du sommaire, pas la chaîne exacte : un gabarit peut
+    // écrire `outline(title: …)` ou `#outline()`.
+    if let Some(position) = ligne_dans_le_gabarit(&out, "outline(") {
+        let debut = out[..position].rfind('\n').map_or(0, |i| i + 1);
+        let indentation = &out[debut..position];
+        out.insert_str(debut, &format!("{indentation}garde-corps\n"));
+        return Some(out);
+    }
+
+    if let Some(position) = ligne_exacte_dans_le_gabarit(&out, "doc") {
+        let debut = out[..position].rfind('\n').map_or(0, |i| i + 1);
+        let indentation = &out[debut..position];
+        out.insert_str(debut, &format!("{indentation}garde-corps\n"));
+        return Some(out);
+    }
+
+    None
+}
+
+/// La position d'une ligne dont le contenu (après indentation) est exactement
+/// `texte` — le `doc` du gabarit, pas un mot qui commence par lui.
+fn ligne_exacte_dans_le_gabarit(gabarit: &str, texte: &str) -> Option<usize> {
+    let mut offset = 0;
+    for ligne in gabarit.split_inclusive('\n') {
+        if ligne.trim() == texte {
+            return Some(offset + ligne.len() - ligne.trim_start().len());
+        }
+        offset += ligne.len();
+    }
+    None
+}
+
+/// La position d'une ligne dont le début (après indentation) est `debut`.
+fn ligne_dans_le_gabarit(gabarit: &str, debut: &str) -> Option<usize> {
+    let mut offset = 0;
+    for ligne in gabarit.split_inclusive('\n') {
+        if ligne.trim_start().starts_with(debut) {
+            return Some(offset + ligne.len() - ligne.trim_start().len());
+        }
+        offset += ligne.len();
+    }
+    None
 }
 
 /// Place l'include avant la première bibliographie, ou à la fin de l'en-tête.
@@ -3170,6 +3334,115 @@ mod epreuves_de_renvois {
         );
     }
 
+    /// Un lien interne demande le numéro du chapitre ou la page : le moteur
+    /// Typst les compose à partir des compteurs, sans numérotation écrite
+    /// dans la source.
+    #[test]
+    fn un_lien_interne_affiche_le_numero_du_chapitre_et_la_page() {
+        let root = racine("numerotation");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            ..Default::default()
+        };
+        normes.titres.numerotation = "1.1".to_string();
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+
+        let (entry, corrections) = super::compilation_unit(
+            &root,
+            "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n",
+            "# Adoption\n\n## Coutume\n\nVoir [[titre-coutume|\"chapitre\"]] à la [[titre-coutume|\"page\"]].\n",
+        );
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "les liens numérotés compilent : {:?}",
+            outcome.errors
+        );
+        let document = outcome.document.expect("document");
+        let pdf = crate::typst::render::pdf_du_document(&document).expect("PDF");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output()
+        else {
+            eprintln!("pdftotext absent — épreuve du texte sautée");
+            return;
+        };
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+        assert!(
+            texte.contains("chapitre 1.1"),
+            "le numéro du chapitre est composé : {texte}"
+        );
+        assert!(texte.contains("page 1"), "la page est composée : {texte}");
+    }
+
+    /// Une figure est appelée par son numéro composé, et sa page se lit
+    /// comme celle de n'importe quel élément.
+    #[test]
+    fn un_lien_interne_affiche_le_numero_de_figure_et_sa_page() {
+        let root = racine("figure-numerotee");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            ..Default::default()
+        };
+        normes.titres.numerotation = "1.1".to_string();
+        normes.legende_prefixe = "Figure".to_string();
+        normes.numerotation_figures = "1".to_string();
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        std::fs::write(
+            root.join("carte.png"),
+            [
+                137u8, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0,
+                0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99,
+                100, 96, 248, 95, 15, 0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78,
+                68, 174, 66, 96, 130,
+            ],
+        )
+        .expect("image");
+
+        let (entry, corrections) = super::compilation_unit(
+            &root,
+            "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n",
+            "# Une partie\n\n![Une carte](carte.png)\n\nVoir [[une-carte|\"figure\"]] à la [[une-carte|\"page\"]].\n",
+        );
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "les liens de figure compilent : {:?}",
+            outcome.errors
+        );
+        let document = outcome.document.expect("document");
+        let pdf = crate::typst::render::pdf_du_document(&document).expect("PDF");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output()
+        else {
+            eprintln!("pdftotext absent — épreuve du texte sautée");
+            return;
+        };
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+        assert!(
+            texte.contains("Figure 1"),
+            "le numéro de figure est composé : {texte}"
+        );
+        assert!(texte.contains("page 1"), "la page est composée : {texte}");
+    }
+
     /// Une étiquette du document est une cible de renvoi, pas une citation
     /// manquante : `@chapitre` vers `<chapitre>` ne se neutralise jamais.
     #[test]
@@ -3876,6 +4149,239 @@ mod tests_pipeline_complet {
         assert!(
             !outcome.errors.is_empty(),
             "une erreur de compilation remonte"
+        );
+    }
+}
+
+/// **Pages de garde** : elles précèdent le sommaire, ne portent pas de numéro
+/// et ne descendent pas dans la table des matières.
+#[cfg(test)]
+mod pages_de_garde {
+    use std::path::PathBuf;
+
+    use super::GARDE_FILE;
+
+    fn racine(nom: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("typst-writer-gardes-{nom}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+        root
+    }
+
+    #[test]
+    fn une_ancienne_page_de_titre_perd_son_numero() {
+        let ancien =
+            "  page(header: none, footer: none)[\n    Titre\n  ]\n  pagebreak()\n  outline()\n";
+        let corrige = super::sans_numero_de_la_page_de_titre(ancien).expect("page de titre");
+        assert!(
+            corrige.contains("page(numbering: none, header: none, footer: none)"),
+            "{corrige}"
+        );
+        assert!(
+            corrige.contains("pagebreak()\n  counter(page).update(1)"),
+            "{corrige}"
+        );
+        assert!(
+            super::sans_numero_de_la_page_de_titre(&corrige).is_none(),
+            "la correction est idempotente"
+        );
+    }
+
+    #[test]
+    fn les_pages_de_garde_precedent_le_sommaire_et_restent_hors_numerotation() {
+        let root = racine("avant-sommaire");
+        let mut normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: true,
+            page_de_titre: false,
+            ..Default::default()
+        };
+        normes.titres.numerotation = "1.1".to_string();
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+
+        let main = format!(
+            "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n{}",
+            "#include \"document.generated.typ\"\n"
+        );
+        let source = "{{garde}}\n# La page de garde\n\nTexte de garde.\n{{/garde}}\n\n# Introduction\n\nLe corps du document.\n";
+        let (entry, corrections) = super::compilation_unit(&root, &main, source);
+
+        let gabarit = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with(crate::mise_en_page::gabarit::FICHIER))
+            .map(|(_, contenu)| contenu.clone())
+            .expect("gabarit corrigé");
+        assert!(
+            gabarit.contains(&format!("#import \"{GARDE_FILE}\": garde-corps")),
+            "le gabarit importe la garde : {gabarit}"
+        );
+        assert!(
+            gabarit.find("garde-corps").unwrap() < gabarit.find("outline()").unwrap(),
+            "la garde est composée avant le sommaire : {gabarit}"
+        );
+        assert!(
+            corrections
+                .iter()
+                .any(|(chemin, _)| chemin.ends_with(super::GARDE_FILE)),
+            "le contenu de garde est fourni"
+        );
+
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "les pages de garde compilent : {:?}",
+            outcome.errors
+        );
+        let document = outcome.document.expect("document compilé");
+        let pdf = crate::typst::render::pdf_du_document(&document).expect("PDF");
+        std::fs::write(root.join("sortie.pdf"), &pdf).expect("PDF sur disque");
+
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg(root.join("sortie.pdf"))
+            .arg("-")
+            .output()
+        else {
+            eprintln!("pdftotext absent — épreuve du texte sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+        assert!(
+            texte.contains("La page de garde"),
+            "le titre de garde est composé : {texte}"
+        );
+        assert_eq!(
+            texte.matches("La page de garde").count(),
+            1,
+            "le titre de garde n'apparaît pas dans le sommaire : {texte}"
+        );
+        assert!(
+            texte.contains("Le corps du document."),
+            "le corps suit la garde : {texte}"
+        );
+    }
+}
+
+/// Plusieurs pages de garde : chacune commence sur sa propre page et aucune
+/// ne prend de numéro.
+#[cfg(test)]
+mod plusieurs_pages_de_garde {
+    use super::GARDE_FILE;
+
+    #[test]
+    fn deux_gardes_font_deux_pages_sans_numero() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-gardes-multiples-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n";
+
+        let source = "{{garde}}\nPremière garde.\n{{/garde}}\n\n{{garde}}\nDeuxième garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&root, main, source);
+        assert!(
+            corrections
+                .iter()
+                .any(|(chemin, _)| chemin.ends_with(GARDE_FILE)),
+            "le fichier de garde est présent"
+        );
+
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "les deux gardes compilent : {:?}",
+            outcome.errors
+        );
+        let document = outcome.document.expect("document");
+        let pdf = crate::typst::render::pdf_du_document(&document).expect("PDF");
+        std::fs::write(root.join("sortie.pdf"), &pdf).expect("PDF sur disque");
+
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg("-f")
+            .arg("1")
+            .arg("-l")
+            .arg("2")
+            .arg(root.join("sortie.pdf"))
+            .arg("-")
+            .output()
+        else {
+            eprintln!("pdftotext absent — épreuve du texte sautée");
+            return;
+        };
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+        assert!(texte.contains("Première garde."), "{texte}");
+        assert!(texte.contains("Deuxième garde."), "{texte}");
+        assert!(
+            !texte.lines().any(|ligne| ligne.trim() == "1"),
+            "aucune garde ne porte le numéro 1 : {texte}"
+        );
+    }
+}
+
+/// La page de titre des normes ne prend pas de numéro : le compteur repart
+/// à 1 pour le corps, et le titre reste hors de la table des matières.
+#[cfg(test)]
+mod page_de_titre_sans_numero {
+    #[test]
+    fn le_titre_des_normes_est_hors_numerotation() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-titre-sans-numero-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            page_de_titre: true,
+            sommaire: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n";
+        let (entry, corrections) =
+            super::compilation_unit(&root, main, "# Introduction\n\nLe corps.\n");
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        let document = outcome.document.expect("document");
+        let pdf = crate::typst::render::pdf_du_document(&document).expect("PDF");
+        std::fs::write(root.join("sortie.pdf"), &pdf).expect("PDF sur disque");
+
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg("-f")
+            .arg("1")
+            .arg("-l")
+            .arg("1")
+            .arg(root.join("sortie.pdf"))
+            .arg("-")
+            .output()
+        else {
+            eprintln!("pdftotext absent — épreuve du texte sautée");
+            return;
+        };
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+        assert!(
+            !texte.lines().any(|ligne| ligne.trim() == "1"),
+            "la page de titre ne porte pas de numéro : {texte}"
         );
     }
 }

@@ -105,6 +105,10 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
             .label("4. Exporter — PDF, Markdown ou DOCX.")
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
+        palette
+            .label("5. En cas d'accident, Aide → Restaurer une version.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
     ]
     .spacing(6);
 
@@ -148,10 +152,10 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         row![
             button(
                 palette
-                    .label("Ouvrir la corbeille")
+                    .label("Corbeille et suppressions…")
                     .size(theme::jetons::DETAIL)
             )
-            .on_press(Message::OuvrirCorbeille)
+            .on_press(Message::CorbeilleOuvrir)
             .padding([4, 10]),
             button(
                 palette
@@ -159,6 +163,13 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
                     .size(theme::jetons::DETAIL)
             )
             .on_press(Message::OuvrirSauvegardes)
+            .padding([4, 10]),
+            button(
+                palette
+                    .label("Restaurer une version…")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::RestaurationOuvrir)
             .padding([4, 10]),
         ]
         .spacing(8),

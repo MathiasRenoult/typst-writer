@@ -84,6 +84,11 @@ garde avec le projet ; elle remplace alors la première page.
 fichier `.typ` existant dans le projet — pour une migration, ou pour un
 chapitre hérité. Voir [Les fichiers](fichiers.md).
 
+Dans le panneau gauche, **Chapitres** propose le document entier ou une tête
+de niveau 1 ; la vue par chapitre ne montre que ses pages, et le sommaire se
+réduit à ses têtes. Le document reste entier dans l'éditeur : la vue de
+chapitre ne réécrit jamais `document.tw`.
+
 ## En cas de doute
 
 `Échap` ferme toujours ce qui s'est ouvert en dernier. Les fenêtres —

@@ -12,6 +12,17 @@ use std::path::{Path, PathBuf};
 /// Le manifeste placé dans chaque archive : l'inventaire du projet exporté.
 pub const MANIFESTE: &str = "manifeste.json";
 
+/// Une version biblique jointe à l'archive, avec son empreinte.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VersionArchivee {
+    /// L'identifiant de citation de la version.
+    pub code: String,
+    /// Son chemin dans l'archive.
+    pub fichier: String,
+    /// L'empreinte stable du fichier, pour refuser une archive abîmée.
+    pub empreinte: u64,
+}
+
 /// Ce que le projet porte en lui, catégorie par catégorie.
 ///
 /// Les chemins sont relatifs à la racine du projet, avec des `/` partout :
@@ -30,6 +41,9 @@ pub struct Inventaire {
     pub ressources: Vec<String>,
     /// Référencés par la source mais absents du projet : dits, pas perdus.
     pub manquantes: Vec<String>,
+    /// Les versions bibliques explicitement jointes à l'archive.
+    #[serde(default)]
+    pub bibles: Vec<VersionArchivee>,
 }
 
 impl Inventaire {
@@ -149,11 +163,53 @@ pub fn inventaire_projet(dir: &Path) -> Result<Inventaire, String> {
 
 /// Exporte un projet vers une archive unique, manifeste compris.
 pub fn exporter_projet(dir: &Path, cible: &Path) -> Result<Inventaire, String> {
-    let inventaire = inventaire_projet(dir)?;
+    exporter_projet_avec_versions(dir, cible, &[])
+}
+
+/// Exporte un projet en joignant explicitement des versions bibliques.
+///
+/// Les textes sont copiés dans l'archive sous `versions-bibliques/`, avec
+/// leur empreinte dans le manifeste. Cette inclusion n'est jamais
+/// silencieuse : l'interface demande d'abord si l'auteur veut transporter
+/// les textes dont il détient les droits.
+pub fn exporter_projet_avec_versions(
+    dir: &Path,
+    cible: &Path,
+    codes: &[String],
+) -> Result<Inventaire, String> {
+    let mut inventaire = inventaire_projet(dir)?;
     if inventaire.sources.is_empty() {
         return Err("Un projet sans source ne s'exporte pas : il n'y a rien à porter.".into());
     }
 
+    let mut bibles = Vec::new();
+    for code in codes {
+        let Some(chemin) = crate::langage::versions::chemin_de(code) else {
+            return Err(format!(
+                "La version biblique « {code} » n'est plus installée : l'archive n'est pas écrite."
+            ));
+        };
+        let octets = std::fs::read(&chemin)
+            .map_err(|e| format!("{} ne se lit pas : {e}.", chemin.display()))?;
+        let fichier = format!("versions-bibliques/{code}.json");
+        inventaire.bibles.push(VersionArchivee {
+            code: code.clone(),
+            fichier: fichier.clone(),
+            empreinte: crate::project::empreinte_stable(&octets),
+        });
+        bibles.push((fichier, octets));
+    }
+
+    ecrire_archive(dir, cible, &inventaire, &bibles)
+}
+
+/// Écrit l'archive à partir d'un inventaire déjà calculé.
+fn ecrire_archive(
+    dir: &Path,
+    cible: &Path,
+    inventaire: &Inventaire,
+    bibles: &[(String, Vec<u8>)],
+) -> Result<Inventaire, String> {
     let fichier = std::fs::File::create(cible).map_err(|e| {
         format!(
             "L'archive {} ne peut pas être créée : {e}.",
@@ -193,13 +249,21 @@ pub fn exporter_projet(dir: &Path, cible: &Path) -> Result<Inventaire, String> {
             .map_err(|e| format!("{relatif} ne s'écrit pas : {e}."))?;
     }
 
+    for (relatif, octets) in bibles {
+        archive
+            .start_file(relatif, options)
+            .map_err(|e| format!("{relatif} ne s'ouvre pas dans l'archive : {e}."))?;
+        archive
+            .write_all(octets)
+            .map_err(|e| format!("{relatif} ne s'écrit pas : {e}."))?;
+    }
+
     archive
         .finish()
         .map_err(|e| format!("L'archive ne se termine pas : {e}."))?;
-    Ok(inventaire)
+    Ok(inventaire.clone())
 }
 
-/// Lit le manifeste d'une archive sans rien extraire.
 /// Ce que l'import a à dire — produit hors du thread de l'interface,
 /// porté par un message (feuille de route, phase 1, cartographie, geste 4).
 #[derive(Debug, Clone)]
@@ -209,8 +273,15 @@ pub enum SortieImport {
     /// L'import a échoué : le mot à montrer.
     Erreur(String),
 }
+
+/// Lit le manifeste d'une archive sans rien extraire.
 pub fn lire_manifeste(archive: &Path) -> Result<Manifeste, String> {
     let mut zip = ouvrir_archive(archive)?;
+    lire_manifeste_dans(&mut zip)
+}
+
+/// Le manifeste, dans une archive déjà ouverte.
+fn lire_manifeste_dans(zip: &mut zip::ZipArchive<std::fs::File>) -> Result<Manifeste, String> {
     let mut entree = zip.by_name(MANIFESTE).map_err(|_| {
         "Cette archive ne porte pas de manifeste : ce n'est pas une sauvegarde de projet."
             .to_string()
@@ -220,6 +291,55 @@ pub fn lire_manifeste(archive: &Path) -> Result<Manifeste, String> {
         .read_to_end(&mut jeton)
         .map_err(|e| format!("Le manifeste ne se lit pas : {e}."))?;
     serde_json::from_slice(&jeton).map_err(|e| format!("Le manifeste est illisible : {e}."))
+}
+
+/// Restaure les versions bibliques jointes à une archive.
+///
+/// Tout est lu et vérifié en mémoire avant la première installation : une
+/// archive incomplète ou une empreinte qui ne correspond pas ne laisse donc
+/// pas une version à moitié installée. Le retour dit combien de versions
+/// ont rejoint le registre local.
+pub fn restaurer_versions(archive: &Path) -> Result<usize, String> {
+    let mut zip = ouvrir_archive(archive)?;
+    let manifeste = lire_manifeste_dans(&mut zip)?;
+    if manifeste.inventaire.bibles.is_empty() {
+        return Ok(0);
+    }
+    let mut contenu = Vec::new();
+    for version in &manifeste.inventaire.bibles {
+        if !chemin_confinable(&version.fichier) {
+            return Err(format!(
+                "{} : un chemin de version ne peut pas sortir de l'archive.",
+                version.fichier
+            ));
+        }
+        let mut entree = zip
+            .by_name(&version.fichier)
+            .map_err(|e| format!("{} manque dans l'archive : {e}.", version.fichier))?;
+        let mut octets = Vec::new();
+        entree
+            .read_to_end(&mut octets)
+            .map_err(|e| format!("{} ne se lit pas : {e}.", version.fichier))?;
+        let empreinte = crate::project::empreinte_stable(&octets);
+        if empreinte != version.empreinte {
+            return Err(format!(
+                "{} a été abîmé dans l'archive : l'empreinte ne correspond pas.",
+                version.fichier
+            ));
+        }
+        let relue = crate::langage::versions::VersionBiblique::depuis_octets(&octets)
+            .map_err(|e| format!("{} est invalide : {e}.", version.fichier))?;
+        if relue.id != version.code {
+            return Err(format!(
+                "{} annonce « {} » mais contient « {} ».",
+                version.fichier, version.code, relue.id
+            ));
+        }
+        contenu.push((relue, octets));
+    }
+
+    crate::langage::versions::installer_lot(&contenu)?;
+    Ok(contenu.len())
 }
 
 /// Importe une sauvegarde à la destination, sans jamais écraser sans choix.
@@ -236,18 +356,7 @@ pub type Preparation = (Vec<(String, Vec<u8>)>, Vec<String>);
 /// l'interface (feuille de route, phase 1, cartographie, geste 4).
 pub fn preparer_import(archive: &Path, destination: &Path) -> Result<Preparation, ErreurImport> {
     let mut zip = ouvrir_archive(archive)?;
-    let manifeste = {
-        let mut entree = zip.by_name(MANIFESTE).map_err(|_| {
-            "Cette archive ne porte pas de manifeste : ce n'est pas une sauvegarde de projet."
-                .to_string()
-        })?;
-        let mut jeton = Vec::new();
-        entree
-            .read_to_end(&mut jeton)
-            .map_err(|e| format!("Le manifeste ne se lit pas : {e}."))?;
-        serde_json::from_slice::<Manifeste>(&jeton)
-            .map_err(|e| format!("Le manifeste est illisible : {e}."))?
-    };
+    let manifeste = lire_manifeste_dans(&mut zip)?;
 
     // Ce que l'archive porte, en mémoire d'abord — et aucun chemin ne sort
     // jamais de la destination : ni `..`, ni absolu, ni traversée par un
@@ -460,7 +569,7 @@ fn appels_de_la_source(texte: &str) -> Vec<String> {
 ///
 /// Les verrous, les sauvegardes antérieures et les temporaires sont de la
 /// machine, pas du projet.
-fn fichiers_du_projet(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+pub(crate) fn fichiers_du_projet(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let mut trouves = Vec::new();
     let mut dossiers = vec![(String::new(), dir.to_path_buf())];
 

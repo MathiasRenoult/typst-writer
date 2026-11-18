@@ -10,12 +10,133 @@
 //! Tout ici est pur : la recherche ne touche ni à l'éditeur, ni à l'écran.
 
 use regex::Regex;
+use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
+/// Une occurrence trouvée dans un fichier du projet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultatProjet {
+    /// Le chemin relatif, avec des `/`.
+    pub chemin: String,
+    /// Le numéro de ligne, à partir de 1.
+    pub ligne: usize,
+    /// La colonne, à partir de 1 (en caractères).
+    pub colonne: usize,
+    /// La ligne, sans indentation excessive.
+    pub extrait: String,
+    /// Le début et la fin de l'occurrence, en octets dans le fichier.
+    pub debut: usize,
+    pub fin: usize,
+}
+
+/// Cherche dans tous les `.tw` et `.typ` d'un projet.
+///
+/// La recherche est volontairement limitée aux sources : les images, les
+/// archives et les sauvegardes ne sont pas du texte à remplacer. Les
+/// résultats sont ordonnés par chemin puis par position.
+#[cfg(test)]
+pub fn chercher_dans_projet(
+    dossier: &Path,
+    mode_regex: bool,
+    motif: &str,
+) -> Result<Vec<ResultatProjet>, String> {
+    chercher_dans_projet_avec(dossier, mode_regex, motif, None)
+}
+
+/// La recherche projet qui peut être annulée : le jeton est relu avant
+/// chaque fichier, et un scan périmé s'arrête au lieu de continuer pour rien.
+pub fn chercher_dans_projet_annulable(
+    dossier: &Path,
+    mode_regex: bool,
+    motif: &str,
+    jeton: &AtomicU64,
+    generation: u64,
+) -> Result<Vec<ResultatProjet>, String> {
+    chercher_dans_projet_avec(dossier, mode_regex, motif, Some((jeton, generation)))
+}
+
+fn chercher_dans_projet_avec(
+    dossier: &Path,
+    mode_regex: bool,
+    motif: &str,
+    controle: Option<(&AtomicU64, u64)>,
+) -> Result<Vec<ResultatProjet>, String> {
+    if motif.is_empty() {
+        return Ok(Vec::new());
+    }
+    let regex = Regex::new(&motif_effectif(mode_regex, motif))
+        .map_err(|erreur| format!("motif : {erreur}"))?;
+
+    let mut fichiers: Vec<_> = crate::project::portable::fichiers_du_projet(dossier)?
+        .into_iter()
+        .filter(|(relatif, _)| {
+            matches!(
+                std::path::Path::new(relatif)
+                    .extension()
+                    .and_then(|extension| extension.to_str()),
+                Some("tw" | "typ")
+            )
+        })
+        .collect();
+    fichiers.sort();
+
+    let mut resultats = Vec::new();
+    for (relatif, chemin) in fichiers {
+        if let Some((jeton, generation)) = controle
+            && jeton.load(Ordering::Relaxed) != generation
+        {
+            break;
+        }
+        let Ok(texte) = std::fs::read_to_string(&chemin) else {
+            continue;
+        };
+        let mut debut_de_ligne = 0;
+        for (numero, brute) in texte.split_inclusive('\n').enumerate() {
+            let ligne = brute.strip_suffix('\n').unwrap_or(brute);
+            let ligne = ligne.strip_suffix('\r').unwrap_or(ligne);
+            for trouve in regex.find_iter(ligne) {
+                let extrait = ligne.trim();
+                resultats.push(ResultatProjet {
+                    chemin: relatif.clone(),
+                    ligne: numero + 1,
+                    colonne: ligne[..trouve.start()].chars().count() + 1,
+                    extrait: if extrait.chars().count() > 140 {
+                        format!("{}…", extrait.chars().take(140).collect::<String>())
+                    } else {
+                        extrait.to_string()
+                    },
+                    debut: debut_de_ligne + trouve.start(),
+                    fin: debut_de_ligne + trouve.end(),
+                });
+            }
+            debut_de_ligne += brute.len();
+        }
+    }
+    Ok(resultats)
+}
 
 /// Une recherche en cours : son motif, son remplacement, ses trouvailles.
 #[derive(Debug, Default, Clone)]
 pub struct Recherche {
     /// Le motif — expression régulière ou texte littéral.
     pub motif: String,
+
+    /// La portée : `true` = tout le projet, `false` = document courant.
+    pub portee_projet: bool,
+
+    /// Les résultats de la recherche dans le projet.
+    pub resultats_projet: Vec<ResultatProjet>,
+
+    /// La génération de la recherche projet : seule la dernière réponse
+    /// connue a le droit de remplacer la liste.
+    pub generation: u64,
+
+    /// Le jeton d'annulation partagé avec la tâche de recherche : incrémenté
+    /// à chaque frappe ou fermeture, il arrête un scan devenu inutile.
+    pub jeton: Arc<AtomicU64>,
 
     /// Le mode : `true` = expression régulière, `false` = littéral.
     pub mode_regex: bool,
@@ -142,6 +263,53 @@ pub fn remplacer_tout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// La recherche projet parcourt les sources, pas les images, et donne
+    /// des positions utilisables par l'éditeur.
+    #[test]
+    fn la_recherche_projet_trouve_les_sources_et_leur_position() {
+        let dir = std::env::temp_dir().join(format!(
+            "typst-writer-recherche-projet-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
+        std::fs::write(dir.join("document.tw"), "# Un titre\n\nLe mot important.\n").unwrap();
+        std::fs::write(
+            dir.join("chapitres/01-suite.typ"),
+            "Encore le mot, puis rien.\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("image.png"), b"MOT").unwrap();
+
+        let resultats = chercher_dans_projet(&dir, false, "mot").unwrap();
+        assert_eq!(resultats.len(), 2, "{resultats:?}");
+        assert_eq!(resultats[0].chemin, "chapitres/01-suite.typ");
+        assert_eq!(resultats[0].ligne, 1);
+        assert_eq!(resultats[0].colonne, 11);
+        assert_eq!(resultats[1].chemin, "document.tw");
+        assert_eq!(resultats[1].ligne, 3);
+        assert_eq!(resultats[1].colonne, 4);
+        assert!(
+            resultats[1].debut > 0 && resultats[1].fin > resultats[1].debut,
+            "les décalages restent utilisables"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un motif régulier invalide est dit, pas avalé.
+    #[test]
+    fn un_motif_de_projet_invalide_se_dit() {
+        let dir = std::env::temp_dir().join(format!(
+            "typst-writer-recherche-projet-invalide-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(chercher_dans_projet(&dir, true, "(").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Les occurrences se trouvent, en octets — la monnaie de l'éditeur.
     #[test]

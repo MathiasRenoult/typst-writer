@@ -97,10 +97,55 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // pas dans le panneau. Le sommaire commence directement.
     content = content.push(Space::new().height(2));
 
+    // Les chapitres du document : la tête de niveau 1 est la frontière.
+    // La liste reste complète même quand la vue n'en montre qu'un ; c'est
+    // elle qui règle la tranche, et le sommaire qui la suit.
+    if state.project.document.is_some() && !state.render.chapitres.is_empty() {
+        content = content.push(section_header(
+            "Chapitres",
+            state.chapitres_replie,
+            Message::ChapitresReplier,
+            palette,
+        ));
+
+        if !state.chapitres_replie {
+            content = content.push(chapitre_ligne(
+                None,
+                "Document entier",
+                None,
+                None,
+                state.render.chapitre.is_none(),
+                palette,
+            ));
+
+            for chapitre in &state.render.chapitres {
+                content = content.push(chapitre_ligne(
+                    Some(chapitre.index),
+                    &chapitre.titre,
+                    Some(chapitre.index + 1),
+                    chapitre.pages_connues.then(|| chapitre.pages()),
+                    state
+                        .render
+                        .chapitre
+                        .as_ref()
+                        .is_some_and(|actif| actif.index == chapitre.index),
+                    palette,
+                ));
+            }
+
+            content = content.push(Space::new().height(10));
+        }
+    }
+
     // SIDEBAR-06-02 : le sommaire est le premier élément du panneau.
     if !state.render.outline.is_empty() {
+        let titre_sommaire = if state.render.chapitre.is_some() {
+            "Sommaire du chapitre"
+        } else {
+            "Sommaire"
+        };
         content = content.push(section_header(
-            "Sommaire",
+            titre_sommaire,
             state.sommaire_replie,
             Message::SommaireReplier,
             palette,
@@ -111,28 +156,34 @@ pub fn view(state: &State) -> Element<'_, Message> {
             // sa place sans laisser un grand vide.
         } else {
             let mut sommaire = column![].spacing(0);
-            let niveaux: Vec<usize> = state
-                .render
-                .outline
+
+            // En vue de chapitre, le sommaire ne garde que ses têtes ; les
+            // index restent ceux du sommaire complet pour que le clic vise
+            // toujours la bonne destination.
+            let visibles = crate::app::chapitres::filtrer_outline(
+                &state.render.outline,
+                state.render.chapitre.as_ref(),
+            );
+            let niveaux: Vec<usize> = visibles
                 .iter()
-                .map(|entree| entree.level.saturating_sub(1))
+                .map(|(_, entree)| entree.level.saturating_sub(1))
                 .collect();
 
-            for (index, entry) in state.render.outline.iter().enumerate() {
-                let level = niveaux[index];
+            for (rang, (index, entry)) in visibles.iter().copied().enumerate() {
+                let level = niveaux[rang];
                 // La coude ne descend jusqu'au bas de la rangée que si
                 // l'entrée suivante est **son enfant**. Une feuille suivie
                 // d'une sœur n'a personne à rejoindre : son trait s'arrête au
                 // milieu, sinon il laisse un moignon au bord de la rangée et
                 // la ligne paraît coupée.
-                let est_dernier = !a_un_enfant(&niveaux, index);
+                let est_dernier = !a_un_enfant(&niveaux, rang);
 
                 // Les guides des ancêtres : un trait vertical là où la branche
                 // continue en dessous, rien là où elle s'achève. Les **traits**,
                 // pas les glyphes de boîte — dans une police proportionnelle
                 // ils dérivent, et la liste partait en diagonale
                 // (bug-report-7, point 13).
-                let guides = guides_du_sommaire(&niveaux, index);
+                let guides = guides_du_sommaire(&niveaux, rang);
 
                 // Du **texte cliquable**, pas un bouton : les boutons
                 // s'espacent entre eux et la hiérarchie part en escalier. Les
@@ -263,6 +314,61 @@ pub fn view(state: &State) -> Element<'_, Message> {
             }
             content = content.push(Space::new().height(8));
         }
+    }
+
+    // Les erreurs de compilation sont visibles même quand l'aperçu est fermé.
+    // Un clic les ouvre à leur position dans la source.
+    if !state.render.errors.is_empty() {
+        content = content.push(separation(palette));
+        content = content.push(Space::new().height(8));
+        content = content.push(
+            palette
+                .label(format!(
+                    "{} erreur(s) de compilation",
+                    state.render.errors.len()
+                ))
+                .size(theme::jetons::CORPS)
+                .color(palette.danger),
+        );
+        for erreur in state.render.errors.iter().take(4) {
+            let ici = erreur.concerne(state.editor.path.as_deref());
+            let position = erreur.line.zip(erreur.column);
+            let libelle = match &erreur.file {
+                Some(fichier) if !ici => format!(
+                    "{} — {}",
+                    crate::ui::preview::file_name(fichier),
+                    erreur.message.trim()
+                ),
+                _ => erreur.message.trim().to_string(),
+            };
+            let bouton = button(
+                palette
+                    .label(libelle)
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
+            )
+            .padding([1, 0])
+            .width(Length::Fill)
+            .style(button::text);
+            let bouton = if ici {
+                match position {
+                    Some((ligne, colonne)) => bouton.on_press(Message::GotoError(ligne, colonne)),
+                    None => bouton,
+                }
+            } else {
+                bouton
+            };
+            content = content.push(bouton);
+        }
+        if state.render.errors.len() > 4 {
+            content = content.push(
+                palette
+                    .label(format!("… et {} autre(s)", state.render.errors.len() - 4))
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
+            );
+        }
+        content = content.push(Space::new().height(8));
     }
 
     // LEFT-04-02 : la section « Document » est supprimée — le nom du
@@ -400,6 +506,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 palette,
                 false,
             ));
+            gestes = gestes.push(stat_icon(
+                lucide_icons::iced::icon_file_plus::<Theme>(),
+                "Enregistrer un modèle JSON",
+                Message::BibleVersionModele,
+                palette,
+                false,
+            ));
             content = content.push(gestes);
             content = content.push(
                 palette
@@ -407,6 +520,86 @@ pub fn view(state: &State) -> Element<'_, Message> {
                     .size(theme::jetons::DETAIL)
                     .color(palette.text_muted),
             );
+
+            let versions: Vec<_> = crate::plugins::bible::Traduction::toutes()
+                .into_iter()
+                .filter_map(|traduction| match traduction {
+                    crate::plugins::bible::Traduction::Externe(index) => Some((traduction, index)),
+                    _ => None,
+                })
+                .collect();
+            if !versions.is_empty() {
+                content = content.push(Space::new().height(8));
+                content = content.push(
+                    row![
+                        palette
+                            .label("Versions ajoutées")
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted),
+                        Space::new().width(Length::Fill),
+                        button(
+                            palette
+                                .label("Dossier")
+                                .size(theme::jetons::CHAPEAU)
+                                .color(palette.accent),
+                        )
+                        .on_press(Message::BibleVersionDossier)
+                        .padding([2, 4])
+                        .style(button::text),
+                    ]
+                    .align_y(Alignment::Center),
+                );
+                for (traduction, index) in versions {
+                    let Some(resume) = crate::langage::versions::resume(index) else {
+                        continue;
+                    };
+                    let source = resume.source;
+                    let mut ligne = column![].spacing(1);
+                    ligne = ligne.push(
+                        row![
+                            button(
+                                palette
+                                    .label(traduction.libelle())
+                                    .size(theme::jetons::DETAIL),
+                            )
+                            .on_press(Message::BibleTraduction(traduction))
+                            .padding([2, 0])
+                            .width(Length::Fill)
+                            .style(button::text),
+                            palette
+                                .label(format!(
+                                    "{} livres · {} ch.",
+                                    resume.livres, resume.chapitres
+                                ))
+                                .size(theme::jetons::CHAPEAU)
+                                .color(palette.text_muted),
+                            icon_action(
+                                lucide_icons::iced::icon_trash_2::<Theme>(),
+                                "Supprimer cette version",
+                                Message::BibleVersionSupprimer(traduction.code()),
+                                palette,
+                            ),
+                            icon_action(
+                                lucide_icons::iced::icon_download::<Theme>(),
+                                "Exporter le fichier JSON",
+                                Message::BibleVersionExporter(traduction.code()),
+                                palette,
+                            ),
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center),
+                    );
+                    if !source.trim().is_empty() {
+                        ligne = ligne.push(
+                            palette
+                                .label(format!("Source : {}", source.trim()))
+                                .size(theme::jetons::CHAPEAU)
+                                .color(palette.text_muted),
+                        );
+                    }
+                    content = content.push(ligne);
+                }
+            }
             if state.plugins.bible.recherche_active {
                 content = content.push(
                     text_input("Chercher une référence", &state.plugins.bible.recherche)
@@ -440,9 +633,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
 
         // Les gestes de la bibliographie, **en icônes** (bug-report
-        // 2026-11-03) : création, import, recherche — et le lien Zotero
-        // rejoint la rangée. Les gestes d'insertion (note, figure, étiquette,
-        // renvoi) sont retirés : ils ne servaient à rien ici.
+        // 2026-11-03) : création, import, recherche. Le lien Zotero a sa
+        // propre ligne, nommée, pour être visible sans survol.
         let mut gestes = row![].spacing(2).align_y(Alignment::Center);
         if state.project.bibliography.is_none() {
             gestes = gestes.push(tooltip(
@@ -488,21 +680,33 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .size(theme::jetons::DETAIL),
             tooltip::Position::Bottom,
         ));
-        if state.zotero.source == crate::zotero::Source::Locale {
-            gestes = gestes.push(tooltip(
-                button(theme::icon(
-                    lucide_icons::iced::icon_link::<Theme>(),
-                    13.0,
-                    palette.text,
-                ))
-                .on_press(Message::ZoteroLierOuvrir)
-                .padding([4, 6])
-                .style(move |t, status| entry_style(t, status, palette, false)),
-                palette.label("Lier à Zotero…").size(theme::jetons::DETAIL),
-                tooltip::Position::Bottom,
-            ));
-        }
         content = content.push(gestes);
+        if state.zotero.source == crate::zotero::Source::Locale {
+            // Le lien ne se cache plus derrière une icône : « ajouter une
+            // collection » doit se voir, même quand la bibliographie locale
+            // est déjà ouverte.
+            content = content.push(Space::new().height(6));
+            content = content.push(
+                button(
+                    row![
+                        theme::icon(
+                            lucide_icons::iced::icon_link::<Theme>(),
+                            11.0,
+                            palette.text_muted,
+                        ),
+                        palette
+                            .label("Lier une collection Zotero…")
+                            .size(theme::jetons::CORPS),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::ZoteroLierOuvrir)
+                .padding([4, 8])
+                .width(Fill)
+                .style(move |t, status| entry_style(t, status, palette, false)),
+            );
+        }
 
         // La dernière notice supprimée se ravise d'un geste : sa copie est à
         // la corbeille, et c'est elle qu'on remet.
@@ -555,40 +759,54 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
 
         // Un projet lié vit de sa collection : on le voit, et on peut s'en
-        // dédire. Sinon, la liaison se propose — pour une bibliothèque locale
-        // seulement, car une notice Zotero déjà pointée n'a pas de deuxième chef.
+        // dédire ou en choisir une autre. Les deux gestes sont sur leur propre
+        // rangée pour rester lisibles dans un panneau étroit.
         if let Some(lien) = state.project.zotero.as_ref() {
             content = content.push(Space::new().height(6));
             content = content.push(
-                row![
-                    theme::icon(
-                        lucide_icons::iced::icon_book::<Theme>(),
-                        11.0,
-                        palette.success,
-                    ),
-                    palette
-                        .label(format!("Zotero · {}", lien.nom))
-                        .size(theme::jetons::CORPS),
-                    Space::new().width(Fill),
-                    button(
+                column![
+                    row![
+                        theme::icon(
+                            lucide_icons::iced::icon_book::<Theme>(),
+                            11.0,
+                            palette.success,
+                        ),
                         palette
-                            .label("Synchroniser")
-                            .size(theme::jetons::DETAIL)
-                            .color(palette.text_muted)
-                    )
-                    .on_press(Message::ZoteroSynchroniser)
-                    .padding([4, 8]),
-                    button(
-                        palette
-                            .label("Délier")
-                            .size(theme::jetons::DETAIL)
-                            .color(palette.text_muted)
-                    )
-                    .on_press(Message::ZoteroDelier)
-                    .padding([4, 8]),
+                            .label(format!("Zotero · {}", lien.nom))
+                            .size(theme::jetons::CORPS),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                    row![
+                        button(
+                            palette
+                                .label("Synchroniser")
+                                .size(theme::jetons::DETAIL)
+                                .color(palette.text_muted)
+                        )
+                        .on_press(Message::ZoteroSynchroniser)
+                        .padding([4, 8]),
+                        button(
+                            palette
+                                .label("Changer…")
+                                .size(theme::jetons::DETAIL)
+                                .color(palette.text_muted)
+                        )
+                        .on_press(Message::ZoteroLierOuvrir)
+                        .padding([4, 8]),
+                        button(
+                            palette
+                                .label("Délier")
+                                .size(theme::jetons::DETAIL)
+                                .color(palette.text_muted)
+                        )
+                        .on_press(Message::ZoteroDelier)
+                        .padding([4, 8]),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
                 ]
-                .spacing(6)
-                .align_y(Alignment::Center),
+                .spacing(4),
             );
         }
         // Le lien Zotero s'est joint à la rangée de gestes (bug-report
@@ -600,7 +818,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
         if locale && !missing {
             content = content.push(Space::new().height(6));
-            content = content.push(
+
+            let mut gestes_locaux = row![
                 button(
                     row![
                         theme::icon(
@@ -618,8 +837,37 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .on_press(Message::EditionReferenceNouveau)
                 .padding([4, 8])
                 .width(Fill)
-                .style(move |t, status| entry_style(t, status, palette, false)),
-            );
+                .style(move |t, status| entry_style(t, status, palette, false))
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center);
+
+            // Le geste destructeur est nommé, pas caché dans une icône : la
+            // confirmation et la copie de la corbeille restent la sécurité.
+            if !state.bibliography.is_empty() {
+                gestes_locaux = gestes_locaux.push(
+                    button(
+                        row![
+                            theme::icon(
+                                lucide_icons::iced::icon_list_x::<Theme>(),
+                                11.0,
+                                palette.danger,
+                            ),
+                            palette
+                                .label("Tout supprimer")
+                                .size(theme::jetons::CORPS)
+                                .color(palette.danger),
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::Center),
+                    )
+                    .on_press(Message::ReferencesSupprimerTout)
+                    .padding([4, 8])
+                    .style(move |t, status| entry_style(t, status, palette, false)),
+                );
+            }
+
+            content = content.push(gestes_locaux);
         }
 
         // Les clés citables, quand la bibliographie en contient : un clic insère
@@ -959,6 +1207,73 @@ pub fn view(state: &State) -> Element<'_, Message> {
     sortie
 }
 
+/// Une ligne du sélecteur de chapitre : le document entier, ou une tête
+/// de niveau 1. La ligne active porte la bordure d'accent, comme une entrée
+/// de liste sélectionnée.
+fn chapitre_ligne<'a>(
+    index: Option<usize>,
+    titre: &'a str,
+    numero: Option<usize>,
+    pages: Option<usize>,
+    actif: bool,
+    palette: Palette,
+) -> Element<'a, Message> {
+    let icone = if index.is_some() {
+        lucide_icons::iced::icon_file_text::<Theme>()
+    } else {
+        lucide_icons::iced::icon_book_open::<Theme>()
+    };
+
+    let mut ligne = row![].spacing(6).align_y(Alignment::Center);
+
+    if let Some(numero) = numero {
+        ligne = ligne.push(
+            palette
+                .label(format!("{numero:02}"))
+                .size(theme::jetons::CHAPEAU)
+                .color(if actif {
+                    palette.accent
+                } else {
+                    palette.text_muted
+                }),
+        );
+    }
+
+    ligne = ligne
+        .push(theme::icon(
+            icone,
+            13.0,
+            if actif {
+                palette.accent
+            } else {
+                palette.text_muted
+            },
+        ))
+        .push(
+            palette
+                .label(tronquer(titre, 42))
+                .size(theme::jetons::CORPS)
+                .color(if actif { palette.accent } else { palette.text }),
+        );
+
+    if let Some(pages) = pages {
+        ligne = ligne.push(Space::new().width(Fill)).push(
+            palette
+                .label(format!("{pages} p."))
+                .size(theme::jetons::CHAPEAU)
+                .color(palette.text_muted),
+        );
+    }
+
+    button(ligne)
+        .on_press(Message::ChapitreChoisir(index))
+        .width(Fill)
+        .height(Length::Fixed(ENTRY_HEIGHT))
+        .padding([4, 8])
+        .style(move |t, status| entry_style(t, status, palette, actif))
+        .into()
+}
+
 /// Une ligne de chapitre : son numéro, son titre, son compte de mots, et de
 /// quoi le renommer ou le supprimer.
 ///
@@ -1148,9 +1463,10 @@ fn reference_cliquee_section<'a>(
     for (index, element) in cliquee.elements.iter().enumerate() {
         match element {
             crate::plugins::bible::ElementCitation::Reference(reference) => {
-                let livre = crate::langage::references::nom_du_livre(
+                let livre = crate::langage::references::nom_du_livre_dans(
                     &reference.livre,
                     crate::langage::references::FormeLivre::FrancaiseLongue,
+                    reference.traduction,
                 );
                 let nombres = crate::langage::references::afficher_nombres(
                     reference,
@@ -1476,9 +1792,16 @@ fn citation_row<'a>(
         );
     }
 
-    // Les gestes — éditer, supprimer — ne paraissent qu'au survol : une
-    // liste de références est un texte à lire, pas une barre d'outils
-    // (bug 13 du rapport 2).
+    // Les gestes restent visibles : une rangée d'actions qui apparaît sous
+    // le pointeur change la mise en page sous le curseur, et l'entrée se
+    // referme aussitôt (le survol était perdu avant le clic). Une couleur
+    // discrète les laisse au second plan sans les faire disparaître.
+    let couleur_action = if survolee {
+        palette.text
+    } else {
+        palette.text_muted
+    };
+
     let mut ligne = row![
         button(registres)
             .on_press(Message::InsertCitation(entry.key.clone()))
@@ -1489,29 +1812,27 @@ fn citation_row<'a>(
     .spacing(2)
     .align_y(Alignment::Center);
 
-    if survolee {
-        ligne = ligne.push(
-            button(theme::icon(
-                lucide_icons::iced::icon_pencil::<Theme>(),
-                12.0,
-                palette.text_muted,
-            ))
-            .on_press(Message::ModifierReference(entry.key.clone()))
-            .padding(6)
-            .style(move |t, status| entry_style(t, status, palette, false)),
-        );
+    ligne = ligne.push(
+        button(theme::icon(
+            lucide_icons::iced::icon_pencil::<Theme>(),
+            12.0,
+            couleur_action,
+        ))
+        .on_press(Message::ModifierReference(entry.key.clone()))
+        .padding(6)
+        .style(move |t, status| entry_style(t, status, palette, false)),
+    );
 
-        ligne = ligne.push(
-            button(theme::icon(
-                lucide_icons::iced::icon_trash_2::<Theme>(),
-                12.0,
-                palette.danger,
-            ))
-            .on_press(Message::ReferenceSupprimer(entry.key.clone()))
-            .padding(6)
-            .style(move |t, status| entry_style(t, status, palette, false)),
-        );
-    }
+    ligne = ligne.push(
+        button(theme::icon(
+            lucide_icons::iced::icon_trash_2::<Theme>(),
+            12.0,
+            palette.danger,
+        ))
+        .on_press(Message::ReferenceSupprimer(entry.key.clone()))
+        .padding(6)
+        .style(move |t, status| entry_style(t, status, palette, false)),
+    );
 
     let ligne = mouse_area(ligne)
         .on_enter(Message::SurvolReference(Some(entry.key.clone())))

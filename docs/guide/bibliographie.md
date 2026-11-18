@@ -5,7 +5,13 @@
 Le panneau de gauche liste les références de la bibliographie — par
 **auteur et par titre**, jamais par clé — séparées par un filet, l'auteur
 au premier registre, l'ouvrage au second. Un clic sur la ligne insère
-`@cle` au curseur.
+`@cle` au curseur. Le crayon et la corbeille de chaque ligne restent
+visibles : ils ne disparaissent plus au survol.
+
+Un geste rapide est à portée de main : le bouton **Tout supprimer**, sous
+**Nouvelle référence**, vide la bibliothèque locale d'un seul geste, après
+confirmation ; le fichier complet part à la corbeille, et les commentaires
+du `.bib` restent en place.
 
 ## La fiche de référence
 
@@ -30,10 +36,16 @@ d'être acceptée.
 
 ## Lier un projet à Zotero
 
-Le bouton « Lier à Zotero… » liste les **collections** de la bibliothèque
+Le bouton « Lier une collection Zotero… » liste les **collections** de la bibliothèque
 Zotero ouverte — leur nom, leur chemin (« Thèse / Chapitre 2 »), leur
 nombre de notices. Une collection choisie s'exporte dans le projet, et le
 bouton « Synchroniser » reprend l'export quand la collection bouge.
+
+Quand le projet est déjà lié, la ligne Zotero propose **Changer…** pour
+choisir une autre collection sans passer par une rupture, et **Délier**
+pour rompre le lien. Le nom de la collection reste affiché au-dessus des
+deux gestes. Changer de collection demande confirmation : les citations
+écrites depuis l'ancienne collection peuvent ne plus se résoudre.
 
 La liaison vit dans `zotero.json`, à côté du projet ; « Délier » la
 retire. Pour que la liaison trouve Zotero, l'application peut poser elle-

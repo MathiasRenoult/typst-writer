@@ -37,6 +37,8 @@ pub enum Message {
     OngletPoser,
     Editor(EditorMessage),
     Format(FormatAction),
+    /// Applique la dernière couleur choisie à la sélection.
+    FormatDerniereCouleur,
     /// Insère `#` × n + espace au curseur — Ctrl+1 à Ctrl+6.
     TitreInserer(u8),
 
@@ -66,6 +68,8 @@ pub enum Message {
 
     /// Une fonctionnalité du projet se branche dans les normes.
     ReglagesFonctionnalite(String, bool),
+    /// Bascule une fonctionnalité depuis une commande, et l'applique.
+    BasculerFonctionnalite(String),
 
     /// Ouvre un autre projet.
     OpenProject(PathBuf),
@@ -332,6 +336,20 @@ pub enum Message {
     BibleVersionImporter,
     /// Le fichier choisi, s'il y en a un.
     BibleVersionImported(Option<PathBuf>),
+    /// L'installation d'une version, hors du fil de l'interface.
+    BibleVersionInstallee(Result<crate::langage::versions::VersionBiblique, String>),
+    /// Ouvrir le dossier des versions bibliques ajoutées.
+    BibleVersionDossier,
+    /// Supprimer une version après confirmation (elle part à la corbeille).
+    BibleVersionSupprimer(String),
+    /// Copier le fichier JSON d'une version vers une destination choisie.
+    BibleVersionExporter(String),
+    /// Résultat de la copie d'une version ; `None` si le choix a été annulé.
+    BibleVersionExportee(Result<Option<String>, String>),
+    /// Enregistrer un modèle JSON de version.
+    BibleVersionModele,
+    /// Résultat de l'enregistrement du modèle ; `None` si annulé.
+    BibleVersionModeleEcrit(Result<Option<String>, String>),
     /// Ouvrir l'édition d'une référence de la consultation.
     BibleReferenceModifier(usize),
     BibleEditionLivre(usize),
@@ -360,7 +378,12 @@ pub enum Message {
     ImageInserer,
     ImageChoisie(Option<std::path::PathBuf>),
 
+    /// Supprime une notice de la bibliographie locale.
     ReferenceSupprimer(String),
+
+    /// Retire toutes les notices de la bibliographie locale, après
+    /// confirmation et copie dans la corbeille.
+    ReferencesSupprimerTout,
 
     /// Remet dans la bibliographie la notice que la corbeille a recueillie.
     ReferenceRestaurer(std::path::PathBuf),
@@ -434,6 +457,10 @@ pub enum Message {
     SommaireReplier,
     /// La section « Chapitres » se replie ou se déplie.
     ChapitresReplier,
+
+    /// Choisit la tranche affichée : `None` pour le document entier, sinon
+    /// l'index d'un chapitre dans `render.chapitres`.
+    ChapitreChoisir(Option<usize>),
     /// La section « Projets » du panneau se replie ou se déplie.
     ProjetsSectionReplier,
     /// La recherche des références se montre ou se cache.
@@ -555,6 +582,8 @@ pub enum Message {
     NoteAnnuler,
     ModeBasculer,
     ModeTypst,
+    /// Affiche ou masque les numéros de ligne de l'éditeur.
+    NumerosDeLigneBascule,
     /// Les couvertures dont la première page a changé, prêtes en arrière-plan.
     VignettesRafraichies(Vec<(String, Vec<u8>, u32, u32)>),
     /// Choix d'une image pour remplacer la miniature d'un projet.
@@ -605,6 +634,7 @@ pub enum Message {
     ProjetImportChoisi(Option<std::path::PathBuf>),
     /// L'import a reçu son mot : les collisions partent à la corbeille.
     ProjetImportConfirmer(std::path::PathBuf, std::path::PathBuf),
+    /// L'archive contient des versions bibliques : l'auteur confirme ses droits.
 
     /// La fin de l'import de sauvegarde, hors du thread de l'interface.
     ProjetImporte(crate::project::portable::SortieImport),
@@ -616,9 +646,16 @@ pub enum Message {
     /// Ouvre le dossier des données de l'application.
     OuvrirDossierDonnees,
     /// Ouvre la corbeille — ce qui a été retiré s'y retrouve.
-    OuvrirCorbeille,
     /// Ouvre les sauvegardes du projet — les versions antérieures.
     OuvrirSauvegardes,
+    /// Ouvre l'écran de restauration d'une version antérieure.
+    RestaurationOuvrir,
+    /// Ferme l'écran de restauration.
+    RestaurationFermer,
+    /// Choisit une copie dans l'écran de restauration.
+    RestaurationChoisir(usize),
+    /// Restaure la copie choisie après confirmation.
+    RestaurationRestaurer,
     /// Exporte le document courant en DOCX (LibreOffice, notes en texte).
     ExportDocx,
     /// La destination choisie pour le DOCX, `None` si annulé.
@@ -689,10 +726,32 @@ pub enum Message {
     /// Une couleur rapide s'applique tout de suite, la roue reste ouverte.
     PickerCouleurRapide(String),
 
+    /// Ouvrir la corbeille dans l'écran de récupération.
+    CorbeilleOuvrir,
+    /// Fermer l'écran de la corbeille.
+    CorbeilleFermer,
+    /// Choisir une entrée de la corbeille.
+    CorbeilleChoisir(usize),
+    /// Restaurer l'entrée choisie à son emplacement d'origine.
+    CorbeilleRestaurer,
+    /// Ouvrir le dossier de la corbeille dans le gestionnaire de fichiers.
+    CorbeilleDossier,
+
     RechercheFermer,
 
     RechercheMotif(String),
     RechercheBasculerMode,
+    RechercheBasculerPortee,
+    /// Ouvrir un résultat de recherche projet à sa position.
+    RechercheProjetOuvrir(String, usize, usize),
+    /// Les résultats d'une recherche projet, avec la génération demandée :
+    /// une réponse tardive ne remplace jamais la frappe courante, ni les
+    /// résultats d'un autre projet.
+    RechercheProjetResultats(
+        std::path::PathBuf,
+        u64,
+        Result<Vec<crate::app::recherche::ResultatProjet>, String>,
+    ),
 
     RechercheRemplacement(String),
 
@@ -882,6 +941,13 @@ impl Message {
             | Message::BibleTraduction(_)
             | Message::BibleVersionImporter
             | Message::BibleVersionImported(_)
+            | Message::BibleVersionInstallee(_)
+            | Message::BibleVersionDossier
+            | Message::BibleVersionSupprimer(_)
+            | Message::BibleVersionExporter(_)
+            | Message::BibleVersionExportee(_)
+            | Message::BibleVersionModele
+            | Message::BibleVersionModeleEcrit(_)
             | Message::BibleReferenceModifier(_)
             | Message::BibleEditionLivre(_)
             | Message::BibleEditionChapitre(_)
@@ -898,6 +964,7 @@ impl Message {
             | Message::BibliographieCreer
             | Message::BibImporte(_)
             | Message::ReferenceSupprimer(_)
+            | Message::ReferencesSupprimerTout
             | Message::ReferenceRestaurer(_)
             | Message::EditionReferenceChamp(_, _)
             | Message::EditionReferenceEnregistrer

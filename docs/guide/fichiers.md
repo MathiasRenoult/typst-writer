@@ -43,6 +43,13 @@ suppressions partent à la **corbeille** — les projets comme les thèmes —
 et un geste qui défait quelque chose **demande son mot** avant de partir :
 `Échap` est toujours « Annuler ».
 
+La corbeille se lit depuis **Aide → Corbeille et suppressions…** : chaque
+entrée montre sa date, sa taille et son emplacement d'origine. **Restaurer
+à l'emplacement d'origine** remet le fichier ou le dossier en place ; si
+l'emplacement est déjà occupé, rien n'est écrasé et l'entrée reste dans la
+corbeille. Le bouton **Dossier** ouvre la corbeille dans le gestionnaire de
+fichiers pour les cas plus anciens, dont l'origine n'est pas inscrite.
+
 Les projets se classent sur des **étagères** — glisser une carte de
 projet d'une étagère à l'autre. Une étagère peut rester vide : son nom et
 sa place vivent dans `etageres-ordre.json`, et les flèches de la galerie
@@ -70,21 +77,26 @@ imprime selon le style du projet. Le panneau Projets porte aussi :
   `^[…]` et citations `@clé[…]` y restent lisibles, quoique non
   standard ;
 - **Exporter en DOCX…** : par LibreOffice. Titres, tableaux, citations et
-  images y survivent ; **les notes deviennent du texte `[note: …]`** —
-  c'est la limite annoncée. Sans LibreOffice, le geste dit son remède
-  (installer LibreOffice, ou exporter en Markdown).
+  images y survivent ; **les notes deviennent du texte `[note: …]`** — une
+  confirmation le rappelle avant de choisir la destination. Sans LibreOffice,
+  le geste dit son remède (installer LibreOffice, ou exporter en Markdown).
 
 ## Faire voyager un projet
 
 **Exporter le projet (archive)…** écrit une archive unique : la source,
 les normes, les styles, les bibliographies et les ressources, avec un
 manifeste qui dit l'inventaire — et **ce qui manque déjà** (les images
-appelées mais absentes, par exemple).
+appelées mais absentes, par exemple). Si des versions bibliques sont
+installées, une question propose de les joindre : **Oui** les copie avec
+leur empreinte, **Non** laisse l'archive au projet seul. Les textes joints
+ne doivent être transportés que si vous détenez les droits.
 
 **Importer une sauvegarde…** restitue le projet, octet pour octet. Rien
 n'est jamais écrasé sans choix : la moindre collision pose la question,
 et ce qui est remplacé part à la corbeille — d'où il se retrouve. Un
-import interrompu laisse la destination exactement comme avant.
+import interrompu laisse la destination exactement comme avant. Si
+l'archive contient des versions bibliques, une confirmation rappelle les
+droits avant de les installer.
 
 ## Versions et changements extérieurs
 
@@ -97,11 +109,18 @@ de fichiers y affiche la date lisible de chacune.
 
 **Restaurer une version** :
 
-1. Fermez Typst Writer — le projet ne doit pas être ouvert.
-2. Ouvrez `sauvegardes/` à côté de votre document.
-3. Choisissez la copie voulue, d'après sa date, et copiez-la à la place du
-   document : `document.tw.1762000000` devient `document.tw`.
-4. Rouvrez le projet.
+1. Ouvrez **Aide** (`F1`), puis **Restaurer une version…** dans la section
+   Récupération.
+2. L'écran liste les copies du document courant avec leur date, leur taille,
+   leur empreinte et le début de leur texte. Choisissez-en une.
+3. **Restaurer cette version** demande confirmation ; le texte actuel est
+   d'abord recopié dans `sauvegardes/`, puis la copie choisie remplace le
+   document et s'ouvre dans l'éditeur.
+
+Le dossier reste accessible par **Ouvrir les sauvegardes du projet** pour une
+récupération manuelle. Une copie porte le nom du document suivi de son heure
+(`document.tw.1762000000`) ; les copies d'un même document sont espacées d'au
+moins une minute et les vingt dernières sont gardées.
 
 Si le fichier a été modifié **hors de l'application** — synchronisation,
 autre éditeur — l'application ne l'écrase jamais en silence : elle le dit,

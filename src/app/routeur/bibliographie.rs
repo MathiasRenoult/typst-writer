@@ -196,6 +196,60 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             }
         }
 
+        Message::ReferencesSupprimerTout => {
+            if !state.geste_confirme {
+                state.confirmation = Some(crate::app::state::Confirmation {
+                    question: "Supprimer toutes les entrées de la bibliographie ? Une copie complète part à la corbeille.".to_string(),
+                    action: Message::ReferencesSupprimerTout,
+                });
+
+                return Task::none();
+            }
+
+            state.geste_confirme = false;
+
+            // Une bibliothèque Zotero est en lecture seule : vider son export
+            // local serait défait à la synchronisation suivante.
+            if state.zotero.source == crate::zotero::Source::Zotero {
+                state.note = Some(crate::app::state::Note::erreur(
+                    "La bibliographie Zotero est en lecture seule ; déliez la collection avant de la vider.".to_string(),
+                ));
+                return Task::none();
+            }
+
+            let Some(bibliotheque) = state.project.bibliography.clone() else {
+                return Task::none();
+            };
+
+            let nombre = state.bibliography.len();
+
+            match crate::project::vider_bibliographie(&bibliotheque) {
+                Ok(Some(copie)) => {
+                    state.bibliography = crate::project::parse_bibliography(&bibliotheque);
+                    state.plugins.bibliographie.edition = None;
+                    // La copie est celle du fichier entier : le geste
+                    // « restaurer la dernière notice » n'a pas de sens ici.
+                    state.derniere_notice_supprimee = None;
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "{nombre} entrée(s) supprimée(s) ; la copie complète est à la corbeille ({}).",
+                        copie.display()
+                    )));
+                    state.refresh_context();
+                    Task::none()
+                }
+                Ok(None) => {
+                    state.note = Some(crate::app::state::Note::info(
+                        "La bibliographie est déjà vide.".to_string(),
+                    ));
+                    Task::none()
+                }
+                Err(probleme) => {
+                    state.note = Some(crate::app::state::Note::erreur(probleme));
+                    Task::none()
+                }
+            }
+        }
+
         Message::ReferenceRestaurer(copie) => {
             let Some(bibliotheque) = state.project.bibliography.clone() else {
                 return Task::none();

@@ -207,6 +207,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .map(|d| d.vers_la_source(&source))
                 .collect();
             state.render.warnings = outcome.warnings;
+            state
+                .editor
+                .set_diagnostics(&state.render.errors, state.resolved.palette.danger);
 
             // Un échec ne vide pas l'aperçu : la dernière image bonne
             // reste affichée sous les erreurs, et ses textures gardent
@@ -257,6 +260,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
             state.render.chapter_page = chapter_page;
             state.render.outline = super::source_outline(state, outcome.outline);
+            // Les têtes de niveau 1 forment les chapitres ; leurs pages
+            // viennent du sommaire qui vient d'être composé.
+            state.rafraichir_chapitres();
 
             // Toutes les pages sont périmées, et pas seulement les visibles :
             // l'image d'une page hors écran appartient elle aussi à la
@@ -284,6 +290,19 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // Une compilation de projet peut ainsi rester une compilation,
             // même si le document compilé fait des centaines de pages.
             let rendu_actif = state.mode == crate::app::state::ModeVue::Rendu;
+            let reprise = if rendu_actif {
+                let page = state.render.reprise_page.take().or_else(|| {
+                    if state.render.reprise_apres_compilation {
+                        super::page_de_lecture(state)
+                    } else {
+                        None
+                    }
+                });
+                state.render.reprise_apres_compilation = false;
+                page
+            } else {
+                None
+            };
             let pdf_a_generer = rendu_actif
                 && !state.render.export_en_cours
                 && state.render.lecteur_empreinte.as_deref() != Some(state.render.content.as_str())
@@ -294,7 +313,13 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 if !pdf_a_generer {
                     taches.push(super::rasterisation::visible(state));
                 }
-                taches.push(super::follow_chapter(state));
+                if let Some(page) = reprise {
+                    // La page convenue au moment de la bascule gagne sur le
+                    // chapitre : c'est l'endroit que l'auteur lisait.
+                    taches.push(super::scroll_preview_to_page(state, page));
+                } else {
+                    taches.push(super::follow_chapter(state));
+                }
             }
 
             if rendu_actif && let Some(document) = document_pour_texte.clone() {
@@ -366,65 +391,85 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return super::rasterisation::visible(state);
             }
 
+            // Une tâche annulée (vue changée) ou une page qui n'a pas pu
+            // être rendue ne doit pas retirer la page de la file : la
+            // nouvelle vue la reprendra au prochain passage.
+            let Some(image) = image else {
+                state.render.stale.insert(index);
+                return super::rasterisation::visible(state);
+            };
+
             state.render.stale.remove(&index);
 
-            if let Some(image) = image {
-                // Le papier se lit sur le premier pixel de la première page
-                // rendue : c'est le coin supérieur gauche, donc le fond du
-                // document. Une seule fois — il ne change pas d'une page à
-                // l'autre — et il sert ensuite à remplir les cadres de page
-                // avant que leur texture n'existe.
-                if state.render.paper.is_none() {
-                    state.render.paper = super::paper_colour(&image);
-                }
-
-                // Pixels identiques à ceux déjà en place : la page n'a pas
-                // changé. On garde le **même** `Handle`, donc la même texture,
-                // et le compositeur n'a rien à refaire. Remplacer l'image
-                // faisait naître une texture par compilation et par page ; à
-                // plusieurs compilations par seconde, c'est ce qui se voyait
-                // comme un clignotement.
-                if state.render.image_hashes.get(&index) == Some(&image.hash) {
-                    return Task::none();
-                }
-
-                state.render.image_hashes.insert(index, image.hash);
-
-                // Un seul `Handle` par page, créé ici et réutilisé tel quel
-                // par `view()` : le backend retrouve sa texture et ne le
-                // retéléverse pas. L'ancienne image reste **sous** la nouvelle
-                // jusqu'à ce que celle-ci soit dessinée : une page ne passe
-                // jamais par un blanc pendant le téléversement.
-                let ancienne = state.render.page_cache.remove(&index);
-                state.render.page_cache.insert(
-                    index,
-                    crate::app::state::Tranche {
-                        gauche: boite.0,
-                        haut: boite.1,
-                        largeur: boite.2,
-                        hauteur: boite.3,
-                        image: Handle::from_rgba(image.width, image.height, image.pixels),
-                        empreinte: state.render.lecteur_empreinte.clone(),
-                        precedente: ancienne.map(|mut tranche| {
-                            // Une seule image de secours : sinon la chaîne
-                            // grandirait à chaque rendu.
-                            tranche.precedente = None;
-                            Box::new(tranche)
-                        }),
-                    },
-                );
-
-                // Une seule passe : la page rapide est la page finale. Le
-                // second rendu « fin » a été supprimé — il doublait le coût
-                // de chaque page pour une différence sous-perceptuelle.
-                if rapide {
-                    state.render.qualite_rapide.remove(&index);
-                }
-
-                // Une image peut arriver après qu'on a défilé ailleurs :
-                // la refuser tout de suite, plutôt que de la garder pour rien.
-                state.render.bound_page_cache();
+            // Une bande de préchargement peut arriver après que la page est
+            // entrée dans la fenêtre : elle ne couvre alors pas la région
+            // visible courante. La page reste périmée, au lieu de faire
+            // croire que son rendu est complet.
+            if !couvre_la_fenetre(state, index, boite) {
+                state.render.stale.insert(index);
+                state.render.qualite_rapide.insert(index);
+                return super::rasterisation::visible(state);
             }
+
+            // Le papier se lit sur le premier pixel de la première page
+            // rendue : c'est le coin supérieur gauche, donc le fond du
+            // document. Une seule fois — il ne change pas d'une page à
+            // l'autre — et il sert ensuite à remplir les cadres de page
+            // avant que leur texture n'existe.
+            // Le papier se lit sur le coin supérieur gauche de la page.
+            // Une bande de préchargement prise en bas de page n'en est
+            // pas un : la prendre pour le fond teindrait tous les cadres
+            // avec la couleur d'un paragraphe.
+            if state.render.paper.is_none() && boite.0 == 0.0 && boite.1 == 0.0 {
+                state.render.paper = super::paper_colour(&image);
+            }
+
+            // Pixels identiques à ceux déjà en place : la page n'a pas
+            // changé. On garde le **même** `Handle`, donc la même texture,
+            // et le compositeur n'a rien à refaire. Remplacer l'image
+            // faisait naître une texture par compilation et par page ; à
+            // plusieurs compilations par seconde, c'est ce qui se voyait
+            // comme un clignotement.
+            if state.render.image_hashes.get(&index) == Some(&image.hash) {
+                return Task::none();
+            }
+
+            state.render.image_hashes.insert(index, image.hash);
+
+            // Un seul `Handle` par page, créé ici et réutilisé tel quel
+            // par `view()` : le backend retrouve sa texture et ne le
+            // retéléverse pas. L'ancienne image reste **sous** la nouvelle
+            // jusqu'à ce que celle-ci soit dessinée : une page ne passe
+            // jamais par un blanc pendant le téléversement.
+            let ancienne = state.render.page_cache.remove(&index);
+            state.render.page_cache.insert(
+                index,
+                crate::app::state::Tranche {
+                    gauche: boite.0,
+                    haut: boite.1,
+                    largeur: boite.2,
+                    hauteur: boite.3,
+                    image: Handle::from_rgba(image.width, image.height, image.pixels),
+                    empreinte: state.render.lecteur_empreinte.clone(),
+                    precedente: ancienne.map(|mut tranche| {
+                        // Une seule image de secours : sinon la chaîne
+                        // grandirait à chaque rendu.
+                        tranche.precedente = None;
+                        Box::new(tranche)
+                    }),
+                },
+            );
+
+            // Une seule passe : la page rapide est la page finale. Le
+            // second rendu « fin » a été supprimé — il doublait le coût
+            // de chaque page pour une différence sous-perceptuelle.
+            if rapide {
+                state.render.qualite_rapide.remove(&index);
+            }
+
+            // Une image peut arriver après qu'on a défilé ailleurs :
+            // la refuser tout de suite, plutôt que de la garder pour rien.
+            state.render.bound_page_cache();
 
             // Une place s'est libérée : ce qui attendait part.
             super::rasterisation::visible(state)
@@ -433,8 +478,18 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // Le rectangle de fenêtre ne vient que d'un vrai défilement :
             // les sondes de taille du panneau le rapportent à l'origine,
             // et une ancre de zoom sur cette origine serait fausse.
+            let restaurer_l_ancre = scroll.is_none() && state.render.reprise_apercu;
             if scroll.is_some() {
                 state.render.fenetre = Some(vue);
+                // L'utilisateur a repris la main : la consigne de reprise
+                // venue d'un changement de mode ne doit pas le rattraper plus
+                // tard.
+                state.render.reprise_page = None;
+                state.render.reprise_apres_compilation = false;
+                state.render.reprise_apercu = false;
+            }
+            if restaurer_l_ancre {
+                state.render.reprise_apercu = false;
             }
             let scroll = scroll.unwrap_or(state.render.scroll);
             let bounds = vue.size();
@@ -448,29 +503,57 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .as_deref()
                 .map_or(0, crate::typst::render::page_count);
 
+            let pages = crate::ui::preview::pages_de_la_vue(&state.render);
             let (first, last) = if (first, last) == (0, 0) && total > 1 {
-                (0, 2.min(total - 1))
+                (
+                    pages.first().copied().unwrap_or(0),
+                    pages
+                        .get(2)
+                        .copied()
+                        .unwrap_or_else(|| pages.first().copied().unwrap_or(0)),
+                )
             } else {
                 (first, last)
             };
 
-            // La plage exacte sert au travail de rasterisation ; la plage
-            // avec marge ne sert qu'à garder des widgets et des images autour
-            // du viewport. Confondre les deux faisait rasteriser une page
-            // invisible à chaque défilement.
-            let visible_exact = state.render.document.as_deref().map(|document| {
-                let sizes =
-                    crate::ui::preview::sizes_of_with_zoom(document, bounds, state.render.zoom);
-                crate::ui::preview::visible_pages_exact(&sizes, scroll.1, scroll.1 + bounds.height)
-            });
+            // La plage exacte désigne les pages dont la fenêtre visible a
+            // besoin ; la plage avec marge ne matérialise que des widgets et
+            // des bandes de préchargement. Une page de marge n'est jamais
+            // rendue en entier : seulement la bande par laquelle elle entrera.
+            let visible_exact = if state.render.document.is_some() {
+                let sizes = crate::ui::preview::sizes_de_la_vue(&state.render);
+                let (debut, fin) = crate::ui::preview::visible_pages_exact(
+                    &sizes,
+                    scroll.1,
+                    scroll.1 + bounds.height,
+                );
+                Some((
+                    pages.get(debut).copied().unwrap_or(0),
+                    pages.get(fin).copied().unwrap_or(0),
+                ))
+            } else {
+                None
+            };
 
             let unchanged = state.render.visible == Some((first, last))
                 && state.render.visible_exact == visible_exact
                 && state.render.viewport == Some(bounds)
                 && state.render.scroll == scroll;
 
+            let vue_changee = state.render.visible != Some((first, last))
+                || state.render.visible_exact != visible_exact;
             state.render.visible = Some((first, last));
             state.render.visible_exact = visible_exact;
+            let direction = if scroll.1 > state.render.scroll.1 + 0.5 {
+                1
+            } else if scroll.1 + 0.5 < state.render.scroll.1 {
+                -1
+            } else {
+                0
+            };
+            if direction != 0 {
+                state.render.scroll_direction = direction;
+            }
             state.render.scroll = scroll;
 
             // La place d'une page a changé : la taille d'affichage change, donc
@@ -498,8 +581,18 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // produisaient des images neuves, qui reconstruisaient la vue, qui
             // signalait le même viewport : un tour de plus, plusieurs mégaoctets
             // à chaque fois.
-            if unchanged {
+            if unchanged && !restaurer_l_ancre {
                 return Task::none();
+            }
+
+            // Nouvelle vue : les tâches encore en attente pour l'ancienne
+            // fenêtre doivent s'arrêter avant de lire une page inutile. Un
+            // simple déplacement dans la même page ne change pas la vue.
+            if vue_changee {
+                state
+                    .render
+                    .vue_generation
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
 
             // Le cache d'images est borné aux pages visibles et à leur
@@ -516,35 +609,50 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             if let Some(document) = state.render.document.clone() {
                 let sizes =
                     crate::ui::preview::sizes_of_with_zoom(&document, bounds, state.render.zoom);
+                let sizes_vue = crate::ui::preview::sizes_de_la_vue(&state.render);
 
-                let (debut, fin) = state.render.visible_exact.unwrap_or((first, last));
+                let (debut_exact, fin_exact) = state.render.visible_exact.unwrap_or((first, last));
 
-                for index in debut..=fin {
+                // La page de marge est préchargée avant d'entrer dans la
+                // fenêtre : c'est ce qui évite une page blanche quand on
+                // descend vite. Les pages hors de la marge ne sont jamais
+                // touchées.
+                for index in first..=last {
                     let Some(taille) = sizes.get(index).copied() else {
                         continue;
                     };
-                    let haut = crate::ui::preview::scroll_offset_for_page(&sizes, index);
-                    let region = crate::ui::preview::region_pour_page(
-                        taille,
-                        haut,
-                        scroll,
-                        (bounds.width, bounds.height),
-                        0.0,
-                    );
+                    let exact = index >= debut_exact && index <= fin_exact;
+                    let cache = state.render.page_cache.get(&index);
+                    let couverte = if exact {
+                        let position = pages.iter().position(|page| *page == index).unwrap_or(0);
+                        let haut = crate::ui::preview::scroll_offset_for_page(&sizes_vue, position);
+                        let region = crate::ui::preview::region_pour_page(
+                            taille,
+                            haut,
+                            scroll,
+                            (bounds.width, bounds.height),
+                            0.0,
+                        );
+                        cache.is_some_and(|tranche| {
+                            crate::ui::preview::tranche_couvre(tranche, region)
+                        })
+                    } else {
+                        cache.is_some()
+                    };
 
-                    if !state
-                        .render
-                        .page_cache
-                        .get(&index)
-                        .is_some_and(|tranche| crate::ui::preview::tranche_couvre(tranche, region))
-                    {
+                    if !couverte {
                         state.render.stale.insert(index);
                         state.render.qualite_rapide.insert(index);
                     }
                 }
             }
 
-            super::rasterisation::visible(state)
+            let tache = super::rasterisation::visible(state);
+            if restaurer_l_ancre {
+                Task::batch([tache, super::restaurer_l_apercu(state)])
+            } else {
+                tache
+            }
         }
         Message::PreviewZoom(zoom) => super::set_preview_zoom(state, zoom),
 
@@ -715,6 +823,46 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         _ => Task::none(),
     }
+}
+
+/// La tranche qui vient d'arriver couvre-t-elle la fenêtre courante ?
+///
+/// Une page de marge n'est préchargée que par une bande : si elle entre dans
+/// la fenêtre avant la fin de son rendu, cette bande ne suffit pas. Le
+/// contrôle se fait avec la même géométrie que `ViewportChanged`.
+fn couvre_la_fenetre(state: &State, index: usize, boite: (f32, f32, f32, f32)) -> bool {
+    let Some((debut, fin)) = state.render.visible_exact else {
+        return true;
+    };
+    if index < debut || index > fin {
+        return true;
+    }
+
+    let Some(document) = state.render.document.as_deref() else {
+        return true;
+    };
+    let viewport = state
+        .render
+        .viewport
+        .unwrap_or_else(crate::ui::preview::default_viewport);
+    let sizes = crate::ui::preview::sizes_of_with_zoom(document, viewport, state.render.zoom);
+    let sizes_vue = crate::ui::preview::sizes_de_la_vue(&state.render);
+    let Some(taille) = sizes.get(index).copied() else {
+        return true;
+    };
+    let Some(position) = crate::ui::preview::position_dans_la_vue(&state.render, index) else {
+        return true;
+    };
+    let haut = crate::ui::preview::scroll_offset_for_page(&sizes_vue, position);
+    let region = crate::ui::preview::region_pour_page(
+        taille,
+        haut,
+        state.render.scroll,
+        (viewport.width, viewport.height),
+        0.0,
+    );
+
+    crate::ui::preview::rectangle_couvre(boite, region)
 }
 
 /// Installe un PDF reçu et relance la rasterisation.

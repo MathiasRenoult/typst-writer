@@ -7,6 +7,7 @@ pub mod callout;
 pub mod chart;
 pub mod completion;
 pub mod confirmation;
+pub mod corbeille;
 pub mod editor;
 pub mod extension;
 pub mod glossaire;
@@ -25,6 +26,7 @@ pub mod projets;
 pub mod recherche;
 pub mod reference;
 pub(crate) mod reglages;
+pub mod restauration;
 pub(crate) mod sidebar;
 mod statistiques;
 pub mod status_bar;
@@ -74,6 +76,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette::view(state),
             balise::view(state),
             completion::view(state),
+            recherche::view(state),
         ]
         .width(Length::Fill)
         .height(Length::Fill)
@@ -103,6 +106,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
         glossaire::view(state),
         zotero::view(state),
         recherche::view(state),
+        restauration::view(state),
+        corbeille::view(state),
         reglages::view(state),
         aide::view(state),
         picker_couleur::view(state, state.resolved.palette),

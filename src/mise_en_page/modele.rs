@@ -831,6 +831,7 @@ impl Typographie {
             guillemets_ouvrants: self.guillemets_ouvrants.chars().collect(),
             guillemets_fermants: self.guillemets_fermants.chars().collect(),
             numerotation_figures: String::new(),
+            legende_prefixe: "Figure".to_string(),
             callouts: ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: references.clone(),

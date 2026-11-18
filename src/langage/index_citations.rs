@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use super::references::{
-    Reference, afficher, afficher_nombres, forme_du_livre, mention_traduction, nom_du_livre,
+    Reference, afficher, afficher_nombres, forme_du_livre, mention_traduction, nom_du_livre_dans,
     rang_du_livre,
 };
 use crate::mise_en_page::modele::{Canon, IndexCitations, References};
@@ -73,7 +73,11 @@ impl IndexBiblique {
             };
             if let Some((du_groupe, _)) = super::references::lire_groupe_de_balise(&apres[..fin]) {
                 for reference in du_groupe {
-                    let cle = reference.cle();
+                    // Deux traductions peuvent nommer un même livre
+                    // différemment : la clé d'index doit donc porter la
+                    // version citée, sinon les deux entrées fusionnent et
+                    // l'une des formes de livre est perdue.
+                    let cle = reference.cle_de_citation();
                     references
                         .entry(cle)
                         .and_modify(|(_, occurrences)| *occurrences += 1)
@@ -86,7 +90,11 @@ impl IndexBiblique {
         let mut groupes: Vec<(usize, GroupeIndex)> = Vec::new();
         for (reference, occurrences) in references.into_values() {
             let rang = rang_du_livre(&reference.livre).unwrap_or(usize::MAX);
-            let nom = nom_du_livre(&reference.livre, forme_du_livre(normes.livre));
+            let nom = nom_du_livre_dans(
+                &reference.livre,
+                forme_du_livre(normes.livre),
+                reference.traduction,
+            );
             let mut libelle = if config.regrouper_par_livre {
                 afficher_nombres(&reference, &normes)
             } else {
@@ -176,14 +184,20 @@ impl IndexBiblique {
                     } else {
                         "Livres non canoniques"
                     };
-                    corps.push_str(&format!("  [{titre}]\n"));
+                    corps.push_str(&format!("  [== {titre}\n\n]\n"));
                     section = Some(groupe.canonique);
                 }
                 if self.regrouper_par_livre {
-                    corps.push_str(&format!("  [{} :]\n", groupe.nom));
+                    // Un titre de livre ne doit jamais rester seul en bas
+                    // d'une colonne : Typst déplace le bloc collant avec la
+                    // première référence qui le suit.
+                    corps.push_str(&format!(
+                        "  block(sticky: true)[{} :]\n",
+                        echapper_contenu_typst(&groupe.nom)
+                    ));
                 }
                 for entree in &groupe.entrees {
-                    let cle = echapper_chaine_typst(&entree.reference.cle());
+                    let cle = echapper_chaine_typst(&entree.reference.cle_de_citation());
                     let libelle = echapper_contenu_typst(&entree.libelle);
                     corps.push_str(&format!(
                         "  [- {libelle} #if present(\"{cle}\") > 0 [(p. #pages(\"{cle}\"))]]\n",
@@ -203,11 +217,16 @@ impl IndexBiblique {
                     } else {
                         "Livres non canoniques"
                     };
-                    corps.push_str(&format!("*{titre}*\n\n"));
+                    corps.push_str(&format!("== {titre}\n\n"));
                     section = Some(groupe.canonique);
                 }
                 if self.regrouper_par_livre {
-                    corps.push_str(&format!("{} :\n\n", groupe.nom));
+                    // Même règle sans colonnes : le titre et la première
+                    // référence voyagent ensemble au fil des pages.
+                    corps.push_str(&format!(
+                        "#block(sticky: true)[{} :]\n\n",
+                        echapper_contenu_typst(&groupe.nom)
+                    ));
                 }
                 for entree in &groupe.entrees {
                     corps.push_str("- ");
@@ -268,7 +287,7 @@ pub fn reperes_typst(elements: &[super::references::ElementCitation], dans_note:
         if let Some(reference) = element.reference() {
             out.push_str(&format!(
                 "#metadata(\"{}\") <{label}>",
-                echapper_chaine_typst(&reference.cle())
+                echapper_chaine_typst(&reference.cle_de_citation())
             ));
         }
     }
@@ -301,6 +320,22 @@ mod tests {
         assert_eq!(index.groupes[0].entrees[0].occurrences, 1);
         assert_eq!(index.groupes[1].nom, "Jean");
         assert_eq!(index.groupes[1].entrees[0].occurrences, 2);
+    }
+
+    #[test]
+    fn deux_traductions_du_meme_livre_ne_fusionnent_pas_dans_l_index() {
+        let doc = document("{{Jn 3.16|lsg ; Jn 3.16|darby}}\n");
+        let config = IndexCitations {
+            regrouper_par_livre: true,
+            ..Default::default()
+        };
+        let index = IndexBiblique::construire(&doc, &References::default(), &config);
+
+        assert_eq!(
+            index.groupes[0].entrees.len(),
+            2,
+            "la même référence dans deux versions reste deux entrées : {index:?}"
+        );
     }
 
     #[test]
@@ -344,8 +379,12 @@ mod tests {
             "{index:?}"
         );
         let typst = index.rendre_typst();
-        assert!(typst.contains("*Livres canoniques*"), "{typst}");
-        assert!(typst.contains("*Livres non canoniques*"), "{typst}");
+        assert!(typst.contains("== Livres canoniques"), "{typst}");
+        assert!(typst.contains("== Livres non canoniques"), "{typst}");
+        assert!(
+            typst.contains("#block(sticky: true)[Jean :]"),
+            "le titre du livre reste avec sa première référence : {typst}"
+        );
 
         // « Tout le corpus » ne fabrique pas de section : une seule liste.
         let config = IndexCitations::default();
@@ -356,10 +395,11 @@ mod tests {
 
     #[test]
     fn les_pages_se_demandent_a_typst() {
-        let doc = document("{{Jn 3.16}}\n\n{{index}}\n");
+        let doc = document("{{Jn 3.16 ; Tob 1.1}}\n\n{{index}}\n");
         let config = IndexCitations {
             afficher_pages: true,
             regrouper_par_livre: true,
+            canon: crate::mise_en_page::modele::Canon::Protestant,
             ..Default::default()
         };
         let index = IndexBiblique::construire(&doc, &References::default(), &config);
@@ -369,6 +409,11 @@ mod tests {
         assert!(typst.contains("query(<tw-citation>)"), "{typst}");
         assert!(typst.contains("location().page()"), "{typst}");
         assert!(typst.contains("[- 3.16"), "{typst}");
+        assert!(typst.contains("[== Livres canoniques"), "{typst}");
+        assert!(
+            typst.contains("block(sticky: true)[Jn :]"),
+            "le titre du livre reste avec sa première référence : {typst}"
+        );
     }
 
     #[test]

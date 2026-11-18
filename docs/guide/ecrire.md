@@ -20,15 +20,56 @@ syntaxe.
 | `{{bib}}` ou `{{bibliographie}}` | la bibliographie du projet, à cet endroit |
 | `{{idx}}` ou `{{index-biblique}}` | l'index des citations bibliques, recalculé au rendu |
 | `{{s}}` ou `{{sommaire}}` | la table des matières, à cet endroit |
+| `{{garde}}` … `{{/garde}}` | une page de garde, avant le sommaire |
 
 Une **ligne vide** sépare les blocs. Ce qui n'est pas reconnu reste du
 texte — un fichier abîmé ne bloque jamais l'ouverture.
+
+## Les chapitres
+
+Une **tête de niveau 1** (`# Titre`) ouvre un chapitre : elle emporte tout
+ce qui la suit jusqu'à la tête de niveau 1 suivante. Les têtes de niveau 2
+et au-delà restent des sections du chapitre.
+
+Le panneau de gauche porte une section **Chapitres**. **Document entier**
+montre tout le rendu ; un chapitre choisi ne montre que ses pages, et le
+**Sommaire** se réduit à ses têtes. Le retour au document entier se fait
+par la même ligne. La source, elle, reste entière dans l'éditeur : choisir
+un chapitre ne réécrit ni ne tronque jamais `document.tw`.
+
+Les chapitres viennent du sommaire composé : leurs pages sont celles du
+PDF réel, pas une estimation. Si le document n'a aucune tête de niveau 1,
+la section n'apparaît pas — tout le document reste alors la seule vue.
 
 Les balises de fin ont une forme canonique courte : `{{s}}`, `{{bib}}`,
 `{{gs}}`, `{{idx}}`. Les noms longs (`{{sommaire}}`, `{{bibliographie}}`,
 `{{glossaire-section}}`, `{{index-biblique}}`) et les anciennes formes
 (`[[TOC]]`, `{bibliographie}`, `{glossaire}`, `{{index}}`) restent lus,
 mais les nouveaux gestes écrivent la forme courte.
+
+## Les pages de garde
+
+Une page de garde se délimite par deux lignes :
+
+```
+{{garde}}
+# Dédicace
+
+À ceux qui cherchent.
+{{/garde}}
+```
+
+Son contenu est composé **avant le sommaire**, sur une page **sans numéro**,
+et il n'entre pas dans la table des matières — même si la page contient des
+titres. Placez les blocs en tête par convention, même si leur contenu est
+toujours composé avant le sommaire. On peut répéter le bloc pour plusieurs
+pages : chacune commence sur sa propre page.
+Le menu `..`, sous « Page de garde », écrit le bloc et place le curseur à
+l'intérieur.
+
+La page de titre des normes suit la même règle : elle est composée sans
+numéro et n'ajoute aucune entrée au sommaire. Si les normes en composent
+déjà une, elle précède les pages de garde ; désactivez-la pour la remplacer.
 
 ## Les métadonnées
 
@@ -68,6 +109,12 @@ disponibles pour les réglages fins.
 | `{{g clé}}` | un terme du glossaire |
 | `{{m auteur}}` | une métadonnée du projet |
 
+Toutes ces mises en forme sont aussi des commandes de la palette
+(`Ctrl+K` ou `/`) : gras, italique, souligné, barré, code, formule, titres,
+listes, citation, note et couleur. Les teintes orange, verte, rouge, bleue,
+violette, grise et noire y sont directes, et « dernière couleur choisie »
+réapplique la couleur courante.
+
 `aujourd'hui` et `maintenant` sont évalués au moment où le document est
 composé, pas à chaque frappe. Pour une composition reproductible — même
 sortie à chaque essai —, la variable d'environnement `SOURCE_DATE_EPOCH`
@@ -83,7 +130,10 @@ place de la note.
 
 `@cle` appelle une référence de la bibliographie ; `@cle[p. 45]` porte la
 page. Plusieurs appels d'un geste — `@dupont[p. 45]; @martin` — ne font
-jamais qu'**une** note de bas de page, avec les deux mentions.
+jamais qu'**une** note de bas de page, avec les deux mentions. Une citation
+peut être collée au mot qu'elle appuie (`famille@grudem…[p. 981]`) ou suivre
+un guillemet fermant ; elle reste une citation Typst. Une adresse
+électronique (`user@example.com`) reste du texte.
 
 La citation reste **visible dans sa source** : l'éditeur ne la remplace
 jamais par un glyphe numéroté. C'est un texte comme un autre — on le
@@ -214,6 +264,11 @@ Avec le regroupement, l'index ressemble à :
     - 1.18 (p. 2, 5, 6, 18)
     - 3.15 (p. 4, 5)
 
+Les indications de corpus — **Livres canoniques** et **Livres non
+canoniques** — sont des titres de niveau 2, suivis d'un retour à la ligne.
+Un titre de livre ne reste jamais seul en bas d'une colonne : il est
+solidaire de sa première référence, qui le suit dans la même colonne.
+
 Les pages sont demandées à Typst au moment de la composition : ce sont
 les pages réelles du document, pas une estimation de l'éditeur. Une
 citation placée dans une note est signalée par le suffixe `n` (`6n`).
@@ -277,6 +332,32 @@ tirets, points, deux-points et soulignés. Si un titre est renommé, les liens
 qui visaient son ancienne ancre ne trouvent plus leur cible : le panneau
 gauche les signale sous **liens internes à vérifier**, et un clic sélectionne
 le lien dans la source.
+
+Quand le texte du lien est un mot clé **entre guillemets**, il est remplacé
+au rendu par la numérotation réelle du document :
+
+    [[titre-adoption-coutume|"chapitre"]]   → chapitre 2.3
+    [[figure-planche|"figure"]]             → Figure 4
+    [[titre-adoption-coutume|"page"]]       → page 7
+
+`"figure"` s'applique à une figure numérotée, c'est-à-dire une image avec
+légende ; pour une image sans légende, `"page"` reste disponible.
+
+`"section"` et `"titre"` sont des synonymes de `"chapitre"` ; `"image"` est
+un synonyme de `"figure"`. Le numéro du chapitre suit la numérotation des
+titres des normes, le préfixe de la figure suit le libellé des légendes, et
+la page suit la numérotation des pages. Le texte entre guillemets est
+volontairement une convention : un lien ordinaire vers un mot « page » reste
+possible sans guillemets.
+
+Les ancres complètes s'écrivent `titre-adoption-coutume` ou
+`figure-planche`. Quand la forme courte est unique dans le document,
+`adoption-coutume` suffit et le lien est résolu vers la bonne ancre ; si un
+titre et une figure partagent la même forme courte, l'ancre complète reste
+nécessaire.
+
+Ces nombres sont ceux que les normes composent réellement : si les titres
+ne sont pas numérotés, un lien `"chapitre"` n'a pas de numéro à afficher.
 
 ## Les formules
 
@@ -353,6 +434,14 @@ Les graphiques utilisent le paquet Typst
 [primaviz](https://typst.app/universe/package/primaviz), vendu avec
 l'application et installé localement — aucun téléchargement au rendu.
 
+## Voir les erreurs de compilation
+
+En écriture, les erreurs sont aussi listées dans le panneau gauche sous
+**n erreur(s) de compilation** et soulignées dans le texte, à la ligne et à la
+colonne signalées. Chaque ligne du panneau montre le message du compilateur ;
+un clic place le curseur à l'endroit fautif. Le panneau de rendu garde sa
+propre liste détaillée quand il est ouvert.
+
 ## Les callouts
 
 Un callout encadre une citation sans la recopier. La balise se pose devant
@@ -379,16 +468,47 @@ téléchargement. Cinq tons sobres sont fournis ; le type inconnu retombe sur
 
 ## Lire l'aperçu
 
-Le panneau de rendu est un lecteur du PDF exporté. Le texte peut y être
-sélectionné au glisser, au double-clic pour un mot et au triple-clic pour
-une ligne ; `Ctrl+C` copie la sélection. `Maj+clic` étend la sélection à
-partir de son point de départ.
+Le panneau de rendu est un lecteur du PDF exporté. Les pages sont centrées
+dans la largeur disponible ; l'aperçu précharge une bande de la page voisine
+pour qu'un défilement rapide ne montre pas de page blanche. Les erreurs de
+compilation occupent toute la largeur du panneau, au-dessus du document, et
+aucun message de compilation ne s'affiche dans la page.
+
+Le texte peut y être sélectionné au glisser, au double-clic pour un mot et au
+triple-clic pour une ligne ; `Ctrl+C` copie la sélection. `Maj+clic` étend la
+sélection à partir de son point de départ.
 
 Dans une vue de rendu, `Ctrl+F` cherche dans le **document composé** — titres,
 notes et bibliographie compris — et non dans la source. La barre compte les
 occurrences, `F3` et `Maj+F3` passent au résultat suivant ou précédent, et
 les résultats sont surlignés dans la page. `Échap` ferme la recherche. Dans
 l'éditeur, `Ctrl+F` garde son sens habituel.
+
+Dans la barre de recherche de l'éditeur, le bouton **Document / Projet**
+change la portée. En mode **Projet**, la recherche parcourt tous les fichiers
+`.tw` et `.typ` du projet, affiche le chemin, la ligne et un extrait, et un
+clic ouvre le fichier à l'occurrence. Le remplacement reste limité au document
+courant : une correction globale n'écrit jamais dans un fichier qu'on n'a pas
+sous les yeux.
+
+La barre de recherche est un **outil**, pas une fenêtre modale : elle reste
+ouverte sans empêcher de cliquer ou de faire défiler le texte. Les boutons
+**Précédent** et **Suivant** amènent l'occurrence dans la fenêtre de
+l'éditeur, pas seulement dans la mémoire du curseur. En vue de rendu,
+`Ctrl+F` ouvre la recherche du PDF ; en vue d'édition, celle du document —
+jamais les deux à la fois.
+
+Le bouton des **numéros de ligne** de la barre d'outils les affiche ou les
+masque dans l'éditeur. C'est une préférence de lecture, conservée d'une
+session à l'autre : elle ne change rien au document composé.
+
+## Revenir au même endroit
+
+Changer de mode ne renvoie plus au début. L'édition retrouve son défilement
+exact, le rendu sa position exacte. À la première ouverture du rendu, la page
+choisie est celle du sommaire qui couvre le haut de l'édition : c'est la
+correspondance que Typst donne entre une ligne et une page. Les deux ancres
+vivent dans la vue, pas dans le fichier.
 
 Les liens du document sont actifs : un lien interne amène à la page visée,
 un lien externe ouvre l'adresse avec l'outil du système. Un pied de page

@@ -275,6 +275,18 @@ impl CodeEditor {
     pub fn dernier_clic_sur_marque(&self) -> Option<(usize, usize, usize)> {
         self.dernier_clic_marque
     }
+
+    /// Pose les soulignements d'erreurs et redessine la couche d'overlay.
+    ///
+    /// Si les soulignements n'ont pas changé, le cache reste intact : une
+    /// compilation qui rejoue les mêmes erreurs ne redessine pas la couche.
+    pub fn set_soulignements(&mut self, soulignements: Vec<super::SoulignementDiagnostic>) {
+        if self.soulignements == soulignements {
+            return;
+        }
+        self.soulignements = soulignements;
+        self.overlay_cache.clear();
+    }
 }
 
 #[cfg(test)]

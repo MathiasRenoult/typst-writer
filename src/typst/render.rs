@@ -554,7 +554,9 @@ pub fn render_region_avec_qualite(
 ///
 /// Sert à reconnaître deux rendus **identiques** de la même page. Ce n'est pas
 /// une empreinte cryptographique : on ne cherche pas à résister à une collision
-/// fabriquée, seulement à constater qu'une page n'a pas changé.
+/// fabriquée, seulement à constater qu'une page n'a pas changé. Elle ne quitte
+/// jamais la mémoire de la session — contrairement aux empreintes d'archives,
+/// qui doivent se relire dans un autre binaire.
 fn pixels_hash(pixels: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
 
@@ -2711,6 +2713,74 @@ mod tests {
 
 #[cfg(test)]
 mod sonde_fluidite {
+    /// Banc de mesure : le budget d'un aperçu de moins de dix pages.
+    ///
+    /// `cargo test --release -- --ignored budget_apercu_dix_pages --nocapture`
+    ///
+    /// Les trois temps sont mesurés séparément : compilation Typst, export du
+    /// PDF depuis le document déjà compilé, puis une bande visible rasterisée
+    /// en qualité `Speed` — le chemin réel de l'aperçu. Le budget visé est
+    /// 100 ms pour la compilation seule et 200 ms pour une mise à jour de
+    /// rendu au défilement ou au zoom.
+    #[test]
+    #[ignore = "banc de mesure manuel"]
+    fn budget_apercu_dix_pages() {
+        let dir = std::env::temp_dir().join(format!("tw-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("racine");
+
+        let mut source = String::from("= Chapitre\n\n");
+        for index in 0..170 {
+            source.push_str(&format!(
+                "Paragraphe {index} avec des mots réguliers et quelques accents, pour occuper la page sans dépendre d'une police particulière.\n\n"
+            ));
+        }
+
+        let debut = std::time::Instant::now();
+        let outcome = super::compile(&dir, &source, &[]);
+        let compilation = debut.elapsed();
+        let Some(document) = outcome.document else {
+            panic!(
+                "le document de mesure ne compile pas : {:?}",
+                outcome.errors
+            );
+        };
+        let pages = super::page_count(&document);
+
+        let debut = std::time::Instant::now();
+        let octets = super::pdf_du_document(&document);
+        let export = debut.elapsed();
+        let pdf = octets
+            .as_deref()
+            .and_then(|o| super::ouvrir_pdf(o.to_vec()));
+
+        println!("BUDGET {pages} page(s) : compilation {compilation:>8.2?}, PDF {export:>8.2?}");
+
+        if let Some(pdf) = pdf {
+            for densite in [1.5_f64, 3.0] {
+                let debut = std::time::Instant::now();
+                let image = super::render_region_avec_qualite(
+                    &pdf,
+                    0,
+                    densite,
+                    0,
+                    0,
+                    1200,
+                    900,
+                    pdf_render::RasterQuality::Speed,
+                );
+                println!(
+                    "  bande {} × {} px à {densite} px/pt : {:>8.2?}",
+                    image.as_ref().map_or(0, |p| p.width),
+                    image.as_ref().map_or(0, |p| p.height),
+                    debut.elapsed()
+                );
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// SONDE (temporaire, bug-report-9 fluidité) : coût du rendu d'une page
     /// de thèse selon la densité — les étapes du crate sont tracées par
     /// `PDF_RENDER_TRACE=1` (interprétation vs rasterisation).

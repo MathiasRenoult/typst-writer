@@ -14,14 +14,11 @@ pub(crate) fn id_recherche_apercu() -> iced::widget::Id {
     iced::widget::Id::new("apercu-recherche")
 }
 
-/// Taille du texte courant.
-const BODY_SIZE: f32 = 14.0;
-
 /// Espacement entre les pages affichées.
 const PAGE_GAP: f32 = 12.0;
 
 /// Marge intérieure du panneau.
-const PANEL_PADDING: f32 = 16.0;
+pub(crate) const PANEL_PADDING: f32 = 16.0;
 
 /// Place minimale laissée à une page dans le panneau, en pixels logiques.
 ///
@@ -129,6 +126,21 @@ const VIEWPORT_MARGIN: usize = 1;
 /// un widget ne se pilote pas de l'extérieur sans être nommé.
 pub(crate) const SCROLL_ID: &str = "apercu";
 
+/// Largeur de la colonne qui porte les pages dans le défilement.
+///
+/// Elle vaut la largeur du panneau quand la page y tient, et celle de la page
+/// la plus large — marges comprises — au-delà. C'est cette largeur explicite
+/// qui permet à `align_x(Center)` de centrer les pages : dans un défilement
+/// horizontal, `Length::Fill` se résout sur le contenu, pas sur la fenêtre.
+pub(crate) fn largeur_colonne(sizes: &[(f32, f32)], largeur_fenetre: f32) -> f32 {
+    let largeur_page_max = sizes
+        .iter()
+        .map(|(largeur, _)| *largeur)
+        .fold(0.0_f32, f32::max);
+
+    (largeur_page_max + 2.0 * PANEL_PADDING).max(largeur_fenetre)
+}
+
 /// Dimensions logiques (pixels écran) des pages du document.
 ///
 /// La géométrie est connue avant tout rendu : elle sert à calculer la hauteur
@@ -143,6 +155,37 @@ fn page_sizes(render: &crate::app::state::RenderState) -> Vec<(f32, f32)> {
         ),
         None => Vec::new(),
     }
+}
+
+/// Les pages que la vue montre réellement : toutes, ou la tranche d'un
+/// chapitre. Les index sont ceux du document compilé, jamais des positions
+/// dans la tranche — le cache de pages et la couche texte restent ainsi
+/// keyés sur les vraies pages.
+pub(crate) fn pages_de_la_vue(render: &crate::app::state::RenderState) -> Vec<usize> {
+    let total = render
+        .document
+        .as_deref()
+        .map_or(0, crate::typst::render::page_count);
+    crate::app::chapitres::plage_pages(render.chapitre.as_ref(), total).collect()
+}
+
+/// Les dimensions des pages de la tranche affichée, dans l'ordre du document.
+pub(crate) fn sizes_de_la_vue(render: &crate::app::state::RenderState) -> Vec<(f32, f32)> {
+    let toutes = page_sizes(render);
+    pages_de_la_vue(render)
+        .into_iter()
+        .filter_map(|index| toutes.get(index).copied())
+        .collect()
+}
+
+/// La position d'une page du document dans la tranche affichée.
+pub(crate) fn position_dans_la_vue(
+    render: &crate::app::state::RenderState,
+    page: usize,
+) -> Option<usize> {
+    pages_de_la_vue(render)
+        .into_iter()
+        .position(|index| index == page)
 }
 
 /// Pourcentage lisible du rapport appliqué à la première page visible.
@@ -269,6 +312,15 @@ pub(crate) fn scroll_offset_for_page(sizes: &[(f32, f32)], index: usize) -> f32 
     (page_offset(sizes, index) - PANEL_PADDING).max(0.0)
 }
 
+/// Le décalage absolu du scrollable qui correspond à un défilement de contenu.
+///
+/// `RenderState::scroll` est exprimé sans la marge du panneau (voir
+/// [`scroll_offset_for_page`]) ; le scrollable, lui, part de zéro en haut du
+/// contenu. Cette conversion est l'inverse exact de celle du `on_scroll`.
+pub(crate) fn offset_absolu(scroll_contenu: f32) -> f32 {
+    (scroll_contenu + PANEL_PADDING).max(0.0)
+}
+
 /// Décalage vertical du sommet de la page `index` dans le contenu défilant.
 pub(crate) fn page_offset(sizes: &[(f32, f32)], index: usize) -> f32 {
     sizes
@@ -341,7 +393,8 @@ pub fn vue<'a>(
     editor: &'a crate::editor::EditorState,
     id: Option<u64>,
 ) -> Element<'a, Message> {
-    let sizes = page_sizes(render);
+    let pages = pages_de_la_vue(render);
+    let sizes = sizes_de_la_vue(render);
     let palette = state.resolved.palette;
 
     // Le fichier ouvert : c'est lui seul dont les diagnostics peuvent être
@@ -353,19 +406,30 @@ pub fn vue<'a>(
     // Espacement nul, volontairement : les écarts entre pages sont posés avec
     // les pages elles-mêmes, pour que la hauteur du contenu ne dépende pas du
     // nombre de pages dessinées. Voir [`content_height`].
-    let mut content = column![].spacing(0.0).padding(PANEL_PADDING).width(Fill);
+    // Les pages d'un document ne sont pas toutes larges comme la fenêtre :
+    // l'alignement les centre dans le panneau au lieu de les coller à gauche.
+    // La colonne reçoit une largeur explicite — celle du panneau quand les
+    // pages y tiennent, celle de la page la plus large au-delà — parce que
+    // `Length::Fill` dans un défilement horizontal se résout sur le contenu,
+    // pas sur la fenêtre, et ne centrerait donc rien.
+    let box_size = render.viewport.unwrap_or_else(default_viewport);
+    let largeur_colonne = largeur_colonne(&sizes, box_size.width);
+    let mut content = column![]
+        .spacing(0.0)
+        .padding(PANEL_PADDING)
+        .width(Length::Fixed(largeur_colonne))
+        .align_x(iced::Alignment::Center);
 
-    if let Some(status) = &state.export_status {
-        // Le gris était codé en dur : il ne suivait donc aucun thème, et un
-        // thème clair l'aurait rendu illisible. C'était la dernière couleur
-        // fixe de l'interface.
-        content = content.push(palette.label(status).size(13).color(palette.text_muted));
-    }
+    // Les erreurs et avertissements ne défilent pas avec les pages : ils
+    // gardent toute la largeur du panneau et restent visibles quand on lit
+    // plus bas. Les loger dans le contenu les comprimait à la largeur d'une
+    // page, et le moindre message long se coupait.
+    let mut entete = column![].spacing(0).width(Fill);
 
     // Fichiers de thème illisibles. Ils sont **dits** : un thème absent de la
     // liste sans explication est un défaut de plus, pas une discrétion.
     for problem in &state.theme_problems {
-        content = content.push(
+        entete = entete.push(
             palette
                 .label(format!("Thème illisible — {problem}"))
                 .size(12)
@@ -373,72 +437,25 @@ pub fn vue<'a>(
         );
     }
 
-    // La génération du PDF lancée par la bascule : dite, jamais silencieuse
-    // (bug-report-9).
-    if state.render.export_en_cours {
-        content = content.push(
-            palette
-                .label("Génération du rendu…")
-                .size(11)
-                .color(palette.text_muted),
-        );
-    }
-
-    // Diagnostics du compilateur, en tête du panneau.
     if !render.errors.is_empty() {
-        content = content.push(diagnostics_panel(&render.errors, true, open, palette));
-    }
-
-    // Un aperçu affiché sous des erreurs est un aperçu **ancien** : le
-    // texte courant ne ressemble pas à ces pages, et il faut le dire.
-    if render.apercu_perime() {
-        content = content.push(
-            container(
-                palette
-                    .label("Aperçu ancien — la compilation actuelle a échoué.")
-                    .size(11),
-            )
-            .padding([4, 8])
-            .width(iced::Length::Fill),
-        );
+        entete = entete.push(diagnostics_panel(&render.errors, true, open, palette));
     }
 
     if !render.warnings.is_empty() {
-        content = content.push(diagnostics_panel(&render.warnings, false, open, palette));
+        entete = entete.push(diagnostics_panel(&render.warnings, false, open, palette));
     }
 
     // Diagnostics du serveur de langage : ils arrivent **au fil de la frappe**,
-    // là où notre compilation attend deux secondes de silence. Le fichier ouvert
+    // là où notre compilation attend le repos de la frappe. Le fichier ouvert
     // est le seul qu'on puisse rejoindre depuis l'éditeur.
 
     if sizes.is_empty() {
-        // État d'attente avant la première compilation.
-        let message = if render.pending {
-            "Compilation…"
-        } else if render.done {
-            "Aucune page à afficher."
-        } else {
-            "Écrivez du contenu : le document est compilé automatiquement."
-        };
-
-        content = content.push(palette.label(message).size(BODY_SIZE));
-
-        return scrollable(content)
-            .id(id.map_or_else(
-                || iced::widget::Id::from(SCROLL_ID),
-                |id| iced::widget::Id::from(format!("apercu-{id}")),
-            ))
-            .direction(iced::widget::scrollable::Direction::Both {
-                vertical: iced::widget::scrollable::Scrollbar::default(),
-                horizontal: iced::widget::scrollable::Scrollbar::default(),
-            })
+        // Progrès silencieux : aucun texte de statut ne vient s'ajouter
+        // au-dessus du document. Les erreurs, elles, restent visibles.
+        return column![entete, space::vertical().height(Fill)]
+            .spacing(0)
             .width(Fill)
             .height(Fill)
-            // Aucune page : le viewport ne sert à rien, mais le message garde
-            // la forme attendue par l'état de rendu.
-            .on_scroll(|viewport| {
-                Message::ViewportChanged(0, 0, viewport.bounds(), Some((0.0, 0.0)))
-            })
             .into();
     }
 
@@ -448,10 +465,23 @@ pub fn vue<'a>(
     // widgets qu'un document d'une page, et la géométrie du défilement reste
     // exacte — les hauteurs de pages sont connues avant tout rendu.
     let last_index = sizes.len() - 1;
-    let (first, last) = render.visible.unwrap_or((0, 2.min(last_index)));
+    let (visible_debut, visible_fin) = render.visible.unwrap_or((
+        pages.first().copied().unwrap_or(0),
+        pages.get(2).copied().unwrap_or(0),
+    ));
 
-    let first = first.min(last_index);
-    let last = last.clamp(first, last_index);
+    // `visible` désigne des pages du document ; la tranche n'en montre qu'une
+    // partie. On convertit donc les bornes en positions dans la tranche avant
+    // de dessiner, sans changer l'identité des pages.
+    let first = pages
+        .iter()
+        .position(|index| *index >= visible_debut)
+        .unwrap_or(0);
+    let last = pages
+        .iter()
+        .rposition(|index| *index <= visible_fin)
+        .unwrap_or(last_index)
+        .clamp(first, last_index);
 
     let head = head_height(&sizes, first);
 
@@ -459,13 +489,15 @@ pub fn vue<'a>(
         content = content.push(space::vertical().height(Length::Fixed(head)).width(Fill));
     }
 
-    for (index, size) in sizes
-        .iter()
-        .enumerate()
-        .skip(first)
-        .take(last.saturating_sub(first) + 1)
-    {
-        content = content.push(page_view(render, palette, index, *size, state.maj_tenu));
+    for position in first..=last {
+        let Some(index) = pages.get(position).copied() else {
+            continue;
+        };
+        let Some(size) = sizes.get(position).copied() else {
+            continue;
+        };
+
+        content = content.push(page_view(render, palette, index, size, state.maj_tenu));
 
         // L'écart **après** la page : il l'accompagne, au lieu d'être posé par
         // la colonne entre deux widgets. C'est ce qui rend la hauteur du
@@ -496,6 +528,7 @@ pub fn vue<'a>(
         .height(Fill)
         .on_scroll({
             let sizes = sizes.clone();
+            let pages = pages.clone();
             move |viewport| {
                 // La marge intérieure du panneau n'est pas dans le repère du
                 // viewport : on la retire pour raisonner sur le contenu défilant.
@@ -503,14 +536,20 @@ pub fn vue<'a>(
                 let top = viewport.absolute_offset().y - PANEL_PADDING;
                 let bottom = top + viewport.bounds().height;
 
-                let (first, last) = visible_pages(&sizes, top, bottom);
+                let (premiere, derniere) = visible_pages(&sizes, top, bottom);
+
+                // Les positions dans la tranche redeviennent des pages du
+                // document : le cache, la couche texte et la rasterisation
+                // parlent toujours la même langue.
+                let premiere = pages.get(premiere).copied().unwrap_or(0);
+                let derniere = pages.get(derniere).copied().unwrap_or(premiere);
 
                 // La place que le panneau laisse à une page vient d'ici : la vue est
                 // seule à la connaître, et c'est elle qui décide de la taille
                 // d'affichage — donc de la finesse dont le rendu a besoin. Les
                 // bornes du viewport la portent, et ne changent qu'au
                 // redimensionnement : un défilement ne les retransmet donc pas.
-                Message::ViewportChanged(first, last, viewport.bounds(), Some((gauche, top)))
+                Message::ViewportChanged(premiere, derniere, viewport.bounds(), Some((gauche, top)))
             }
         });
 
@@ -521,7 +560,7 @@ pub fn vue<'a>(
 
     // Le pied de page dit où l'on est dans le document. Il ne défile pas :
     // sans lui, un lecteur de thèse ne sait pas sur quelle page il se trouve.
-    let indicateur = indicateur_page(render, palette, &sizes);
+    let indicateur = indicateur_page(render, palette, &sizes, &pages);
 
     let mut colonne = column![].spacing(0).width(Fill).height(Fill);
 
@@ -530,6 +569,10 @@ pub fn vue<'a>(
     if render.recherche_apercu.visible {
         colonne = colonne.push(barre_recherche(render, palette));
     }
+
+    // Les diagnostics gardent toute la largeur du panneau, au-dessus du
+    // document qui défile.
+    colonne = colonne.push(entete);
 
     colonne = colonne.push(defilable).push(indicateur);
 
@@ -563,9 +606,14 @@ fn indicateur_page<'a>(
     render: &crate::app::state::RenderState,
     palette: Palette,
     sizes: &[(f32, f32)],
+    pages: &[usize],
 ) -> Element<'a, Message> {
-    let total = sizes.len();
-    let page = page_au_defilement(sizes, render.scroll.1).unwrap_or(0) + 1;
+    let total = render
+        .document
+        .as_deref()
+        .map_or(sizes.len(), crate::typst::render::page_count);
+    let position = page_au_defilement(sizes, render.scroll.1).unwrap_or(0);
+    let page = pages.get(position).copied().unwrap_or(position) + 1;
 
     container(
         palette
@@ -722,23 +770,13 @@ fn page_view(
         }
 
         // Aucune texture encore : le cadre est du papier, de la taille de la
-        // page. Il n'apparaît donc jamais de trou dans le document.
-        None => container(
-            palette
-                .label(if render.rendering.contains(&(render.revision, index)) {
-                    "Rendu…"
-                } else {
-                    ""
-                })
-                .size(13)
-                .color(palette.text_muted),
-        )
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(height))
-        .center_x(Fill)
-        .center_y(Fill)
-        .style(paper_style(paper))
-        .into(),
+        // page. Il n'apparaît donc jamais de trou dans le document, et aucun
+        // texte de chargement ne vient se coller sur une page en cours.
+        None => container(space::vertical())
+            .width(Length::Fixed(width))
+            .height(Length::Fixed(height))
+            .style(paper_style(paper))
+            .into(),
     };
 
     let Some(texte) = render.texte_affiche() else {
@@ -920,7 +958,7 @@ fn diagnostics_panel<'a>(
     let mut list = column![palette.label(title).size(13).color(accent)].spacing(4);
 
     for diagnostic in diagnostics {
-        let here = diagnostic.file.as_deref() == open;
+        let here = diagnostic.concerne(open);
 
         let location = match (diagnostic.line, diagnostic.column) {
             (Some(line), Some(column)) => format!("ligne {line}, colonne {column}"),
@@ -985,7 +1023,7 @@ fn diagnostics_panel<'a>(
 ///
 /// Le nom seul suffit : le chemin complet est le même préfixe pour tout le
 /// monde, et l'infobulle d'une ligne de chapitre le donne déjà.
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| path.display().to_string())
@@ -1597,20 +1635,56 @@ pub(crate) fn region_pour_page(
     )
 }
 
+/// La bande d'une page voisine qui sera vue la première quand elle entrera
+/// dans la fenêtre : son bas si elle vient du haut, son haut si elle vient
+/// du bas. Un préchargement plein page coûterait le prix d'une page entière
+/// à fort zoom ; cette bande coûte celui d'une fenêtre.
+pub(crate) fn region_de_prechargement(
+    taille: (f32, f32),
+    fenetre: (f32, f32),
+    vient_du_haut: bool,
+) -> (f32, f32, f32, f32) {
+    let hauteur_page = taille.1.max(1.0);
+    let fraction = (fenetre.1 / hauteur_page).clamp(0.0, 1.0);
+    let hauteur = fraction.max(1.0 / hauteur_page);
+
+    (
+        0.0,
+        if vient_du_haut { 1.0 - hauteur } else { 0.0 },
+        1.0,
+        hauteur,
+    )
+}
+
+/// Un rectangle en fractions de page couvre-t-il une région demandée ?
+pub(crate) fn rectangle_couvre(
+    rectangle: (f32, f32, f32, f32),
+    region: (f32, f32, f32, f32),
+) -> bool {
+    let (x, y, l, h) = region;
+    const EPSILON: f32 = 1.0e-3;
+
+    rectangle.0 <= x + EPSILON
+        && rectangle.1 <= y + EPSILON
+        && rectangle.0 + rectangle.2 >= x + l - EPSILON
+        && rectangle.1 + rectangle.3 >= y + h - EPSILON
+}
+
 /// Une tranche couvre-t-elle la région demandée ? Tant qu'elle la couvre,
 /// défiler est gratuit.
 pub(crate) fn tranche_couvre(
     tranche: &crate::app::state::Tranche,
     region: (f32, f32, f32, f32),
 ) -> bool {
-    let (x, y, l, h) = region;
-
-    const EPSILON: f32 = 1.0e-3;
-
-    tranche.gauche <= x + EPSILON
-        && tranche.haut <= y + EPSILON
-        && tranche.gauche + tranche.largeur >= x + l - EPSILON
-        && tranche.haut + tranche.hauteur >= y + h - EPSILON
+    rectangle_couvre(
+        (
+            tranche.gauche,
+            tranche.haut,
+            tranche.largeur,
+            tranche.hauteur,
+        ),
+        region,
+    )
 }
 
 #[cfg(test)]
@@ -1630,6 +1704,25 @@ mod tests_des_regions {
         // En bas : ni par le bas.
         let region = region_pour_page((500.0, 800.0), 0.0, (0.0, 750.0), (500.0, 200.0), 0.5);
         assert_eq!(region, (0.0, 0.8125, 1.0, 0.1875), "bas de page");
+    }
+
+    #[test]
+    fn le_prechargement_prend_la_bande_par_laquelle_la_page_entre() {
+        // Une page fait quatre fenêtres de haut.
+        let page = (500.0, 800.0);
+        let fenetre = (500.0, 200.0);
+
+        // La page qui vient du haut montre son bas.
+        let bande = region_de_prechargement(page, fenetre, true);
+        assert_eq!(bande, (0.0, 0.75, 1.0, 0.25));
+
+        // Celle qui vient du bas montre son haut.
+        let bande = region_de_prechargement(page, fenetre, false);
+        assert_eq!(bande, (0.0, 0.0, 1.0, 0.25));
+
+        // Une page plus courte que la fenêtre est préchargée entière.
+        let bande = region_de_prechargement((500.0, 100.0), fenetre, false);
+        assert_eq!(bande, (0.0, 0.0, 1.0, 1.0));
     }
 
     #[test]
@@ -1671,7 +1764,17 @@ mod tests_de_la_molette_dirigee {
 
 #[cfg(test)]
 mod tests_pages_visibles {
-    use super::pages_visibles;
+    use super::{largeur_colonne, pages_visibles};
+
+    /// La colonne fait au moins la fenêtre : les pages y sont centrées, et
+    /// une page plus large que le panneau élargit la colonne au lieu d'être
+    /// rognée.
+    #[test]
+    fn la_colonne_centre_les_pages_sans_les_rogner() {
+        assert_eq!(largeur_colonne(&[(400.0, 600.0)], 600.0), 600.0);
+        assert_eq!(largeur_colonne(&[(800.0, 600.0)], 600.0), 832.0);
+        assert_eq!(largeur_colonne(&[], 600.0), 600.0);
+    }
 
     /// Les pages visibles (feuille de route, phase 3, point 3.3) : le calcul
     /// suit la fenêtre et les tailles, sans défilement manuel.

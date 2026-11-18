@@ -122,16 +122,23 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::ChartImporter => Task::perform(
-            async {
-                rfd::AsyncFileDialog::new()
-                    .add_filter("CSV ou texte", &["csv", "txt"])
-                    .pick_file()
-                    .await
-                    .and_then(|fichier| std::fs::read_to_string(fichier.path()).ok())
-            },
-            Message::ChartImporte,
-        ),
+        Message::ChartImporter => {
+            // Le fichier doit arriver dans un panneau visible : sans cela,
+            // l'import serait fait puis perdu derrière une fenêtre fermée.
+            if state.chart.is_none() {
+                state.chart = Some(crate::app::state::ChartDialogue::default());
+            }
+            Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("CSV ou texte", &["csv", "txt"])
+                        .pick_file()
+                        .await
+                        .and_then(|fichier| std::fs::read_to_string(fichier.path()).ok())
+                },
+                Message::ChartImporte,
+            )
+        }
 
         Message::ChartImporte(Some(texte)) => {
             if let Some(dialogue) = state.chart.as_mut() {

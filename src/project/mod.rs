@@ -437,12 +437,26 @@ pub fn ecrire_releve_references(
 /// Empreinte du contenu d'un fichier, pour reconnaître le nôtre au retour.
 ///
 /// Comparée à celle du disque, elle distingue notre propre écriture d'un
-/// changement extérieur. Elle ne vit qu'en mémoire pendant la session.
+/// changement extérieur. Elle n'a pas besoin d'être cryptographique, mais
+/// elle doit rester la même d'une exécution à l'autre : c'est l'empreinte
+/// stable qui sert aussi dans les archives.
 pub fn empreinte_contenu(octets: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hacheur = std::collections::hash_map::DefaultHasher::new();
-    octets.hash(&mut hacheur);
-    hacheur.finish()
+    empreinte_stable(octets)
+}
+
+/// Une empreinte **stable** pour ce qui voyage dans une archive.
+///
+/// `DefaultHasher` dépend de l'implémentation de la bibliothèque standard :
+/// deux binaires Rust différents peuvent produire deux valeurs pour le même
+/// fichier. Un manifeste d'archive, lui, doit se relire ailleurs et plus tard.
+/// FNV-1a 64 bits est volontairement simple, déterministe et sans dépendance.
+pub fn empreinte_stable(octets: &[u8]) -> u64 {
+    let mut empreinte = 0xcbf2_9ce4_8422_2325_u64;
+    for octet in octets {
+        empreinte ^= u64::from(*octet);
+        empreinte = empreinte.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    empreinte
 }
 
 /// Écrit plusieurs fichiers **ensemble** : ou tous, ou aucun.
@@ -820,6 +834,13 @@ pub struct Session {
     /// apparence.
     #[serde(default)]
     pub themes: crate::theming::Chosen,
+
+    /// Les numéros de ligne de l'éditeur.
+    ///
+    /// Une préférence d'application, sans rapport avec la mise en page du
+    /// document : elle survit donc au projet et au redémarrage.
+    #[serde(default)]
+    pub line_numbers: bool,
 }
 
 fn session_path() -> PathBuf {
@@ -1285,6 +1306,45 @@ pub fn supprimer_reference(path: &Path, cle: &str) -> Result<std::path::PathBuf,
 
     ecrire_atomique(path, &reste).map_err(|e| format!("{e}"))?;
     Ok(copie)
+}
+
+/// Retire toutes les notices d'une bibliothèque locale, sans toucher aux
+/// commentaires ni à la mise en forme du fichier.
+///
+/// Le contenu entier part d'abord à la corbeille. Une lecture, une découpe ou
+/// une écriture ratée laisse le fichier intact ; une bibliothèque déjà vide ne
+/// produit aucune copie inutile.
+pub fn vider_bibliographie(path: &Path) -> Result<Option<std::path::PathBuf>, String> {
+    let contenu = std::fs::read_to_string(path).map_err(|e| format!("{e}"))?;
+    let nombre = parse_bibliography_text(&contenu).len();
+
+    if nombre == 0 {
+        return Ok(None);
+    }
+
+    let mut reste = contenu.clone();
+
+    // On retire la première notice, puis on recommence : les positions
+    // changent à chaque retrait, et une clé peut réapparaître dans un champ.
+    for _ in 0..nombre {
+        let Some(entree) = parse_bibliography_text(&reste).into_iter().next() else {
+            break;
+        };
+        let Some((ouverture, fermeture)) = plage_de_notice(&reste, &entree.key) else {
+            return Err(format!("« {} » introuvable.", entree.key));
+        };
+
+        let mut fin = fermeture;
+        while fin < reste.len() && reste[fin..].starts_with('\n') {
+            fin += 1;
+        }
+
+        reste.replace_range(ouverture..fin, "");
+    }
+
+    let copie = vers_la_corbeille_texte("bibliographie.bib", &contenu)?;
+    ecrire_atomique(path, &reste).map_err(|e| format!("{e}"))?;
+    Ok(Some(copie))
 }
 
 /// Le résultat de l'import d'un style.
@@ -2531,6 +2591,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&work);
     }
 
+    /// Vider la bibliographie retire les notices, pas les commentaires, et
+    /// garde une copie intégrale avant d'écrire.
+    #[test]
+    fn vider_la_bibliographie_garde_les_commentaires_et_une_copie() {
+        let dir = std::env::temp_dir().join(format!("tw-vider-bib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier");
+
+        let chemin = dir.join("references.bib");
+        let contenu = "% Mes commentaires\n\n@book{un,\n  title = {Un},\n}\n\n@article{deux,\n  title = {Deux},\n}\n";
+        std::fs::write(&chemin, contenu).expect("bibliothèque");
+
+        let copie = super::vider_bibliographie(&chemin)
+            .expect("vidée")
+            .expect("une copie est faite");
+        let reste = std::fs::read_to_string(&chemin).expect("relu");
+
+        assert!(!reste.contains("@book"), "la notice part : {reste}");
+        assert!(!reste.contains("@article"), "la notice part : {reste}");
+        assert!(
+            reste.contains("% Mes commentaires"),
+            "les commentaires restent : {reste}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&copie).expect("copie relue"),
+            contenu,
+            "la copie est intégrale"
+        );
+        assert!(
+            super::vider_bibliographie(&chemin)
+                .expect("seconde fois")
+                .is_none(),
+            "une bibliothèque vide ne produit pas de copie"
+        );
+
+        let _ = std::fs::remove_file(&copie);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Une suppression n'est pas une destruction : le fichier va à la
     /// corbeille, le chemin est rendu, et rien ne se marche dessus.
     #[test]
@@ -2897,6 +2996,10 @@ mod tests {
         // sans rien perdre, et sans démarrer sur un thème inexistant.
         assert_eq!(session.theme_mode, crate::base::theme::ThemeMode::System);
         assert_eq!(session.themes, crate::theming::Chosen::default());
+        assert!(
+            !session.line_numbers,
+            "les numéros de ligne restent masqués"
+        );
     }
 
     /// Le thème retenu survit à un redémarrage.
@@ -2915,6 +3018,7 @@ mod tests {
                 light: "Moka clair".to_string(),
                 dark: "Moka sombre".to_string(),
             },
+            line_numbers: true,
         };
 
         let text = serde_json::to_string_pretty(&session).unwrap();
@@ -2928,6 +3032,7 @@ mod tests {
         assert_eq!(restored.theme_mode, crate::base::theme::ThemeMode::Light);
         assert_eq!(restored.themes.light, "Moka clair");
         assert_eq!(restored.themes.dark, "Moka sombre");
+        assert!(restored.line_numbers, "la préférence de ligne est relue");
     }
 
     /// Le thème retenu survit à un aller-retour par un vrai fichier.
@@ -2955,6 +3060,7 @@ mod tests {
                     light: "Clair".to_string(),
                     dark: "Mon thème".to_string(),
                 },
+                line_numbers: true,
             },
         );
 
@@ -2962,6 +3068,7 @@ mod tests {
         let restored = load_session_from(&path).expect("session lisible");
 
         assert_eq!(restored.theme_mode, crate::base::theme::ThemeMode::Dark);
+        assert!(restored.line_numbers, "les numéros de ligne survivent");
 
         // 3. Les thèmes disponibles sont relus du dossier, et le choix retrouvé.
         let mut themes = crate::theming::natives();
@@ -4250,5 +4357,18 @@ mod tests_de_la_base {
         let brut = std::fs::read_to_string(dossier.join("references.json")).expect("fichier");
         assert!(brut.contains("Jn 3:16"), "{brut}");
         assert!(brut.contains("3"), "le compte y est : {brut}");
+    }
+}
+
+#[cfg(test)]
+mod tests_de_l_empreinte_stable {
+    use super::*;
+
+    #[test]
+    fn l_empreinte_stable_est_deterministe_et_documentee() {
+        assert_eq!(empreinte_stable(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(empreinte_stable(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(empreinte_stable(b"a"), empreinte_stable(b"a"));
+        assert_ne!(empreinte_stable(b"a"), empreinte_stable(b"b"));
     }
 }

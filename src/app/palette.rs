@@ -12,6 +12,7 @@
 use iced::Task;
 use iced_code_editor::Message as EditorMessage;
 
+use crate::app::message::FormatAction;
 use crate::app::{Message, State};
 use crate::base::texte::{normaliser_recherche as normaliser, offset_sur_caractere};
 
@@ -56,6 +57,19 @@ pub enum Icone {
     Puzzle,
     Plus,
     Panneau,
+    Numeros,
+    Texte,
+    Gras,
+    Italique,
+    Souligne,
+    Barre,
+    Code,
+    Titre,
+    Teinte,
+    Importer,
+    Theme,
+    Norme,
+    Plugin,
 }
 
 /// La famille d'une commande — ce qui donne un premier classement.
@@ -64,6 +78,7 @@ pub enum Categorie {
     Fichier,
     Projet,
     Insertion,
+    Texte,
     Affichage,
     Recherche,
     Aide,
@@ -79,6 +94,7 @@ pub enum CommandeId {
     NouveauProjet,
     ExporterPdf,
     BasculerRendu,
+    NumerosDeLigne,
     Focus,
     Bibliotheque,
     Normes,
@@ -96,6 +112,65 @@ pub enum CommandeId {
     ExporterProjetPortable,
     OuvrirDossierDonnees,
     SauverSous,
+    // Mise en forme du texte.
+    Gras,
+    Italique,
+    Souligne,
+    Barre,
+    GrasItalique,
+    Code,
+    Formule,
+    Titre1,
+    Titre2,
+    Titre3,
+    Titre4,
+    Titre5,
+    Titre6,
+    ListePuce,
+    ListeNumero,
+    CitationBloc,
+    Note,
+    BlocTypst,
+    ChoisirCouleur,
+    CouleurOrange,
+    CouleurVert,
+    CouleurDerniere,
+    CouleurRouge,
+    CouleurBleu,
+    CouleurViolet,
+    CouleurGris,
+    CouleurNoir,
+    // Déplacements dans le texte.
+    BlocMonter,
+    BlocDescendre,
+    TitreSuivant,
+    TitrePrecedent,
+    ListeIndenter,
+    ListeDesindenter,
+    ListeMonter,
+    ListeDescendre,
+    // Import et export de fichiers.
+    NouveauFichier,
+    ImporterTw,
+    ImporterSauvegarde,
+    ImporterNormeFichier,
+    ExporterNormes,
+    ImporterTheme,
+    EditeurTheme,
+    DossierThemes,
+    RafraichirThemes,
+    ImporterBibliographie,
+    ImporterVersionBiblique,
+    ImporterStyleCsl,
+    ImporterGraphique,
+    BasculerApercu,
+    SuiviApercu,
+    // Plugins.
+    PluginBibliographie,
+    PluginGlossaire,
+    PluginGraphiques,
+    PluginCallouts,
+    PluginReferencesBibliques,
 }
 
 /// Une balise insérable. Les balises qui ouvrent un panneau gardent leur
@@ -120,6 +195,7 @@ pub enum TagId {
     Bibliographie,
     GlossaireSection,
     IndexBiblique,
+    Garde,
     Meta,
 }
 
@@ -183,9 +259,9 @@ pub const COMMANDES: &[Commande] = &[
     },
     Commande {
         id: CommandeId::Ouvrir,
-        titre: "Ouvrir un document",
-        description: "Choisir un fichier d'écriture",
-        alias: &["open", "ouvrir"],
+        titre: "Importer un document .typ",
+        description: "Ouvrir un fichier Typst dans le projet",
+        alias: &["open", "ouvrir", "importer typ", "typ"],
         categorie: Categorie::Fichier,
         icone: Icone::Dossier,
         raccourci: Some("Ctrl+O"),
@@ -230,6 +306,16 @@ pub const COMMANDES: &[Commande] = &[
         icone: Icone::Mode,
         raccourci: Some("Ctrl+E"),
         action: Action::Message(|| Message::ModeBasculer),
+    },
+    Commande {
+        id: CommandeId::NumerosDeLigne,
+        titre: "Afficher les numéros de ligne",
+        description: "Montrer ou masquer les numéros dans l'éditeur",
+        alias: &["numeros", "ligne", "line numbers"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Numeros,
+        raccourci: None,
+        action: Action::Message(|| Message::NumerosDeLigneBascule),
     },
     Commande {
         id: CommandeId::Focus,
@@ -401,6 +487,563 @@ pub const COMMANDES: &[Commande] = &[
         raccourci: None,
         action: Action::Message(|| Message::SaveAs),
     },
+    Commande {
+        id: CommandeId::Gras,
+        titre: "Gras",
+        description: "Mettre la sélection en gras",
+        alias: &["gras", "bold", "b"],
+        categorie: Categorie::Texte,
+        icone: Icone::Gras,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Gras)),
+    },
+    Commande {
+        id: CommandeId::Italique,
+        titre: "Italique",
+        description: "Mettre la sélection en italique",
+        alias: &["italique", "italic", "i"],
+        categorie: Categorie::Texte,
+        icone: Icone::Italique,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Italique)),
+    },
+    Commande {
+        id: CommandeId::Souligne,
+        titre: "Souligné",
+        description: "Souligner la sélection",
+        alias: &["souligné", "souligne", "underline"],
+        categorie: Categorie::Texte,
+        icone: Icone::Souligne,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Souligne)),
+    },
+    Commande {
+        id: CommandeId::Barre,
+        titre: "Barré",
+        description: "Barrer la sélection",
+        alias: &["barré", "barre", "strike", "strikethrough"],
+        categorie: Categorie::Texte,
+        icone: Icone::Barre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Barre)),
+    },
+    Commande {
+        id: CommandeId::GrasItalique,
+        titre: "Gras et italique",
+        description: "Mettre la sélection en gras italique",
+        alias: &["gras italique", "bold italic", "bi"],
+        categorie: Categorie::Texte,
+        icone: Icone::Gras,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::GrasItalique)),
+    },
+    Commande {
+        id: CommandeId::Code,
+        titre: "Code en ligne",
+        description: "Entourer la sélection de code",
+        alias: &["code", "inline code", "monospace"],
+        categorie: Categorie::Texte,
+        icone: Icone::Code,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Code)),
+    },
+    Commande {
+        id: CommandeId::Formule,
+        titre: "Formule en ligne",
+        description: "Entourer la sélection d'une formule",
+        alias: &["formule", "math", "équation", "equation"],
+        categorie: Categorie::Texte,
+        icone: Icone::Code,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Formule)),
+    },
+    Commande {
+        id: CommandeId::Titre1,
+        titre: "Titre de niveau 1",
+        description: "Transformer le bloc en titre de chapitre",
+        alias: &["titre 1", "h1", "chapitre"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Titre(1))),
+    },
+    Commande {
+        id: CommandeId::Titre2,
+        titre: "Titre de niveau 2",
+        description: "Transformer le bloc en sous-titre",
+        alias: &["titre 2", "h2", "section"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Titre(2))),
+    },
+    Commande {
+        id: CommandeId::Titre3,
+        titre: "Titre de niveau 3",
+        description: "Transformer le bloc en titre de niveau 3",
+        alias: &["titre 3", "h3"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Titre(3))),
+    },
+    Commande {
+        id: CommandeId::Titre4,
+        titre: "Titre de niveau 4",
+        description: "Transformer le bloc en titre de niveau 4",
+        alias: &["titre 4", "h4"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Titre(4))),
+    },
+    Commande {
+        id: CommandeId::Titre5,
+        titre: "Titre de niveau 5",
+        description: "Transformer le bloc en titre de niveau 5",
+        alias: &["titre 5", "h5"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Titre(5))),
+    },
+    Commande {
+        id: CommandeId::Titre6,
+        titre: "Titre de niveau 6",
+        description: "Transformer le bloc en titre de niveau 6",
+        alias: &["titre 6", "h6"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Titre(6))),
+    },
+    Commande {
+        id: CommandeId::ListePuce,
+        titre: "Liste à puces",
+        description: "Basculer le bloc en liste à puces",
+        alias: &["puce", "liste", "bullet"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::ListePuce)),
+    },
+    Commande {
+        id: CommandeId::ListeNumero,
+        titre: "Liste numérotée",
+        description: "Basculer le bloc en liste numérotée",
+        alias: &["numérotée", "liste", "numbered", "ol"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::ListeNumero)),
+    },
+    Commande {
+        id: CommandeId::CitationBloc,
+        titre: "Citation de bloc",
+        description: "Basculer le bloc en citation",
+        alias: &["citation", "citation de bloc", "quote", "blockquote"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::CitationBloc)),
+    },
+    Commande {
+        id: CommandeId::Note,
+        titre: "Note de bas de page",
+        description: "Mettre la sélection en note",
+        alias: &["note", "footnote"],
+        categorie: Categorie::Texte,
+        icone: Icone::Note,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Note)),
+    },
+    Commande {
+        id: CommandeId::BlocTypst,
+        titre: "Bloc Typst brut",
+        description: "Entourer la sélection de Typst",
+        alias: &["typst", "brut", "raw"],
+        categorie: Categorie::Texte,
+        icone: Icone::Fragment,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::BlocTypst)),
+    },
+    Commande {
+        id: CommandeId::ChoisirCouleur,
+        titre: "Choisir une couleur…",
+        description: "Ouvrir la roue des couleurs pour la sélection",
+        alias: &["couleur", "roue", "picker", "teinte personnalisée"],
+        categorie: Categorie::Texte,
+        icone: Icone::Palette,
+        raccourci: None,
+        action: Action::Message(|| Message::PickerCouleurOuvrir),
+    },
+    Commande {
+        id: CommandeId::CouleurOrange,
+        titre: "Teinter en orange",
+        description: "Appliquer la couleur orange à la sélection",
+        alias: &["orange", "teinte orange", "couleur orange"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("orange".to_string()))),
+    },
+    Commande {
+        id: CommandeId::CouleurVert,
+        titre: "Teinter en vert",
+        description: "Appliquer la couleur verte à la sélection",
+        alias: &["vert", "green", "teinte verte", "couleur verte"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("green".to_string()))),
+    },
+    Commande {
+        id: CommandeId::CouleurDerniere,
+        titre: "Dernière couleur choisie",
+        description: "Teinter avec la dernière couleur utilisée",
+        alias: &["dernière couleur", "last color", "couleur courante"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::FormatDerniereCouleur),
+    },
+    Commande {
+        id: CommandeId::CouleurRouge,
+        titre: "Teinter en rouge",
+        description: "Appliquer la couleur rouge à la sélection",
+        alias: &["rouge", "red", "teinte rouge"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("red".to_string()))),
+    },
+    Commande {
+        id: CommandeId::CouleurBleu,
+        titre: "Teinter en bleu",
+        description: "Appliquer la couleur bleue à la sélection",
+        alias: &["bleu", "blue", "teinte bleue"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("blue".to_string()))),
+    },
+    Commande {
+        id: CommandeId::CouleurViolet,
+        titre: "Teinter en violet",
+        description: "Appliquer la couleur violette à la sélection",
+        alias: &["violet", "purple", "teinte violette"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("purple".to_string()))),
+    },
+    Commande {
+        id: CommandeId::CouleurGris,
+        titre: "Teinter en gris",
+        description: "Appliquer la couleur grise à la sélection",
+        alias: &["gris", "gray", "grey", "teinte grise"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("gray".to_string()))),
+    },
+    Commande {
+        id: CommandeId::CouleurNoir,
+        titre: "Teinter en noir",
+        description: "Appliquer la couleur noire à la sélection",
+        alias: &["noir", "black", "teinte noire"],
+        categorie: Categorie::Texte,
+        icone: Icone::Teinte,
+        raccourci: None,
+        action: Action::Message(|| Message::Format(FormatAction::Couleur("black".to_string()))),
+    },
+    Commande {
+        id: CommandeId::BlocMonter,
+        titre: "Monter le bloc",
+        description: "Déplacer le bloc courant vers le haut",
+        alias: &["monter", "bloc", "haut", "move up"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::BlocMonter),
+    },
+    Commande {
+        id: CommandeId::BlocDescendre,
+        titre: "Descendre le bloc",
+        description: "Déplacer le bloc courant vers le bas",
+        alias: &["descendre", "bloc", "bas", "move down"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::BlocDescendre),
+    },
+    Commande {
+        id: CommandeId::TitreSuivant,
+        titre: "Titre suivant",
+        description: "Aller au titre suivant",
+        alias: &["titre suivant", "heading next"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::TitreSuivant),
+    },
+    Commande {
+        id: CommandeId::TitrePrecedent,
+        titre: "Titre précédent",
+        description: "Aller au titre précédent",
+        alias: &["titre précédent", "heading previous"],
+        categorie: Categorie::Texte,
+        icone: Icone::Titre,
+        raccourci: None,
+        action: Action::Message(|| Message::TitrePrecedent),
+    },
+    Commande {
+        id: CommandeId::ListeIndenter,
+        titre: "Indenter la ligne",
+        description: "Enfoncer la ligne de liste courante",
+        alias: &["indenter", "liste", "tab"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::ListeIndenter),
+    },
+    Commande {
+        id: CommandeId::ListeDesindenter,
+        titre: "Désindenter la ligne",
+        description: "Remonter la ligne de liste courante",
+        alias: &["désindenter", "desindenter", "liste", "shift tab"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::ListeDesindenter),
+    },
+    Commande {
+        id: CommandeId::ListeMonter,
+        titre: "Monter la ligne de liste",
+        description: "Échanger avec la ligne de liste précédente",
+        alias: &["liste monter", "ligne haut"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::ListeMonter),
+    },
+    Commande {
+        id: CommandeId::ListeDescendre,
+        titre: "Descendre la ligne de liste",
+        description: "Échanger avec la ligne de liste suivante",
+        alias: &["liste descendre", "ligne bas"],
+        categorie: Categorie::Texte,
+        icone: Icone::Texte,
+        raccourci: None,
+        action: Action::Message(|| Message::ListeDescendre),
+    },
+    Commande {
+        id: CommandeId::NouveauFichier,
+        titre: "Nouveau document",
+        description: "Ouvrir un nouveau document d'écriture",
+        alias: &["nouveau", "document", "new file"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Fichier,
+        raccourci: Some("Ctrl+N"),
+        action: Action::Message(|| Message::NewFile),
+    },
+    Commande {
+        id: CommandeId::ImporterTw,
+        titre: "Importer un .tw unique",
+        description: "Reconstruire un projet depuis un fichier .tw",
+        alias: &["importer tw", "import tw"],
+        categorie: Categorie::Projet,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::ProjetImportTw),
+    },
+    Commande {
+        id: CommandeId::ImporterSauvegarde,
+        titre: "Importer une sauvegarde",
+        description: "Restaurer un projet depuis une archive",
+        alias: &["importer sauvegarde", "archive", "import backup"],
+        categorie: Categorie::Projet,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::ProjetImportSauvegarde),
+    },
+    Commande {
+        id: CommandeId::ImporterNormeFichier,
+        titre: "Importer un fichier de normes",
+        description: "Ajouter une norme TOML à la bibliothèque",
+        alias: &["importer norme", "norme toml", "import norme"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::NormesFichierImporter),
+    },
+    Commande {
+        id: CommandeId::ExporterNormes,
+        titre: "Exporter les normes du document",
+        description: "Écrire les normes courantes dans un fichier TOML",
+        alias: &["exporter normes", "normes toml", "export normes"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Telecharger,
+        raccourci: None,
+        action: Action::Message(|| Message::MiseEnPageExporter),
+    },
+    Commande {
+        id: CommandeId::ImporterTheme,
+        titre: "Charger un thème",
+        description: "Importer un thème depuis un fichier TOML",
+        alias: &[
+            "charger thème",
+            "importer thème",
+            "load theme",
+            "theme toml",
+        ],
+        categorie: Categorie::Reglage,
+        icone: Icone::Theme,
+        raccourci: None,
+        action: Action::Message(|| Message::LoadTheme),
+    },
+    Commande {
+        id: CommandeId::EditeurTheme,
+        titre: "Customiser un thème",
+        description: "Ouvrir l'éditeur du thème actif",
+        alias: &["éditeur thème", "customiser thème", "theme editor"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Theme,
+        raccourci: None,
+        action: Action::Message(|| Message::ThemeEditeurOuvrir),
+    },
+    Commande {
+        id: CommandeId::DossierThemes,
+        titre: "Ouvrir le dossier des thèmes",
+        description: "Voir les fichiers de thèmes sur le disque",
+        alias: &["dossier thèmes", "themes folder"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Dossier,
+        raccourci: None,
+        action: Action::Message(|| Message::OpenThemesFolder),
+    },
+    Commande {
+        id: CommandeId::RafraichirThemes,
+        titre: "Recharger les thèmes",
+        description: "Relire les thèmes du dossier",
+        alias: &["recharger thèmes", "refresh themes"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Theme,
+        raccourci: None,
+        action: Action::Message(|| Message::RefreshThemes),
+    },
+    Commande {
+        id: CommandeId::ImporterBibliographie,
+        titre: "Importer une bibliographie",
+        description: "Ajouter un fichier BibLaTeX au projet",
+        alias: &["importer bibliographie", "bib", "biblatex"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::BibliographieImporter),
+    },
+    Commande {
+        id: CommandeId::ImporterVersionBiblique,
+        titre: "Importer une version biblique",
+        description: "Ajouter une version JSON au registre",
+        alias: &["importer bible", "version biblique", "bible json"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::BibleVersionImporter),
+    },
+    Commande {
+        id: CommandeId::ImporterStyleCsl,
+        titre: "Importer un style CSL",
+        description: "Ajouter un style de citation au projet",
+        alias: &["importer csl", "style citation", "csl"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::StyleCslImporter),
+    },
+    Commande {
+        id: CommandeId::ImporterGraphique,
+        titre: "Importer des données de graphique",
+        description: "Charger un CSV dans le panneau graphique",
+        alias: &["importer csv", "graphique csv", "chart csv"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Importer,
+        raccourci: None,
+        action: Action::Message(|| Message::ChartImporter),
+    },
+    Commande {
+        id: CommandeId::BasculerApercu,
+        titre: "Afficher ou masquer l'aperçu",
+        description: "Le panneau de rendu à côté du texte",
+        alias: &["aperçu", "preview", "rendu"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Mode,
+        raccourci: None,
+        action: Action::Message(|| Message::TogglePreview),
+    },
+    Commande {
+        id: CommandeId::SuiviApercu,
+        titre: "Suivre le curseur dans l'aperçu",
+        description: "Faire défiler le rendu avec l'écriture",
+        alias: &["suivi aperçu", "sync preview"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Mode,
+        raccourci: None,
+        action: Action::Message(|| Message::TogglePreviewSync),
+    },
+    Commande {
+        id: CommandeId::PluginBibliographie,
+        titre: "Activer ou désactiver la bibliographie",
+        description: "Brancher ou débrancher le plugin bibliographie",
+        alias: &["plugin bibliographie", "bibliographie"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Plugin,
+        raccourci: None,
+        action: Action::Message(|| Message::BasculerFonctionnalite("bibliographie".to_string())),
+    },
+    Commande {
+        id: CommandeId::PluginGlossaire,
+        titre: "Activer ou désactiver le glossaire",
+        description: "Brancher ou débrancher le plugin glossaire",
+        alias: &["plugin glossaire", "glossaire"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Plugin,
+        raccourci: None,
+        action: Action::Message(|| Message::BasculerFonctionnalite("glossaire".to_string())),
+    },
+    Commande {
+        id: CommandeId::PluginGraphiques,
+        titre: "Activer ou désactiver les graphiques",
+        description: "Brancher ou débrancher le plugin graphiques",
+        alias: &["plugin graphiques", "graphiques", "charts"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Plugin,
+        raccourci: None,
+        action: Action::Message(|| Message::BasculerFonctionnalite("graphiques".to_string())),
+    },
+    Commande {
+        id: CommandeId::PluginCallouts,
+        titre: "Activer ou désactiver les callouts",
+        description: "Brancher ou débrancher le plugin des encadrés",
+        alias: &["plugin callouts", "encadrés", "callouts"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Plugin,
+        raccourci: None,
+        action: Action::Message(|| Message::BasculerFonctionnalite("callouts".to_string())),
+    },
+    Commande {
+        id: CommandeId::PluginReferencesBibliques,
+        titre: "Activer ou désactiver les références bibliques",
+        description: "Brancher ou débrancher le plugin biblique",
+        alias: &["plugin biblique", "références bibliques", "bible"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Plugin,
+        raccourci: None,
+        action: Action::Message(|| {
+            Message::BasculerFonctionnalite("references_bibliques".to_string())
+        }),
+    },
 ];
 
 /// Le catalogue des balises.
@@ -432,6 +1075,13 @@ pub const BALISES: &[Balise] = &[
         description: "Composer une référence ou un groupe",
         alias: &["b", "bible", "verset", "référence"],
         icone: Icone::Bible,
+    },
+    Balise {
+        id: TagId::Garde,
+        titre: "Page de garde",
+        description: "Composer des pages avant le sommaire, sans numéro",
+        alias: &["garde", "page de garde", "front", "front matter"],
+        icone: Icone::Fichier,
     },
     Balise {
         id: TagId::Meta,
@@ -598,7 +1248,15 @@ pub enum ItemAction {
     Tag(TagId),
     Snippet(SnippetId),
     Meta(String),
-    LienInterne { reference: String },
+    LienInterne {
+        reference: String,
+    },
+    /// Appliquer une norme de la bibliothèque au document.
+    Norme(String),
+    /// Exporter une norme de la bibliothèque dans un fichier TOML.
+    ExporterNorme(String),
+    /// Choisir un thème par son nom.
+    Theme(String),
 }
 
 /// L'état de la palette ouverte.
@@ -612,6 +1270,9 @@ pub struct Palette {
     /// Les métadonnées visibles au moment de l'ouverture : la palette ne
     /// relit pas `metadonnees.toml` à chaque image.
     pub metadonnees: Vec<(String, String)>,
+    /// Les normes de la bibliothèque, lues à l'ouverture : les commandes de
+    /// chargement ne fouillent pas le disque à chaque frappe.
+    pub normes: Vec<String>,
 }
 
 /// Un champ du formulaire d'une balise simple.
@@ -731,6 +1392,7 @@ impl Palette {
             selection: 0,
             remplacement: declencheur(contenu, curseur, mode),
             metadonnees: Vec::new(),
+            normes: Vec::new(),
         }
     }
 
@@ -760,6 +1422,42 @@ impl Palette {
                     commande_active(&state.reglages.fonctionnalites, commande.id)
                 }) {
                     items.push(item_de_commande(commande));
+                }
+
+                // Les normes de la bibliothèque sont des commandes de
+                // chargement direct : choisir un nom l'applique au document.
+                for nom in &self.normes {
+                    items.push(Item {
+                        titre: format!("Norme · {nom}"),
+                        description: "Charger et appliquer cette norme au document".to_string(),
+                        alias: format!("norme {nom} charger appliquer"),
+                        categorie: Categorie::Reglage,
+                        icone: Icone::Norme,
+                        raccourci: None,
+                        action: ItemAction::Norme(nom.clone()),
+                    });
+                    items.push(Item {
+                        titre: format!("Exporter la norme · {nom}"),
+                        description: "Écrire cette norme dans un fichier TOML".to_string(),
+                        alias: format!("exporter norme {nom} toml"),
+                        categorie: Categorie::Reglage,
+                        icone: Icone::Telecharger,
+                        raccourci: None,
+                        action: ItemAction::ExporterNorme(nom.clone()),
+                    });
+                }
+
+                // Chaque thème disponible est une commande de choix.
+                for theme in &state.themes {
+                    items.push(Item {
+                        titre: format!("Thème · {}", theme.name),
+                        description: "Choisir ce thème".to_string(),
+                        alias: format!("thème {} theme {}", theme.name, theme.name),
+                        categorie: Categorie::Affichage,
+                        icone: Icone::Theme,
+                        raccourci: None,
+                        action: ItemAction::Theme(theme.name.clone()),
+                    });
                 }
             }
 
@@ -833,6 +1531,9 @@ fn poser(state: &mut State, mode: ModePalette) -> Task<Message> {
     let curseur = state.editor.cursor_offset();
     let mut palette = Palette::depuis(mode, &contenu, curseur);
     palette.metadonnees = metadonnees_visibles(state);
+    if mode == ModePalette::Systeme {
+        palette.normes = crate::project::noms_de_normes();
+    }
     state.palette = Some(palette);
     state.editor.editor.lose_focus();
     iced::widget::operation::focus(Palette::id_champ())
@@ -937,11 +1638,17 @@ fn commande_active(
     fonctionnalites: &crate::mise_en_page::modele::Fonctionnalites,
     id: CommandeId,
 ) -> bool {
-    use crate::base::valeurs::{CLE_BIBLIOGRAPHIE, CLE_GLOSSAIRE};
+    use crate::base::valeurs::{
+        CLE_BIBLIOGRAPHIE, CLE_GLOSSAIRE, CLE_GRAPHIQUES, CLE_REFERENCES_BIBLIQUES,
+    };
 
     match id {
-        CommandeId::Citation => fonctionnalites.actif(CLE_BIBLIOGRAPHIE),
+        CommandeId::Citation | CommandeId::ImporterBibliographie | CommandeId::ImporterStyleCsl => {
+            fonctionnalites.actif(CLE_BIBLIOGRAPHIE)
+        }
         CommandeId::GlossaireFenetre => fonctionnalites.actif(CLE_GLOSSAIRE),
+        CommandeId::ImporterVersionBiblique => fonctionnalites.actif(CLE_REFERENCES_BIBLIQUES),
+        CommandeId::ImporterGraphique => fonctionnalites.actif(CLE_GRAPHIQUES),
         _ => true,
     }
 }
@@ -1132,6 +1839,9 @@ fn executer_item(state: &mut State, item: &Item, configurer: bool) -> Task<Messa
         ItemAction::LienInterne { reference, .. } => {
             inserer_texte(state, &format!("[[{reference}|]]"), 2)
         }
+        ItemAction::Norme(nom) => Task::done(Message::NormesAppliquerAuDocument(nom.clone())),
+        ItemAction::ExporterNorme(nom) => Task::done(Message::NormesExporter(nom.clone())),
+        ItemAction::Theme(nom) => Task::done(Message::SelectTheme(nom.clone())),
     }
 }
 
@@ -1157,6 +1867,7 @@ fn inserer_tag(state: &mut State, tag: TagId) -> Task<Message> {
         TagId::Bibliographie => Task::done(Message::BibliographieSectionInserer),
         TagId::GlossaireSection => Task::done(Message::GlossaireSectionInserer),
         TagId::IndexBiblique => Task::done(Message::BibleIndexInserer),
+        TagId::Garde => inserer_texte(state, "{{garde}}\n\n{{/garde}}", 11),
     }
 }
 
@@ -1284,6 +1995,31 @@ mod tests_de_la_palette {
             BALISES.iter().any(|balise| balise.id == TagId::Meta),
             "la métadonnée a sa balise"
         );
+    }
+
+    #[test]
+    fn le_catalogue_couvre_les_formats_les_imports_et_les_plugins() {
+        for id in [
+            CommandeId::Gras,
+            CommandeId::Italique,
+            CommandeId::Souligne,
+            CommandeId::Barre,
+            CommandeId::CouleurOrange,
+            CommandeId::CouleurVert,
+            CommandeId::CouleurDerniere,
+            CommandeId::ImporterTw,
+            CommandeId::ImporterTheme,
+            CommandeId::ImporterNormeFichier,
+            CommandeId::NouveauFichier,
+            CommandeId::EditeurTheme,
+            CommandeId::PluginBibliographie,
+            CommandeId::PluginGlossaire,
+        ] {
+            assert!(
+                COMMANDES.iter().any(|commande| commande.id == id),
+                "commande absente du catalogue : {id:?}"
+            );
+        }
     }
 
     #[test]

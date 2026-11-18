@@ -22,6 +22,8 @@ thread_local! {
 
 fn couverture(state: &State, nom: &str) -> Option<image::Handle> {
     let (_, pixels, largeur, hauteur) = state.vignettes.iter().find(|(cle, ..)| cle == nom)?;
+    // Empreinte de cache, jamais écrite sur disque : elle sert seulement à
+    // savoir si la couverture affichée est encore la bonne.
     let mut empreinte = std::collections::hash_map::DefaultHasher::new();
     pixels.hash(&mut empreinte);
     largeur.hash(&mut empreinte);

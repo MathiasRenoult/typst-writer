@@ -36,6 +36,8 @@ pub fn generer_avec(
     regles: &Regles,
     decor: &crate::mise_en_page::modele::Decor,
 ) -> String {
+    let document = super::liens::resoudre(document);
+    let document = document.as_ref();
     let mut out = String::new();
 
     // L'index des citations est recalculé à chaque rendu : il lit les
@@ -69,11 +71,94 @@ pub fn generer_avec(
     out
 }
 
+/// Le document porte-t-il au moins une page de garde ?
+pub fn a_des_pages_de_garde(document: &Document) -> bool {
+    document
+        .blocs
+        .iter()
+        .any(|bloc| matches!(bloc, Bloc::Garde(_)))
+}
+
+/// Génère le contenu Typst des pages de garde, hors du corps du document.
+///
+/// Il est injecté dans `document.garde.typ` : le gabarit le compose avant le sommaire,
+/// dans une page sans numéro et avec `heading(outlined: false)` pour que ses
+/// titres ne descendent pas dans la table des matières. Plusieurs blocs
+/// `{{garde}}` sont séparés par un saut de page : chacun commence sur sa page.
+pub fn generer_front_matter(
+    document: &Document,
+    regles: &Regles,
+    decor: &crate::mise_en_page::modele::Decor,
+) -> String {
+    let document = super::liens::resoudre(document);
+    let document = document.as_ref();
+    let pages: Vec<&Vec<Bloc>> = document
+        .blocs
+        .iter()
+        .filter_map(|bloc| match bloc {
+            Bloc::Garde(contenu) => Some(contenu),
+            _ => None,
+        })
+        .collect();
+
+    if pages.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+
+    // Les imports des graphiques et des callouts valent aussi pour les pages
+    // de garde : ils sont dans un fichier Typst distinct du corps.
+    if pages
+        .iter()
+        .any(|contenu| contenu.iter().any(contient_chart))
+    {
+        out.push_str("#import \"@local/primaviz:0.12.1\": *\n\n");
+    }
+    if pages
+        .iter()
+        .any(|contenu| contenu.iter().any(contient_callout))
+    {
+        out.push_str("#import \"@local/showybox:2.0.4\": showybox\n\n");
+    }
+
+    let index = if pages
+        .iter()
+        .any(|contenu| contenu.iter().any(contient_index))
+    {
+        crate::langage::index_citations::IndexBiblique::construire(
+            document,
+            &regles.references,
+            &regles.index,
+        )
+    } else {
+        crate::langage::index_citations::IndexBiblique::default()
+    };
+
+    let mut compteur_liens = crate::langage::liens::CompteurLiens::default();
+    for (rang, contenu) in pages.iter().enumerate() {
+        if rang > 0 {
+            out.push_str("#pagebreak()\n\n");
+        }
+        for bloc in *contenu {
+            generer_bloc(bloc, &mut out, regles, decor, &index, &mut compteur_liens);
+        }
+    }
+
+    // Les ancres d'une page de garde ne doivent jamais entrer en collision
+    // avec celles du corps : deux titres identiques y sont légitimes.
+    out = out
+        .replace("<titre-", "<garde-titre-")
+        .replace("<figure-", "<garde-figure-");
+    out
+}
+
 /// Le document contient-il un index biblique, même sous un décor ?
 fn contient_index(bloc: &Bloc) -> bool {
     match bloc {
         Bloc::IndexBiblique => true,
         Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_index(bloc),
+        Bloc::Garde(contenu) => contenu.iter().any(contient_index),
         _ => false,
     }
 }
@@ -83,6 +168,7 @@ fn contient_chart(bloc: &Bloc) -> bool {
     match bloc {
         Bloc::Chart(_) | Bloc::Graphique { .. } => true,
         Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_chart(bloc),
+        Bloc::Garde(contenu) => contenu.iter().any(contient_chart),
         _ => false,
     }
 }
@@ -94,6 +180,7 @@ fn contient_callout(bloc: &Bloc) -> bool {
             crate::langage::callout::est_callout(proprietes) || contient_callout(bloc)
         }
         Bloc::Canonique(bloc) => contient_callout(bloc),
+        Bloc::Garde(contenu) => contenu.iter().any(contient_callout),
         _ => false,
     }
 }
@@ -160,7 +247,10 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             | Inline::Couleur { contenu, .. } => premier_caractere(contenu),
             Inline::Lien { texte, .. } => premier_caractere(texte),
             Inline::LienInterne { texte, .. } => premier_caractere(texte),
-            Inline::Citation(_) => Some('\u{2039}'),
+            // Une citation est un mot pour la typographie. Le glyphe de
+            // renvoi n'est pas un guillemet : le prendre pour l'un ouvrait
+            // une fausse citation et collait un `‹` devant `@clé`.
+            Inline::Citation(_) => Some('a'),
             // Une date vaut un mot : ce qui la suit mérite l'espace d'un.
             Inline::Date(_) => Some('1'),
             // Une métadonnée rend une valeur : elle vaut un mot.
@@ -296,6 +386,10 @@ fn generer_bloc(
         }
         Bloc::SautDePage => {
             out.push_str("#pagebreak()\n\n");
+        }
+        Bloc::Garde(_) => {
+            // Les pages de garde ne passent pas par le corps : elles sont
+            // composées avant le sommaire, par `generer_front_matter`.
         }
         Bloc::Image { légende, cible } => {
             // Une légende fait une figure numérotée ; sans elle, l'image
@@ -453,6 +547,7 @@ fn generer_inline_dans(
         // pas la fin du texte.
         contexte.suivant = premier_caractere(&inline[rang + 1..]);
         contexte.suivant_texte = premier_texte(&inline[rang + 1..]);
+        contexte.suivant_citation = matches!(inline.get(rang + 1), Some(Inline::Citation(_)));
 
         match element {
             Inline::Bible(elements) => {
@@ -594,6 +689,12 @@ fn generer_inline_dans(
             }
             Inline::Citation(references) => {
                 generer_citation(references, out);
+                // Une citation est un mot pour la typographie : sans cela,
+                // un guillemet fermant qui suit immédiatement croyait que le
+                // dernier caractère était encore une espace et n'ajoutait
+                // pas son insécable.
+                contexte.precedent = Some('a');
+                contexte.venant_du_guillemet = false;
                 en_tete = false;
             }
             Inline::Note(contenu) => {
@@ -619,7 +720,28 @@ fn generer_inline_dans(
                 out.push_str("#link(<");
                 out.push_str(reference);
                 out.push_str(">)[");
-                generer_inline_dans(texte, out, false, regles, contexte, dans_note);
+                if let Some(affichage) = super::liens::affichage_du_lien(texte) {
+                    match affichage {
+                        super::liens::AffichageLien::Chapitre => {
+                            out.push_str("chapitre #context counter(heading)");
+                        }
+                        super::liens::AffichageLien::Figure => {
+                            let prefixe = regles.legende_prefixe.trim();
+                            out.push_str(if prefixe.is_empty() {
+                                "Figure"
+                            } else {
+                                prefixe
+                            });
+                            out.push_str(" #context counter(figure)");
+                        }
+                        super::liens::AffichageLien::Page => {
+                            out.push_str("page #context counter(page)");
+                        }
+                    }
+                    out.push_str(&format!(".display(at: <{reference}>)"));
+                } else {
+                    generer_inline_dans(texte, out, false, regles, contexte, dans_note);
+                }
                 out.push(']');
                 en_tete = false;
             }
@@ -1254,6 +1376,72 @@ mod tests {
         assert!(!typst.contains("#import"), "{typst}");
         assert!(!typst.contains("#show"), "{typst}");
         assert!(!typst.contains("#bibliography"), "{typst}");
+    }
+
+    /// Une citation collée au mot et suivie d'un point ne doit ni avaler les
+    /// espaces du paragraphe, ni sortir en texte échappé.
+    #[test]
+    fn une_citation_collee_en_fin_de_phrase_garde_la_phrase() {
+        let source = "D'un point de vue général, le Larousse dit \"les liens ne sont pas rompus\"@n2022petit[p. 50].";
+        let typst = generer(&parse(source));
+
+        assert!(
+            typst.contains("D'un point de vue général"),
+            "les espaces du paragraphe restent : {typst:?}"
+        );
+        assert!(
+            typst.contains("@n2022petit[p. 50]"),
+            "la citation reste une citation Typst : {typst:?}"
+        );
+        assert!(
+            !typst.contains("\\@"),
+            "le @ ne se réfugie pas en texte : {typst:?}"
+        );
+        assert!(
+            !typst.contains("‹@"),
+            "un faux guillemet ne précède pas la citation : {typst:?}"
+        );
+    }
+
+    /// Une citation entre un mot et un guillemet fermant dans un texte
+    /// séparé ne doit ni perdre l'espace avant `»`, ni ouvrir une fausse
+    /// citation : le guillemet ferme l'élément précédent, à travers la
+    /// citation.
+    #[test]
+    fn un_guillemet_fermant_apres_une_citation_garde_son_espace() {
+        let regles = crate::langage::typographie::Regles::francaise();
+        let sortie = generer_inline_en_clair(
+            &[
+                Inline::Texte("une famille".to_string()),
+                Inline::Citation(vec![
+                    crate::langage::schema::Reference::new("grudemwaynea2023theologie")
+                        .avec_page("p. 981"),
+                ]),
+                Inline::Texte(" ». La suite.".to_string()),
+            ],
+            &regles,
+        );
+
+        assert!(
+            sortie.contains("@grudemwaynea2023theologie[p. 981]~»"),
+            "le guillemet ferme après la citation, avec son insécable : {sortie:?}"
+        );
+        assert!(
+            sortie.contains("une famille"),
+            "les mots restent espacés : {sortie:?}"
+        );
+        assert!(!sortie.contains("‹"), "aucune fausse citation : {sortie:?}");
+    }
+
+    #[test]
+    fn une_citation_sans_page_avant_un_guillemet_garde_son_espace() {
+        let source = "Trevor Burke dit : « L’adoption est un terme juridique. Dieu.@burketrevorjadopted » Cette définition continue.";
+        let typst = generer_avec(
+            &crate::langage::parse(source),
+            &crate::langage::typographie::Regles::francaise(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        assert!(typst.contains("@burketrevorjadopted~»"), "{typst:?}");
     }
 
     /// Un appel groupé s'écrit en appels `#cite` qui se suivent, séparés par

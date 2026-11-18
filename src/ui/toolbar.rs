@@ -350,6 +350,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ));
         bar = bar.push(titre_menu(palette));
 
+        // Les numéros de ligne : un repère de lecture pour qui en a besoin,
+        // invisible par défaut en prose.
+        bar = bar.push(icon_button(
+            lucide_icons::iced::icon_list_ordered::<Theme>(),
+            if state.numeros_de_ligne {
+                "Masquer les numéros de ligne"
+            } else {
+                "Afficher les numéros de ligne"
+            },
+            Message::NumerosDeLigneBascule,
+            palette,
+            state.numeros_de_ligne,
+        ));
+
         bar = bar.push(format_button(
             "•",
             "Basculer la ligne en liste à puces",

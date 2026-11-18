@@ -700,6 +700,7 @@ impl CodeEditor {
 
     pub(crate) fn search_matches_visible(&self) -> bool {
         self.search_state.is_open
+            || self.search_highlights_enabled
             || (self.vim_enabled && self.vim_state.last_search().is_some())
     }
 
@@ -739,6 +740,62 @@ impl CodeEditor {
         let buffer = &self.buffer;
         self.search_state.set_query(query, buffer);
         self.search_state.is_open = true;
+    }
+
+    /// Met à jour les correspondances surlignées **sans ouvrir** la boîte de
+    /// dialogue du crate.
+    ///
+    /// La barre de recherche de l'application pilote ce surlignage ; la boîte
+    /// de dialogue propre au crate ne doit pas s'ajouter à elle. Un motif vide
+    /// efface les surlignages.
+    pub fn set_search_query_silencieux(&mut self, query: String) {
+        let vide = query.is_empty();
+        self.search_state.set_query(query, &self.buffer);
+        self.search_highlights_enabled = !vide;
+        self.overlay_cache.clear();
+    }
+
+    /// Efface le surlignage piloté par l'hôte.
+    pub fn effacer_recherche_silencieuse(&mut self) {
+        self.search_state.set_query(String::new(), &self.buffer);
+        self.search_highlights_enabled = false;
+        self.overlay_cache.clear();
+    }
+
+    /// Fait défiler l'éditeur vers un décalage vertical absolu.
+    ///
+    /// L'hôte s'en sert pour retrouver exactement la position qu'il avait
+    /// avant de quitter la vue : le widget de défilement est reconstruit avec
+    /// la vue, mais le modèle de l'éditeur, lui, survit.
+    pub fn defiler_vers_offset(&mut self, offset: f32) -> iced::Task<Message> {
+        let offset = offset.max(0.0);
+        self.viewport_scroll = offset;
+        iced::advanced::widget::operate(
+            iced::advanced::widget::operation::scrollable::scroll_to::<Message>(
+                self.scrollable_id.clone(),
+                iced::advanced::widget::operation::scrollable::AbsoluteOffset {
+                    x: Some(0.0),
+                    y: Some(offset),
+                },
+            ),
+        )
+    }
+
+    /// Fait défiler l'éditeur jusqu'au curseur, sans le déplacer.
+    ///
+    /// Une occurrence de recherche doit être **vue**, pas seulement
+    /// sélectionnée : c'est ce qui manquait aux boutons « suivant » et
+    /// « précédent » quand l'occurrence tombait hors de la fenêtre.
+    pub fn defiler_vers_curseur(&self) -> iced::Task<Message> {
+        self.scroll_to_cursor()
+    }
+
+    /// Les correspondances sont-elles actuellement surlignées ?
+    ///
+    /// Public pour que l'hôte vérifie son propre surlignage sans connaître
+    /// l'état interne de la boîte de dialogue du crate.
+    pub fn recherche_surlignee(&self) -> bool {
+        self.search_matches_visible()
     }
 
     /// Opens the search dialog programmatically.
@@ -1116,6 +1173,35 @@ mod tests {
     fn test_get_visible_match_range_empty() {
         let matches = vec![];
         assert_eq!(get_visible_match_range(&matches, 0, 100), 0..0);
+    }
+
+    /// Le surlignage piloté par l'hôte ne doit pas ouvrir la boîte de
+    /// dialogue du crate : c'étaient deux panneaux de recherche à l'écran.
+    #[test]
+    fn test_external_query_highlights_without_opening_dialog() {
+        let mut editor = CodeEditor::new("foo bar foo", "txt");
+
+        editor.set_search_query_silencieux("foo".to_string());
+
+        assert!(!editor.is_search_open(), "la boîte du crate reste fermée");
+        assert!(editor.search_matches_visible(), "les occurrences sont visibles");
+        assert_eq!(editor.search_state.matches.len(), 2);
+
+        editor.effacer_recherche_silencieuse();
+        assert!(!editor.search_matches_visible());
+        assert!(editor.search_state.matches.is_empty());
+    }
+
+    /// Fermer la boîte efface aussi le surlignage externe : sinon les
+    /// occurrences restaient marquées après la fermeture de la recherche.
+    #[test]
+    fn test_closing_the_dialog_clears_external_highlights() {
+        let mut editor = CodeEditor::new("foo", "txt");
+        editor.set_search_query_silencieux("foo".to_string());
+
+        let _task = editor.close_search_dialog();
+
+        assert!(!editor.search_matches_visible());
     }
 
     #[test]

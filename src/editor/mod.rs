@@ -7,6 +7,11 @@ use std::path::PathBuf;
 pub enum FormatAction {
     Gras,
     Italique,
+    Souligne,
+    Barre,
+    GrasItalique,
+    Code,
+    Formule,
     Couleur(String),
     Titre(u8),
     ListePuce,
@@ -31,6 +36,13 @@ pub struct EditorState {
     /// La frappe ne doit pas payer un parse complet à chaque caractère : la
     /// structure est rejouée quand une action ou le rendu la demande.
     document_dirty: bool,
+
+    /// Position verticale de la vue au dernier départ — en pixels.
+    ///
+    /// Changer de mode retire le widget d'édition de l'arbre : le défilement
+    /// du scrollable disparaît avec lui. Cette valeur, elle, survit et permet
+    /// de revenir exactement là où l'on lisait.
+    ancre_defilement: f32,
 }
 
 /// Taille du texte de rédaction.
@@ -118,6 +130,7 @@ impl Default for EditorState {
             path: None,
             document: None,
             document_dirty: false,
+            ancre_defilement: 0.0,
         };
 
         // La recherche propre au crate — sans expressions régulières ni rappel
@@ -145,6 +158,7 @@ impl EditorState {
             path: Some(path),
             document,
             document_dirty,
+            ancre_defilement: 0.0,
         };
 
         // La recherche propre au crate — sans expressions régulières ni rappel
@@ -156,6 +170,43 @@ impl EditorState {
         }
 
         state
+    }
+
+    /// Pose les erreurs de compilation comme soulignements dans l'éditeur.
+    ///
+    /// Les positions du diagnostic sont à 1 ; le widget attend des index de
+    /// caractères à 0. Une erreur sans colonne ne souligne qu'un caractère
+    /// au début de sa ligne, plutôt que de mentir sur la portée.
+    pub fn set_diagnostics(
+        &mut self,
+        diagnostics: &[crate::typst::render::Diagnostic],
+        couleur: iced::Color,
+    ) {
+        let chemin = self.path.as_deref();
+        let soulignements = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.concerne(chemin))
+            .filter_map(|diagnostic| {
+                let ligne = diagnostic.line?.saturating_sub(1);
+                let debut = diagnostic.column.unwrap_or(1).saturating_sub(1);
+                Some(iced_code_editor::SoulignementDiagnostic {
+                    ligne,
+                    debut,
+                    fin: debut + 1,
+                    couleur,
+                })
+            })
+            .collect();
+        self.editor.set_soulignements(soulignements);
+    }
+
+    /// Remplace entièrement le texte du document, comme une relecture depuis
+    /// le disque : le tampon, l'historique et les caches du widget repartent
+    /// de zéro, et l'AST est reconstruit.
+    pub fn remplacer_contenu(&mut self, content: &str) -> Task<EditorMessage> {
+        let tache = self.editor.reset(content);
+        self.refresh_document();
+        tache
     }
 
     /// Le fichier courant utilise-t-il le langage intermédiaire ?
@@ -459,7 +510,9 @@ impl EditorState {
         self.editor.selectionner(debut, fin);
         self.refresh_document();
 
-        Task::none()
+        // La sélection seule ne déplace pas la vue : sans ce défilement, une
+        // occurrence hors de la fenêtre restait invisible au « suivant ».
+        self.editor.defiler_vers_curseur()
     }
 
     pub fn replace_span(&mut self, start: usize, end: usize, text: &str) -> Task<EditorMessage> {
@@ -510,6 +563,11 @@ impl EditorState {
         let task = match action {
             FormatAction::Gras => self.wrap_selection("**", "**"),
             FormatAction::Italique => self.wrap_selection("*", "*"),
+            FormatAction::Souligne => self.wrap_selection("__", "__"),
+            FormatAction::Barre => self.wrap_selection("~~", "~~"),
+            FormatAction::GrasItalique => self.wrap_selection("***", "***"),
+            FormatAction::Code => self.wrap_selection("`", "`"),
+            FormatAction::Formule => self.wrap_selection("$", "$"),
             FormatAction::Couleur(couleur) => {
                 self.wrap_selection(&format!("{{{{c {couleur}|"), "}}")
             }
@@ -700,6 +758,24 @@ impl EditorState {
     /// non un simple changement de position.
     pub fn set_cursor(&mut self, line: usize, column: usize) -> Task<EditorMessage> {
         self.editor.set_cursor(line, column)
+    }
+
+    /// Retient la position verticale de la vue avant de la quitter.
+    ///
+    /// Le widget de défilement est reconstruit quand on revient en édition ;
+    /// cette ancre est la seule mémoire qui survive au changement de mode.
+    pub fn memoriser_defilement(&mut self) {
+        self.ancre_defilement = self.editor.viewport_scroll();
+    }
+
+    /// Ramène la vue à l'ancre retenue — au pixel près.
+    pub fn restaurer_defilement(&mut self) -> Task<EditorMessage> {
+        self.editor.defiler_vers_offset(self.ancre_defilement)
+    }
+
+    /// Affiche ou masque les numéros de ligne.
+    pub fn afficher_les_numeros_de_ligne(&mut self, actifs: bool) {
+        self.editor.set_line_numbers_enabled(actifs);
     }
 
     /// La position du curseur, et où il tombe dans le texte.
@@ -1102,6 +1178,24 @@ mod tests {
         );
     }
 
+    /// Les formats qui n'ont pas de bouton dédié restent des actions de
+    /// texte : ils enveloppent la sélection avec leur marque exacte.
+    #[test]
+    fn les_formats_de_texte_supplementaires_enveloppent_la_selection() {
+        for (action, attendu) in [
+            (FormatAction::Souligne, "__mot__"),
+            (FormatAction::Barre, "~~mot~~"),
+            (FormatAction::GrasItalique, "***mot***"),
+            (FormatAction::Code, "`mot`"),
+            (FormatAction::Formule, "$mot$"),
+        ] {
+            let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "mot".to_string());
+            let _ = editor.update(EditorMessage::SelectAll);
+            let _ = editor.apply_format(action);
+            assert_eq!(editor.content(), attendu);
+        }
+    }
+
     /// Sans sélection, la commande Typst laisse le curseur dans le corps brut.
     #[test]
     fn raw_typst_format_inserts_an_editable_block() {
@@ -1372,6 +1466,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remplacer_contenu_recharge_le_tampon_et_l_ast() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "ancien texte".to_string());
+        assert_eq!(editor.document.as_ref().map(|d| d.blocs.len()), Some(1));
+
+        let _ = editor.remplacer_contenu("# Nouveau\n\nUn paragraphe.\n");
+
+        assert_eq!(editor.content(), "# Nouveau\n\nUn paragraphe.\n");
+        assert_eq!(
+            editor.document.as_ref().map(|d| d.blocs.len()),
+            Some(2),
+            "l'AST est reconstruit sur le texte restauré"
+        );
+    }
+
     /// La bascule retire la marque, et le titre change de niveau sans se
     /// perdre.
     #[test]
@@ -1384,6 +1494,45 @@ mod tests {
 
         let _ = editor.apply_format(FormatAction::Titre(4));
         assert_eq!(editor.content(), "#### Deuxième");
+    }
+
+    /// Le surlignage de la barre de recherche externe ne doit pas ouvrir la
+    /// boîte de dialogue du crate : c'était le second panneau de recherche.
+    #[test]
+    fn le_surlignage_externe_n_ouvre_pas_la_boite_du_crate() {
+        let mut editor = iced_code_editor::CodeEditor::new("chat et chat", "tw");
+
+        editor.set_search_query_silencieux("chat".to_string());
+
+        assert!(!editor.is_search_open(), "aucune boîte concurrente");
+        assert!(
+            editor.recherche_surlignee(),
+            "les occurrences restent visibles"
+        );
+
+        editor.effacer_recherche_silencieuse();
+        assert!(!editor.recherche_surlignee());
+        assert!(!editor.is_search_open());
+    }
+
+    /// L'ancre d'édition est un décalage de vue, pas une ligne de curseur :
+    /// elle doit revenir au pixel près, sans déplacer le curseur.
+    #[test]
+    fn l_ancre_d_edition_est_un_decalage_de_vue() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "Une\nDeux\nTrois\n".to_string(),
+        );
+
+        let _ = editor.editor.defiler_vers_offset(120.0);
+        editor.memoriser_defilement();
+        let _ = editor.editor.defiler_vers_offset(0.0);
+        let avant = editor.editor.cursor_position();
+
+        let _ = editor.restaurer_defilement();
+
+        assert!((editor.editor.viewport_scroll() - 120.0).abs() < 0.5);
+        assert_eq!(editor.editor.cursor_position(), avant);
     }
 }
 

@@ -64,10 +64,24 @@ impl CodeEditor {
         cols: (usize, usize),
         color: Color,
     ) {
+        let (x_start, width) = self.segment_geometry(ctx, vl, (cols.0, cols.1));
         let y = visual_idx as f32 * ctx.line_height;
-        let line_content = self.buffer.line(vl.logical_line);
+        frame.fill_rectangle(
+            Point::new(x_start, y + 2.0),
+            Size::new(width, ctx.line_height - 4.0),
+            color,
+        );
+    }
+
+    /// La géométrie horizontale d'un segment, défilement compris.
+    fn segment_geometry(
+        &self,
+        ctx: &RenderContext,
+        vl: &VisualLine,
+        cols: (usize, usize),
+    ) -> (f32, f32) {
         let (x_start, width) = calculate_segment_geometry(
-            line_content,
+            self.buffer.line(vl.logical_line),
             &MarquesLigne::new(&self.marques, vl.logical_line),
             vl.start_col,
             cols.0,
@@ -76,12 +90,7 @@ impl CodeEditor {
             ctx.full_char_width,
             ctx.char_width,
         );
-        let x_start = x_start - ctx.horizontal_scroll_offset;
-        frame.fill_rectangle(
-            Point::new(x_start, y + 2.0),
-            Size::new(width, ctx.line_height - 4.0),
-            color,
-        );
+        (x_start - ctx.horizontal_scroll_offset, width)
     }
 
     /// Draws search match highlights for all visible matches.
@@ -320,6 +329,46 @@ impl CodeEditor {
                         selection_color,
                     );
                 }
+            }
+        }
+    }
+
+    /// Draws a thin underline for each diagnostic on the visible lines.
+    ///
+    /// The underline is drawn in the overlay layer, so changing an error does
+    /// not invalidate the text geometry. Columns are character indices in the
+    /// logical line; the caller converts its own byte/1-based positions.
+    pub(super) fn draw_soulignements(
+        &self,
+        frame: &mut canvas::Frame,
+        ctx: &RenderContext,
+        start_visual_idx: usize,
+        end_visual_idx: usize,
+    ) {
+        if self.soulignements.is_empty() {
+            return;
+        }
+        let start = start_visual_idx.min(ctx.visual_lines.len());
+        let end = end_visual_idx.min(ctx.visual_lines.len());
+        for (idx, vl) in ctx.visual_lines.iter().enumerate().skip(start).take(end.saturating_sub(start)) {
+            for soulignement in &self.soulignements {
+                if soulignement.ligne != vl.logical_line {
+                    continue;
+                }
+                let ligne = self.buffer.line(vl.logical_line);
+                let fin_ligne = ligne.chars().count();
+                let debut = soulignement.debut.max(vl.start_col);
+                let fin = soulignement.fin.min(vl.end_col).min(fin_ligne);
+                if debut >= fin {
+                    continue;
+                }
+                let (x, width) = self.segment_geometry(ctx, vl, (debut, fin));
+                let y = idx as f32 * ctx.line_height + ctx.line_height - 2.0;
+                frame.fill_rectangle(
+                    Point::new(x, y),
+                    Size::new(width, 1.5),
+                    soulignement.couleur,
+                );
             }
         }
     }

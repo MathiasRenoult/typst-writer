@@ -1,6 +1,6 @@
 [package]
 name = "typst-writer"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 rust-version = "1.92"
 description = "Un éditeur pour écrire en Typst, avec le rendu du document final"
@@ -17,6 +17,9 @@ iced-code-editor = { version = "0.5.2", features = ["two-face"] }
 lucide-icons = { version = "1.57.0", features = ["iced"] }
 mimalloc = "0.1.52"
 regex = "1.13.1"
+# Le timer de l'anti-rebond de la recherche projet : le même exécuteur
+# `smol` que celui d'iced, sans ajouter un second moteur asynchrone.
+smol = "2.0.2"
 fontdb = "0.23"
 rfd = "0.17.2"
 same-file = "1.0.6"

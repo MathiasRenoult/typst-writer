@@ -14,9 +14,10 @@ pub enum Traduction {
     #[default]
     Lsg,
     Darby,
-    /// Une version ajoutée par l'auteur, désignée par son rang dans le
-    /// registre local. Le registre est trié par identifiant ; le code écrit
-    /// dans une citation reste la source de vérité.
+    /// Une version ajoutée par l'auteur, désignée par son indice stable dans
+    /// le registre local. Le registre garde les emplacements des versions
+    /// déjà lues et ajoute les nouvelles à la fin ; le code écrit dans une
+    /// citation reste la source de vérité.
     Externe(u16),
 }
 
@@ -83,8 +84,9 @@ impl Traduction {
     pub fn toutes() -> Vec<Self> {
         let mut toutes = vec![Traduction::Lsg, Traduction::Darby];
         toutes.extend(
-            (0..crate::langage::versions::nombre())
-                .filter_map(|index| u16::try_from(index).ok().map(Traduction::Externe)),
+            crate::langage::versions::indices()
+                .into_iter()
+                .map(Traduction::Externe),
         );
         toutes
     }
@@ -166,6 +168,19 @@ impl Reference {
             "{}|{}|{}|{}|{}",
             self.livre, self.chapitre, self.chapitre_fin, self.verset_debut, self.verset_fin
         )
+    }
+
+    /// La clé d'une citation, traduction comprise.
+    ///
+    /// Deux traductions peuvent citer le même verset avec des noms de livre
+    /// différents : la page d'un index doit retrouver ses propres repères, et
+    /// non ceux de l'autre version. Une citation sans suffixe garde la clé
+    /// historique, ce qui préserve les documents déjà composés.
+    pub fn cle_de_citation(&self) -> String {
+        match self.traduction {
+            Some(traduction) => format!("{}|{}", self.cle(), traduction.code()),
+            None => self.cle(),
+        }
     }
 }
 
@@ -1035,22 +1050,42 @@ pub fn nombre(n: u32, chiffres: Chiffres) -> String {
 /// Un code inconnu est rendu tel quel : l'affichage ne perd jamais la
 /// référence, même si la table ne la connaît pas.
 pub fn nom_du_livre(livre: &str, forme: FormeLivre) -> String {
-    let Some(l) = LIVRES_FR.iter().find(|l| l.osis == livre) else {
-        if let Some(l) = crate::langage::versions::livre_pour_osis(livre) {
-            return match forme {
-                FormeLivre::FrancaiseLongue | FormeLivre::Tob => l.nom,
-                FormeLivre::FrancaiseCourte | FormeLivre::SansPoint => l.abreviation,
-                FormeLivre::Osis => l.osis,
-            };
-        }
-        return livre.to_string();
-    };
+    nom_du_livre_dans(livre, forme, None)
+}
+
+/// Le nom d'un livre dans une traduction donnée.
+///
+/// Une version ajoutée peut nommer « Gen » autrement que la table française ;
+/// c'est sa forme qui gagne quand la référence porte explicitement cette
+/// version. Sans version, ou si elle ne fournit pas le livre, la table
+/// générale décide.
+pub fn nom_du_livre_dans(livre: &str, forme: FormeLivre, traduction: Option<Traduction>) -> String {
+    if let Some(Traduction::Externe(index)) = traduction
+        && let Some(l) = crate::langage::versions::livre_pour_osis_dans(index, livre)
+    {
+        return nom_du_resume(l, forme);
+    }
+    if let Some(l) = LIVRES_FR.iter().find(|l| l.osis == livre) {
+        return match forme {
+            FormeLivre::FrancaiseLongue => l.nom.to_string(),
+            FormeLivre::FrancaiseCourte => l.fr.to_string(),
+            FormeLivre::SansPoint => l.fr.trim_end_matches('.').to_string(),
+            FormeLivre::Osis => l.abreviation.to_string(),
+            FormeLivre::Tob => abreviation_tob(livre).unwrap_or(l.fr).to_string(),
+        };
+    }
+    if let Some(l) = crate::langage::versions::livre_pour_osis(livre) {
+        return nom_du_resume(l, forme);
+    }
+    livre.to_string()
+}
+
+/// La forme demandée d'un livre fourni par une version ajoutée.
+fn nom_du_resume(l: crate::langage::versions::LivreResume, forme: FormeLivre) -> String {
     match forme {
-        FormeLivre::FrancaiseLongue => l.nom.to_string(),
-        FormeLivre::FrancaiseCourte => l.fr.to_string(),
-        FormeLivre::SansPoint => l.fr.trim_end_matches('.').to_string(),
-        FormeLivre::Osis => l.abreviation.to_string(),
-        FormeLivre::Tob => abreviation_tob(livre).unwrap_or(l.fr).to_string(),
+        FormeLivre::FrancaiseLongue | FormeLivre::Tob => l.nom,
+        FormeLivre::FrancaiseCourte | FormeLivre::SansPoint => l.abreviation,
+        FormeLivre::Osis => l.osis,
     }
 }
 
@@ -1079,7 +1114,11 @@ fn afficher_sans_mention(
     reference: &Reference,
     normes: &crate::mise_en_page::modele::References,
 ) -> String {
-    let livre = nom_du_livre(&reference.livre, forme_du_livre(normes.livre));
+    let livre = nom_du_livre_dans(
+        &reference.livre,
+        forme_du_livre(normes.livre),
+        reference.traduction,
+    );
     let nombres = afficher_nombres(reference, normes);
     let chapitres = afficher_chapitres(reference, normes);
     let versets = afficher_versets(reference, normes);
@@ -1886,21 +1925,23 @@ pub fn rang_du_livre(code: &str) -> Option<usize> {
         .position(|livre| livre.osis.eq_ignore_ascii_case(code))
 }
 
+/// La normalisation des noms de livres : sans espaces, en minuscules.
+pub(crate) fn normaliser_nom(texte: &str) -> String {
+    texte
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+}
+
 /// Le code OSIS d'un livre nommé en français, en abréviation ou en OSIS.
 pub fn code_du_livre(nom: &str) -> Option<String> {
-    let normalise = |texte: &str| {
-        texte
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect::<String>()
-            .to_lowercase()
-    };
-    let cherche = normalise(nom);
+    let cherche = normaliser_nom(nom);
     for l in LIVRES_FR {
-        if normalise(l.osis) == cherche
-            || normalise(l.nom) == cherche
-            || normalise(l.abreviation) == cherche
-            || normalise(l.fr) == cherche
+        if normaliser_nom(l.osis) == cherche
+            || normaliser_nom(l.nom) == cherche
+            || normaliser_nom(l.abreviation) == cherche
+            || normaliser_nom(l.fr) == cherche
         {
             return Some(l.osis.to_string());
         }

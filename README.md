@@ -7,7 +7,7 @@ mémoire, un livre, un article — sans jamais perdre de vue la page finale.
 Le texte reste simple et lisible ; la mise en page est composée par Typst,
 le moteur qui produit aussi le PDF.
 
-Version 0.6.1 · Linux.
+Version 0.6.2 · Linux.
 
 ## L'idée
 
@@ -39,7 +39,10 @@ citation, un titre ou un tableau.
 
 Le lecteur de PDF intégré permet aussi de sélectionner et copier le texte
 composé, de chercher une expression dans le document final et de suivre
-les liens internes et externes.
+les liens internes et externes. Un lien interne peut afficher la
+numérotation réelle du document — `[[titre-adoption-coutume|"chapitre"]]`
+donne « chapitre 2.3 », `[[figure-planche|"figure"]]` donne « Figure 4 »,
+et `"page"` donne la page composée.
 
 ### Un vrai espace de travail pour un long document
 
@@ -50,7 +53,14 @@ projets se parcourt comme une étagère, avec des couvertures et des
 vignettes de page.
 
 Les chapitres, le sommaire, les références et les projets se déplacent
-ensemble : on change de chapitre sans perdre le fil.
+ensemble : on change de chapitre sans perdre le fil. Le panneau
+**Chapitres** propose le document entier ou une tête de niveau 1 ; la vue
+par chapitre ne montre que ses pages et le sommaire se réduit à ses têtes,
+sans jamais réécrire la source.
+
+Une **page de garde** se délimite par `{{garde}}` … `{{/garde}}` : elle est
+composée avant le sommaire, sans numéro, et n'entre pas dans la table des
+matières. On peut en mettre plusieurs ; le menu `..` insère le bloc.
 
 ### Les citations et les sources, sans friction
 
@@ -80,7 +90,10 @@ cités.
 Une version biblique supplémentaire s'ajoute localement, à partir d'un
 fichier JSON dont vous détenez les droits : elle peut contenir autant de
 livres que son édition, dans son ordre propre, et se choisit comme les deux
-traductions embarquées. Voir
+traductions embarquées. Le panneau des versions les liste avec leur nombre
+de livres et de chapitres, leur provenance, un accès au dossier, une copie
+du JSON pour le transport et une suppression réversible. Un convertisseur
+USFM/JSONL accompagne le format. Voir
 [les versions bibliques](docs/guide/bibles.md).
 
 ### Une mise en page qui suit le document
@@ -97,10 +110,13 @@ simples qui montrent toujours le texte qui sera écrit.
 ### Une interface qui parle la même langue que vous
 
 La palette de commandes s'ouvre avec `Ctrl+K` ou `/` ; `..` propose les
-éléments à insérer. Une recherche de livre biblique filtre la liste au fil
-de la frappe, les commandes inutiles disparaissent quand leur module est
-désactivé, et le curseur revient naturellement dans le document après une
-insertion.
+éléments à insérer. Elle donne aussi accès aux formats du texte (gras,
+italique, souligné, barré, code, formules, titres), aux teintes orange et
+verte ou à la dernière couleur choisie, à tous les imports et exports, aux
+thèmes, aux normes de la bibliothèque et aux bascules de plugins. Une
+recherche de livre biblique filtre la liste au fil de la frappe, les
+commandes inutiles disparaissent quand leur module est désactivé, et le
+curseur revient naturellement dans le document après une insertion.
 
 Les raccourcis sont réunis dans une carte (`F1`), et l'aide indique aussi
 où vivent vos données et comment les sauvegarder.
@@ -117,8 +133,8 @@ soignée.
 Le paquet Linux s'installe sans `sudo` :
 
 ```sh
-tar -xzf typst-writer-0.6.1-linux-x86_64.tar.gz
-cd typst-writer-0.6.1-linux-x86_64
+tar -xzf typst-writer-0.6.2-linux-x86_64.tar.gz
+cd typst-writer-0.6.2-linux-x86_64
 ./install.sh
 ```
 
@@ -180,15 +196,20 @@ L'application est encore jeune, et certaines limites sont assumées :
 
 - l'export DOCX passe par LibreOffice et rend les notes comme du texte ;
 - l'import DOCX n'est pas disponible ;
-- les diagnostics du compilateur sont comptés, mais pas encore soulignés
-  dans le texte ;
+- les diagnostics du compilateur sont soulignés dans le texte et listés dans
+  le panneau gauche, sans correction automatique proposée ;
 - Zotero est consulté en lecture seule ;
+- les versions bibliques ajoutées ne sont jointes à l'archive que sur demande
+  explicite, avec un avertissement sur les droits ; sinon, exportez leur JSON
+  depuis le panneau des versions ;
 - l'historique d'annulation peut repartir après certains remplacements
   de symboles.
 
 Les sauvegardes automatiques et les copies précédentes sont là pour les
 accidents ; elles ne remplacent pas une sauvegarde personnelle des travaux
-importants.
+importants. L'écran **Restaurer une version** (Aide, `F1`) les montre avec
+leur date, leur taille, leur empreinte et un aperçu, et restaure la copie
+choisie sans perdre le texte courant.
 
 ## Documentation
 
@@ -196,7 +217,9 @@ Le manuel d'usage est dans [`docs/guide/`](docs/guide/index.md) : prise en
 main, écriture, bibliographie, glossaire, normes, recherche, raccourcis,
 fichiers et installation. Les notes de version sont dans
 [`CHANGELOG.md`](CHANGELOG.md) et les temps forts de cette version dans
-[`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+[`RELEASE_NOTES.md`](RELEASE_NOTES.md). Les commandes de vérification et la
+classification des épreuves ignorées sont dans
+[`docs/verification.md`](docs/verification.md).
 
 ## Licence
 

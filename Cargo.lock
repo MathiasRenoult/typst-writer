@@ -6309,7 +6309,7 @@ dependencies = [
 
 [[package]]
 name = "typst-writer"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "citationberg",
  "fontdb",
@@ -6326,6 +6326,7 @@ dependencies = [
  "same-file",
  "serde",
  "serde_json",
+ "smol",
  "time",
  "toml",
  "typst",

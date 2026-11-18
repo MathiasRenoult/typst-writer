@@ -18,6 +18,47 @@ pub enum NatureLien {
     Figure,
 }
 
+/// Ce qu'un lien interne affiche quand son texte est un mot-clé entre
+/// guillemets : `[[référence|"chapitre"]]`, `[[référence|"figure"]]` ou
+/// `[[référence|"page"]]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AffichageLien {
+    /// Le numéro composé de la tête visée — « chapitre 2.3 ».
+    Chapitre,
+    /// Le numéro composé de la figure visée — « Figure 4 ».
+    Figure,
+    /// La page composée où se trouve la cible — « page 7 ».
+    Page,
+}
+
+/// Reconnaît le mot-clé d'affichage automatique d'un lien interne.
+///
+/// Le mot est volontairement **entre guillemets** : un lien ordinaire qui
+/// affiche le mot « page » reste possible, et aucun texte existant ne change
+/// de sens sans l'avoir demandé.
+pub fn affichage_du_lien(texte: &[Inline]) -> Option<AffichageLien> {
+    let [Inline::Texte(texte)] = texte else {
+        return None;
+    };
+
+    let texte = texte.trim();
+    let interieur = texte
+        .strip_prefix('"')
+        .and_then(|reste| reste.strip_suffix('"'))
+        .or_else(|| {
+            texte
+                .strip_prefix('«')
+                .and_then(|reste| reste.strip_suffix('»'))
+        })?;
+
+    match interieur.trim().to_lowercase().as_str() {
+        "chapitre" | "section" | "titre" => Some(AffichageLien::Chapitre),
+        "figure" | "image" => Some(AffichageLien::Figure),
+        "page" => Some(AffichageLien::Page),
+        _ => None,
+    }
+}
+
 /// Un élément que l'on peut cibler dans le document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementLien {
@@ -90,6 +131,159 @@ pub fn collecter(document: &Document) -> Vec<ElementLien> {
     elements
 }
 
+/// Les cibles d'un document, avec leurs formes courtes quand elles sont
+/// uniques : `titre-adoption-coutume` peut aussi s'écrire `adoption-coutume`.
+///
+/// Deux éléments qui partageraient la même forme courte gardent leur ancre
+/// complète : une abréviation ambiguë ne doit jamais choisir à la place de
+/// l'auteur.
+fn cibles_resolues(document: &Document) -> HashMap<String, String> {
+    let mut cibles = HashMap::new();
+    let mut courtes: HashMap<String, Option<String>> = HashMap::new();
+
+    for element in collecter(document) {
+        let complete = element.reference;
+        cibles.insert(complete.clone(), complete.clone());
+
+        if let Some(courte) = complete
+            .strip_prefix("titre-")
+            .or_else(|| complete.strip_prefix("figure-"))
+        {
+            courtes
+                .entry(courte.to_string())
+                .and_modify(|entree| *entree = None)
+                .or_insert_with(|| Some(complete.clone()));
+        }
+    }
+
+    for (courte, complete) in courtes {
+        if let Some(complete) = complete {
+            // Une ancre complète existante gagne toujours : `titre-x` ne doit
+            // pas être détourné par la forme courte de `figure-titre-x`.
+            cibles.entry(courte).or_insert(complete);
+        }
+    }
+
+    cibles
+}
+
+/// Réécrit les liens courts vers leur ancre complète, pour la génération
+/// Typst uniquement : le fichier `.tw` garde la forme écrite par l'auteur.
+///
+/// Le document n'est copié que si un lien a réellement besoin d'être résolu :
+/// la génération d'un document sans ancre courte reste sans allocation.
+pub fn resoudre(document: &Document) -> std::borrow::Cow<'_, Document> {
+    let cibles = cibles_resolues(document);
+
+    if !document
+        .blocs
+        .iter()
+        .any(|bloc| contient_lien_court(bloc, &cibles))
+    {
+        return std::borrow::Cow::Borrowed(document);
+    }
+
+    let mut copie = document.clone();
+    for bloc in &mut copie.blocs {
+        resoudre_bloc(bloc, &cibles);
+    }
+
+    std::borrow::Cow::Owned(copie)
+}
+
+fn contient_lien_court(bloc: &Bloc, cibles: &HashMap<String, String>) -> bool {
+    match bloc {
+        Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
+            contient_lien_court_inline(contenu, cibles)
+        }
+        Bloc::ListePuce(items) | Bloc::ListeNumero(items) => items
+            .iter()
+            .any(|item| contient_lien_court_inline(&item.contenu, cibles)),
+        Bloc::Tableau { entete, lignes, .. } => entete
+            .iter()
+            .chain(lignes.iter().flatten())
+            .any(|cellule| contient_lien_court_inline(cellule, cibles)),
+        Bloc::Image { légende, .. } => contient_lien_court_inline(légende, cibles),
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_lien_court(bloc, cibles),
+        Bloc::Garde(contenu) => contenu.iter().any(|bloc| contient_lien_court(bloc, cibles)),
+        _ => false,
+    }
+}
+
+fn contient_lien_court_inline(inline: &[Inline], cibles: &HashMap<String, String>) -> bool {
+    inline.iter().any(|element| match element {
+        Inline::LienInterne { reference, texte } => {
+            cibles
+                .get(reference)
+                .is_some_and(|complete| complete != reference)
+                || contient_lien_court_inline(texte, cibles)
+        }
+        Inline::Gras(contenu)
+        | Inline::Italique(contenu)
+        | Inline::GrasItalique(contenu)
+        | Inline::Souligne(contenu)
+        | Inline::Barre(contenu)
+        | Inline::Note(contenu)
+        | Inline::Couleur { contenu, .. }
+        | Inline::Lien { texte: contenu, .. } => contient_lien_court_inline(contenu, cibles),
+        Inline::Canonique(contenu) => {
+            contient_lien_court_inline(std::slice::from_ref(contenu.as_ref()), cibles)
+        }
+        _ => false,
+    })
+}
+
+fn resoudre_bloc(bloc: &mut Bloc, cibles: &HashMap<String, String>) {
+    match bloc {
+        Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
+            resoudre_inline(contenu, cibles)
+        }
+        Bloc::ListePuce(items) | Bloc::ListeNumero(items) => {
+            for item in items {
+                resoudre_inline(&mut item.contenu, cibles);
+            }
+        }
+        Bloc::Tableau { entete, lignes, .. } => {
+            for cellule in entete.iter_mut().chain(lignes.iter_mut().flatten()) {
+                resoudre_inline(cellule, cibles);
+            }
+        }
+        Bloc::Image { légende, .. } => resoudre_inline(légende, cibles),
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => resoudre_bloc(bloc, cibles),
+        Bloc::Garde(contenu) => {
+            for bloc in contenu {
+                resoudre_bloc(bloc, cibles);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn resoudre_inline(inline: &mut [Inline], cibles: &HashMap<String, String>) {
+    for element in inline {
+        match element {
+            Inline::LienInterne { reference, texte } => {
+                if let Some(complete) = cibles.get(reference) {
+                    *reference = complete.clone();
+                }
+                resoudre_inline(texte, cibles);
+            }
+            Inline::Gras(contenu)
+            | Inline::Italique(contenu)
+            | Inline::GrasItalique(contenu)
+            | Inline::Souligne(contenu)
+            | Inline::Barre(contenu)
+            | Inline::Note(contenu)
+            | Inline::Couleur { contenu, .. }
+            | Inline::Lien { texte: contenu, .. } => resoudre_inline(contenu, cibles),
+            Inline::Canonique(contenu) => {
+                resoudre_inline(std::slice::from_mut(contenu.as_mut()), cibles)
+            }
+            _ => {}
+        }
+    }
+}
+
 fn parcourir(bloc: &Bloc, compteur: &mut CompteurLiens, elements: &mut Vec<ElementLien>) {
     match bloc {
         Bloc::Titre { niveau, contenu } => {
@@ -147,10 +341,7 @@ pub struct LienCasse {
 /// suit le texte, et un lien ancien devient silencieusement mort. Le contrôle
 /// parcourt aussi les notes, les tableaux et les blocs canoniques.
 pub fn cibles_absentes(document: &Document) -> Vec<LienCasse> {
-    let cibles: HashSet<String> = collecter(document)
-        .into_iter()
-        .map(|element| element.reference)
-        .collect();
+    let cibles: HashSet<String> = cibles_resolues(document).into_keys().collect();
     let mut sortie = Vec::new();
 
     for bloc in &document.blocs {
@@ -305,6 +496,65 @@ mod tests {
             typst.contains("#link(<titre-introduction>)[le début]"),
             "{typst}"
         );
+    }
+
+    #[test]
+    fn un_mot_cle_entre_guillemets_demande_une_numerotation() {
+        let document = super::super::parse::parse(
+            "# Adoption\n\n## Coutume\n\nVoir [[titre-coutume|\"chapitre\"]] et [[titre-adoption|\"page\"]].\n",
+        );
+        let typst = super::super::generer::generer(&document);
+        assert!(
+            typst.contains(
+                "#link(<titre-coutume>)[chapitre #context counter(heading).display(at: <titre-coutume>)]"
+            ),
+            "la tête affiche son numéro : {typst}"
+        );
+        assert!(
+            typst.contains(
+                "#link(<titre-adoption>)[page #context counter(page).display(at: <titre-adoption>)]"
+            ),
+            "la page est calculée : {typst}"
+        );
+    }
+
+    #[test]
+    fn une_ancre_courte_est_resolue_vers_son_titre() {
+        let document = super::super::parse::parse(
+            "# Adoption coutume\n\nVoir [[adoption-coutume|\"chapitre\"]].\n",
+        );
+        let typst = super::super::generer::generer(&document);
+        assert!(
+            typst.contains("#link(<titre-adoption-coutume>)[chapitre #context counter(heading).display(at: <titre-adoption-coutume>)]"),
+            "la forme courte choisit la bonne ancre : {typst}"
+        );
+        assert!(
+            super::cibles_absentes(&document).is_empty(),
+            "la cible courte n'est pas signalée comme absente"
+        );
+    }
+
+    #[test]
+    fn une_image_sans_legende_se_cite_par_sa_page() {
+        let document = super::super::parse::parse(
+            "![](le-fils-prodigue-rembrandt.png)\n\nVoir [[le-fils-prodigue-rembrandt|\"page\"]].\n",
+        );
+        let typst = super::super::generer::generer(&document);
+        assert!(
+            typst.contains("#link(<figure-le-fils-prodigue-rembrandt>)[page #context counter(page).display(at: <figure-le-fils-prodigue-rembrandt>)]"),
+            "l'image sans légende reste une cible de page : {typst}"
+        );
+        assert!(
+            super::cibles_absentes(&document).is_empty(),
+            "la cible courte de l'image est reconnue"
+        );
+    }
+
+    #[test]
+    fn un_lien_numerote_se_relit_a_l_identique() {
+        let source = "Voir [[adoption-coutume|\"chapitre\"]] et [[planche|\"page\"]].\n";
+        let document = super::super::parse::parse(source);
+        assert_eq!(super::super::serialiser::serialiser(&document), source);
     }
 
     #[test]

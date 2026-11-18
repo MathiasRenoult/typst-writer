@@ -77,6 +77,19 @@ pub fn parse(texte: &str) -> Document {
         // Une ligne échappée est du texte, quel que soit ce qu'elle annonce.
         let echappee = ligne.trim_start().starts_with('\\');
 
+        // Une page de garde : `{{garde}}` … `{{/garde}}`. Son contenu est
+        // composé avant le sommaire et reste hors de la table des matières.
+        if !echappee
+            && ligne.trim() == "{{garde}}"
+            && let Some((contenu, suivant)) = lire_garde(&lignes, index)
+        {
+            // Une garde n'est jamais décorée : elle est extraite du corps
+            // avant la composition, et un décor n'aurait pas de cible.
+            blocs.push(Bloc::Garde(contenu));
+            index = suivant;
+            continue;
+        }
+
         // Un bloc brut Typst : tout jusqu'au délimiteur fermant.
         if !echappee && ligne.trim_start().starts_with("```") {
             let (brut, suivant) = lire_brut(&lignes, index);
@@ -267,12 +280,34 @@ pub struct SourceHeading {
 pub fn titres_source(texte: &str, document: &Document) -> Vec<SourceHeading> {
     let mut positions = Vec::new();
     let mut fence_ouverte = None;
+    let mut garde_ouverte = false;
 
     for (index, ligne) in texte.lines().enumerate() {
         if let Some(longueur) = fence_ouverte {
             if ferme_fence(ligne, longueur) {
                 fence_ouverte = None;
             }
+            continue;
+        }
+
+        if garde_ouverte {
+            if ligne.trim() == "{{/garde}}" {
+                garde_ouverte = false;
+            }
+            continue;
+        }
+
+        if ligne.trim_start().starts_with('\\') {
+            continue;
+        }
+
+        if ligne.trim() == "{{garde}}"
+            && texte
+                .lines()
+                .skip(index + 1)
+                .any(|suivante| suivante.trim() == "{{/garde}}")
+        {
+            garde_ouverte = true;
             continue;
         }
 
@@ -329,6 +364,9 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             // L'index des citations : une balise de bloc, jamais avalée par
             // le paragraphe qui la précède.
             || ligne.trim() == "{{index}}"
+            // Une page de garde commence et finit un bloc.
+            || ligne.trim() == "{{garde}}"
+            || ligne.trim() == "{{/garde}}"
             // Une ligne d'attributs trouvée — mais elle flotte jusqu'à son
             // bloc, et le parseur sait le reste.
             || crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
@@ -1130,6 +1168,22 @@ pub fn lire_image(ligne: &str) -> Option<(Vec<crate::langage::schema::Inline>, S
     Some((parse_inline(&texte), cible))
 }
 
+/// Lit une page de garde : tout ce qui se trouve entre `{{garde}}` et
+/// `{{/garde}}` est un document ordinaire. Sans fermeture, ce n'est pas une
+/// page de garde : les deux lignes restent du texte.
+fn lire_garde(lignes: &[&str], index: usize) -> Option<(Vec<Bloc>, usize)> {
+    let mut fin = index + 1;
+    while fin < lignes.len() {
+        if lignes[fin].trim() == "{{/garde}}" {
+            let contenu = lignes[index + 1..fin].join("\n");
+            let document = parse(&contenu);
+            return Some((document.blocs, fin + 1));
+        }
+        fin += 1;
+    }
+    None
+}
+
 /// Lit un bloc brut Typst, jusqu'au délimiteur fermant de longueur compatible.
 ///
 /// Les fences internes plus courtes restent du contenu ; le sérialiseur choisit
@@ -1400,7 +1454,7 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
         // Une adresse électronique ne s'ouvre pas ici : le `@` y est collé à
         // un mot, et la frontière est la même pour tous les lecteurs.
         let avant = &texte[..texte.len() - reste.len()];
-        if crate::langage::citation::frontiere(avant)
+        if (crate::langage::citation::frontiere(avant) || citation_collee_au_mot(reste))
             && let Some((references, apres)) = appel(reste)
         {
             vider!();
@@ -1741,6 +1795,22 @@ fn jusqu_au_parenthese_fermante(texte: &str) -> Option<(String, &str)> {
     }
 
     None
+}
+
+/// Une citation écrite sans espace après un mot : `famille@grudem[p. 981]`.
+///
+/// La frontière ordinaire protège les adresses électroniques
+/// (`user@example.com`) : elle refuse tout `@` précédé d'une lettre. Mais
+/// l'auteur écrit souvent la référence collée au mot qu'elle appuie, et Typst
+/// lui-même la reconnaît. On accepte donc ce cas quand l'appel est
+/// **explicite** : une mention de page (`[p. 981]`) ou une clé qui n'a pas la
+/// forme d'un domaine (un point sans page reste une adresse probable).
+fn citation_collee_au_mot(reste: &str) -> bool {
+    let Some((references, _)) = appel(reste) else {
+        return false;
+    };
+
+    references.iter().any(|reference| reference.page.is_some()) || !references[0].cle.contains('.')
 }
 
 /// Un appel de citation : `@clé`, `@clé[p. 45]`, ou plusieurs références.
@@ -2487,6 +2557,41 @@ mod tests {
         );
     }
 
+    /// Une citation collée au mot qu'elle appuie se lit comme une citation ;
+    /// l'adresse électronique, elle, reste du texte.
+    #[test]
+    fn une_citation_collee_au_mot_se_lit() {
+        let doc = parse("Une phrase famille@grudemwaynea2023theologie[p. 981].\n");
+
+        let blocs = doc.blocs;
+        assert_eq!(blocs.len(), 1);
+        match &blocs[0] {
+            Bloc::Paragraphe(inline) => {
+                assert!(
+                    inline.iter().any(|element| matches!(
+                        element,
+                        Inline::Citation(references)
+                            if references[0].cle == "grudemwaynea2023theologie"
+                                && references[0].page.as_deref() == Some("p. 981")
+                    )),
+                    "la citation collée est reconnue : {inline:?}"
+                );
+            }
+            autre => panic!("un paragraphe attendu, pas {autre:?}"),
+        }
+
+        let doc = parse("Écrire à user@example.com.\n");
+        let Bloc::Paragraphe(inline) = &doc.blocs[0] else {
+            panic!("un paragraphe");
+        };
+        assert!(
+            !inline
+                .iter()
+                .any(|element| matches!(element, Inline::Citation(_))),
+            "l'adresse reste du texte : {inline:?}"
+        );
+    }
+
     /// Une citation bibliographique se lit.
     #[test]
     fn une_citation_se_lit() {
@@ -2775,6 +2880,25 @@ mod tests {
 
     /// Les titres gardent leur ligne source pour la navigation de l'outline,
     /// sans prendre les faux titres d'un bloc Typst ou d'une ligne échappée.
+    /// Les têtes d'une page de garde ne sont pas des têtes du document :
+    /// elles ne décalent ni les chapitres ni leurs lignes.
+    #[test]
+    fn titres_source_ignorent_les_pages_de_garde() {
+        let source =
+            "{{garde}}\n# Dédicace\n\n## Sous-titre de garde\n{{/garde}}\n\n# Introduction\n";
+        let document = parse(source);
+        let titres = titres_source(source, &document);
+        assert_eq!(
+            titres,
+            vec![SourceHeading {
+                level: 1,
+                text: "Introduction".to_string(),
+                line: 7,
+            }],
+            "seule la tête du corps compte : {titres:?}"
+        );
+    }
+
     #[test]
     fn titres_source_ignorent_les_blocs_bruts_et_les_lignes_echappees() {
         let source = "# Introduction\n\n## Un **titre**\n\n````typst\n```\n# faux\n```\n````\n\\# échappé\n### Suite\n";
@@ -3202,6 +3326,25 @@ mod tests_des_metadonnees {
             assert!(relu.contains(attendu), "{attendu} manque : {relu}");
         }
         assert_eq!(parse(&relu), doc, "le round-trip des blocs tient");
+    }
+
+    /// Une page de garde est un document imbriqué : elle se relit, et son
+    /// contenu ne passe pas dans le corps du document.
+    #[test]
+    fn une_page_de_garde_se_lit_et_se_relit() {
+        let source =
+            "{{garde}}\n# La page de garde\n\nUn texte de garde.\n{{/garde}}\n\n# Introduction\n";
+        let doc = parse(source);
+        let Bloc::Garde(contenu) = &doc.blocs[0] else {
+            panic!("une page de garde attendue : {doc:?}");
+        };
+        assert_eq!(contenu.len(), 2, "un titre et un paragraphe : {contenu:?}");
+        assert_eq!(doc.blocs.len(), 2, "le corps suit : {doc:?}");
+
+        let relu = crate::langage::serialiser(&doc);
+        assert!(relu.starts_with("{{garde}}\n"), "{relu:?}");
+        assert!(relu.contains("{{/garde}}\n"), "{relu:?}");
+        assert_eq!(parse(&relu), doc, "le round-trip de la garde tient");
     }
 
     /// Un accent dans une balise biblique ne doit jamais faire tomber

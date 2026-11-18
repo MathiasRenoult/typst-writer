@@ -207,15 +207,11 @@ fn aller_a_position(state: &State, page: usize, point: typst::layout::Point) -> 
     let Some(document) = state.render.document.as_ref() else {
         return Task::none();
     };
-    let sizes = crate::ui::preview::sizes_of_with_zoom(
-        document,
-        state
-            .render
-            .viewport
-            .unwrap_or_else(crate::ui::preview::default_viewport),
-        state.render.zoom,
-    );
-    let Some((_, hauteur)) = sizes.get(page).copied() else {
+    let Some(position) = crate::ui::preview::position_dans_la_vue(&state.render, page) else {
+        return Task::none();
+    };
+    let sizes = crate::ui::preview::sizes_de_la_vue(&state.render);
+    let Some((_, hauteur)) = sizes.get(position).copied() else {
         return Task::none();
     };
     let Some((_, hauteur_page)) = crate::typst::render::page_size(document, page) else {
@@ -228,7 +224,7 @@ fn aller_a_position(state: &State, page: usize, point: typst::layout::Point) -> 
         1.0
     };
     let dans_la_page = (point.y.to_pt() * ratio) as f32;
-    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, page) + dans_la_page;
+    let offset = crate::ui::preview::scroll_offset_for_page(&sizes, position) + dans_la_page;
 
     iced::advanced::widget::operate(iced::advanced::widget::operation::scrollable::scroll_to::<
         Message,

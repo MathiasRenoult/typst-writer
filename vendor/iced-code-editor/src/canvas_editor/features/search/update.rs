@@ -56,6 +56,7 @@ impl CodeEditor {
             return Task::none();
         }
         self.search_state.close();
+        self.search_highlights_enabled = false;
         self.overlay_cache.clear();
         Task::none()
     }

@@ -55,7 +55,7 @@ pub fn generer(mise_en_page: &MiseEnPage) -> String {
     if mise_en_page.page_de_titre {
         out.push_str(
             "  // La page de titre : les métadonnées du document.\n\
-  page(header: none, footer: none)[\n\
+  page(numbering: none, header: none, footer: none)[\n\
     #v(1fr)\n\
     #text(size: 1.5em, weight: \"bold\")[#sys.inputs.at(\"titre\", default: \"\")]\n\
     #v(0.5cm)\n\
@@ -66,7 +66,8 @@ pub fn generer(mise_en_page: &MiseEnPage) -> String {
     #sys.inputs.at(\"date\", default: \"\")\n\
     #v(1fr)\n\
   ]\n\
-  pagebreak()\n",
+  pagebreak()\n\
+  counter(page).update(1)\n",
         );
     }
 
