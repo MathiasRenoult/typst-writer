@@ -45,7 +45,27 @@
 <main>
 <h1>Les normes</h1>
 <p>La fenêtre des normes — <code>Ctrl+P</code>, ou le bouton de la barre — porte les réglages de mise en page du document : <strong>Métadonnées</strong>, <strong>Page</strong>, <strong>Texte</strong>, <strong>Titres</strong>, <strong>Figures et dates</strong>, <strong>En-tête et pied</strong>, <strong>Typographie</strong>, <strong>Couleurs et décor</strong>, <strong>Add-ons</strong>. Ce qu&#x27;elle montre est une copie de travail : seul « Appliquer » touche le projet, et les valeurs fautives sont dites champ par champ avant que quoi que ce soit ne soit écrit.</p>
-<p>Les normes <strong>activent ou désactivent</strong> les add-ons. Les paramètres propres à un plugin — style bibliographique, références bibliques, glossaire, graphiques — ont leur <strong>panneau séparé</strong>, ouvert par le bouton de la barre d&#x27;outils « Paramètres des plugins ». C&#x27;est la même séparation que dans le document : les normes disent ce qui est actif, le plugin dit comment il se comporte.</p>
+<p>Les normes <strong>activent ou désactivent</strong> les add-ons. Les paramètres propres à un plugin — style bibliographique, références bibliques, glossaire, graphiques, callouts — se règlent dans le panneau des plugins, mais ils appartiennent au <strong>même fichier de normes</strong> que la mise en page : le fichier <code>mise-en-page.toml</code> les emporte avec lui. Quand un document est ouvert, l&#x27;interface, l&#x27;éditeur et les plugins prennent donc sa mise en page et son paramétrage de plugins. Le panneau des plugins est séparé pour la commodité ; ce n&#x27;est pas un réglage de l&#x27;application.</p>
+<h2>Fichiers de normes</h2>
+<p>La fenêtre des normes porte l&#x27;onglet <strong>Fichiers de normes</strong> (bouton « Fichiers… »). Il gère la bibliothèque interne :</p>
+<ul>
+<li><strong>Charger</strong> met le fichier dans la fenêtre, sans toucher au document ;</li>
+<li><strong>Appliquer au document</strong> écrit son <code>mise-en-page.toml</code>, son gabarit</li>
+</ul>
+<p>  Typst et met à jour les plugins ;</p>
+<ul>
+<li><strong>Importer un fichier…</strong> ajoute un <code>.toml</code> à la bibliothèque ; le nom du</li>
+</ul>
+<p>  fichier devient le nom de la norme, suffixé si ce nom est déjà pris ;</p>
+<ul>
+<li><strong>Exporter</strong> écrit une copie <code>.toml</code> sans jamais écraser un fichier</li>
+</ul>
+<p>  existant ;</p>
+<ul>
+<li><strong>Supprimer</strong> retire l&#x27;entrée de la bibliothèque ; le geste demande son</li>
+</ul>
+<p>  mot, car un fichier de normes ne se reconstitue pas à l&#x27;identique.</p>
+<p>Une norme importée reste une <strong>norme interne</strong> : elle est proposée à la création d&#x27;un projet comme les normes livrées. Le nom de la copie et le bouton d&#x27;enregistrement créent une nouvelle entrée à partir des réglages courants.</p>
 <p>Les champs numériques se règlent à la <strong>molette</strong> ou aux <strong>flèches</strong> ▲▼ — la valeur garde son unité : <code>11pt</code> devient <code>12pt</code>, <code>2cm</code> devient <code>3cm</code>.</p>
 <h2>Mise en page</h2>
 <p>Le papier (format, orientation), les marges, les numéros de page, le texte courant (police, taille, interligne, retrait, justification, langue), les titres de chapitres (police, tailles, gras, casse, numérotation) et les couleurs.</p>
@@ -72,15 +92,15 @@
 <p>La numérotation s&#x27;active ou non, et se positionne où l&#x27;on veut.</p>
 <p>La saisie prévoit aussi les champs <code>{document}</code>, <code>{date}</code>, <code>{auteur}</code>, <code>{projet}</code>, <code>{titre}</code>, <code>{page}</code> et <code>{pages}</code>. Ils sont résolus par le moteur Typst ; vérifiez tout de même leur place dans le PDF exporté.</p>
 <h2>Les plugins</h2>
-<p>Le panneau des plugins est distinct des normes. Il porte quatre onglets :</p>
+<p>Le panneau des plugins est une fenêtre séparée, mais ses valeurs font partie du <strong>fichier de normes</strong> du document. Il porte quatre onglets :</p>
 <ul>
 <li><strong>Bibliographie</strong> — le style des citations et de la liste finale,</li>
 </ul>
 <p>  l&#x27;import d&#x27;un fichier <code>.csl</code> et les styles installés dans Zotero ;</p>
 <ul>
-<li><strong>Biblique</strong> — la forme des livres (abréviation, nom complet, OSIS,</li>
+<li><strong>Biblique</strong> — la traduction consultée (LSG ou Darby), l&#x27;ordre de la</li>
 </ul>
-<p>  sans point), les chiffres arabes ou romains, les séparateurs, le gabarit   de citation, l&#x27;ordre canonique et l&#x27;index des citations (pages,   regroupement, forme, colonnes) ;</p>
+<p>  liste (apparition ou canonique), la forme des livres (abréviation, nom   complet, OSIS, sans point), les chiffres arabes ou romains, les   séparateurs, le gabarit de citation, l&#x27;ordre canonique et l&#x27;index des   citations (pages, regroupement, forme, colonnes) ;</p>
 <ul>
 <li><strong>Glossaire</strong> — un renvoi vers le panneau du glossaire, où se gèrent les</li>
 </ul>

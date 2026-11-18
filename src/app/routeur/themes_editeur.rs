@@ -72,6 +72,8 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
                 hex_saisi: valeur,
                 champ: Some(champ),
                 reglage: None,
+                callout: None,
+                balise: false,
             });
             state.editor.editor.lose_focus();
             Task::none()

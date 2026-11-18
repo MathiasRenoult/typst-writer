@@ -138,7 +138,7 @@ pub fn context(text: &str, offset: usize) -> Option<Context> {
 #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
 /// Un caractère peut-il appartenir à un nom de commande ou à une clé ?
 fn is_word(character: char) -> bool {
-    character.is_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
+    crate::langage::citation::est_caractere_de_cle(character)
 }
 
 #[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).

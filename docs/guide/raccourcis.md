@@ -22,12 +22,36 @@ barre d'outils portent leurs combinaisons.
 | `Ctrl+Suppr` | supprimer le mot après le curseur |
 | `Ctrl+L` | surligner la ligne courante |
 | `Ctrl+Maj+L` | surligner la ligne suivante |
+| `Tab` / `Maj+Tab` | sur une ligne de liste : l'enfoncer / la remonter d'un niveau |
+| `@` | ouvrir le composeur de citation au curseur |
+| `Tab` après `@…` | ouvrir aussi le menu contextuel de citation, sans quitter le document |
+
+## La palette des commandes
+
+| Touches | Effet |
+| --- | --- |
+| `Ctrl+K` | ouvrir la palette de toutes les commandes |
+| `/` dans le texte | ouvrir la palette système (après un blanc) |
+| `..` dans le texte | ouvrir les balises et snippets insérables (après un blanc) |
+| `↑` / `↓` | parcourir les résultats |
+| `Entrée` | insérer avec les valeurs par défaut |
+| `Tab` | ouvrir le formulaire de la balise sélectionnée |
+| `Échap` | fermer la palette sans insérer |
+
+Dans une balise, `Entrée` insère avec les valeurs du formulaire ; `Échap`
+annule. Les balises ont des noms courts : `c` (couleur), `g` (glossaire),
+`d` (date), `b` (bible), `m` (métadonnée), `e` (encadré), `gr` (graphique),
+`t` (tableau), `s` (sommaire), `bib` (bibliographie), `gs` (glossaire de
+section), `idx` (index biblique). Les métadonnées du projet apparaissent
+dans `..` sous « Métadonnée · clé » et s'écrivent `{{m clé}}` dans le
+document.
 
 ## Chercher
 
 | Touches | Effet |
 | --- | --- |
-| `Ctrl+F` | la recherche |
+| `Ctrl+F` | la recherche de l'éditeur, ou celle du rendu quand la vue rendu est active |
+| `Ctrl+C` | copier la sélection du rendu |
 | `Aa` / `.*` | basculer littéral / expression régulière |
 | `F3` / `Maj+F3` | le résultat suivant / précédent |
 | `Entrée` | dans le motif : le suivant — dans le remplacement : remplacer |
@@ -66,8 +90,7 @@ Toutes se conduisent de même.
 | `Entrée` | valider |
 | `Échap` | fermer celle du dessus |
 
-Dans le composeur de notes : les flèches parcourent la note puis les
-clés, `Échap` abandonne sans rien écrire. Dans l'overlay de note de bas
-de page : `Entrée` enregistre, `Échap` ferme. Dans les listes de
+Dans le composeur de citations : les flèches parcourent la note puis les
+clés, `Échap` abandonne sans rien écrire. Dans les listes de
 complétion : les flèches parcourent, `Entrée` ou `Tab` accepte,
 `Ctrl+Espace` accepte aussi, `Échap` ferme.

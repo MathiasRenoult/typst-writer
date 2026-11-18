@@ -277,7 +277,7 @@ impl canvas::Program<Message> for CarreSatVal {
 
 /// Les couleurs rapides : la palette de base, fixe — un clic applique, la
 /// roue reste ouverte pour la suite.
-const RAPIDES: [(&str, &str); 8] = [
+pub const RAPIDES: [(&str, &str); 8] = [
     ("Noir", "#1a1a2e"),
     ("Gris", "#7f8c8d"),
     ("Blanc", "#ffffff"),

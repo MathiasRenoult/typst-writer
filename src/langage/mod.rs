@@ -13,10 +13,12 @@
 //! Voir `docs/design/langage-intermediaire.md` pour la conception complète.
 
 pub mod blocs;
+pub mod callout;
+pub mod chart;
+pub mod citation;
 pub mod export;
 pub mod generer;
 pub mod index_citations;
-pub mod marques;
 pub mod migration;
 pub mod parse;
 pub mod pipeline;

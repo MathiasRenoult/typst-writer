@@ -68,7 +68,7 @@ const BOTTOM_MARGIN: f32 = 64.0;
 /// couvrirait le texte qu'on est en train d'écrire.
 const HOVER_LINES: usize = 12;
 
-/// Ce qui flotte au-dessus de l'éditeur : liste de complétion ou survol.
+/// Ce qui flotte au-dessus de l'éditeur : le composeur ou un survol.
 struct Bulle<'a> {
     contenu: Element<'a, Message>,
     /// Coin haut-gauche, en coordonnées de la vue de l'éditeur.
@@ -96,9 +96,22 @@ struct EditorOverlay<'a> {
 
 /// Ce que la bulle doit montrer, et où.
 ///
-/// Elle ne sert plus qu'au **survol** (tinymist) : la complétion s'affiche
-/// désormais dans une fenêtre fixe au centre, pas près du curseur.
+/// Elle porte le composeur de citation, et le survol d'une référence
+/// biblique (tinymist). Le composeur est posé près du curseur, sans voile.
 fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
+    // Le composeur de citation : une bulle près du curseur, sans voile. Le
+    // texte reste visible et cliquable derrière elle.
+    if let Some(composeur) = state.composeur.as_ref() {
+        return Some(Bulle {
+            contenu: crate::ui::completion::contenu_composeur(
+                composeur,
+                palette,
+                state.editor.is_intermediate(),
+            ),
+            position: state.editor.cursor_view_position(),
+        });
+    }
+
     // Le survol d'une référence biblique : son extrait (le système de
     // références bibliques).
     if let Some((point, reference)) = state.plugins.bible.survol.as_ref() {
@@ -321,14 +334,29 @@ impl<'a> From<EditorOverlay<'a>> for Element<'a, Message> {
     }
 }
 
-/// Le coin haut-gauche de la bulle : au-dessus du curseur et centrée, ou en
+/// Le coin haut-gauche de la bulle : au-dessus du texte et centrée, ou en
 /// dessous quand le haut manque de place ; toujours dans la fenêtre.
+///
+/// Le choix se fait sur la place réellement disponible, **pas** seulement sur
+/// le bord supérieur : une bulle près du bas qui basculait sous le curseur
+/// était ensuite ramenée par le `clamp` et restait collée au bas de l'écran.
 fn position_bulle(position: iced::Point, size: Size, bounds: Size) -> iced::Point {
-    let marge = 12.0;
-    let mut y = position.y - size.height - marge;
-    if y < 0.0 {
-        y = position.y + marge;
-    }
+    const MARGE: f32 = 12.0;
+
+    let au_dessus = position.y - size.height - MARGE;
+    let en_dessous = position.y + MARGE;
+    let y = if au_dessus >= MARGE {
+        au_dessus
+    } else if en_dessous + size.height <= bounds.height - MARGE {
+        en_dessous
+    } else if position.y > bounds.height / 2.0 {
+        // Les deux côtés manquent de place : garder la bulle au-dessus du
+        // texte, puis la borner à la fenêtre.
+        au_dessus
+    } else {
+        en_dessous
+    };
+
     let x = position.x - size.width / 2.0;
 
     iced::Point::new(
@@ -397,6 +425,20 @@ impl overlay::Overlay<Message, iced::Theme, iced::Renderer> for BulleRecouvremen
             clipboard,
             shell,
             &Rectangle::with_size(Size::INFINITE),
+        );
+    }
+
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        self.contenu.as_widget_mut().operate(
+            self.arbre,
+            layout.children().next().unwrap(),
+            renderer,
+            operation,
         );
     }
 
@@ -642,6 +684,11 @@ mod tests {
         // En haut de la fenêtre, elle passe en dessous.
         let place = position_bulle(iced::Point::new(200.0, 30.0), size, bounds);
         assert_eq!(place.y, 42.0, "elle bascule sous le curseur");
+
+        // En bas de la fenêtre, elle reste au-dessus : le bas ne doit jamais
+        // l'aimanter au bord.
+        let place = position_bulle(iced::Point::new(200.0, 550.0), size, bounds);
+        assert_eq!(place.y, 488.0, "elle reste au-dessus du texte");
 
         // Près du bord droit, elle reste entièrement visible.
         let place = position_bulle(iced::Point::new(780.0, 200.0), size, bounds);

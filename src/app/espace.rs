@@ -94,6 +94,8 @@ impl Vue {
                 crate::zotero::Source::Locale
             },
         };
+        let plugins =
+            crate::plugins::Plugins::depuis_les_normes(&crate::mise_en_page::charger(&projet.dir));
         Self {
             editor,
             render: RenderState::default(),
@@ -102,7 +104,7 @@ impl Vue {
             zotero,
             mode,
             typst: String::new(),
-            plugins: crate::plugins::Plugins::default(),
+            plugins,
         }
     }
 

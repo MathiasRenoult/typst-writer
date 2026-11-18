@@ -123,9 +123,16 @@ impl State {
         }
     }
 
-    fn actualiser_typst(&mut self) {
+    pub(crate) fn actualiser_typst(&mut self) {
+        // Personne ne regarde le source Typst : ne pas rejouer le pipeline
+        // complet à chaque frappe. La vue Typst le demandera en s'ouvrant.
+        if !crate::app::a_une_vue_typst(self) {
+            return;
+        }
+
         // Le vrai pipeline du projet : décor, normes et bibliographie ne sont
         // pas réinventés par la vue de lecture seule.
+        self.editor.actualiser_document();
         let (entry, overrides) = self.compilation_unit();
         // Le texte complet, pas le `#include` du point d'entrée : la vue
         // Typst montre ce que le compilateur reçoit vraiment.
@@ -266,6 +273,7 @@ impl State {
 
         self.projects = crate::project::list_projects();
         self.etageres = crate::project::etageres();
+        self.etageres_ordre = crate::project::etageres_ordonnees();
         let autre = self
             .projects
             .iter()
@@ -279,6 +287,7 @@ impl State {
                     .map_err(|e| format!("création du projet de remplacement : {e}"))?;
                 self.projects = crate::project::list_projects();
                 self.etageres = crate::project::etageres();
+                self.etageres_ordre = crate::project::etageres_ordonnees();
                 nouveau
             }
         };
@@ -546,6 +555,8 @@ impl State {
                 self.ouvrir_vue(projet, chemin, contenu, ouverture);
                 if self.project.dir == dir {
                     self.projets_vue = false;
+                    self.vignettes_generation
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             Err(e) => self.note = Some(Note::erreur(format!("Ouverture : {e}"))),
@@ -597,14 +608,14 @@ fn transaction(state: &mut State, message: Message) -> Task<Message> {
             editor.is_some_and(|editor| document.source.fermer_transaction(&mut editor.editor));
         if change {
             if state.espace.active == id {
-                state.render.words_pending = true;
+                state.mots_a_recalculer();
                 state.actualiser_typst();
             }
             for vue in state.espace.vues.values_mut() {
                 if vue.project.dir == cle.0 && vue.editor.path.as_ref() == Some(&cle.1) {
                     document.source.projeter(&mut vue.editor.editor);
                     vue.editor.synchroniser_source();
-                    vue.render.words_pending = true;
+                    vue.render.mots_a_recalculer();
                     if state.espace.active == id {
                         vue.typst.clone_from(&state.typst_genere);
                     }
@@ -736,6 +747,18 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .and_then(|p| p.onglets.get(p.actif))
                 .copied()
             {
+                // Le panneau cliqué devient le panneau focal, même quand sa
+                // vue est déjà la vue active : sinon le focus restait sur le
+                // panneau de rendu et F11 ne maximisait jamais l'éditeur.
+                state.espace.focus = p;
+
+                if id == state.espace.active {
+                    if state.mode == crate::app::state::ModeVue::Edition {
+                        state.editor.editor.request_focus();
+                    }
+                    return Task::none();
+                }
+
                 state.choisir_vue(id);
             }
             Task::none()
@@ -903,6 +926,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 Ok(dir) => {
                     state.projects = crate::project::list_projects();
                     state.etageres = crate::project::etageres();
+                    state.etageres_ordre = crate::project::etageres_ordonnees();
                     state.ouvrir_projet_espace(dir, Ouverture::Remplacer);
                 }
                 Err(e) => state.note = Some(Note::erreur(format!("Création du projet : {e}"))),

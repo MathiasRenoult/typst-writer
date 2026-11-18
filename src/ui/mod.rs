@@ -1,6 +1,10 @@
 pub mod aide;
+pub mod apercu;
+pub mod balise;
 pub mod bible;
 pub mod bible_edition;
+pub mod callout;
+pub mod chart;
 pub mod completion;
 pub mod confirmation;
 pub mod editor;
@@ -8,8 +12,11 @@ pub mod extension;
 pub mod glossaire;
 pub mod glossaire_fenetre;
 pub mod layout;
+pub mod normes_fichiers;
+pub mod normes_lot;
 pub mod note;
 pub mod onglets;
+pub mod palette;
 pub mod picker_couleur;
 pub mod plugins;
 pub mod preview;
@@ -64,6 +71,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
             iced::widget::container(layout::view(state))
                 .width(Length::Fill)
                 .height(Length::Fill),
+            palette::view(state),
+            balise::view(state),
             completion::view(state),
         ]
         .width(Length::Fill)
@@ -83,9 +92,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ]
         .width(Length::Fill)
         .height(Length::Fill),
+        palette::view(state),
+        balise::view(state),
         completion::view(state),
-        note_overlay(state),
         projets::view(state),
+        normes_lot::view(state),
         reference::view(state),
         bible_edition::view(state),
         glossaire_fenetre::view(state),
@@ -99,87 +110,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         projet::view(state),
         note::view(state),
         extension::view(state),
+        callout::view(state),
+        chart::view(state),
         tableau::view(state),
         theme_editeur::view(state),
     ]
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
-}
-
-/// L'overlay de note de bas de page : en bas de l'écran, sans déranger
-/// le fil du document. Entrée enregistre, Échap ferme.
-fn note_overlay(state: &State) -> Element<'_, Message> {
-    let Some(note) = state.note_overlay.as_ref() else {
-        return iced::widget::Space::new()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    };
-    let palette = state.resolved.palette;
-    let champ = iced::widget::text_input("Texte de la note…", &note.contenu)
-        .on_input(Message::NoteOverlayChamp)
-        .on_submit(Message::NoteOverlayEnregistrer)
-        .padding(8)
-        .size(13)
-        .width(Length::Fill);
-    let contenu = iced::widget::container(
-        column![
-            iced::widget::row![
-                palette
-                    .label("Note de bas de page")
-                    .size(theme::jetons::DETAIL)
-                    .color(palette.text_muted),
-                iced::widget::Space::new().width(Length::Fill),
-                palette
-                    .label("Entrée : enregistrer · Échap : fermer")
-                    .size(theme::jetons::CHAPEAU)
-                    .color(palette.text_muted),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-            iced::widget::row![
-                champ,
-                iced::widget::button(palette.label("✓").size(14))
-                    .on_press(Message::NoteOverlayEnregistrer)
-                    .padding([6, 10]),
-                iced::widget::button(palette.label("✕").size(14))
-                    .on_press(Message::NoteOverlayFermer)
-                    .padding([6, 10]),
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(8),
-    )
-    .padding(14)
-    .width(Length::Fill)
-    .style(move |_| iced::widget::container::Style {
-        background: Some(palette.surface.into()),
-        border: iced::Border {
-            color: palette.border,
-            width: 1.0,
-            radius: theme::jetons::RAYON.into(),
-        },
-        ..Default::default()
-    });
-    // EDITOR-04-02 : le clic en dehors de l'overlay le ferme. Les zones
-    // vides au-dessus et en dessous du contenu portent le geste ; le
-    // contenu lui-même ne le porte pas.
-    let fond = iced::widget::mouse_area(
-        iced::widget::Space::new()
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .on_press(Message::NoteOverlayFermer);
-
-    iced::widget::container(column![
-        fond,
-        contenu,
-        iced::widget::mouse_area(iced::widget::Space::new().width(Length::Fill).height(12.0),)
-            .on_press(Message::NoteOverlayFermer),
-    ])
-    .padding(16)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()

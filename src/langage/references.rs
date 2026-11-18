@@ -1,7 +1,8 @@
 //! Les références bibliques : donnée, syntaxe d'affichage, lecture et écriture.
 //!
-//! Ce module ne dépend d'aucun plugin et n'embarque aucun texte : il ne
-//! connaît que les soixante-six livres et leurs formes françaises.
+//! Ce module ne dépend d'aucun plugin et n'embarque aucun texte : il connaît
+//! les soixante-six livres canoniques, leurs formes françaises, et les
+//! deutérocanoniques et apocryphes que l'auteur peut citer.
 
 /// Une traduction biblique nommée dans une citation.
 ///
@@ -140,6 +141,9 @@ pub enum FormeLivre {
     Osis,
     /// « Gn », « Jn » sans point.
     SansPoint,
+    /// Les abréviations de la Traduction œcuménique de la Bible :
+    /// « Gn », « 1 S », « 1 Co », « 1 M »…
+    Tob,
 }
 
 /// Les chiffres des chapitres et des versets.
@@ -157,7 +161,8 @@ struct LivreFr {
     fr: &'static str,
 }
 
-/// Les soixante-six livres, dans l'ordre canonique.
+/// Les livres canoniques, puis les deutérocanoniques et les apocryphes,
+/// dans l'ordre où le panneau les propose.
 const LIVRES_FR: &[LivreFr] = &[
     LivreFr {
         osis: "Gen",
@@ -555,7 +560,381 @@ const LIVRES_FR: &[LivreFr] = &[
         abreviation: "Rev",
         fr: "Ap",
     },
+    // Les deutérocanoniques et les apocryphes ne sont pas dans le canon
+    // protestant, mais l'auteur peut les citer : ils ont un code OSIS, un
+    // nom et une abréviation, et restent hors des 66 livres de base.
+    LivreFr {
+        osis: "Tob",
+        nom: "Tobie",
+        abreviation: "Tob",
+        fr: "Tb",
+    },
+    LivreFr {
+        osis: "Jdt",
+        nom: "Judith",
+        abreviation: "Jdt",
+        fr: "Jdt",
+    },
+    LivreFr {
+        osis: "AddEst",
+        nom: "Esther grec",
+        abreviation: "AddEst",
+        fr: "Est gr",
+    },
+    LivreFr {
+        osis: "1Macc",
+        nom: "1 Maccabées",
+        abreviation: "1Macc",
+        fr: "1 M",
+    },
+    LivreFr {
+        osis: "2Macc",
+        nom: "2 Maccabées",
+        abreviation: "2Macc",
+        fr: "2 M",
+    },
+    LivreFr {
+        osis: "Wis",
+        nom: "Sagesse",
+        abreviation: "Wis",
+        fr: "Sg",
+    },
+    LivreFr {
+        osis: "Sir",
+        nom: "Siracide",
+        abreviation: "Sir",
+        fr: "Si",
+    },
+    LivreFr {
+        osis: "Bar",
+        nom: "Baruch",
+        abreviation: "Bar",
+        fr: "Ba",
+    },
+    LivreFr {
+        osis: "EpJer",
+        nom: "Lettre de Jérémie",
+        abreviation: "EpJer",
+        fr: "Let Jr",
+    },
+    LivreFr {
+        osis: "PrMan",
+        nom: "Prière de Manassé",
+        abreviation: "PrMan",
+        fr: "Pr Man",
+    },
+    LivreFr {
+        osis: "Ps151",
+        nom: "Psaume 151",
+        abreviation: "Ps151",
+        fr: "Ps 151",
+    },
+    LivreFr {
+        osis: "3Macc",
+        nom: "3 Maccabées",
+        abreviation: "3Macc",
+        fr: "3 M",
+    },
+    LivreFr {
+        osis: "4Macc",
+        nom: "4 Maccabées",
+        abreviation: "4Macc",
+        fr: "4 M",
+    },
+    LivreFr {
+        osis: "2Esd",
+        nom: "2 Esdras",
+        abreviation: "2Esd",
+        fr: "2 Esd",
+    },
+    LivreFr {
+        osis: "1Esd",
+        nom: "1 Esdras",
+        abreviation: "1Esd",
+        fr: "1 Esd",
+    },
+    LivreFr {
+        osis: "3Esd",
+        nom: "3 Esdras",
+        abreviation: "3Esd",
+        fr: "3 Esd",
+    },
+    LivreFr {
+        osis: "1En",
+        nom: "1 Hénoch",
+        abreviation: "1En",
+        fr: "1 Hén",
+    },
+    LivreFr {
+        osis: "2En",
+        nom: "2 Hénoch",
+        abreviation: "2En",
+        fr: "2 Hén",
+    },
+    LivreFr {
+        osis: "Jub",
+        nom: "Jubilés",
+        abreviation: "Jub",
+        fr: "Jub",
+    },
+    LivreFr {
+        osis: "TReu",
+        nom: "Testament de Ruben",
+        abreviation: "TReu",
+        fr: "T. Rub.",
+    },
+    LivreFr {
+        osis: "TSim",
+        nom: "Testament de Siméon",
+        abreviation: "TSim",
+        fr: "T. Sim.",
+    },
+    LivreFr {
+        osis: "TLevi",
+        nom: "Testament de Lévi",
+        abreviation: "TLevi",
+        fr: "T. Lévi",
+    },
+    LivreFr {
+        osis: "TJud",
+        nom: "Testament de Juda",
+        abreviation: "TJud",
+        fr: "T. Juda",
+    },
+    LivreFr {
+        osis: "TIss",
+        nom: "Testament d'Issachar",
+        abreviation: "TIss",
+        fr: "T. Iss.",
+    },
+    LivreFr {
+        osis: "TZeb",
+        nom: "Testament de Zabulon",
+        abreviation: "TZeb",
+        fr: "T. Zabulon",
+    },
+    LivreFr {
+        osis: "TDan",
+        nom: "Testament de Dan",
+        abreviation: "TDan",
+        fr: "T. Dan",
+    },
+    LivreFr {
+        osis: "TNaph",
+        nom: "Testament de Nephtali",
+        abreviation: "TNaph",
+        fr: "T. Nephtali",
+    },
+    LivreFr {
+        osis: "TGad",
+        nom: "Testament de Gad",
+        abreviation: "TGad",
+        fr: "T. Gad",
+    },
+    LivreFr {
+        osis: "TAsh",
+        nom: "Testament d'Aser",
+        abreviation: "TAsh",
+        fr: "T. Aser",
+    },
+    LivreFr {
+        osis: "TJos",
+        nom: "Testament de Joseph",
+        abreviation: "TJos",
+        fr: "T. Joseph",
+    },
+    LivreFr {
+        osis: "TBen",
+        nom: "Testament de Benjamin",
+        abreviation: "TBen",
+        fr: "T. Benjamin",
+    },
+    LivreFr {
+        osis: "2Bar",
+        nom: "2 Baruch",
+        abreviation: "2Bar",
+        fr: "2 Ba",
+    },
+    LivreFr {
+        osis: "3Bar",
+        nom: "3 Baruch",
+        abreviation: "3Bar",
+        fr: "3 Ba",
+    },
+    LivreFr {
+        osis: "ApAb",
+        nom: "Apocalypse d'Abraham",
+        abreviation: "ApAb",
+        fr: "Ap. Ab.",
+    },
+    LivreFr {
+        osis: "ApZeph",
+        nom: "Apocalypse de Sophonie",
+        abreviation: "ApZeph",
+        fr: "Ap. So.",
+    },
+    LivreFr {
+        osis: "ApPet",
+        nom: "Apocalypse de Pierre",
+        abreviation: "ApPet",
+        fr: "Ap. Pierre",
+    },
+    LivreFr {
+        osis: "ApPaul",
+        nom: "Apocalypse de Paul",
+        abreviation: "ApPaul",
+        fr: "Ap. Paul",
+    },
+    LivreFr {
+        osis: "ApMos",
+        nom: "Apocalypse de Moïse",
+        abreviation: "ApMos",
+        fr: "Ap. Moïse",
+    },
 ];
+
+/// Les abréviations TOB, par code OSIS.
+///
+/// La TOB écrit les livres à deux chiffres avec une espace (« 1 S ») et
+/// garde des formes propres (« Is », « He », « 1 M »). La table est séparée
+/// de `LIVRES_FR` : une forme d'affichage n'est pas un nom de livre.
+const ABREVIATIONS_TOB: &[(&str, &str)] = &[
+    ("Gen", "Gn"),
+    ("Exod", "Ex"),
+    ("Lev", "Lv"),
+    ("Num", "Nb"),
+    ("Deut", "Dt"),
+    ("Josh", "Jos"),
+    ("Judg", "Jg"),
+    ("Ruth", "Rt"),
+    ("1Sam", "1 S"),
+    ("2Sam", "2 S"),
+    ("1Kgs", "1 R"),
+    ("2Kgs", "2 R"),
+    ("1Chr", "1 Ch"),
+    ("2Chr", "2 Ch"),
+    ("Ezra", "Esd"),
+    ("Neh", "Ne"),
+    ("Esth", "Est"),
+    ("Job", "Jb"),
+    ("Ps", "Ps"),
+    ("Prov", "Pr"),
+    ("Eccl", "Qo"),
+    ("Song", "Ct"),
+    ("Isa", "Is"),
+    ("Jer", "Jr"),
+    ("Lam", "Lm"),
+    ("Ezek", "Ez"),
+    ("Dan", "Dn"),
+    ("Hos", "Os"),
+    ("Joel", "Jl"),
+    ("Amos", "Am"),
+    ("Obad", "Ab"),
+    ("Jonah", "Jon"),
+    ("Mic", "Mi"),
+    ("Nah", "Na"),
+    ("Hab", "Ha"),
+    ("Zeph", "So"),
+    ("Hag", "Ag"),
+    ("Zech", "Za"),
+    ("Mal", "Ml"),
+    ("Matt", "Mt"),
+    ("Mark", "Mc"),
+    ("Luke", "Lc"),
+    ("John", "Jn"),
+    ("Acts", "Ac"),
+    ("Rom", "Rm"),
+    ("1Cor", "1 Co"),
+    ("2Cor", "2 Co"),
+    ("Gal", "Ga"),
+    ("Eph", "Ep"),
+    ("Phil", "Ph"),
+    ("Col", "Col"),
+    ("1Thess", "1 Th"),
+    ("2Thess", "2 Th"),
+    ("1Tim", "1 Tm"),
+    ("2Tim", "2 Tm"),
+    ("Titus", "Tt"),
+    ("Phlm", "Phm"),
+    ("Heb", "He"),
+    ("Jas", "Jc"),
+    ("1Pet", "1 P"),
+    ("2Pet", "2 P"),
+    ("1John", "1 Jn"),
+    ("2John", "2 Jn"),
+    ("3John", "3 Jn"),
+    ("Jude", "Jude"),
+    ("Rev", "Ap"),
+    ("Tob", "Tb"),
+    ("Jdt", "Jdt"),
+    ("AddEst", "Est gr"),
+    ("1Macc", "1 M"),
+    ("2Macc", "2 M"),
+    ("Wis", "Sg"),
+    ("Sir", "Si"),
+    ("Bar", "Ba"),
+    ("EpJer", "Let Jr"),
+    ("PrMan", "Pr Man"),
+    ("Ps151", "Ps 151"),
+    ("3Macc", "3 M"),
+    ("4Macc", "4 M"),
+    ("2Esd", "2 Esd"),
+    ("1Esd", "1 Esd"),
+    ("3Esd", "3 Esd"),
+    ("1En", "1 Hén"),
+    ("2En", "2 Hén"),
+    ("Jub", "Jub"),
+    ("TReu", "T. Rub."),
+    ("TSim", "T. Sim."),
+    ("TLevi", "T. Lévi"),
+    ("TJud", "T. Juda"),
+    ("TIss", "T. Iss."),
+    ("TZeb", "T. Zabulon"),
+    ("TDan", "T. Dan"),
+    ("TNaph", "T. Nephtali"),
+    ("TGad", "T. Gad"),
+    ("TAsh", "T. Aser"),
+    ("TJos", "T. Joseph"),
+    ("TBen", "T. Benjamin"),
+    ("2Bar", "2 Ba"),
+    ("3Bar", "3 Ba"),
+    ("ApAb", "Ap. Ab."),
+    ("ApZeph", "Ap. So."),
+    ("ApPet", "Ap. Pierre"),
+    ("ApPaul", "Ap. Paul"),
+    ("ApMos", "Ap. Moïse"),
+];
+
+/// Les soixante-six livres du canon protestant, avant les deutérocanoniques
+/// et les apocryphes ajoutés à la fin de [`LIVRES_FR`].
+const NB_LIVRES_CANON: usize = 66;
+
+/// Les livres hors canon, pour que le panneau biblique puisse les proposer
+/// sans dépendre d'une traduction qui ne les contient pas.
+pub fn livres_hors_canon() -> Vec<(&'static str, &'static str, &'static str)> {
+    LIVRES_FR
+        .iter()
+        .skip(NB_LIVRES_CANON)
+        .map(|livre| (livre.osis, livre.nom, livre.abreviation))
+        .collect()
+}
+
+/// Le livre appartient-il aux deutérocanoniques ou aux apocryphes ajoutés
+/// après les soixante-six livres canoniques ?
+pub fn est_hors_canon(osis: &str) -> bool {
+    LIVRES_FR
+        .iter()
+        .skip(NB_LIVRES_CANON)
+        .any(|livre| livre.osis == osis)
+}
+
+/// L'abréviation TOB d'un livre.
+pub fn abreviation_tob(osis: &str) -> Option<&'static str> {
+    ABREVIATIONS_TOB
+        .iter()
+        .find(|(code, _)| *code == osis)
+        .map(|(_, abreviation)| *abreviation)
+}
 
 /// L'abréviation française d'un livre, telle que la table la porte.
 ///
@@ -625,6 +1004,7 @@ pub fn nom_du_livre(livre: &str, forme: FormeLivre) -> String {
         FormeLivre::FrancaiseCourte => l.fr.to_string(),
         FormeLivre::SansPoint => l.fr.trim_end_matches('.').to_string(),
         FormeLivre::Osis => l.abreviation.to_string(),
+        FormeLivre::Tob => abreviation_tob(livre).unwrap_or(l.fr).to_string(),
     }
 }
 
@@ -749,6 +1129,7 @@ pub(crate) fn forme_du_livre(forme: crate::mise_en_page::modele::SystemeAbreviat
         SystemeAbreviation::FrancaiseLongue => FormeLivre::FrancaiseLongue,
         SystemeAbreviation::SansPoint => FormeLivre::SansPoint,
         SystemeAbreviation::Osis => FormeLivre::Osis,
+        SystemeAbreviation::Tob => FormeLivre::Tob,
     }
 }
 
@@ -1244,6 +1625,7 @@ fn forme_livre(mot: &str) -> Option<FormeLivre> {
         "court" | "courte" | "francaise_courte" => Some(FormeLivre::FrancaiseCourte),
         "osis" => Some(FormeLivre::Osis),
         "sanspoint" | "sans_point" => Some(FormeLivre::SansPoint),
+        "tob" => Some(FormeLivre::Tob),
         _ => None,
     }
 }
@@ -1323,6 +1705,7 @@ fn afficher_elements_forme_avec(
         }
         FormeLivre::Osis => crate::mise_en_page::modele::SystemeAbreviation::Osis,
         FormeLivre::SansPoint => crate::mise_en_page::modele::SystemeAbreviation::SansPoint,
+        FormeLivre::Tob => crate::mise_en_page::modele::SystemeAbreviation::Tob,
     };
     afficher_elements_avec(elements, &normes, transformer)
 }
@@ -1443,4 +1826,87 @@ pub fn code_du_livre(nom: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests_des_normes_tob {
+    use super::*;
+
+    #[test]
+    fn les_abreviations_tob_sont_courtes_et_stables() {
+        assert_eq!(nom_du_livre("1Sam", FormeLivre::Tob), "1 S");
+        assert_eq!(nom_du_livre("Isa", FormeLivre::Tob), "Is");
+        assert_eq!(nom_du_livre("Heb", FormeLivre::Tob), "He");
+        assert_eq!(nom_du_livre("1Macc", FormeLivre::Tob), "1 M");
+        assert_eq!(nom_du_livre("Jub", FormeLivre::Tob), "Jub");
+    }
+
+    #[test]
+    fn une_reference_accentuee_se_lit_sans_paniquer() {
+        let reference = depuis_texte("Genèse 3:16").expect("le nom accentué se résout");
+        assert_eq!(reference.livre, "Gen");
+
+        let (references, _) = lire_groupe("Genèse 3:16, 17").expect("le groupe accentué");
+        assert_eq!(references.len(), 2, "les deux versets sont lus");
+        assert_eq!(references[1].verset_debut, 17);
+
+        let situees = references_situees("Genèse 3:16, 17");
+        assert_eq!(situees.len(), 2, "les positions restent justes");
+        assert_eq!(
+            &"Genèse 3:16, 17"[situees[1].0..situees[1].1],
+            "17",
+            "la seconde position ne coupe pas dans un accent"
+        );
+    }
+
+    #[test]
+    fn les_abreviations_tob_nomment_des_livres_connus() {
+        for (code, abreviation) in ABREVIATIONS_TOB {
+            assert!(
+                LIVRES_FR.iter().any(|livre| livre.osis == *code),
+                "l'abréviation TOB « {abreviation} » vise un livre absent : {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn les_livres_hors_canon_sont_citables() {
+        assert!(
+            livres_hors_canon()
+                .iter()
+                .any(|(osis, _, _)| *osis == "1En")
+        );
+        assert!(
+            livres_hors_canon()
+                .iter()
+                .any(|(osis, _, _)| *osis == "Jub")
+        );
+        assert_eq!(
+            code_du_livre("1 Hénoch").as_deref(),
+            Some("1En"),
+            "le nom long se résout"
+        );
+        let reference = depuis_texte("1 Hén 1:1").expect("une référence hors canon");
+        assert_eq!(reference.livre, "1En");
+
+        let testament = depuis_texte("T. Rub. 1:1").expect("un Testament des patriarches");
+        assert_eq!(testament.livre, "TReu");
+    }
+
+    #[test]
+    fn la_forme_tob_est_lue_et_affichee() {
+        let normes = crate::mise_en_page::modele::References {
+            livre: crate::mise_en_page::modele::SystemeAbreviation::Tob,
+            ..Default::default()
+        };
+        assert_eq!(
+            afficher(&Reference::verset("1Sam", 1, 1), &normes),
+            "1 S 1.1"
+        );
+        assert_eq!(afficher(&Reference::verset("Isa", 6, 1), &normes), "Is 6.1");
+
+        let (references, forme) = lire_groupe("1 S 1:1|tob").expect("le groupe TOB");
+        assert_eq!(forme, Some(FormeLivre::Tob), "la forme est gardée");
+        assert_eq!(references[0].livre, "1Sam");
+    }
 }

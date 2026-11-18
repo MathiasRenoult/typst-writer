@@ -1,148 +1,125 @@
 # Typst Writer
 
-Typst Writer est un éditeur de rédaction pour les documents Typst : thèses,
-mémoires, livres, articles. L'aperçu est le document final lui-même, composé
-par le vrai moteur Typst.
+**Le studio d'écriture des documents qui comptent.**
 
-Version 0.5.0.
+Typst Writer est un éditeur pour écrire de longs textes — une thèse, un
+mémoire, un livre, un article — sans jamais perdre de vue la page finale.
+Le texte reste simple et lisible ; la mise en page est composée par Typst,
+le moteur qui produit aussi le PDF.
 
-## Ce que l'application fait
+Version 0.6.0 · Linux.
 
-- **Écrire** dans une source lisible et comparable ligne à ligne,
-  `document.tw` : titres, emphase, citations, notes, liens, images,
-  tableaux, formules, graphiques, décor et sauts de page.
-- **Composer** le document pendant l'écriture et suivre le chapitre sous le
-  curseur ; le rendu affiché est celui du PDF exporté.
-- **Travailler dans un espace de travail** composé de panneaux divisibles,
-  d'onglets par panneau et de plusieurs vues d'un même document — édition,
-  rendu et source Typst.
-- **Citer** avec une bibliographie par projet, des notices complètes, des
-  styles CSL, l'import `.bib` et la liaison à une collection Zotero en
-  lecture seule.
-- **Référencer la Bible** avec une syntaxe dédiée, un panneau d'insertion,
-  des formes de livres personnalisables, un gabarit de citation, un index
-  paginé et des statistiques de citation.
-- **Mettre en page** par des normes : papier, marges, en-tête et pied,
-  typographie par langue, titres, couleurs, décor et numérotation.
-- **Chercher et remplacer** en texte littéral ou en expression régulière,
-  avec aperçu des remplacements.
-- **Exporter** en PDF, en Markdown et en DOCX, et transporter un projet sous
-  forme d'archive avec inventaire et import sans écrasement.
-- **Travailler au clavier** avec une carte des raccourcis (`F1`), un
-  diagnostic du poste et la récupération des sauvegardes et de la corbeille.
+## L'idée
 
-## Écrire
+Un document de recherche n'est pas une suite de paragraphes : c'est un
+assemblage de chapitres, de citations, de notes, de références bibliques,
+d'index et de règles de présentation. Typst Writer réunit ces gestes dans
+un seul espace, sans imposer un format fermé.
 
-La source est un markdown lisible :
+La source du document est un fichier texte, `document.tw`, que l'on peut
+lire, comparer, sauvegarder et rouvrir dans dix ans. L'aperçu est le
+document réellement composé, pas une approximation.
 
-    # Le titre
+## Ce qui rend l'application différente
 
-    Un paragraphe, avec du **gras** et une citation — @dupont[p. 45].
+### Le texte reste à vous
 
-    | Mois | Ventes |
-    | --- | :-: |
-    | Jan | 10 |
+Le document n'est pas enfermé dans une base de données ni dans un format
+propriétaire. Il vit dans un fichier lisible, proche de Markdown, que vous
+pouvez ouvrir avec n'importe quel éditeur. Les projets, les bibliographies
+et les normes restent sur votre machine ; aucun compte, aucun serveur,
+aucun envoi de vos travaux.
 
-    Soit $x^2$ dans le texte.
+### On écrit déjà dans la page
 
-    {graphique type=barre titre="Évolution"}
-    Jan | 10
-    Fév | 20
+L'aperçu n'est pas une image à côté du texte : c'est le rendu Typst du
+document, avec ses marges, ses polices, ses notes et sa pagination. On
+peut écrire, regarder la page se recomposer et vérifier immédiatement une
+citation, un titre ou un tableau.
 
-Les mesures de mise en page ne sont pas écrites dans la source : elles
-vivent dans les normes du document. La syntaxe complète est décrite dans
-[le guide d'écriture](docs/guide/ecrire.md).
+Le lecteur de PDF intégré permet aussi de sélectionner et copier le texte
+composé, de chercher une expression dans le document final et de suivre
+les liens internes et externes.
 
-## Les références bibliques
+### Un vrai espace de travail pour un long document
 
-Une référence s'écrit entre doubles accolades :
+L'éditeur se divise en panneaux indépendants, avec des onglets. Le même
+chapitre peut être ouvert en écriture dans un panneau et en lecture dans
+un autre ; la disposition est retrouvée au lancement. La bibliothèque de
+projets se parcourt comme une étagère, avec des couvertures et des
+vignettes de page.
 
-    {{Jn 3.16}}
+Les chapitres, le sommaire, les références et les projets se déplacent
+ensemble : on change de chapitre sans perdre le fil.
 
-La forme standard est le nom abrégé suivi de `chapitre.verset`. Les formes
-historiques `Jn 3:16` et `Jn 3,16` sont également lues. Les livres peuvent
-être écrits en entier, en abréviation française ou en code OSIS.
+### Les citations et les sources, sans friction
 
-Le bouton **Référence biblique** ouvre un panneau d'insertion : livre,
-chapitre, versets (`16`, `16-18`, `16, 17`), plusieurs références et texte
-libre sont réunis dans **une seule** balise. Le champ chapitre accepte les
-suites de chapitres entiers, par exemple `1-11`.
+Taper `@` ouvre le composeur de citation : on choisit une référence, une
+page, puis une autre référence si nécessaire. La note reste visible dans
+le texte et prend sa forme finale au rendu. Les références viennent d'une
+bibliographie locale, d'un fichier `.bib` ou d'une collection Zotero lue
+en lecture seule ; les styles de citation de Zotero sont reconnus.
 
-Les citations peuvent être composées à la main :
+Chaque source peut être corrigée dans une fiche, et la bibliographie
+finale se place où vous le décidez.
 
-    {{2 Ch 5.6 ; Js 1.9 ; 2 Ch 7.6-12}}
-    {{Jn 3.16 ; "cf. aussi" ; Gn 1.1}}
-    {{Gn 1-11}}
+### La Bible traitée comme une source savante
 
-Un même livre n'est nommé qu'une fois : ses occurrences sont séparées par
-une virgule. Le rendu peut être rangé dans l'ordre canonique.
+Une référence biblique s'écrit simplement `{{Jn 3.16}}`. Le panneau
+d'insertion propose un livre, un chapitre, des versets et un texte libre,
+puis compose **une seule** citation avec plusieurs références.
 
-### Syntaxe personnalisable
+Les formes de livres sont réglables — nom complet, abréviation courante ou
+abréviations de la TOB — et les livres deutérocanoniques comme les
+apocryphes (Tobie, Judith, Sagesse, Hénoch, Jubilés, Testaments des
+patriarches, apocalypses) sont citables et indexables. Un clic sur une
+référence montre le verset dans une bulle ; l'index biblique donne les
+pages réelles du document, et les statistiques disent quels livres ont été
+cités.
 
-L'onglet **Biblique** des paramètres de plugins règle :
+### Une mise en page qui suit le document
 
-- la forme des livres : abréviation, nom complet, OSIS ou sans point ;
-- les chiffres arabes ou romains ;
-- les séparateurs entre chapitre et verset, plage, livres, occurrences et
-  chapitres entiers ;
-- le **gabarit de citation**, qui décrit la forme complète d'une référence.
-  Les jetons disponibles sont `{livre}`, `{chapitres}`, `{versets}`,
-  `{nombres}`, `{chapitre}`, `{chapitre_fin}`, `{verset}`, `{verset_fin}`
-  et `{reference}`. Par exemple, `{livre} {chapitre}, {verset}` rend
-  `Jn 3, 16`, et `({reference})` rend `(Jn 3.16)`.
+Les mesures ne sont pas écrites au milieu du texte. Elles vivent dans les
+normes du document : papier, marges, en-tête et pied de page, typographie,
+titres, couleurs, numérotation. Un projet peut ainsi changer de mise en
+page sans être réécrit.
 
-La balise source reste toujours `{{…}}` ; le gabarit règle sa composition.
-Une balise peut aussi choisir ponctuellement sa forme avec `|long`,
-`|court`, `|osis` ou `|sanspoint`. Une référence peut nommer sa traduction
-avec `|lsg` ou `|darby` : elle est alors affichée dans la citation
-(`Jn 3.16 (LSG)`), et reste silencieuse sans ce suffixe.
+Les encadrés, les tableaux, les graphiques, les dates, les couleurs et les
+métadonnées sont insérés depuis une même palette, avec des formulaires
+simples qui montrent toujours le texte qui sera écrit.
 
-### Index et consultation
+### Une interface qui parle la même langue que vous
 
-Cliquer sur une citation ouvre **La référence cliquée** dans le panneau
-gauche. Chaque référence y est présentée séparément avec son livre, son
-chapitre et son propre extrait biblique. Le crayon ouvre une fenêtre
-flottante pour en corriger le livre, le chapitre ou les versets ; la balise
-est réécrite en conservant son texte libre et sa forme.
+La palette de commandes s'ouvre avec `Ctrl+K` ou `/` ; `..` propose les
+éléments à insérer. Une recherche de livre biblique filtre la liste au fil
+de la frappe, les commandes inutiles disparaissent quand leur module est
+désactivé, et le curseur revient naturellement dans le document après une
+insertion.
 
-L'index des citations s'insère par l'icône de la barre supérieure ou par la
-balise `{{index}}`. Dans l'onglet Biblique, il peut :
+Les raccourcis sont réunis dans une carte (`F1`), et l'aide indique aussi
+où vivent vos données et comment les sauvegarder.
 
-- afficher ou masquer les pages où chaque référence apparaît ;
-- regrouper les références sous leur livre ;
-- choisir sa propre forme de livre ;
-- régler le nombre de colonnes de l'index (1 à 4).
+## À qui s'adresse l'application
 
-Les pages sont demandées au moteur Typst lors de la composition : ce sont
-les pages réelles du document. Une citation placée dans une note est
-signalée par le suffixe `n` (`6n`).
+Aux personnes qui écrivent longtemps : théologiens, chercheurs, étudiants,
+auteurs de mémoires et de livres. Plus généralement, à celles et ceux qui
+veulent garder la main sur leur texte tout en obtenant une mise en page
+soignée.
 
-Exemple avec regroupement et pages :
+## Démarrer
 
-    Genèse :
-    - 1.18 (p. 2, 5, 6, 18)
-    - 3.15 (p. 4, 5)
+Le paquet Linux s'installe sans `sudo` :
 
-Les **statistiques bibliques** du panneau gauche listent les références
-citées, permettent de les rechercher, de les trier et de rejoindre leur
-citation d'un clic. La recherche du panneau prend le clavier à son
-ouverture, sans écrire dans l'éditeur.
+```sh
+tar -xzf typst-writer-0.6.0-linux-x86_64.tar.gz
+cd typst-writer-0.6.0-linux-x86_64
+./install.sh
+```
 
-## L'espace de travail
+L'installateur vérifie chaque fichier par son empreinte. La désinstallation
+se fait avec `./desinstaller.sh` et ne touche jamais aux documents.
 
-L'éditeur se divise en panneaux, chacun avec ses onglets. Le même document
-peut être ouvert dans plusieurs panneaux avec un texte partagé et des vues
-indépendantes. La disposition est retrouvée au lancement. La bibliothèque de
-projets se parcourt en galerie plein écran, avec couvertures et étagères.
-
-## Installation
-
-Sous Linux, le paquet `typst-writer-<version>-linux-x86_64.tar.gz`
-s'installe sans `sudo` avec `./install.sh`, se met à jour en se réexécutant
-et se retire avec `./desinstaller.sh`. Chaque fichier installé est vérifié
-par son empreinte. Voir [l'installation Linux](docs/guide/installation-linux.md).
-
-Avec une chaîne Rust à jour :
+Pour compiler l'application vous-même, une chaîne Rust à jour suffit :
 
 ```sh
 cargo build --release
@@ -150,45 +127,71 @@ cargo build --release
 ```
 
 L'application demande Linux avec Wayland ou X11 et un pilote graphique
-offrant Vulkan. L'assistance à la frappe utilise
-[tinymist](https://github.com/Myriad-Dreamin/tinymist), qui est facultative :
-sans elle, le reste de l'application fonctionne.
+récent. L'assistance à la frappe est facultative : écrire, composer et
+exporter fonctionnent sans elle.
+
+## Premiers pas
+
+1. Créez un projet depuis la bibliothèque.
+2. Écrivez dans le chapitre ouvert.
+3. Ouvrez l'aperçu pour voir la page composée.
+4. Ajoutez vos sources depuis la bibliographie ou tapez `@` dans le texte.
+5. Exportez en PDF, en Markdown ou en DOCX quand le document est prêt.
+
+La [prise en main](docs/guide/prise-en-main.md) détaille chaque geste.
+
+## Un aperçu de la syntaxe
+
+La source reste volontairement simple :
+
+```text
+# Un chapitre
+
+Un paragraphe avec du **gras**, une citation @dupont[p. 45] et une note.^[Une précision.]
+
+{{Jn 3.16 ; "cf. aussi" ; Gn 1.1}}
+
+{{e type=note titre="À retenir"|Une idée mise en valeur.}}
+```
+
+Les références bibliques, les citations, les notes et les blocs de mise en
+page sont décrits dans le [guide d'écriture](docs/guide/ecrire.md).
+
+## Ce que l'application sait produire
+
+- un PDF composé par Typst ;
+- un Markdown lisible ;
+- un DOCX pour les personnes qui travaillent encore avec Word ;
+- un projet portable ou un fichier `.tw` unique à transmettre.
+
+Chaque export est accompagné de ce qu'il sait préserver. Les notes, les
+citations et les références bibliques sont expliquées dans la
+documentation.
+
+## Limites actuelles
+
+L'application est encore jeune, et certaines limites sont assumées :
+
+- l'export DOCX passe par LibreOffice et rend les notes comme du texte ;
+- l'import DOCX n'est pas disponible ;
+- les diagnostics du compilateur sont comptés, mais pas encore soulignés
+  dans le texte ;
+- Zotero est consulté en lecture seule ;
+- l'historique d'annulation peut repartir après certains remplacements
+  de symboles.
+
+Les sauvegardes automatiques et les copies précédentes sont là pour les
+accidents ; elles ne remplacent pas une sauvegarde personnelle des travaux
+importants.
 
 ## Documentation
 
-Le manuel d'usage se trouve dans [`docs/guide/`](docs/guide/index.md) :
-prise en main, écriture et références bibliques, bibliographie, glossaire,
-normes et plugins, recherche, raccourcis, fichiers et installation.
-
-Le site de documentation se construit sans dépendance :
-
-```sh
-python3 site/construire.py
-```
-
-Il se lit dans `site/dist/`.
-
-## Précautions et limites actuelles
-
-La suite de tests couvre le cœur de l'application. Le document est
-enregistré automatiquement après une courte pause dans la frappe, et la
-version précédente reste dans `sauvegardes/`. Vérifiez néanmoins le PDF
-avant de livrer un document et conservez des copies de vos travaux
-importants.
-
-- Les diagnostics du compilateur sont comptés dans la barre d'état, mais ne
-  sont pas soulignés dans le texte.
-- L'histoire d'annulation du document ouvert repart après certains
-  remplacements de symboles.
-- L'export DOCX passe par LibreOffice et rend les notes comme du texte
-  `[note: …]`, et non comme des notes de bas de page Word.
-- L'import DOCX n'est pas disponible : les notes perdraient leur identité au
-  retour. L'alternative est décrite dans le guide.
-- La connexion Zotero et le rendu final des citations se vérifient dans le
-  PDF ; voir le [guide bibliographique](docs/guide/bibliographie.md).
-- Les graphiques utilisent le paquet Typst `cetz` ; leur rendu dépend de la
-  résolution de ce paquet.
+Le manuel d'usage est dans [`docs/guide/`](docs/guide/index.md) : prise en
+main, écriture, bibliographie, glossaire, normes, recherche, raccourcis,
+fichiers et installation. Les notes de version sont dans
+[`CHANGELOG.md`](CHANGELOG.md) et les temps forts de cette version dans
+[`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Licence
 
-MIT — voir `LICENSE`.
+MIT — voir [`LICENSE`](LICENSE).

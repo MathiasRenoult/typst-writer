@@ -118,6 +118,7 @@ pub fn compilation_unit_document_avec_diagnostics(
     let mut regles = normes.typographie.regles(&normes.references);
     regles.index = normes.index.clone();
     regles.numerotation_figures = normes.numerotation_figures.clone();
+    regles.callouts = normes.parametres_plugins.callouts.clone();
     // Les mots de la balise `{date:...}` viennent des normes (2026-11-03).
     regles.dates = crate::langage::dates::Regles {
         siecle: normes.dates.siecle.clone(),
@@ -507,6 +508,47 @@ mod tests {
             )),
             "{document:?}"
         );
+    }
+
+    /// Un `@` dans une chaîne Typst n'est pas une citation : l'import d'un
+    /// paquet local doit traverser l'assemblage intact.
+    #[test]
+    fn un_import_de_paquet_n_est_pas_une_citation() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-pipeline-import-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine du projet");
+
+        let main = "#import \"@local/primaviz:0.12.1\": *\n";
+        let (entree, corrections, rapports) =
+            super::compilation_unit_avec_diagnostics(&root, main, "Un texte.\n");
+
+        assert!(
+            entree.contains("@local/primaviz:0.12.1"),
+            "l'import reste intact : {entree}"
+        );
+        assert!(
+            !entree.contains("[local]"),
+            "l'import n'est jamais une citation neutralisée : {entree}"
+        );
+        assert!(
+            !rapports
+                .iter()
+                .any(|rapport| rapport.message.contains("local")),
+            "aucune citation « local » inventée : {rapports:?}"
+        );
+        assert!(
+            corrections.iter().any(
+                |(chemin, contenu)| chemin.ends_with("document.generated.typ")
+                    && contenu.contains("Un texte.")
+                    && !contenu.contains("[local]")
+            ),
+            "le généré ne porte pas de citation inventée : {corrections:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Les normes du projet portent la typographie jusqu'au générateur.
@@ -1968,27 +2010,33 @@ fn corriger_le_typst(
         let mut curseur = 0usize;
 
         while curseur < octets.len() {
-            if octets[curseur] == b'@' {
+            if octets[curseur] == b'@' && !dans_une_chaine(ligne, curseur) {
+                // Un `@` collé à un mot est une adresse électronique, pas
+                // une citation. La frontière est la même que celle du
+                // parseur : `user@example.com` reste du texte.
+                if !crate::langage::citation::frontiere(&ligne[..curseur]) {
+                    ligne_sortie.push('@');
+                    curseur += 1;
+                    continue;
+                }
+
                 // Déjà échappé par l'auteur : la suite est du texte.
                 let echappe = ligne[..curseur].ends_with('\\');
 
-                // La clé se lit caractère par caractère : ses lettres
-                // peuvent être accentuées, et le point s'y lit aussi — c'est
-                // lui qui distingue une adresse électronique d'une clé.
+                // La clé se lit caractère par caractère, avec la même
+                // grammaire que le parseur. Dans ce texte Typst, un
+                // deux-points peut désigner une étiquette ; le point, lui,
+                // reste un caractère de clé.
                 let mut fin_cle = curseur + 1;
                 let mut deux_points = false;
 
                 for caractere in ligne[curseur + 1..].chars() {
-                    if caractere.is_alphanumeric()
-                        || caractere == '_'
-                        || caractere == '-'
-                        || caractere == '.'
-                    {
-                        fin_cle += caractere.len_utf8();
-                    } else if caractere == ':' {
+                    if caractere == ':' {
                         // Un renvoi (`@fig:une`) porte deux points : ce
-                        // n'est jamais une citation (R5).
+                        // n'est jamais une citation ordinaire (R5).
                         deux_points = true;
+                        fin_cle += caractere.len_utf8();
+                    } else if crate::langage::citation::est_caractere_de_cle(caractere) {
                         fin_cle += caractere.len_utf8();
                     } else {
                         break;
@@ -2007,15 +2055,6 @@ fn corriger_le_typst(
                 // sera diagnostiquée par le moteur, jamais déguisée en
                 // `[cle]` (R5, « diagnostics »).
                 let est_renvoi = deux_points || (!cle.is_empty() && etiquettes.contains(cle));
-
-                if !echappe && !est_renvoi && cle.contains('.') {
-                    // Une adresse électronique a un point, et n'est jamais
-                    // une clé : elle s'échappe, pour que Typst la lise comme
-                    // du texte au lieu d'y chercher une référence.
-                    ligne_sortie.push_str("\\@");
-                    curseur += 1;
-                    continue;
-                }
 
                 if !echappe && !est_renvoi && !cle.is_empty() && !cles.contains(cle) {
                     rapports.push(crate::langage::diagnostics::Diagnostic {
@@ -2040,6 +2079,30 @@ fn corriger_le_typst(
     }
 
     sortie
+}
+
+/// Le caractère à `position` est-il dans une chaîne Typst ?
+///
+/// Les `@` des chemins de paquets — `#import "@local/primaviz:…"` — ne sont
+/// pas des citations : les neutraliser casse l'import. La lecture suit les
+/// guillemets et leurs échappements, sans toucher au reste de la ligne.
+fn dans_une_chaine(ligne: &str, position: usize) -> bool {
+    let mut chaine = false;
+    let mut echappe = false;
+
+    for caractere in ligne[..position].chars() {
+        if echappe {
+            echappe = false;
+            continue;
+        }
+        match caractere {
+            '\\' if chaine => echappe = true,
+            '"' => chaine = !chaine,
+            _ => {}
+        }
+    }
+
+    chaine
 }
 
 /// Les bibliographies mortes des fichiers **inclus**.
@@ -3185,6 +3248,65 @@ mod epreuves_de_renvois {
         assert!(
             texte.contains("La note exacte."),
             "la note est dans le PDF : {texte}"
+        );
+    }
+
+    /// Une citation **dans une note de bas de page** compile réellement et
+    /// laisse sa note dans le PDF : le contenu d'une note est un corps Typst
+    /// comme un autre, pas une zone opaque.
+    #[test]
+    fn une_citation_dans_une_note_se_lit_dans_le_pdf() {
+        let root = racine("citation-note");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{dupont2023, title = {Un titre}, author = {Dupont, Jean}, year = {2023}}\n",
+        )
+        .expect("bibliographie");
+        let source = "#bibliography(\"references.bib\", style: \"chicago-notes\")\n\nTexte#footnote[Voir @dupont2023[p. 45].] suite.\n";
+        let pdf = crate::typst::render::render_pdf(&root, source, &[]).expect("PDF");
+        let fichier = root.join("sortie.pdf");
+        std::fs::write(&fichier, &pdf).expect("PDF sur disque");
+
+        let extrait = std::process::Command::new("pdftotext")
+            .arg(&fichier)
+            .arg("-")
+            .output();
+        let Ok(sortie) = extrait else {
+            eprintln!("pdftotext absent — épreuve du texte extrait sautée");
+            return;
+        };
+        assert!(sortie.status.success(), "pdftotext s'exécute");
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+
+        assert!(
+            texte.contains("Voir") && texte.contains("45"),
+            "la note et sa page sont dans le PDF : {texte}"
+        );
+    }
+
+    /// La citation dans une note traverse **tout le chemin applicatif** :
+    /// `.tw` → parseur → générateur → assemblage → moteur Typst. Ce n'est
+    /// pas seulement du Typst écrit à la main dans une épreuve.
+    #[test]
+    fn une_citation_dans_une_note_traverse_le_pipeline_et_compile() {
+        let root = racine("citation-note-pipeline");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{dupont2023, title = {Un titre}, author = {Dupont, Jean}, year = {2023}}\n",
+        )
+        .expect("bibliographie");
+
+        let (entree, corrections) = super::compilation_unit(
+            &root,
+            "#bibliography(\"references.bib\", style: \"chicago-notes\")\n",
+            "Texte^[Voir @dupont2023[p. 45].] suite.\n",
+        );
+        let outcome = crate::typst::render::compile(&root, &entree, &corrections);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "la citation en note compile par le pipeline : {:?}",
+            outcome.errors
         );
     }
 

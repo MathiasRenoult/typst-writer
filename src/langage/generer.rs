@@ -50,14 +50,15 @@ pub fn generer_avec(
         crate::langage::index_citations::IndexBiblique::default()
     };
 
-    // L'import `cetz` pour les graphiques, seulement si le document en
-    // contient — un import inutile alourdit le préambule.
-    let a_graphique = document
-        .blocs
-        .iter()
-        .any(|b| matches!(b, Bloc::Graphique { .. }));
-    if a_graphique {
-        out.push_str("#import \"@preview/cetz:0.3.2\": chart\n\n");
+    // primaviz, pour les balises `{chart}` et les anciens `{graphique}` —
+    // le paquet est vendu avec l'application et installé avant le rendu.
+    if document.blocs.iter().any(contient_chart) {
+        out.push_str("#import \"@local/primaviz:0.12.1\": *\n\n");
+    }
+
+    // showybox, pour les callouts — même contrat : le paquet est embarqué.
+    if document.blocs.iter().any(contient_callout) {
+        out.push_str("#import \"@local/showybox:2.0.4\": showybox\n\n");
     }
 
     for bloc in &document.blocs {
@@ -76,6 +77,25 @@ fn contient_index(bloc: &Bloc) -> bool {
     }
 }
 
+/// Le document contient-il un graphique primaviz, même sous un décor ?
+fn contient_chart(bloc: &Bloc) -> bool {
+    match bloc {
+        Bloc::Chart(_) | Bloc::Graphique { .. } => true,
+        Bloc::Décor { bloc, .. } => contient_chart(bloc),
+        _ => false,
+    }
+}
+
+/// Le document contient-il un callout, même sous un autre décor ?
+fn contient_callout(bloc: &Bloc) -> bool {
+    match bloc {
+        Bloc::Décor { proprietes, bloc } => {
+            crate::langage::callout::est_callout(proprietes) || contient_callout(bloc)
+        }
+        _ => false,
+    }
+}
+
 /// Génère un bloc, suivi d'une ligne vide — la séparation de blocs de Typst.
 /// Le premier caractère qui vient du **texte** : les littéraux et les
 /// codes sont sautés, car ils ne posent jamais l'espace d'un signe.
@@ -88,6 +108,7 @@ fn premier_texte(inline: &[Inline]) -> Option<char> {
             | Inline::GrasItalique(contenu)
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => premier_texte(contenu),
+            Inline::Canonique(interne) => premier_texte(std::slice::from_ref(interne.as_ref())),
             Inline::Lien { texte, .. } => premier_texte(texte),
             _ => None,
         };
@@ -138,8 +159,11 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             Inline::Citation(_) => Some('\u{2039}'),
             // Une date vaut un mot : ce qui la suit mérite l'espace d'un.
             Inline::Date(_) => Some('1'),
+            // Une métadonnée rend une valeur : elle vaut un mot.
+            Inline::Meta(_) => Some('m'),
             // Un terme du glossaire rend un mot — sa forme courte.
             Inline::Glo { .. } => Some('t'),
+            Inline::Canonique(interne) => premier_caractere(std::slice::from_ref(interne.as_ref())),
         };
 
         if trouve.is_some() {
@@ -293,6 +317,21 @@ fn generer_bloc(
             }
         }
         Bloc::Décor { proprietes, bloc } => {
+            // Un callout n'est pas un `#block` : showybox prend le relais et
+            // reçoit le corps déjà généré, typographie comprise.
+            if crate::langage::callout::est_callout(proprietes) {
+                let mut interieur = String::new();
+                generer_bloc(bloc, &mut interieur, regles, decor, index);
+                out.push_str(&crate::langage::callout::rendre_avec(
+                    crate::langage::callout::type_de(proprietes),
+                    crate::langage::callout::titre_de(proprietes),
+                    interieur.trim_end(),
+                    &regles.callouts.presets,
+                    proprietes,
+                ));
+                return;
+            }
+
             // Le manteau : `#block(...)` autour de ce que le bloc génère.
             // Les propriétés deviennent les arguments du bloc Typst — c'est
             // tout le décor, des bordures aux dégradés.
@@ -331,36 +370,42 @@ fn generer_bloc(
         Bloc::IndexBiblique => {
             out.push_str(&index.rendre_typst());
         }
+        Bloc::Chart(chart) => match crate::langage::chart::rendre(chart) {
+            Ok(code) => out.push_str(&code),
+            Err(erreur) => out.push_str(&format!("// graphique invalide : {erreur}\n\n")),
+        },
         Bloc::Graphique {
             type_,
             titre,
             donnees,
         } => {
-            // Un graphique `cetz` : le paquet est importé par le préambule
-            // du document généré. Les données deviennent un tableau de
-            // couples (label, valeur) que `cetz` sait dessiner.
-            out.push_str("#figure(\n  ");
-            match type_.as_str() {
-                "ligne" => out.push_str("chart.linechart("),
-                "secteur" => out.push_str("chart.piechart("),
-                _ => out.push_str("chart.barchart("),
+            // Les anciens `{graphique}` passent aussi par primaviz : un seul
+            // moteur de graphiques, et les documents existants continuent de
+            // se composer sans cetz.
+            let type_ = match type_.as_str() {
+                "ligne" | "line" => "line",
+                "secteur" | "pie" => "pie",
+                _ => "bar",
+            };
+            let donnees = donnees
+                .iter()
+                .map(|(label, valeur)| format!("\"{}\",{valeur}", label.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let chart = crate::langage::schema::Chart {
+                type_: type_.to_string(),
+                titre: titre.clone(),
+                valeurs: false,
+                donnees,
+                ..crate::langage::schema::Chart::default()
+            };
+            match crate::langage::chart::rendre(&chart) {
+                Ok(code) => out.push_str(&code),
+                Err(erreur) => out.push_str(&format!("// graphique invalide : {erreur}\n\n")),
             }
-            out.push('(');
-            for (i, (label, valeur)) in donnees.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str("(label: \"");
-                echapper_chaine(label, out);
-                out.push_str(&format!("\", values: ({valeur},))"));
-            }
-            out.push_str("),");
-            if !titre.is_empty() {
-                out.push_str("\n  caption: [");
-                echapper_chaine(titre, out);
-                out.push_str("],");
-            }
-            out.push_str("\n)\n\n");
+        }
+        Bloc::Canonique(interne) => {
+            generer_bloc(interne, out, regles, decor, index);
         }
     }
 }
@@ -499,6 +544,17 @@ fn generer_inline_dans(
                 echapper_texte(&compose, &mut echappe, false);
                 out.push_str(&super::typographie::substituer_siecles(&echappe));
             }
+            Inline::Meta(cle) => {
+                // Même source que les quick parts de l'en-tête : la valeur
+                // vient de `metadonnees.toml`, passée en `sys.inputs` à la
+                // compilation. Une clé absente ne casse pas le document.
+                out.push_str("#sys.inputs.at(\"");
+                echapper_chaine(cle, out);
+                out.push_str("\", default: \"\")");
+                en_tete = false;
+                contexte.precedent = None;
+                contexte.venant_du_guillemet = false;
+            }
             Inline::Glo {
                 cle,
                 majuscule,
@@ -547,6 +603,19 @@ fn generer_inline_dans(
                 out.push_str("\")[");
                 generer_inline_dans(texte, out, false, regles, contexte, dans_note);
                 out.push(']');
+                en_tete = false;
+            }
+            Inline::Canonique(interne) => {
+                // L'enveloppe n'ajoute rien au rendu : elle ne porte que la
+                // forme d'écriture. On génère exactement l'élément intérieur.
+                generer_inline_dans(
+                    std::slice::from_ref(interne.as_ref()),
+                    out,
+                    en_tete,
+                    regles,
+                    contexte,
+                    dans_note,
+                );
                 en_tete = false;
             }
         }
@@ -1099,6 +1168,65 @@ mod tests {
         let document = parse("Voir @dupont2023.\n");
 
         assert!(generer(&document).contains("@dupont2023"));
+    }
+
+    /// Une citation bibliographique se génère en référence Typst, même
+    /// lorsqu'elle est **dans une note de bas de page**.
+    #[test]
+    fn une_citation_dans_une_note_reste_une_citation() {
+        let document = parse("Une note^[Voir @dupont2023[p. 45].]\n");
+        let typst = generer(&document);
+
+        assert!(
+            typst.contains("#footnote[Voir @dupont2023[p. 45].]"),
+            "la citation reste dans la note : {typst}"
+        );
+    }
+
+    /// Le balisage inline traverse la note : gras, italique, couleur et lien
+    /// restent des éléments typographiques, jamais du texte échappé.
+    #[test]
+    fn les_balises_vivent_dans_une_note() {
+        let document = parse(
+            "Une note^[Voir **gras**, *italique*, {rouge:rouge} et un [lien](https://exemple.fr).]\n",
+        );
+        let typst = generer(&document);
+
+        assert!(typst.contains("#footnote["), "{typst}");
+        assert!(
+            typst.contains("*gras*"),
+            "le gras vit dans la note : {typst}"
+        );
+        assert!(
+            typst.contains("_italique_"),
+            "l'italique vit dans la note : {typst}"
+        );
+        assert!(
+            typst.contains("#text(fill:"),
+            "la couleur vit dans la note : {typst}"
+        );
+        assert!(
+            typst.contains("#link(\"https://exemple.fr\")"),
+            "le lien vit dans la note : {typst}"
+        );
+    }
+
+    /// L'ancien `{graphique}` passe désormais par primaviz, pas par cetz.
+    #[test]
+    fn un_ancien_graphique_passe_par_primaviz() {
+        let typst = generer(&parse(
+            "{graphique type=barre titre=\"Ventes\"}\nNord | 30\nSud | 70\n",
+        ));
+
+        assert!(
+            typst.contains("#import \"@local/primaviz:0.12.1\": *"),
+            "le paquet primaviz est importé : {typst}"
+        );
+        assert!(
+            typst.contains("bar-chart("),
+            "le graphique est composé : {typst}"
+        );
+        assert!(!typst.contains("cetz"), "cetz n'est plus là : {typst}");
     }
 
     /// Le corps généré n'importe pas l'en-tête : l'assemblage s'en charge, et
@@ -1712,5 +1840,49 @@ mod tests_de_l_index_des_citations {
 
         assert!(typst.contains("Jn 3.16 (DARBY)"), "{typst}");
         assert!(!typst.contains("Jn 3.16 (LSG)"), "{typst}");
+    }
+}
+
+#[cfg(test)]
+mod tests_des_callouts {
+    use super::*;
+    use crate::mise_en_page::modele::Decor;
+
+    /// Un callout importe showybox une seule fois, et rend le bloc de
+    /// citation dans le cadre du ton choisi.
+    #[test]
+    fn un_callout_importe_showybox_et_rend_le_ton() {
+        let document = crate::langage::parse(
+            "{callout attention \"Vigilance\"}\n> Ne pas confondre les deux sens.\n",
+        );
+        let typst = generer_avec(&document, &Regles::aucune(), &Decor::default());
+
+        assert_eq!(
+            typst.matches("#import \"@local/showybox:2.0.4\"").count(),
+            1,
+            "un seul import : {typst}"
+        );
+        assert!(typst.contains("#showybox("), "le cadre est posé : {typst}");
+        assert!(typst.contains("title: \"Vigilance\""), "{typst}");
+        assert!(typst.contains("border-color: rgb(\"#b23b36\")"), "{typst}");
+        assert!(
+            typst.contains("#quote(block: true)[Ne pas confondre les deux sens.]"),
+            "la citation reste une citation : {typst}"
+        );
+        assert!(
+            !typst.contains("#block("),
+            "showybox remplace le bloc : {typst}"
+        );
+    }
+
+    /// Un callout sans type prend le ton `note` ; la source, elle, ne change
+    /// pas.
+    #[test]
+    fn un_callout_sans_type_prend_le_ton_note() {
+        let document = crate::langage::parse("{callout}\n> Une remarque.\n");
+        let typst = generer_avec(&document, &Regles::aucune(), &Decor::default());
+
+        assert!(typst.contains("border-color: rgb(\"#3b6ea5\")"), "{typst}");
+        assert!(typst.contains("title: \"\""), "{typst}");
     }
 }

@@ -84,6 +84,9 @@ pub enum Bloc {
         /// Le bloc habillé. Jamais un autre `Décor` : un seul manteau.
         bloc: Box<Bloc>,
     },
+    /// Un bloc écrit dans la forme canonique unifiée : `{{sommaire}}`,
+    /// `{{bibliographie}}`, `{{glossaire-section}}`, `{{index-biblique}}`.
+    Canonique(Box<Bloc>),
     /// Un graphique : `{graphique type=barre}` suivi de lignes `label | valeur`.
     Graphique {
         /// Le type : `barre`, `ligne` ou `secteur`.
@@ -93,6 +96,8 @@ pub enum Bloc {
         /// Les données : (libellé, valeur) par ligne.
         donnees: Vec<(String, f64)>,
     },
+    /// Un graphique primaviz : `{chart pie "Titre" 10cm×6cm}` suivi d'un CSV.
+    Chart(Chart),
     /// La liste finale du glossaire : `{glossaire}`.
     Glossaire {
         /// `true` quand `{glossaire: tout}` montre aussi les termes jamais
@@ -106,6 +111,86 @@ pub enum Bloc {
     /// L'index des citations bibliques : `{{index}}`. Il est recalculé au
     /// rendu, comme la table des matières — jamais une liste figée.
     IndexBiblique,
+}
+
+/// Un graphique primaviz : son type, ses paramètres et son CSV.
+///
+/// Le CSV est conservé **tel que l'auteur l'a collé** : la modification d'une
+/// ligne ne réécrit pas les autres, et le fichier reste lisible à la main.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chart {
+    /// `pie`, `bar`, `line`, `scatter`, `box`, `area` ou `lollipop`.
+    pub type_: String,
+    /// Le titre affiché par le graphique.
+    pub titre: String,
+    /// Le sous-titre affiché sous le titre.
+    pub sous_titre: String,
+    /// Le titre de l'axe horizontal.
+    pub x_label: String,
+    /// Le titre de l'axe vertical.
+    pub y_label: String,
+    /// La largeur Typst (`10cm`, `auto`…).
+    pub largeur: String,
+    /// La hauteur Typst (`6cm`, `auto`…).
+    pub hauteur: String,
+    /// `centre`, `gauche`, `droite` ou `pleine-largeur`.
+    pub placement: String,
+    /// Afficher la légende quand le type la connaît.
+    pub legende: bool,
+    /// Afficher les valeurs ou les pourcentages.
+    pub valeurs: bool,
+    /// Afficher la grille quand le type la connaît.
+    pub grille: bool,
+    /// Afficher les graduations des axes.
+    pub graduations: bool,
+    /// Afficher les points d'une ligne.
+    pub points: bool,
+    /// Remplir l'aire sous une ligne.
+    pub aire: bool,
+    /// `linear`, `smooth` ou `catmull-rom`.
+    pub courbe: String,
+    /// Un camembert évidé.
+    pub donut: bool,
+    /// La part du rayon occupée par le trou, en pourcentage.
+    pub anneau: String,
+    /// Des barres horizontales.
+    pub horizontal: bool,
+    /// Les données, au format CSV.
+    pub donnees: String,
+}
+
+impl Default for Chart {
+    fn default() -> Self {
+        Self {
+            type_: "bar".to_string(),
+            titre: String::new(),
+            sous_titre: String::new(),
+            x_label: String::new(),
+            y_label: String::new(),
+            largeur: "10cm".to_string(),
+            hauteur: "6cm".to_string(),
+            placement: "centre".to_string(),
+            legende: true,
+            valeurs: true,
+            grille: false,
+            graduations: false,
+            points: true,
+            aire: false,
+            courbe: "linear".to_string(),
+            donut: false,
+            anneau: "40%".to_string(),
+            horizontal: false,
+            donnees: String::new(),
+        }
+    }
+}
+
+impl Chart {
+    /// La forme est-elle constructible ? La validation fine vit dans
+    /// [`crate::langage::chart::valider`], qui lit le CSV.
+    pub fn est_canonique(&self) -> bool {
+        crate::langage::chart::valider(self).is_ok()
+    }
 }
 
 /// L'alignement d'une colonne de tableau, écrit dans sa ligne de
@@ -277,6 +362,18 @@ pub enum Inline {
     Note(Vec<Inline>),
     /// Un lien : `[texte](https://…)`.
     Lien { texte: Vec<Inline>, cible: String },
+    /// Une balise écrite dans la forme canonique unifiée : `{{couleur red|…}}`,
+    /// `{{date …}}`, `{{glossaire …}}`, `{{bible …}}`.
+    ///
+    /// L'enveloppe ne change pas le sens : elle porte la **forme d'écriture**
+    /// choisie, pour que la sérialisation la conserve au lieu de retomber sur
+    /// une ancienne syntaxe.
+    Canonique(Box<Inline>),
+    /// Une métadonnée du projet : `{{m auteur}}`.
+    ///
+    /// La clé est celle de `metadonnees.toml` ; le rendu lit
+    /// `sys.inputs`, exactement comme les quick parts de l'en-tête.
+    Meta(String),
     /// Une ou plusieurs références bibliques : `{{Jean 3.16}}`, un groupe
     /// `{{Jn 3.16 ; Gn 1.1-3}}`, et le texte libre entre guillemets.
     Bible(Vec<crate::langage::references::ElementCitation>),
@@ -429,6 +526,7 @@ impl Bloc {
                 !cible.is_empty() && !cible.contains('\n') && inline_canonique(légende)
             }
             Bloc::Graphique { type_, donnees, .. } => !donnees.is_empty() && !type_.is_empty(),
+            Bloc::Chart(chart) => chart.est_canonique(),
             // La liste du glossaire a deux formes, toutes deux canoniques.
             Bloc::Glossaire { .. } => true,
             Bloc::Sommaire => true,
@@ -441,6 +539,9 @@ impl Bloc {
                     && proprietes.est_canonique()
                     && !matches!(bloc.as_ref(), Bloc::Décor { .. })
                     && bloc.est_canonique()
+            }
+            Bloc::Canonique(interne) => {
+                !matches!(interne.as_ref(), Bloc::Canonique(_)) && interne.est_canonique()
             }
         }
     }
@@ -489,6 +590,14 @@ impl Inline {
             }
             Inline::Note(contenu) => inline_canonique(contenu),
             Inline::Date(spec) => crate::langage::dates::analyser(spec).is_some(),
+            // La forme canonique est une enveloppe d'écriture, pas un nouveau
+            // sens : le contenu porte la vérité.
+            Inline::Canonique(interne) => {
+                !matches!(interne.as_ref(), Inline::Canonique(_)) && interne.est_canonique()
+            }
+            // La clé d'une métadonnée est un identifiant simple : elle se
+            // relit sans ambiguïté entre les deux accolades.
+            Inline::Meta(cle) => cle_meta_valide(cle),
             // La clé est un identifiant — c'est ce qui rend l'écriture
             // `{glo:clé majuscule pluriel}` univoque.
             Inline::Glo { cle, .. } => crate::project::glossaire::EntreeGlossaire::cle_valide(cle),
@@ -675,6 +784,9 @@ fn contient_emphase(inline: &[Inline]) -> bool {
         | Inline::Barre(contenu)
         | Inline::Note(contenu)
         | Inline::Couleur { contenu, .. } => contient_emphase(contenu) || element.est_emphase(),
+        Inline::Canonique(interne) => {
+            contient_emphase(std::slice::from_ref(interne.as_ref())) || element.est_emphase()
+        }
         Inline::Lien { texte, .. } => contient_emphase(texte),
         _ => false,
     })
@@ -733,13 +845,29 @@ impl Bloc {
             Bloc::Separateur | Bloc::Commentaire(_) | Bloc::SautDePage => String::new(),
             Bloc::Brut(_)
             | Bloc::Graphique { .. }
+            | Bloc::Chart(_)
             | Bloc::Glossaire { .. }
             | Bloc::Bibliographie
             | Bloc::IndexBiblique
             | Bloc::Sommaire => String::new(),
             Bloc::Formule(texte) => texte.clone(),
+            Bloc::Canonique(interne) => interne.texte_nu(),
         }
     }
+}
+
+/// Une clé de métadonnée : identifiant simple, sans espace ni délimiteur.
+///
+/// Le même alphabet que les clés du glossaire, étendu aux lettres accentuées
+/// puisque les métadonnées sont écrites en français. Les accolades, la barre
+/// oblique et les sauts de ligne sont exclus : ils fermeraient la balise ou
+/// déborderaient sur le texte voisin.
+pub fn cle_meta_valide(cle: &str) -> bool {
+    !cle.is_empty()
+        && !cle.contains(['{', '}', '|', '\\', '\n', '\r', ' ', '\t'])
+        && cle
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
 /// Le texte nu d'une suite d'éléments inline.
@@ -773,8 +901,12 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
             // La spécification tient lieu de texte nu : elle se lit, et le
             // rendu exact dépend des normes.
             Inline::Date(spec) => out.push_str(spec),
-            // La clé tient lieu de texte : la forme réelle vient du
-            // glossaire, que le schéma ne connaît pas.
+            // La clé tient lieu de texte : la valeur réelle vient des
+            // métadonnées du projet, que le schéma ne connaît pas.
+            Inline::Meta(cle) => out.push_str(cle),
+            Inline::Canonique(interne) => {
+                out.push_str(&inline_texte_nu(std::slice::from_ref(interne.as_ref())))
+            }
             Inline::Glo { cle, .. } => out.push_str(cle),
             Inline::Citation(references) => {
                 for (index, reference) in references.iter().enumerate() {

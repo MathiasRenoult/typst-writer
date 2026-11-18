@@ -7,47 +7,24 @@
 use crate::app::Message;
 use crate::app::state::State;
 use crate::plugins::bible::{
-    BiblePanneau, FormeLivre, LivreConnu, Traduction, afficher, afficher_groupe_forme, livres,
+    BiblePanneau, FormeLivre, LivreChoix, Traduction, afficher, afficher_groupe_forme,
 };
 use crate::ui::editor::bubble_style;
 use crate::ui::theme;
 use iced::widget::{
-    Space, button, column, container, pick_list, row, scrollable, text, text_input,
+    Space, button, column, combo_box, container, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Length};
-
-/// L'identifiant du premier champ du panneau.
-pub fn id_champ() -> iced::widget::Id {
-    iced::widget::Id::new("bible-panneau-champ")
-}
-
-/// L'étiquette d'un livre dans la liste : son nom et son abréviation française.
-fn libelle_livre(livre: &LivreConnu) -> String {
-    let abreviation =
-        crate::plugins::bible::abreviation_francaise(&livre.osis).unwrap_or(&livre.abreviation);
-    format!("{} — {}", livre.nom, abreviation)
-}
 
 /// La fenêtre du panneau d'insertion.
 pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Message> {
     let palette = state.resolved.palette;
-    let tous_les_livres = livres(Traduction::Lsg);
-    let filtre = panneau.recherche.to_lowercase();
-    let options: Vec<String> = tous_les_livres
-        .iter()
-        .filter(|livre| {
-            filtre.is_empty()
-                || livre.nom.to_lowercase().contains(&filtre)
-                || livre.abreviation.to_lowercase().contains(&filtre)
-                || crate::plugins::bible::abreviation_francaise(&livre.osis)
-                    .is_some_and(|abreviation| abreviation.to_lowercase().contains(&filtre))
-        })
-        .map(libelle_livre)
-        .collect();
-    let courant = panneau
-        .livre
-        .and_then(|index| tous_les_livres.get(index))
-        .map(libelle_livre);
+    let tous_les_livres = crate::plugins::bible::livres(Traduction::Lsg);
+    let choix_courant = panneau.livre.and_then(|index| {
+        tous_les_livres
+            .get(index)
+            .map(|livre| LivreChoix::depuis(index, livre, panneau.forme))
+    });
 
     let entete = row![
         palette
@@ -62,20 +39,32 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
     .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
-    let recherche = text_input("Chercher un livre", &panneau.recherche)
-        .id(id_champ())
-        .on_input(Message::BiblePanneauRecherche)
-        .padding(6);
-
-    let choix_livre = pick_list(options, courant, move |choix| {
-        let index = tous_les_livres
-            .iter()
-            .position(|livre| libelle_livre(livre) == choix)
-            .unwrap_or(0);
-        Message::BiblePanneauLivre(index)
-    })
+    let choix_livre = combo_box(
+        &panneau.choix,
+        "Chercher un livre",
+        choix_courant.as_ref(),
+        |choix| Message::BiblePanneauLivre(choix.rang),
+    )
+    .on_input(Message::BiblePanneauRecherche)
     .width(Length::Fill)
-    .placeholder("Choisir un livre");
+    .menu_height(Length::Fixed(260.0));
+
+    let hors_canon = panneau
+        .livre
+        .and_then(|index| tous_les_livres.get(index))
+        .is_some_and(|livre| crate::langage::references::est_hors_canon(&livre.osis));
+    let note_hors_canon: Element<'_, Message> = if hors_canon {
+        palette
+            .label(
+                "Ce livre est hors du canon protestant : sa référence est citée, \
+                 mais la traduction embarquée n'en fournit pas le texte.",
+            )
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted)
+            .into()
+    } else {
+        Space::new().height(Length::Fixed(0.0)).into()
+    };
 
     let champs = row![
         text_input("Chapitre (1-11)", &panneau.chapitre)
@@ -147,6 +136,7 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
         "Abrégé avec points",
         "Abrégé sans points",
         "OSIS",
+        "TOB",
     ];
     let forme_courante = match panneau.forme {
         None => "Hérité du document",
@@ -154,6 +144,7 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
         Some(FormeLivre::FrancaiseCourte) => "Abrégé avec points",
         Some(FormeLivre::SansPoint) => "Abrégé sans points",
         Some(FormeLivre::Osis) => "OSIS",
+        Some(FormeLivre::Tob) => "TOB",
     };
     let forme = pick_list(options_forme, Some(forme_courante), |choix| {
         Message::BiblePanneauForme(match choix {
@@ -161,6 +152,7 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
             "Abrégé avec points" => Some(FormeLivre::FrancaiseCourte),
             "Abrégé sans points" => Some(FormeLivre::SansPoint),
             "OSIS" => Some(FormeLivre::Osis),
+            "TOB" => Some(FormeLivre::Tob),
             _ => None,
         })
     })
@@ -230,9 +222,9 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
     let fenetre = container(
         column![
             entete,
-            recherche,
             choix_livre,
             champs,
+            note_hors_canon,
             references,
             texte_libre,
             row![

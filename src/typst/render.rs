@@ -267,6 +267,9 @@ pub fn compile_avec_entrees(
     overrides: &[(PathBuf, String)],
     entrees: &[(String, String)],
 ) -> CompileOutcome {
+    assurer_si_primaviz(entry, overrides);
+    assurer_si_showybox(entry, overrides);
+
     let marked = marked_entry(root, entry, overrides);
 
     let compiled_entry = marked.as_deref().unwrap_or(entry);
@@ -480,6 +483,7 @@ pub fn render_page(pdf: &DocumentPdf, index: usize, density: f64) -> Option<Page
 /// `hauteur` : sa taille. Le coût ne dépend que de la région : la page
 /// hors écran n'est jamais rasterisée (bug-report-9, fluidité — le
 /// rendu par région, `vendor/pdf-render-1.3.0/PATCHES.md`).
+#[cfg(test)]
 pub fn render_region(
     pdf: &DocumentPdf,
     index: usize,
@@ -489,6 +493,34 @@ pub fn render_region(
     largeur: u32,
     hauteur: u32,
 ) -> Option<PageImage> {
+    render_region_avec_qualite(
+        pdf,
+        index,
+        density,
+        x0,
+        y0,
+        largeur,
+        hauteur,
+        pdf_render::RasterQuality::Quality,
+    )
+}
+
+/// Rasterise une région avec la qualité demandée.
+///
+/// L'aperçu n'utilise que `Speed` : c'est sa passe unique. `Quality` reste
+/// disponible pour les rendus qui exigent le pipeline f32 exact (export,
+/// vignettes) ; le double passage rapide + fin de l'aperçu a été supprimé.
+#[allow(clippy::too_many_arguments)]
+pub fn render_region_avec_qualite(
+    pdf: &DocumentPdf,
+    index: usize,
+    density: f64,
+    x0: u32,
+    y0: u32,
+    largeur: u32,
+    hauteur: u32,
+    qualite: pdf_render::RasterQuality,
+) -> Option<PageImage> {
     let page = pdf.pages().get(index)?;
 
     let settings = pdf_render::RenderSettings {
@@ -497,7 +529,7 @@ pub fn render_region(
         width: Some(largeur.min(u32::from(u16::MAX)) as u16),
         height: Some(hauteur.min(u32::from(u16::MAX)) as u16),
         bg_color: pdf_render::vello_cpu::color::palette::css::WHITE,
-        quality: pdf_render::RasterQuality::Quality,
+        quality: qualite,
         origin: (x0 as f32, y0 as f32),
     };
 
@@ -551,16 +583,56 @@ pub fn page_count(document: &PagedDocument) -> usize {
     document.pages().len()
 }
 
+/// Exporte un document déjà compilé en PDF (octets bruts).
+///
+/// C'est le même export que `render_pdf`, sans recompiler : l'aperçu peut
+/// ainsi suivre une compilation fraîche sans payer deux fois le moteur.
+pub fn pdf_du_document(document: &PagedDocument) -> Option<Vec<u8>> {
+    typst_pdf::pdf(document, &Default::default()).ok()
+}
+
 /// Exporte le document compilé en PDF (octets bruts).
 ///
 /// Renvoie `None` si le document ne compile pas (les erreurs sont alors
 /// disponibles via [`compile`]).
 pub fn render_pdf(root: &Path, entry: &str, overrides: &[(PathBuf, String)]) -> Option<Vec<u8>> {
+    assurer_si_primaviz(entry, overrides);
+    assurer_si_showybox(entry, overrides);
+
     let world = PreviewWorld::new(root, entry, overrides, &[]);
 
     let document = typst::compile::<PagedDocument>(&world).output.ok()?;
 
-    typst_pdf::pdf(&document, &Default::default()).ok()
+    pdf_du_document(&document)
+}
+
+/// Pose primaviz si le document ou une substitution l'importe.
+///
+/// L'entrée peut être un chemin et le vrai texte vivre dans `overrides` :
+/// regarder les deux évite un export sans paquet. L'appel est idempotent et
+/// ne touche au disque que lorsque le paquet manque.
+fn assurer_si_primaviz(entry: &str, overrides: &[(PathBuf, String)]) {
+    if entry.contains("@local/primaviz")
+        || overrides
+            .iter()
+            .any(|(_, contenu)| contenu.contains("@local/primaviz"))
+    {
+        let _ = crate::typst::paquets::assurer_primaviz();
+    }
+}
+
+/// Pose showybox si le document ou une substitution l'importe.
+///
+/// Même contrat que primaviz : l'entrée et les substitutions sont regardées,
+/// et l'installation est idempotente.
+fn assurer_si_showybox(entry: &str, overrides: &[(PathBuf, String)]) {
+    if entry.contains("@local/showybox")
+        || overrides
+            .iter()
+            .any(|(_, contenu)| contenu.contains("@local/showybox"))
+    {
+        let _ = crate::typst::paquets::assurer_showybox();
+    }
 }
 
 /// Convertit les diagnostics du compilateur en diagnostics positionnés.
@@ -692,7 +764,7 @@ impl PreviewWorld {
 
     /// Chemin sur disque d'un fichier référencé par un FileId.
     fn path_of(&self, id: FileId) -> PathBuf {
-        // Un fichier de paquet (`@preview/cetz:…`) vit dans le dossier
+        // Un fichier de paquet (`@local/primaviz:…`) vit dans le dossier
         // local des paquets — jamais au hasard du projet, jamais au
         // réseau (bug-report-7, point 4).
         if let VirtualRoot::Package(paquet) = id.root() {
@@ -785,10 +857,24 @@ impl World for PreviewWorld {
         self.fonts.get(index).cloned()
     }
 
-    fn today(&self, _offset: Option<Duration>) -> Option<typst::foundations::Datetime> {
-        // Sans date, `datetime.today()` renvoie une erreur — acceptable pour
-        // un aperçu (et rarement utilisé dans les documents).
-        None
+    fn today(&self, offset: Option<Duration>) -> Option<typst::foundations::Datetime> {
+        // `datetime.today()` est une fonction du monde, pas du document :
+        // sans cette horloge, un en-tête qui l'appelle — c'est le cas du
+        // gabarit de mise en page — rendait le document **incompilable**.
+        // Typst ne nous donne pas de date par défaut ; on lui rend la date
+        // locale, et la date UTC décalée quand `datetime.today(offset: …)`
+        // demande un fuseau explicite.
+        let maintenant = if let Some(offset) = offset {
+            time::OffsetDateTime::now_utc() + time::Duration::seconds_f64(offset.seconds())
+        } else {
+            time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        };
+
+        typst::foundations::Datetime::from_ymd(
+            maintenant.year(),
+            maintenant.month() as u8,
+            maintenant.day(),
+        )
     }
 }
 
@@ -889,6 +975,30 @@ mod tests {
     }
 
     use super::*;
+
+    /// DIAGNOSTIC : compile l'assemblage réel d'un projet (`PROJET=…`).
+    ///
+    /// Ignoré par défaut : lit le projet de l'auteur, sans l'écrire. Sert à
+    /// distinguer un défaut du document d'un défaut de l'en-tête.
+    #[test]
+    #[ignore = "lit le projet désigné par PROJET dans HOME"]
+    fn diagnose_project_assembly() {
+        let home = std::env::var("HOME").expect("HOME");
+        let name = std::env::var("PROJET").unwrap_or_else(|_| "projet".to_string());
+        let dir = PathBuf::from(home).join(format!(".typst-writer/projets/{name}"));
+        let main = fs::read_to_string(dir.join("main.typ")).expect("main.typ");
+        let source = fs::read_to_string(dir.join("document.tw")).expect("document.tw");
+
+        let (entry, corrections, rapports) =
+            crate::langage::pipeline::compilation_unit_avec_diagnostics(&dir, &main, &source);
+        let entrees = crate::project::metadonnees::Metadonnees::charger(&dir).entrees();
+        let outcome = compile_avec_entrees(&dir, &entry, &corrections, &entrees);
+
+        println!("erreurs = {:#?}", outcome.errors);
+        println!("avertissements = {:#?}", outcome.warnings);
+        println!("citations neutralisées = {rapports:#?}");
+        println!("pages = {:?}", outcome.document.as_deref().map(page_count));
+    }
 
     /// Ce que l'introspection donne réellement pour les titres d'un document.
     ///
@@ -1254,6 +1364,118 @@ mod tests {
 
         assert!(outcome.errors.is_empty(), "aucune erreur attendue");
         assert_eq!(page_count(outcome.document.as_ref().unwrap()), 1);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn un_document_compile_donne_un_pdf() {
+        let dir = std::env::temp_dir().join("typst-writer-pdf-du-document");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let outcome = compile(&dir, "= Titre\n\nDu texte.\n", &[]);
+        let document = outcome.document.expect("document compilé");
+        let pdf = pdf_du_document(&document).expect("PDF sans recompilation");
+
+        assert!(pdf.starts_with(b"%PDF"), "les octets sont un PDF");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Un graphique primaviz : la source `.tw` générée est compilée par le
+    /// vrai moteur, paquet local compris.
+    #[test]
+    #[ignore = "écrit dans TYPST_WRITER_PAQUETS, à lancer avec un dossier jetable"]
+    fn compiles_a_primaviz_chart() {
+        let dir = std::env::temp_dir().join("typst-writer-compile-chart");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let chart = crate::langage::schema::Chart {
+            type_: "bar".to_string(),
+            titre: "Ventes".to_string(),
+            donnees: "region,ventes\nNord,30\nSud,70\n".to_string(),
+            ..crate::langage::schema::Chart::default()
+        };
+        let source = format!(
+            "#import \"@local/primaviz:0.12.1\": *\n\n{}",
+            crate::langage::chart::rendre(&chart).expect("graphique valide")
+        );
+        let outcome = compile(&dir, &source, &[]);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "primaviz compile : {:?}",
+            outcome.errors
+        );
+        assert!(outcome.document.is_some(), "le document est rendu");
+        assert!(
+            render_pdf(&dir, &source, &[]).is_some(),
+            "l'export PDF trouve aussi le paquet"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Un callout showybox : la source `.tw` générée est compilée par le
+    /// vrai moteur, paquet local compris.
+    #[test]
+    #[ignore = "écrit dans TYPST_WRITER_PAQUETS, à lancer avec un dossier jetable"]
+    fn compiles_a_showybox_callout() {
+        let dir = std::env::temp_dir().join("typst-writer-compile-callout");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let source = format!(
+            "#import \"@local/showybox:2.0.4\": showybox\n\n{}",
+            crate::langage::callout::rendre(
+                "attention",
+                "Vigilance",
+                "#quote(block: true)[Ne pas confondre les deux sens.]"
+            )
+        );
+        let outcome = compile(&dir, &source, &[]);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "showybox compile : {:?}",
+            outcome.errors
+        );
+        assert!(outcome.document.is_some(), "le document est rendu");
+        assert!(
+            render_pdf(&dir, &source, &[]).is_some(),
+            "l'export PDF trouve aussi le paquet"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Le chemin complet `.tw` → parse → génération → compilation : un
+    /// callout écrit par l'auteur ne casse jamais le document.
+    #[test]
+    #[ignore = "écrit dans TYPST_WRITER_PAQUETS, à lancer avec un dossier jetable"]
+    fn compiles_a_generated_callout() {
+        let dir = std::env::temp_dir().join("typst-writer-compile-callout-tw");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let document = crate::langage::parse(
+            "{callout important \"À retenir\"}\n> La distinction des deux sens.\n",
+        );
+        let typst = crate::langage::generer::generer(&document);
+        let outcome = compile(&dir, &typst, &[]);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "le callout généré compile : {:?} ({typst:?})",
+            outcome.errors
+        );
+        assert!(outcome.document.is_some(), "le document est rendu");
+        assert!(
+            render_pdf(&dir, &typst, &[]).is_some(),
+            "l'export PDF du callout généré"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -2586,6 +2808,31 @@ avec des mots encore, et encore, jusqu'à remplir la page.\n";
                 }
             }
         }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod tests_datetime {
+    use super::*;
+
+    /// `datetime.today()` est une fonction du monde : sans horloge, le
+    /// gabarit de mise en page du projet rendait le document incompilable.
+    #[test]
+    fn un_document_qui_appelle_datetime_today_compile() {
+        let dir = std::env::temp_dir().join(format!("tw-date-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+
+        let resultat = compile(&dir, "La date est #datetime.today().display().\n", &[]);
+
+        assert!(
+            resultat.errors.is_empty(),
+            "datetime.today() doit avoir une horloge : {:?}",
+            resultat.errors
+        );
+        assert!(resultat.document.is_some(), "le document doit se composer");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

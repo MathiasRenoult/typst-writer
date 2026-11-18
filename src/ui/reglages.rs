@@ -75,6 +75,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         button(palette.label("Exporter").size(theme::jetons::DETAIL))
             .on_press(Message::MiseEnPageExporter)
             .padding([5, 12]),
+        button(palette.label("Fichiers…").size(theme::jetons::DETAIL))
+            .on_press(Message::MiseEnPagePanneau(9))
+            .padding([5, 12]),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
@@ -107,7 +110,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             12.0,
             palette.text_muted,
         ))
-        .on_press(Message::NormesSupprimer(dialogue.norme.to_string()))
+        .on_press(Message::NormesSupprimerDemande(dialogue.norme.to_string()))
         .padding([4, 6]),
         Space::new().width(Length::Fill),
         text_input("nom de la copie", &dialogue.norme)
@@ -159,6 +162,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         (picto!(icon_paintbrush), "Typographie"),
         (picto!(icon_palette), "Couleurs et décor"),
         (picto!(icon_puzzle), "Add-ons"),
+        (picto!(icon_folder_open), "Fichiers de normes"),
     ];
     let mut rail = column![].spacing(2);
     for (indice, (picto, nom)) in onglets.into_iter().enumerate() {
@@ -185,6 +189,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         ]
         .spacing(20),
         8 => corps_addons(palette, dialogue),
+        9 => crate::ui::normes_fichiers::corps(palette, dialogue),
         _ => column![corps_metadonnees(palette, dialogue)].spacing(20),
     };
     // ---- Le pied : ce qui ne va pas, et les gestes ----

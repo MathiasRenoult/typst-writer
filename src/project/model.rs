@@ -246,6 +246,10 @@ pub fn migrate_to_document(project: &Project) -> std::io::Result<PathBuf> {
 pub fn migrate_to_document_avec_rapport(
     project: &Project,
 ) -> std::io::Result<(PathBuf, crate::langage::migration::Rapport)> {
+    // La réparation de `main.typ` vient **après** la lecture des includes :
+    // un ancien modèle peut encore décrire des chapitres, et les retirer
+    // avant la migration perdrait leur contenu. Le remplacement n'a lieu
+    // qu'une fois le document écrit.
     let path = project.dir.join("document.tw");
     let mut rapport = crate::langage::migration::Rapport {
         elements_convertis: 0,
@@ -257,6 +261,7 @@ pub fn migrate_to_document_avec_rapport(
     // en revanche, peut être le résidu d'une création antérieure et ne doit pas
     // empêcher la migration des chapitres qui contiennent le travail.
     if path.exists() && !std::fs::read_to_string(&path)?.trim().is_empty() {
+        reparer_assemblage_herite(project)?;
         return Ok((path, rapport));
     }
 
@@ -294,7 +299,63 @@ pub fn migrate_to_document_avec_rapport(
         return Err(error);
     }
 
+    // Les includes ont été lus : le vieux gabarit peut maintenant céder la
+    // place à la seule accroche des normes.
+    reparer_assemblage_herite(project)?;
+
     Ok((path, rapport))
+}
+
+/// Reconnaît et retire un assemblage de modèle supprimé.
+///
+/// Les anciens modèles « devoir court » et « travail long » avaient leur
+/// contenu (page de titre, sommaire, introduction, bibliographie) dans
+/// `main.typ`, puis l'application y ajoutait son accroche. Aujourd'hui, ces
+/// éléments viennent exclusivement des normes et du document Markdown.
+///
+/// Seul un fichier **identique au gabarit d'origine** — accroche comprise —
+/// est remplacé : une ligne ajoutée par l'auteur suffit à le préserver. La
+/// version remplacée est d'abord copiée dans `sauvegardes/`, jamais perdue.
+fn reparer_assemblage_herite(project: &Project) -> std::io::Result<bool> {
+    let Some(ancien) = std::fs::read_to_string(&project.main).ok() else {
+        return Ok(false);
+    };
+
+    if !est_un_ancien_assemblage(&ancien) {
+        return Ok(false);
+    }
+
+    crate::project::sauvegarder_version(&project.dir, &project.main, &ancien, true)?;
+
+    // Le gabarit aussi : il est généré, et l'ancien peut encore porter la
+    // page de titre ou le sommaire que les normes ont depuis désactivés.
+    let normes = crate::mise_en_page::charger(&project.dir);
+    let entete = crate::mise_en_page::gabarit::generer(&normes);
+    crate::services::stockage::ecrire_atomique(
+        &project.dir.join(crate::mise_en_page::gabarit::FICHIER),
+        &entete,
+    )?;
+
+    let nouveau = crate::mise_en_page::gabarit::accroche();
+    crate::services::stockage::ecrire_atomique(&project.main, &nouveau)?;
+
+    Ok(true)
+}
+
+/// Le texte est-il exactement l'un des assemblages de modèles disparus,
+/// éventuellement précédé de l'accroche des normes ?
+fn est_un_ancien_assemblage(texte: &str) -> bool {
+    let texte = texte.replace("\r\n", "\n");
+    let texte = texte.trim_start();
+    let accroche = crate::mise_en_page::gabarit::accroche();
+    let sans_accroche = texte
+        .strip_prefix(accroche.trim_end())
+        .unwrap_or(texte)
+        .trim();
+
+    [ANCIEN_TRAVAIL_LONG, ANCIEN_DEVOIR_COURT]
+        .iter()
+        .any(|ancien| sans_accroche == ancien.trim())
 }
 
 /// Importe un fichier `.tw` dans le projet sans écraser un texte existant.
@@ -1112,6 +1173,99 @@ pub fn count_words(content: &str) -> usize {
 /// Le document d'écriture du projet classique : le vide accueillant.
 pub const DOCUMENT_CLASSIQUE: &str = "";
 
+/// Ancien assemblage du modèle « travail long », supprimé depuis.
+///
+/// Il est conservé ici uniquement pour reconnaître, **mot pour mot**, un
+/// `main.typ` resté sur le disque après la disparition des modèles
+/// intégrés. Le remplacer est sûr : ce n'est pas une modification de
+/// l'auteur, c'est le gabarit d'origine.
+const ANCIEN_TRAVAIL_LONG: &str = r#"// Métadonnées : les vôtres. Aucune institution n'est imposée — les normes
+// du projet (mise-en-page.toml) s'appliquent par-dessus.
+#let titre = "Titre du travail"
+#let auteur = "Prénom Nom"
+#let date = "Date de remise"
+
+#set text(font: "New Computer Modern", size: 11pt)
+
+// Page de titre
+#page(margin: 2.5cm, header: none, footer: none)[
+  #v(1fr)
+  #text(size: 1.6em, weight: "bold")[#titre]
+  #v(2cm)
+  #auteur
+  #linebreak()
+  #date
+  #v(1fr)
+]
+
+// Préliminaires : sommaire à numérotation romaine.
+#set page(margin: 2.5cm, numbering: "i", header: none)
+#outline(title: "Sommaire", depth: 3)
+
+// Le corps : numérotation arabe, en-tête courant — le moteur résout titre
+// et auteur à chaque page ; jamais un champ que le moteur ne saurait lire.
+// Les chapitres sont numérotés : un renvoi de titre montre son numéro
+// (Typst refuse de référencer un titre sans numérotation).
+#set heading(numbering: "1.1")
+#counter(page).update(1)
+#set page(numbering: "1", header: context [
+  #titre #h(1fr) #auteur
+])
+
+// L'assemblage : les chapitres sont inclus ici, dans l'ordre.
+// Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
+
+= Introduction
+
+// Bibliographie
+#bibliography("references.bib", style: "chicago-notes", title: "Bibliographie")
+"#;
+
+/// Ancien assemblage du modèle « devoir court », supprimé depuis.
+///
+/// Il est conservé ici uniquement pour reconnaître, **mot pour mot**, un
+/// `main.typ` resté sur le disque après la disparition des modèles
+/// intégrés. Le remplacer est sûr : ce n'est pas une modification de
+/// l'auteur, c'est le gabarit d'origine.
+const ANCIEN_DEVOIR_COURT: &str = r#"// Métadonnées : les vôtres. Aucune institution n'est imposée — les normes
+// du projet (mise-en-page.toml) s'appliquent par-dessus.
+#let titre = "Titre du devoir"
+#let auteur = "Prénom Nom"
+#let matiere = "Matière"
+#let date = "Date de remise"
+
+#set page(margin: 2.5cm, numbering: "1")
+#set text(font: "New Computer Modern", size: 11pt)
+
+// Page de titre
+#page(header: none, footer: none)[
+  #v(1fr)
+  #text(size: 1.5em, weight: "bold")[#titre]
+  #v(0.5cm)
+  #text(size: 1.1em)[#matiere]
+  #v(2cm)
+  #auteur
+  #linebreak()
+  #date
+  #v(1fr)
+]
+
+// Sommaire
+#outline(title: "Sommaire", depth: 2)
+
+// L'assemblage : les chapitres sont inclus ici, dans l'ordre.
+// Ajouter un chapitre depuis le panneau de travail écrit la ligne pour vous.
+
+= Introduction
+
+= Développement
+
+= Conclusion
+
+// Bibliographie
+#bibliography("references.bib", style: "chicago-notes", title: "Bibliographie")
+"#;
+
 pub const MAIN_TEMPLATE: &str = r#"#set page(margin: 2cm)
 #set text(font: "New Computer Modern", size: 11pt)
 
@@ -1403,6 +1557,102 @@ mod tests {
         assert_eq!(
             result,
             "#include \"entete.typ\"\n#bibliography(\"references.bib\")\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Un `main.typ` resté sur un ancien modèle est ramené à l'accroche des
+    /// normes : ni page de titre, ni sommaire, ni introduction cachée.
+    #[test]
+    fn un_ancien_assemblage_de_modele_est_remplace() {
+        let dir = scratch("ancien-assemblage");
+        let accroche = crate::mise_en_page::gabarit::accroche();
+        let ancien = format!("{accroche}{ANCIEN_TRAVAIL_LONG}");
+        std::fs::write(dir.join("main.typ"), ancien).unwrap();
+        std::fs::write(dir.join("document.tw"), "## Introduction\n").unwrap();
+
+        let project = load(&dir);
+        let _ = migrate_to_document_avec_rapport(&project).unwrap();
+
+        let main = std::fs::read_to_string(dir.join("main.typ")).unwrap();
+        assert_eq!(main, accroche, "seule l'accroche des normes demeure");
+        assert!(
+            !main.contains("Page de titre"),
+            "la page de titre est partie"
+        );
+        assert!(!main.contains("#outline"), "le sommaire est parti");
+        assert!(!main.contains("= Introduction"), "le titre caché est parti");
+        assert!(
+            !main.contains("#bibliography"),
+            "la bibliographie cachée est partie"
+        );
+
+        let copies: Vec<_> = std::fs::read_dir(dir.join("sauvegardes"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            copies.iter().any(|nom| nom.starts_with("main.typ.")),
+            "l'ancien assemblage est conservé : {copies:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Après le retrait du modèle, aucun style de citation n'est en conflit :
+    /// le document ne contient plus de directive que les normes n'ont pas
+    /// demandée.
+    #[test]
+    fn un_ancien_assemblage_ne_provoque_plus_de_conflit_de_style() {
+        let dir = scratch("ancien-assemblage-style");
+        let accroche = crate::mise_en_page::gabarit::accroche();
+        std::fs::write(
+            dir.join("main.typ"),
+            format!("{accroche}{ANCIEN_TRAVAIL_LONG}"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("document.tw"), "## Introduction\n").unwrap();
+        std::fs::write(
+            dir.join("mise-en-page.toml"),
+            "[bibliographie]\nstyle = \"apa\"\n",
+        )
+        .unwrap();
+
+        let project = load(&dir);
+        let _ = migrate_to_document_avec_rapport(&project).unwrap();
+        let main = std::fs::read_to_string(dir.join("main.typ")).unwrap();
+        let document = crate::langage::parse("## Introduction\n");
+        let (_, _, rapports) = crate::langage::pipeline::compilation_unit_document_avec_diagnostics(
+            &dir, &main, &document,
+        );
+
+        assert!(
+            rapports.is_empty(),
+            "aucun conflit de style ne doit rester : {rapports:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Une ligne ajoutée par l'auteur suffit à ne pas reconnaître le modèle :
+    /// on ne réécrit jamais un assemblage personnalisé.
+    #[test]
+    fn un_ancien_assemblage_modifie_par_l_auteur_est_preserve() {
+        let dir = scratch("ancien-assemblage-modifie");
+        let accroche = crate::mise_en_page::gabarit::accroche();
+        let personnalise = format!("{accroche}{ANCIEN_TRAVAIL_LONG}\n// Mon ajout personnel.\n");
+        std::fs::write(dir.join("main.typ"), &personnalise).unwrap();
+        std::fs::write(dir.join("document.tw"), "## Introduction\n").unwrap();
+
+        let project = load(&dir);
+        let _ = migrate_to_document_avec_rapport(&project).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("main.typ")).unwrap(),
+            personnalise,
+            "un fichier personnalisé reste intact"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

@@ -5,9 +5,11 @@ mod espace_runtime;
 mod fichiers;
 mod journal;
 pub mod message;
+pub mod palette;
 mod projet_dialogue;
 mod rasterisation;
 pub mod recherche;
+pub mod recherche_apercu;
 mod reglages;
 mod rendu;
 pub mod routeur;
@@ -28,9 +30,22 @@ use iced::keyboard;
 use iced::{Subscription, Task, time};
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 /// Intervalle de recompilation automatique après la dernière frappe.
 const RENDER_INTERVAL_MS: u64 = 100;
+
+/// Intervalle du tic **au repos**.
+///
+/// Le tic de rendu existe pour deux choses : décider qu'une compilation est
+/// due après une frappe, et faire avancer un travail en cours. Quand il n'y
+/// a ni frappe, ni compilation, ni geste de zoom, ni survol en attente, le
+/// réveiller dix fois par seconde ne fait que reconstruire la vue — et un
+/// document immobile consommait alors plusieurs pour cent d'un cœur. Une
+/// seconde suffit à découvrir un changement venu d'ailleurs, sans peser sur
+/// le repos.
+const RENDER_INTERVAL_IDLE_MS: u64 = 1_000;
 
 /// Combien de temps le geste de zoom attend avant le rendu net : la
 /// molette dix fois ne relance pas dix rendus, mais un seul (bug-report-9).
@@ -44,7 +59,7 @@ const MARGE_RENDU: f32 = 0.5;
 /// qui le montre, et l'identifiant nu en mode focus (bug-report-9 :
 /// cibler l'identifiant nu en vue normale ne trouvait personne — le
 /// zoom s'ancre en haut à gauche, le défilement horizontal ne suit pas).
-fn id_du_scrollable(state: &State) -> iced::widget::Id {
+pub(crate) fn id_du_scrollable(state: &State) -> iced::widget::Id {
     if state.layout.focus_mode {
         crate::ui::preview::SCROLL_ID.into()
     } else {
@@ -158,6 +173,7 @@ impl State {
             projets_vue: false,
             mode: crate::app::state::ModeVue::default(),
             vignettes: Vec::new(),
+            vignettes_generation: Arc::new(AtomicU64::new(0)),
             drag_projet: None,
             drag_etagere: None,
             editeur_theme: None,
@@ -177,6 +193,8 @@ impl State {
             projets_etage: "Mon étagère".to_string(),
             note_dialogue: None,
             extension: None,
+            chart: None,
+            callout: None,
             geste_confirme: false,
             conflit_refuse: None,
             importation: None,
@@ -190,8 +208,13 @@ impl State {
             bibliography: Vec::new(),
             project,
             projects,
-            etageres: Default::default(),
+            etageres: crate::project::etageres(),
+            etageres_ordre: crate::project::etageres_ordonnees(),
+            selection_projets: Default::default(),
+            dernier_projet_selectionne: None,
+            normes_lot: None,
             plugins: crate::plugins::Plugins::default(),
+            plugins_pour: None,
             window_size: iced::Size::new(1180.0, 780.0),
             window: None,
             // L'écran se déclare dans les millisecondes qui suivent ; d'ici là,
@@ -199,11 +222,12 @@ impl State {
             scale_factor: 1.0,
             mise_en_page: None,
             composeur: None,
-            note_overlay: None,
             zotero,
             renaming: None,
             jump: None,
             completion: None,
+            palette: None,
+            balise_dialogue: None,
             rendus_partages: Default::default(),
             reglages: Default::default(),
             render: Default::default(),
@@ -302,6 +326,10 @@ impl State {
 
     fn refresh_context(&mut self) {
         self.projects = crate::project::list_projects();
+        self.etageres = crate::project::etageres();
+        self.etageres_ordre = crate::project::etageres_ordonnees();
+        self.selection_projets
+            .retain(|dir| self.projects.iter().any(|projet| projet.dir == *dir));
 
         // Le projet est relu depuis le disque : ses chapitres ont pu être
         // renommés, ajoutés ou supprimés depuis le dernier scan.
@@ -320,7 +348,75 @@ impl State {
         self.plugins.glossaire.entrees =
             crate::plugins::glossaire::Glossaire::charger(&self.project.dir).entrees;
 
+        // Le fichier de normes porte aussi le paramétrage des plugins :
+        // l'interface, l'éditeur et les plugins suivent le document ouvert.
+        self.configurer_les_plugins_selon_les_normes();
         self.rafraichir_statistiques_bibliques();
+    }
+
+    /// Configure les plugins de la vue active d'après les normes du projet.
+    ///
+    /// Un changement de projet réinitialise les états transitoires (référence
+    /// cliquée, survol) ; un changement de norme remet les choix par défaut du
+    /// fichier. Un simple enregistrement ne défait pas le choix de vue de
+    /// l'auteur : `plugins_pour` retient ce qui a déjà été appliqué.
+    fn configurer_les_plugins_selon_les_normes(&mut self) {
+        let projet = self.project.dir.clone();
+        let parametres = self.reglages.parametres_plugins.clone();
+        let fonctionnalites = self.reglages.fonctionnalites.clone();
+        let deja = self.plugins_pour.as_ref().is_some_and(
+            |(ancien_projet, anciens, anciennes_fonctionnalites)| {
+                ancien_projet == &projet
+                    && anciens == &parametres
+                    && anciennes_fonctionnalites == &fonctionnalites
+            },
+        );
+        if deja {
+            return;
+        }
+
+        let changement_de_projet = self
+            .plugins_pour
+            .as_ref()
+            .is_none_or(|(ancien_projet, _, _)| ancien_projet != &projet);
+
+        self.plugins.bible.traduction =
+            crate::plugins::bible::Traduction::depuis_code(&parametres.biblique.traduction)
+                .unwrap_or_default();
+        self.plugins.bible.tri = if parametres.biblique.tri == "canonique" {
+            crate::plugins::bible::TriReferences::Canonique
+        } else {
+            crate::plugins::bible::TriReferences::Apparition
+        };
+
+        if changement_de_projet {
+            self.plugins.bible.reference_cliquee = None;
+            self.plugins.bible.edition = None;
+            self.plugins.bible.survol = None;
+            self.plugins.bible.survol_candidat = None;
+            self.plugins.bibliographie.edition = None;
+            self.plugins.bibliographie.survol = None;
+            self.plugins.glossaire.edition = None;
+            self.plugins.glossaire.survol = None;
+        }
+
+        let activation = &self.reglages.fonctionnalites;
+        if !activation.actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES) {
+            self.plugins.bible.panneau = None;
+            self.plugins.bible.edition = None;
+            self.plugins.bible.reference_cliquee = None;
+            self.plugins.bible.survol = None;
+            self.plugins.bible.survol_candidat = None;
+        }
+        if !activation.actif(crate::base::valeurs::CLE_BIBLIOGRAPHIE) {
+            self.plugins.bibliographie.edition = None;
+        }
+        if !activation.actif(crate::base::valeurs::CLE_GLOSSAIRE) {
+            self.plugins.glossaire.fenetre = false;
+            self.plugins.glossaire.edition = None;
+        }
+
+        self.plugins_pour = Some((projet, parametres, fonctionnalites));
     }
 
     /// Recalcule les statistiques bibliques du document ouvert.
@@ -443,7 +539,7 @@ impl State {
             .and_then(|path| path.extension())
             .is_some_and(|extension| extension == "tw");
         let writing_document = if is_intermediate {
-            self.editor.document.clone()
+            self.editor.document_pour_lecture()
         } else if assembly_is_open {
             self.project
                 .document
@@ -492,7 +588,10 @@ impl State {
 
     /// Empreinte de ce qui serait compilé : sert à ne relancer que si quelque
     /// chose a changé.
-    pub fn compilation_fingerprint(&self) -> String {
+    pub fn compilation_fingerprint(&mut self) -> String {
+        // Le document a pu différer son AST pendant la frappe : le rendre
+        // cohérent ici, une fois, évite de le reparser à chaque tick.
+        self.editor.actualiser_document();
         let (entry, overrides) = self.compilation_unit();
 
         // La **même** fonction que celle dont `compile` tire l'empreinte qu'il
@@ -699,6 +798,12 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 /// Les routeurs passent donc après les deux gardes : un message de plugin
 /// qui écrit ne contourne jamais la lecture seule.
 fn update_interne(state: &mut State, message: Message) -> Task<Message> {
+    // La palette est un petit domaine autonome : elle reçoit ses messages
+    // avant les gardes de plugin, puisqu'elle ne touche à aucun plugin.
+    if let Some(tache) = crate::app::palette::traiter(state, &message) {
+        return tache;
+    }
+
     // Un add-on désactivé ne reçoit plus ses messages : la vue disparaît,
     // et ce qui resterait branché se tait.
     if let Some(cle) = message.plugin()
@@ -722,6 +827,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::StyleParentTelecharger
         | Message::BibImporte(Some(_))
         | Message::MiseEnPageAppliquer
+        | Message::NormesAppliquerAuDocument(_)
         | Message::NewFile
         | Message::NewChapter
         | Message::DeleteChapter(_)
@@ -744,6 +850,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::GlossaireSectionInserer
         | Message::GlossaireInserer(_)
         | Message::TableauInserer
+        | Message::ChartInserer
+        | Message::CalloutInserer
         | Message::BlocMonter
         | Message::BlocDescendre
         | Message::RechercheRemplacer
@@ -751,8 +859,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::CompletionAccept
         | Message::ComposeurTerminer
         | Message::SauvegardeForcee(_)
-        | Message::ImportAppliquer
-        | Message::NoteOverlayEnregistrer => true,
+        | Message::ImportAppliquer => true,
         Message::Editor(message) => crate::editor::EditorState::message_may_change_content(message),
         Message::FileOpened(Some((chemin, _))) => {
             !crate::project::same_file(chemin, &state.project.main)
@@ -772,6 +879,12 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         state.note = Some(crate::app::state::Note::erreur(
             "Projet en lecture seule : fermez l'autre instance avant de modifier ses fichiers.",
         ));
+        return Task::none();
+    }
+
+    if matches!(message, Message::BibleSurvolQuitter) {
+        state.plugins.bible.survol = None;
+        state.plugins.bible.survol_candidat = None;
         return Task::none();
     }
 
@@ -821,7 +934,21 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
     if matches!(
         message,
         Message::ProjetsVue
-            | Message::VignettesFaites(_)
+            | Message::ProjetCliquer(_)
+            | Message::SelectionVider
+            | Message::EtagereCreer
+            | Message::EtagereMonter(_)
+            | Message::EtagereDescendre(_)
+            | Message::SelectionNormes
+            | Message::NormesLotChoisir(_)
+            | Message::NormesLotAccrocher(_)
+            | Message::NormesLotAppliquer
+            | Message::NormesLotFermer
+            | Message::SelectionExporter(_)
+            | Message::SelectionExportee(_)
+            | Message::VignettesRafraichies(_)
+            | Message::MiniatureChoisir(_)
+            | Message::MiniaturePrete(_, _)
             | Message::DragCommencer(_)
             | Message::ProjetsRechercheBascule
             | Message::ProjetsEtageChoisie(_)
@@ -843,6 +970,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             | Message::PickerCouleurTeinte(_)
             | Message::PickerCouleurSatVal(_, _)
             | Message::PickerCouleurPourReglage(_)
+            | Message::PickerCouleurPourBalise
+            | Message::PickerCouleurPourCallout(_)
             | Message::PickerCouleurEnregistrer
             | Message::PickerCouleurAppliquer
             | Message::PickerCouleurHex(_)
@@ -871,15 +1000,57 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             | Message::NormesEcraser
             | Message::NormesEnregistrer(_)
             | Message::NormesSupprimer(_)
+            | Message::NormesSupprimerDemande(_)
+            | Message::NormesAppliquerAuDocument(_)
+            | Message::NormesExporter(_)
+            | Message::NormesFichierImporter
+            | Message::NormesFichierImporte(_)
     ) {
         return routeur::normes::traiter(state, message);
     }
 
     if matches!(
         message,
-        Message::NoteOverlayChamp(_) | Message::NoteOverlayEnregistrer | Message::NoteOverlayFermer
+        Message::ChartOuvrir
+            | Message::ChartFermer
+            | Message::ChartType(_)
+            | Message::ChartTitre(_)
+            | Message::ChartSousTitre(_)
+            | Message::ChartXLabel(_)
+            | Message::ChartYLabel(_)
+            | Message::ChartCsv(_)
+            | Message::ChartImporter
+            | Message::ChartImporte(_)
+            | Message::ChartLargeur(_)
+            | Message::ChartHauteur(_)
+            | Message::ChartPlacement(_)
+            | Message::ChartLegende(_)
+            | Message::ChartValeurs(_)
+            | Message::ChartGrille(_)
+            | Message::ChartGraduations(_)
+            | Message::ChartPoints(_)
+            | Message::ChartAire(_)
+            | Message::ChartCourbe(_)
+            | Message::ChartDonut(_)
+            | Message::ChartAnneau(_)
+            | Message::ChartHorizontal(_)
+            | Message::ChartInserer
     ) {
-        return routeur::notes::traiter(state, message);
+        return routeur::chart::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::CalloutOuvrir
+            | Message::CalloutFermer
+            | Message::CalloutType(_)
+            | Message::CalloutTitre(_)
+            | Message::CalloutChamp(_, _)
+            | Message::CalloutBascule(_, _)
+            | Message::CalloutReinitialiser
+            | Message::CalloutInserer
+    ) {
+        return routeur::callout::traiter(state, message);
     }
 
     if matches!(message, Message::ModeBasculer | Message::ModeTypst) {
@@ -931,6 +1102,23 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
 
     if matches!(message, Message::ReglagesFonctionnalite(_, _)) {
         return routeur::addons::traiter(state, message);
+    }
+
+    if matches!(
+        message,
+        Message::TexteApercuPret(..)
+            | Message::SelectionApercuAppuyer { .. }
+            | Message::SelectionApercuGlisser { .. }
+            | Message::SelectionApercuRelacher
+            | Message::SelectionApercuCopier
+            | Message::LienApercuActiver(..)
+            | Message::RechercheApercuOuvrir
+            | Message::RechercheApercuFermer
+            | Message::RechercheApercuMotif(..)
+            | Message::RechercheApercuSuivant
+            | Message::RechercheApercuPrecedent
+    ) {
+        return routeur::apercu::traiter(state, message);
     }
 
     match message {
@@ -1042,7 +1230,12 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::MiseEnPageDestination(_, _)
         | Message::MiseEnPageNote(_)
         | Message::EntetePiedImage(_)
-        | Message::EntetePiedImageChoisie(_, _) => {
+        | Message::EntetePiedImageChoisie(_, _)
+        | Message::CalloutPresetChoisir(_)
+        | Message::CalloutPresetChamp(_, _, _)
+        | Message::CalloutPresetBascule(_, _, _)
+        | Message::CalloutPresetAjouter
+        | Message::CalloutPresetSupprimer(_) => {
             crate::app::reglages::update(state, message).unwrap_or_else(Task::none)
         }
 
@@ -1077,6 +1270,11 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ExtensionInserer
         | Message::ExtensionOuvrir
         | Message::ExtensionParam(..)
+        | Message::CalloutFermer
+        | Message::CalloutInserer
+        | Message::CalloutOuvrir
+        | Message::CalloutTitre(_)
+        | Message::CalloutType(_)
         | Message::ImageInserer
         | Message::NewProject
         | Message::OpenChapter(..)
@@ -1124,6 +1322,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::RenderTick
         | Message::RenderDone(..)
         | Message::PdfApercu(..)
+        | Message::PdfDocumentPret(..)
         | Message::PageRendered(..)
         | Message::ViewportChanged(..)
         | Message::PreviewZoom(..)
@@ -1660,6 +1859,8 @@ struct Situation {
     tableau: bool,
     /// La vue des projets est ouverte — `Échap` la ferme.
     projets: bool,
+    /// La fenêtre de normes en lot est ouverte — `Échap` la ferme.
+    normes_lot: bool,
     /// L'éditeur de thème est ouvert — `Échap` le ferme.
     theme: bool,
     /// Le dialogue de projet est ouvert — `Échap` annule.
@@ -1670,6 +1871,11 @@ struct Situation {
     sur_liste: bool,
     /// Le composeur est ouvert : sa frappe est à lui.
     composeur: bool,
+    /// La palette de commandes est ouverte : elle prend les touches de
+    /// navigation, la frappe reste à son champ.
+    palette: bool,
+    /// Le formulaire d'une balise simple est ouvert.
+    balise: bool,
     /// Une fenêtre est ouverte — c'est le contrat qui s'applique.
     fenetre: bool,
     /// La fiche de référence : `Entrée` y enregistre.
@@ -1681,11 +1887,19 @@ struct Situation {
     /// Ce qui est au-dessus de la pile des fenêtres.
     aide: bool,
     recherche: bool,
+    /// La vue active est le document rendu.
+    apercu: bool,
+    /// La recherche du document rendu est ouverte.
+    recherche_apercu: bool,
     liaison: bool,
     /// Le panneau de la note de bas de page — `Échap` annule.
     note: bool,
     /// Le composeur d'extension — `Échap` annule.
     extension: bool,
+    /// Le panneau d'un graphique — `Échap` le ferme.
+    chart: bool,
+    /// Le panneau d'un callout — `Échap` le ferme.
+    callout: bool,
     /// Le panneau d'insertion biblique — `Échap` le ferme.
     bible_panneau: bool,
     /// La fiche flottante d'une référence biblique — `Échap` la ferme.
@@ -1701,20 +1915,27 @@ impl Situation {
         Situation {
             tableau: state.tableau.is_some(),
             projets: state.projets_vue,
+            normes_lot: state.normes_lot.is_some(),
             theme: state.editeur_theme.is_some(),
             projet: state.projet_dialogue.is_some(),
             confirmation: state.confirmation.is_some(),
             sur_liste: est_sur_une_liste(&state.editor.content(), state.editor.cursor_offset()),
             composeur: state.composeur.is_some(),
+            palette: state.palette.is_some(),
+            balise: state.balise_dialogue.is_some(),
             fenetre: fenetre_ouverte(state),
             fiche: state.plugins.bibliographie.edition.is_some(),
             glossaire: state.plugins.glossaire.fenetre,
             glossaire_fiche: state.plugins.glossaire.edition.is_some(),
             aide: state.aide,
             recherche: state.recherche.is_some(),
+            apercu: state.mode == crate::app::state::ModeVue::Rendu,
+            recherche_apercu: state.render.recherche_apercu.visible,
             liaison: state.liaison.is_some(),
             note: state.note_dialogue.is_some(),
             extension: state.extension.is_some(),
+            chart: state.chart.is_some(),
+            callout: state.callout.is_some(),
             bible_panneau: state.plugins.bible.panneau.is_some(),
             bible_edition: state.plugins.bible.edition.is_some(),
             completion: false,
@@ -1748,7 +1969,7 @@ enum Action {
 /// d'avant porte le marqueur, la suivante reçoit le sien — `- ` reste,
 /// `3. ` devient `4. `. Rien quand la ligne d'avant n'est pas une liste.
 fn marque_suivante(contenu: &str, offset: usize) -> Option<String> {
-    let offset = offset.min(contenu.len());
+    let offset = crate::base::texte::offset_sur_caractere(contenu, offset);
     let debut = contenu[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     if debut == 0 {
         return None;
@@ -1781,7 +2002,7 @@ fn marque_suivante(contenu: &str, offset: usize) -> Option<String> {
 
 /// La ligne du curseur : sa plage dans le contenu, et son texte.
 fn ligne_du_curseur(contenu: &str, offset: usize) -> (usize, usize, &str) {
-    let offset = offset.min(contenu.len());
+    let offset = crate::base::texte::offset_sur_caractere(contenu, offset);
     let debut = contenu[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let fin = contenu[offset..]
         .find('\n')
@@ -1804,7 +2025,9 @@ fn est_sur_une_liste(contenu: &str, offset: usize) -> bool {
     chiffres > 0 && tete[chiffres..].starts_with(". ")
 }
 
-/// Indente la ligne du curseur (bug-report-10, 3.2).
+/// Indente la ligne du curseur (bug-report-10, 3.2). Utilisé par les tests de
+/// la règle ; l'édition réelle ne remplace que le début de la ligne.
+#[cfg(test)]
 fn indenter_la_ligne(contenu: &str, offset: usize) -> (String, usize) {
     let (debut, _, _) = ligne_du_curseur(contenu, offset);
     let mut neuf = String::with_capacity(contenu.len() + 2);
@@ -1816,7 +2039,8 @@ fn indenter_la_ligne(contenu: &str, offset: usize) -> (String, usize) {
 }
 
 /// Désindente la ligne du curseur (bug-report-10, 3.3) — deux espaces
-/// s'il y en a, sinon rien.
+/// s'il y en a, sinon rien. Utilisé par les tests de la règle.
+#[cfg(test)]
 fn desindenter_la_ligne(contenu: &str, offset: usize) -> (String, usize) {
     let (debut, _, ligne) = ligne_du_curseur(contenu, offset);
     let en_trop = (ligne.len() - ligne.trim_start().len()).min(2);
@@ -1876,6 +2100,31 @@ fn plan_touche(
 ) -> Action {
     use iced::keyboard::{Key, key::Named};
 
+    // Le formulaire d'une balise simple : Échap annule, Entrée insère,
+    // Tabulation circule entre les champs.
+    if etat.balise {
+        return match key {
+            Key::Named(Named::Escape) => Action::Message(Message::BaliseAnnuler),
+            Key::Named(Named::Enter) => Action::Message(Message::BaliseInserer),
+            Key::Named(Named::Tab) if modifiers.shift() => Action::FocusPrecedent,
+            Key::Named(Named::Tab) => Action::FocusSuivant,
+            _ => Action::Rien,
+        };
+    }
+
+    // La palette, quand elle est ouverte, prend les touches qui la
+    // conduisent. La frappe reste à son champ de recherche.
+    if etat.palette {
+        return match key {
+            Key::Named(Named::Escape) => Action::Message(Message::PaletteFermer),
+            Key::Named(Named::ArrowUp) => Action::Message(Message::PaletteDeplacer(-1)),
+            Key::Named(Named::ArrowDown) => Action::Message(Message::PaletteDeplacer(1)),
+            Key::Named(Named::Enter) => Action::Message(Message::PaletteExecuter),
+            Key::Named(Named::Tab) => Action::Message(Message::PaletteConfigurer),
+            _ => Action::Rien,
+        };
+    }
+
     // Le composeur, quand il est ouvert, prend ses touches : sa frappe est
     // à lui, et rien ne doit l'entamer.
     if etat.composeur && est_touche_composeur(key) {
@@ -1907,12 +2156,21 @@ fn plan_touche(
     match key {
         Key::Named(Named::F1) => return Action::Message(Message::AideBasculer),
         Key::Named(Named::F3) => {
-            return Action::Message(if !etat.recherche {
+            let suivant = !modifiers.shift();
+            return Action::Message(if etat.apercu {
+                if !etat.recherche_apercu {
+                    Message::RechercheApercuOuvrir
+                } else if suivant {
+                    Message::RechercheApercuSuivant
+                } else {
+                    Message::RechercheApercuPrecedent
+                }
+            } else if !etat.recherche {
                 Message::RechercheOuvrir
-            } else if modifiers.shift() {
-                Message::RecherchePrecedent
-            } else {
+            } else if suivant {
                 Message::RechercheSuivant
+            } else {
+                Message::RecherchePrecedent
             });
         }
         Key::Named(Named::F11) => return Action::Message(Message::ToggleFocusMode),
@@ -1923,6 +2181,9 @@ fn plan_touche(
             // une sortie.
             if etat.completion || etat.survol {
                 return Action::Message(Message::CompletionDismiss);
+            }
+            if etat.recherche_apercu {
+                return Action::Message(Message::RechercheApercuFermer);
             }
             if etat.focus {
                 return Action::Message(Message::ToggleFocusMode);
@@ -1984,11 +2245,19 @@ fn plan_touche(
     };
 
     match character.to_lowercase().as_str() {
+        "k" => Action::Message(Message::PaletteOuvrir(
+            crate::app::palette::ModePalette::Systeme,
+        )),
         "s" => Action::Enregistrer,
         "i" => Action::Message(Message::ShowHover),
         "n" => Action::Message(Message::NewFile),
         "o" => Action::Message(Message::OpenFile),
-        "f" => Action::Message(Message::RechercheOuvrir),
+        "c" if etat.apercu => Action::Message(Message::SelectionApercuCopier),
+        "f" => Action::Message(if etat.apercu {
+            Message::RechercheApercuOuvrir
+        } else {
+            Message::RechercheOuvrir
+        }),
         "t" => Action::Message(if modifiers.shift() {
             Message::TitrePrecedent
         } else {
@@ -2033,6 +2302,14 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
         return Message::NoteAnnuler;
     }
 
+    if etat.chart {
+        return Message::ChartFermer;
+    }
+
+    if etat.callout {
+        return Message::CalloutFermer;
+    }
+
     if etat.extension {
         return Message::ExtensionAnnuler;
     }
@@ -2043,6 +2320,10 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 
     if etat.bible_panneau {
         return Message::BiblePanneauFermer;
+    }
+
+    if etat.normes_lot {
+        return Message::NormesLotFermer;
     }
 
     if etat.projets {
@@ -2086,8 +2367,11 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
 pub(crate) fn fenetre_ouverte(state: &State) -> bool {
     state.tableau.is_some()
         || state.note_dialogue.is_some()
+        || state.chart.is_some()
+        || state.callout.is_some()
         || state.extension.is_some()
         || state.projets_vue
+        || state.normes_lot.is_some()
         || state.editeur_theme.is_some()
         || state.projet_dialogue.is_some()
         || state.confirmation.is_some()
@@ -2104,14 +2388,12 @@ pub(crate) fn fenetre_ouverte(state: &State) -> bool {
 
 /// Le pointeur de l'éditeur doit-il être neutralisé ?
 ///
-/// C'est plus large qu'une fenêtre au clavier : l'overlay d'une note, le
-/// sélecteur de couleur et le composeur flottent eux aussi au-dessus du
-/// texte, même s'ils ne prennent pas toute la fenêtre.
+/// C'est plus large qu'une fenêtre au clavier : le sélecteur de couleur
+/// flotte lui aussi au-dessus du texte, même s'il ne prend pas toute la
+/// fenêtre. Le composeur de citation, lui, est **non invasif** : il ne
+/// bloque pas le pointeur, et un clic dans le texte le referme.
 pub(crate) fn pointeur_bloque(state: &State) -> bool {
-    fenetre_ouverte(state)
-        || state.note_overlay.is_some()
-        || state.picker_couleur.is_some()
-        || state.composeur.is_some()
+    fenetre_ouverte(state) || state.picker_couleur.is_some()
 }
 
 fn handle_shortcut(
@@ -2204,6 +2486,43 @@ fn sauter_titre(state: &mut State, direction: i8) -> Task<Message> {
     }
 }
 
+/// Une vue de rendu est-elle réellement visible ?
+///
+/// C'est la seule condition qui justifie le travail lourd de l'aperçu :
+/// compilation Typst, PDF, rasterisation et couche texte. Une vue d'édition
+/// seule ne doit pas compiler tout un projet en arrière-plan.
+pub(crate) fn a_une_vue_de_rendu(state: &State) -> bool {
+    if state.mode == crate::app::state::ModeVue::Rendu {
+        return true;
+    }
+
+    state.espace.grille.iter().any(|(_, panneau)| {
+        panneau
+            .onglets
+            .get(panneau.actif)
+            .and_then(|id| state.espace.vues.get(id))
+            .is_some_and(|vue| vue.mode == crate::app::state::ModeVue::Rendu)
+    })
+}
+
+/// Une vue Typst est-elle réellement visible ?
+///
+/// Le source Typst généré est une autre matérialisation lourde : inutile de
+/// rejouer tout le pipeline à chaque frappe quand personne ne le regarde.
+pub(crate) fn a_une_vue_typst(state: &State) -> bool {
+    if state.mode == crate::app::state::ModeVue::Typst {
+        return true;
+    }
+
+    state.espace.grille.iter().any(|(_, panneau)| {
+        panneau
+            .onglets
+            .get(panneau.actif)
+            .and_then(|id| state.espace.vues.get(id))
+            .is_some_and(|vue| vue.mode == crate::app::state::ModeVue::Typst)
+    })
+}
+
 /// Lance les rasterisations nécessaires, et rien de plus.
 ///
 /// Une page n'est rasterisée que si elle est visible, marquée périmée, et
@@ -2211,25 +2530,7 @@ fn sauter_titre(state: &mut State, direction: i8) -> Task<Message> {
 /// coûte donc qu'une compilation (~15 ms) + 1-2 pages rasterisées (~30 ms
 /// chacune) ; un défilement sur des images déjà à jour ne déclenche aucun
 /// travail, et un document intact n'est jamais recompilé.
-/// Le composeur de notes s'ouvre sur le `@` qui vient d'être tapé.
 ///
-/// C'est le premier fil du rebranchement de la complétion locale : le
-/// déclencheur se lit dans le texte, à la place du curseur — et le `@`
-/// ouvre le composeur, les autres déclencheurs suivront leur liste.
-fn declencher_si_besoin(state: &mut State) -> Task<Message> {
-    let texte = state.editor.content();
-    let position = state.editor.cursor_offset();
-    let Some(context) = crate::editor::completion::context(&texte, position) else {
-        return Task::none();
-    };
-
-    if context.trigger == '@' {
-        crate::app::composeur::ouvrir_composeur(state, &context)
-    } else {
-        Task::none()
-    }
-}
-
 /// La bascule vers la vue rendu génère systématiquement le PDF (bug-report-9).
 ///
 /// C'est lui que l'aperçu affiche, et lui que l'export écrit : le montreur
@@ -2256,7 +2557,7 @@ fn rendre_les_fenetres_de_rendu(state: &mut State) -> Option<Task<Message>> {
 
     for id in ids {
         let active = id == state.espace.active;
-        let (mode, compile, pdf) = if active {
+        let (mode, compile, pdf, texte) = if active {
             (
                 state.mode,
                 state.render.document.is_none() && !state.render.done && !state.render.pending,
@@ -2264,6 +2565,8 @@ fn rendre_les_fenetres_de_rendu(state: &mut State) -> Option<Task<Message>> {
                     && state.render.lecteur.is_none()
                     && !state.render.export_en_cours
                     && !state.render.export_tente,
+                state.render.document.is_some()
+                    && !state.render.texte_est_pret(state.render.content.as_str()),
             )
         } else {
             let Some(vue) = state.espace.vues.get(&id) else {
@@ -2276,10 +2579,12 @@ fn rendre_les_fenetres_de_rendu(state: &mut State) -> Option<Task<Message>> {
                     && vue.render.lecteur.is_none()
                     && !vue.render.export_en_cours
                     && !vue.render.export_tente,
+                vue.render.document.is_some()
+                    && !vue.render.texte_est_pret(vue.render.content.as_str()),
             )
         };
 
-        if mode != crate::app::state::ModeVue::Rendu || (!compile && !pdf) {
+        if mode != crate::app::state::ModeVue::Rendu || (!compile && !pdf && !texte) {
             continue;
         }
 
@@ -2352,7 +2657,7 @@ fn follow_editor_scroll(state: &mut State) -> Task<Message> {
 /// L'opération est paramétrée par le type de message qu'elle produirait : elle
 /// n'en produit aucun, mais c'est ainsi qu'elle se raccorde à la boucle de
 /// messages.
-fn scroll_preview_to_page(state: &State, page: usize) -> Task<Message> {
+pub(crate) fn scroll_preview_to_page(state: &State, page: usize) -> Task<Message> {
     let Some(document) = state.render.document.clone() else {
         return Task::none();
     };
@@ -2528,11 +2833,11 @@ fn source_outline(
         let Some(path) = state.editor.path.clone() else {
             return Vec::new();
         };
-        let Some(document) = state.editor.document.as_ref() else {
+        let Some(document) = state.editor.document_pour_lecture() else {
             return Vec::new();
         };
 
-        return map_outline_to_source(path, &state.editor.content(), document, outline);
+        return map_outline_to_source(path, &state.editor.content(), &document, outline);
     }
 
     let assembly_is_open = state
@@ -2624,8 +2929,31 @@ fn compile_task(state: &State) -> Task<Message> {
 
 /// Recompile le document périodiquement : le moteur n'est relancé que si le
 /// contenu a changé depuis la dernière compilation (debounce par inactivité).
-fn subscription_timer() -> Subscription<Message> {
-    time::every(time::milliseconds(RENDER_INTERVAL_MS)).map(|_| Message::RenderTick)
+///
+/// Au repos, le tic s'espère : un document immobile n'a aucune raison de
+/// réveiller l'interface dix fois par seconde.
+fn subscription_timer(state: &State) -> Subscription<Message> {
+    let rendu = a_une_vue_de_rendu(state);
+    let mots_dus = state.render.words_pending
+        && state.render.words_depuis.is_none_or(|depuis| {
+            depuis.elapsed() >= std::time::Duration::from_millis(crate::app::state::IDLE_DELAY_MS)
+        });
+    let attend = state.render.pending
+        || mots_dus
+        || state.render.zoom_depuis.is_some()
+        || (rendu
+            && (state.render.changed_at.is_some()
+                || !state.render.done
+                || (state.render.document.is_some() && state.render.lecteur.is_none())))
+        || state.plugins.bible.survol_candidat.is_some();
+
+    let intervalle = if attend {
+        RENDER_INTERVAL_MS
+    } else {
+        RENDER_INTERVAL_IDLE_MS
+    };
+
+    time::every(time::milliseconds(intervalle)).map(|_| Message::RenderTick)
 }
 
 /// Écrit le document sur le disque à intervalle régulier, et seulement s'il
@@ -2705,6 +3033,12 @@ fn message_evenement(event: Event, status: Status) -> Option<Message> {
         }),
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => match status {
             Status::Ignored => Some(Message::RawKey(key, modifiers)),
+            // F11 est un raccourci de **fenêtre**, pas de l'éditeur : même
+            // quand le canevas de texte capture la touche, le mode focus doit
+            // pouvoir s'ouvrir depuis l'édition, pas seulement depuis l'aperçu.
+            Status::Captured if matches!(key, keyboard::Key::Named(keyboard::key::Named::F11)) => {
+                Some(Message::RawKey(key, modifiers))
+            }
             Status::Captured => None,
         },
 
@@ -2714,6 +3048,10 @@ fn message_evenement(event: Event, status: Status) -> Option<Message> {
                 maj: modifiers.shift(),
             })
         }
+
+        // Le pointeur sort de la zone de texte : le survol d'un verset se
+        // termine, au lieu de laisser sa bulle collée à l'écran.
+        Event::Mouse(iced::mouse::Event::CursorLeft) => Some(Message::BibleSurvolQuitter),
 
         // La molette tient le zoom — `Ctrl` de la souris, comme dans tout
         // lecteur de document. Le défilement reste au reste.
@@ -2751,6 +3089,23 @@ mod tests_de_la_molette {
             Some(Message::RawKey(_, _))
         ));
         assert!(message_evenement(frappe, Status::Captured).is_none());
+
+        // F11 traverse la capture de l'éditeur : le mode focus s'ouvre aussi
+        // depuis l'écriture.
+        let f11 = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(keyboard::key::Named::F11),
+            modified_key: Key::Named(keyboard::key::Named::F11),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::F11),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        assert!(matches!(
+            message_evenement(f11, Status::Captured),
+            Some(Message::RawKey(_, _))
+        ));
+
         assert!(matches!(
             message_evenement(
                 Event::Window(iced::window::Event::Unfocused),
@@ -2760,6 +3115,13 @@ mod tests_de_la_molette {
                 controle: false,
                 maj: false
             })
+        ));
+        assert!(matches!(
+            message_evenement(
+                Event::Mouse(iced::mouse::Event::CursorLeft),
+                Status::Ignored
+            ),
+            Some(Message::BibleSurvolQuitter)
         ));
     }
 
@@ -2830,15 +3192,75 @@ fn est_touche_composeur(key: &iced::keyboard::Key) -> bool {
     )
 }
 
-pub fn subscription(_state: &State) -> Subscription<Message> {
+/// Les touches de la palette que son champ de recherche capture.
+///
+/// Le champ prend la frappe entière — c'est sa fonction — mais les flèches,
+/// `Entrée`, `Tab` et `Échap` conduisent la liste. On les relaie même
+/// capturées, comme le composeur le fait pour les siennes.
+fn subscription_palette(state: &State) -> Subscription<Message> {
+    if state.palette.is_none() {
+        return Subscription::none();
+    }
+
+    iced::event::listen_with(|event, status, _window| match status {
+        Status::Captured => match event {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                if est_touche_palette(&key) =>
+            {
+                Some(Message::RawKey(key, modifiers))
+            }
+            _ => None,
+        },
+        Status::Ignored => None,
+    })
+}
+
+fn est_touche_palette(key: &iced::keyboard::Key) -> bool {
+    use iced::keyboard::{Key, key::Named};
+
+    matches!(
+        key,
+        Key::Named(Named::Tab | Named::Enter | Named::Escape | Named::ArrowUp | Named::ArrowDown)
+    )
+}
+
+/// Les touches du formulaire de balise que son champ capture.
+fn subscription_balise(state: &State) -> Subscription<Message> {
+    if state.balise_dialogue.is_none() {
+        return Subscription::none();
+    }
+
+    iced::event::listen_with(|event, status, _window| match status {
+        Status::Captured => match event {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+                if matches!(
+                    key,
+                    keyboard::Key::Named(
+                        keyboard::key::Named::Escape
+                            | keyboard::key::Named::Enter
+                            | keyboard::key::Named::Tab
+                    )
+                ) =>
+            {
+                Some(Message::RawKey(key, modifiers))
+            }
+            _ => None,
+        },
+        Status::Ignored => None,
+    })
+}
+
+pub fn subscription(state: &State) -> Subscription<Message> {
     Subscription::batch(vec![
-        subscription_timer(),
+        subscription_timer(state),
         subscription_save(),
         subscription_system_theme(),
         subscription_window(),
         subscription_drag(),
         subscription_keys(),
-        subscription_composeur(_state),
+        subscription_palette(state),
+        subscription_balise(state),
+        subscription_composeur(state),
         subscription_memory(),
     ])
 }
@@ -3193,6 +3615,47 @@ mod tests_plan_touche {
             Action::Rien
         ));
     }
+
+    /// Dans le rendu, `Ctrl+F` et `F3` appartiennent à la recherche du PDF ;
+    /// dans l'éditeur, ils gardent leur sens.
+    #[test]
+    fn la_recherche_suit_la_vue_active() {
+        let edition = Situation::default();
+        let apercu = Situation {
+            apercu: true,
+            ..Situation::default()
+        };
+        let apercu_ouvert = Situation {
+            apercu: true,
+            recherche_apercu: true,
+            ..Situation::default()
+        };
+
+        assert!(matches!(
+            plan_touche(edition, &touche("f"), Modifiers::CTRL),
+            Action::Message(Message::RechercheOuvrir)
+        ));
+        assert!(matches!(
+            plan_touche(apercu, &touche("f"), Modifiers::CTRL),
+            Action::Message(Message::RechercheApercuOuvrir)
+        ));
+        assert!(matches!(
+            plan_touche(apercu_ouvert, &Key::Named(Named::F3), Modifiers::empty()),
+            Action::Message(Message::RechercheApercuSuivant)
+        ));
+        assert!(matches!(
+            plan_touche(apercu_ouvert, &Key::Named(Named::F3), Modifiers::SHIFT),
+            Action::Message(Message::RechercheApercuPrecedent)
+        ));
+        assert!(matches!(
+            plan_touche(
+                apercu_ouvert,
+                &Key::Named(Named::Escape),
+                Modifiers::empty()
+            ),
+            Action::Message(Message::RechercheApercuFermer)
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -3240,6 +3703,26 @@ mod tests_des_gestes_de_liste {
         let (revient, curseur) = desindenter_la_ligne(&indente, curseur);
         assert_eq!(revient, texte, "le retour est exact");
         assert_eq!(curseur, 2, "le curseur revient");
+    }
+
+    /// Le même geste vaut pour une liste numérotée : le marqueur `1.` n'est
+    /// pas un cas à part, seule l'indentation décide du niveau.
+    #[test]
+    fn le_niveau_change_aussi_une_liste_numerotee() {
+        let saut = &char::from(10).to_string();
+        let texte = ["1. premier", "2. second", ""].join(saut);
+        let offset = texte.find("2. second").expect("la seconde ligne") + 3;
+
+        let (indente, curseur) = indenter_la_ligne(&texte, offset);
+        assert_eq!(
+            indente,
+            ["1. premier", "  2. second", ""].join(saut),
+            "la ligne numérotée prend un niveau"
+        );
+
+        let (revient, curseur) = desindenter_la_ligne(&indente, curseur);
+        assert_eq!(revient, texte, "le retour est exact");
+        assert_eq!(curseur, offset, "le curseur revient à sa place");
     }
 
     /// `Entrée` crée l'élément suivant (3.4) : la marque suit — la puce

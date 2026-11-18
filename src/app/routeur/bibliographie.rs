@@ -6,6 +6,10 @@ use iced::Task;
 /// Traite la fiche ouverte. La porte d'activation est déjà passée.
 pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        // Le geste de citation ouvre le composeur au curseur : c'est un
+        // message de la bibliographie, et son routeur le reçoit comme tel.
+        Message::CitationOuvrir => crate::app::composeur::ouvrir_au_curseur(state),
+
         // L'édition d'une référence : une fenêtre, des champs, et une
         // bibliothèque locale à écrire — jamais une notice Zotero.
         Message::ModifierReference(cle) => {

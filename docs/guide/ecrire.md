@@ -13,14 +13,41 @@ syntaxe.
 | `> texte` | une citation de bloc |
 | `- élément` | une liste à puces |
 | `1. élément` | une liste numérotée |
+| `Tab` / `Maj+Tab` | enfoncer / remonter la ligne de liste sous le curseur |
 | ```` ```typst ```` … ```` ``` ```` | un bloc Typst brut, inséré tel quel |
 | trois lignes vides consécutives | un saut de page |
 | `// texte` | un commentaire — conservé dans le `.tw`, ignoré au rendu |
-| `{bibliographie}` | la bibliographie du projet, à cet endroit |
-| `{{index}}` | l'index des citations bibliques, recalculé au rendu |
+| `{{bib}}` ou `{{bibliographie}}` | la bibliographie du projet, à cet endroit |
+| `{{idx}}` ou `{{index-biblique}}` | l'index des citations bibliques, recalculé au rendu |
+| `{{s}}` ou `{{sommaire}}` | la table des matières, à cet endroit |
 
 Une **ligne vide** sépare les blocs. Ce qui n'est pas reconnu reste du
 texte — un fichier abîmé ne bloque jamais l'ouverture.
+
+Les balises de fin ont une forme canonique courte : `{{s}}`, `{{bib}}`,
+`{{gs}}`, `{{idx}}`. Les noms longs (`{{sommaire}}`, `{{bibliographie}}`,
+`{{glossaire-section}}`, `{{index-biblique}}`) et les anciennes formes
+(`[[TOC]]`, `{bibliographie}`, `{glossaire}`, `{{index}}`) restent lus,
+mais les nouveaux gestes écrivent la forme courte.
+
+## Les métadonnées
+
+Une métadonnée du projet s'appelle par `{{m clé}}` : `{{m auteur}}` affiche
+la valeur d'`auteur` réglée dans les normes. Les métadonnées existantes sont
+aussi proposées dans le menu `..` sous « Métadonnée · clé ».
+
+## Les blocs canoniques
+
+| Ce qu'on écrit | Ce que c'est |
+| --- | --- |
+| `{{e type=note titre="À retenir"\|texte}}` | un encadré et son contenu, sur une ligne |
+| `{{gr type=barre titre="Ventes"}}` puis `Nord \| 30` | un graphique simple et ses données |
+| `{{ch type=pie titre="Répartition"}}` puis le CSV | un graphique primaviz |
+| `{{t}}` puis la grille Markdown | un tableau explicite |
+
+Les paramètres gardent leurs noms longs (`type`, `titre`, `couleur`) ; seule
+la balise est courte. Les panneaux de graphique et d'encadré restent
+disponibles pour les réglages fins.
 
 ## Le texte
 
@@ -34,6 +61,16 @@ texte — un fichier abîmé ne bloque jamais l'ouverture.
 | `` `code` `` | du code inline — une bande opaque : rien ne s'y ouvre ni ne s'y ferme |
 | `[texte](https://…)` | un lien |
 | `^[texte]` | une note libre, en bas de page |
+| `{{c red\|texte}}` | un passage teinté (forme canonique courte) |
+| `{{d 1789.07.14}}` | une date composée par les normes |
+| `{{g clé}}` | un terme du glossaire |
+| `{{m auteur}}` | une métadonnée du projet |
+
+La note reste elle aussi visible dans sa source : le panneau d'insertion écrit
+`^[texte]`, et le rendu en fait une note de bas de page. Rien n'est remplacé
+par un signe dans le fichier. Une note peut contenir une citation
+(`^[Voir @dupont2023[p. 45].]`) : elle est composée dans la note, pas à la
+place de la note.
 
 ## Les citations
 
@@ -41,10 +78,25 @@ texte — un fichier abîmé ne bloque jamais l'ouverture.
 page. Plusieurs appels d'un geste — `@dupont[p. 45]; @martin` — ne font
 jamais qu'**une** note de bas de page, avec les deux mentions.
 
-L'appel est un **glyphe numéroté** — ¹, ² — dans le fil du texte, un
-caractère entier : il se déplace, se sélectionne et se supprime d'un seul
-geste. **Cliquer dessus** ouvre le composeur de notes ; les flèches
-parcourent la note puis les clés, `Échap` abandonne sans rien écrire.
+La citation reste **visible dans sa source** : l'éditeur ne la remplace
+jamais par un glyphe numéroté. C'est un texte comme un autre — on le
+déplace, on le sélectionne et on le corrige caractère par caractère, et
+`@dupont2023` reste lisible dans le document. La numérotation et la note
+sont produites au rendu, pas dans le fichier.
+
+Le bouton citation de la barre supérieure ouvre le composeur à l'endroit du
+curseur. Il sert aussi à réécrire une citation existante lorsque le curseur
+s'y trouve. Tant que l'on n'a pas validé, le document n'est pas modifié ;
+`Échap` ne laisse rien. Taper `@` ouvre le même composeur : un `@` isolé
+n'est donc plus seulement du texte, et un `@` collé à un mot reste une
+adresse électronique.
+
+`Tab` après `@exemple` ouvre aussi le menu contextuel, posé près du curseur :
+le document reste visible derrière lui, et la source n'est pas modifiée. Le
+menu permet de choisir la référence, de saisir sa page (`p. 45`,
+`pp. 12-15`…), puis d'ajouter une autre référence à la même citation. `Tab`
+fait avancer d'une étape, `Entrée` insère, `Échap` abandonne sans rien
+écrire ; un clic dans le texte ferme le menu et rend la main à l'éditeur.
 
 Voir [La bibliographie](bibliographie.md).
 
@@ -75,6 +127,13 @@ courant (`{{Jn 3.16, 17 ; Rm 8.1}}`). Les formes relatives sont lues :
 références, à condition d'être entre guillemets ; un point-virgule dans les
 guillemets ne coupe pas la citation.
 
+Dans le panneau d'insertion, le livre se choisit dans une **liste
+déroulante cherchable** : un seul champ porte la recherche et la sélection,
+et seuls les livres réels peuvent être choisis. Le livre, le chapitre et
+les versets laissés dans les champs sont pris en compte au moment d'insérer,
+même sans cliquer sur **Ajouter** ; un nom de livre tapé sans sélection peut
+aussi être résolu s'il désigne un livre sans ambiguïté.
+
 Un même livre n'est nommé qu'une fois : ses occurrences sont réunies et
 séparées par une virgule. L'ordre des livres suit leur première apparition,
 sauf si la norme **Ranger les références dans l'ordre canonique** est
@@ -92,11 +151,19 @@ d'insertion propose les mêmes choix sans modifier les normes du projet :
 - `|long` — le nom complet, « Jean 3.16 » ;
 - `|court` — l'abréviation française, « Jn 3.16 » ;
 - `|osis` — le code OSIS, « John 3.16 » ;
-- `|sanspoint` — l'abréviation sans point.
+- `|sanspoint` — l'abréviation sans point ;
+- `|tob` — les abréviations de la TOB, « 1 S 1.1 », « Is 6.1 ».
 
 Sans suffixe, c'est la forme réglée pour le projet qui s'applique. Le
 panneau des plugins (onglet **Biblique**) choisit aussi les chiffres des
 chapitres et des versets, les séparateurs et l'ordre canonique.
+
+Les livres deutérocanoniques et apocryphes sont citables dans la même
+syntaxe : Tobie, Judith, Sagesse, Siracide, Baruch, les Maccabées, les
+Psaumes additionnels, Hénoch, les Jubilés, les Testaments des douze
+patriarches et les principales apocalypses. Leurs références se composent
+et s'indexent ; les deux traductions embarquées ne fournissent pas leur
+texte, donc la bulle de consultation les signale sans verset.
 
 Une référence peut nommer sa **traduction** : `{{Jn 3.16|lsg}}` rend
 `Jn 3.16 (LSG)`, `{{Jn 3.16|darby}}` rend `Jn 3.16 (DARBY)`. La
@@ -159,12 +226,12 @@ dans l'ordre canonique, et d'aller directement à leur citation d'un clic.
 
 ## Le glossaire
 
-`{glo:cle}` appelle un terme du glossaire : la forme se développe à la
+`{{g cle}}` appelle un terme du glossaire : la forme se développe à la
 première occurrence, les reprises gardent le sigle. Les variantes
-`pluriel` et `majuscule` s'écrivent après la clé — `{glo:sdo pluriel}`,
-`{glo:sdo majuscule}`. La liste finale se pose d'une ligne
-`{glossaire}`, ou `{glossaire: tout}` pour y montrer aussi les termes
-jamais cités.
+`pluriel` et `majuscule` s'écrivent après la clé — `{{g sdo pluriel}}`,
+`{{g sdo majuscule}}`. La forme historique `{glo:cle}` reste lue. La liste
+finale se pose d'une ligne `{{gs}}`, ou `{{gs tout}}` pour y montrer aussi
+les termes jamais cités ; `{glossaire}` et `{glossaire: tout}` restent lus.
 
 Voir [Le glossaire](glossaire.md).
 
@@ -222,20 +289,83 @@ normes.
 
 ## Les graphiques
 
-Un graphique se déclare par un bloc `{graphique}` suivi de ses données :
+Un graphique se déclare par une balise `{chart}` suivie de ses données en
+CSV. La forme concise est :
 
-    {graphique type=barre titre="Évolution"}
-    Jan | 10
-    Fév | 20
-    Mar | 15
+    {chart bar "Évolution" 10cm×6cm centre}
+    Jan,10
+    Fév,20
+    Mar,15
 
-Chaque ligne est `libellé | valeur`. Le `type` dit la forme : `barre`
-(par défaut), `ligne` ou `secteur`. Le `titre` est facultatif — il devient
-la légende de la figure.
+Le premier mot est le type : `bar` (par défaut), `pie` (secteurs), `line`
+(lignes), `scatter` (nuage de points) ou `box` (boîtes à moustaches). Le
+titre, entre guillemets, est facultatif. La taille `largeur×hauteur` et le
+placement — `centre`, `gauche`, `droite` ou `pleine` — le sont aussi ;
+`{chart pie "Répartition"}` suffit pour un graphique simple. `sans-legende`
+et `sans-valeurs` désactivent les deux options quand le type les connaît.
+La forme longue `type=… titre=… largeur=…` reste lue pour les documents
+existants.
+
+Les colonnes dépendent du type :
+
+- `bar`, `pie`, `line` : `étiquette,valeur` ;
+- `scatter` : `x,y` ;
+- `box` : `étiquette,min,q1,médiane,q3,max`.
+
+Les documents qui portent encore l'ancien bloc `{graphique}` restent lus : le
+générateur les traduit vers primaviz, sans changer leur source.
+
+Une ligne d'en-tête est reconnue et sautée. La virgule et le point-virgule
+sont acceptés comme séparateurs, et les valeurs entre guillemets gardent
+leurs virgules. Le bouton **Insérer un graphique** de la barre d'outils
+ouvre le panneau complet : type, titre, taille, placement, légende, valeurs
+et un vrai champ CSV où coller plusieurs lignes ou importer un fichier. Il
+n'y a pas d'aperçu séparé : le document composé est la prévisualisation.
 
 Les graphiques utilisent le paquet Typst
-[cetz](https://typst.app/universe/package/cetz). Sa résolution dans
-l'application doit être vérifiée avant de compter sur ce rendu.
+[primaviz](https://typst.app/universe/package/primaviz), vendu avec
+l'application et installé localement — aucun téléchargement au rendu.
+
+## Les callouts
+
+Un callout encadre une citation sans la recopier. La balise se pose devant
+le bloc de citation :
+
+    {callout note "À retenir"}
+    > Une distinction utile pour la suite.
+
+Le premier mot après `callout` est le ton : `citation` (neutre), `note`,
+`important`, `attention` ou `astuce`. Le titre, entre guillemets, est
+facultatif ; sans lui, le cadre garde sa couleur mais n'a pas de bande de
+titre. Les alias anglais `quote`, `warning` et `tip` sont aussi lus.
+
+Le bouton **Insérer un callout** ouvre le panneau : ton, titre, puis
+« Encadrer cette citation » si le curseur est déjà dans une citation ;
+sinon « Insérer le callout » pose une citation vide et y place le curseur.
+Le texte reste toujours dans le document — le panneau ne le recopie pas.
+
+Les callouts utilisent le paquet Typst
+[showybox](https://typst.app/universe/package/showybox), vendu avec
+l'application et installé localement : le rendu ne dépend d'aucun
+téléchargement. Cinq tons sobres sont fournis ; le type inconnu retombe sur
+`note`, jamais sur une erreur de compilation.
+
+## Lire l'aperçu
+
+Le panneau de rendu est un lecteur du PDF exporté. Le texte peut y être
+sélectionné au glisser, au double-clic pour un mot et au triple-clic pour
+une ligne ; `Ctrl+C` copie la sélection. `Maj+clic` étend la sélection à
+partir de son point de départ.
+
+Dans une vue de rendu, `Ctrl+F` cherche dans le **document composé** — titres,
+notes et bibliographie compris — et non dans la source. La barre compte les
+occurrences, `F3` et `Maj+F3` passent au résultat suivant ou précédent, et
+les résultats sont surlignés dans la page. `Échap` ferme la recherche. Dans
+l'éditeur, `Ctrl+F` garde son sens habituel.
+
+Les liens du document sont actifs : un lien interne amène à la page visée,
+un lien externe ouvre l'adresse avec l'outil du système. Un pied de page
+discret indique la page courante et le nombre total de pages du document.
 
 ## Le décor : l'intention, jamais la mesure
 

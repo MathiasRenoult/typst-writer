@@ -150,6 +150,9 @@ pub fn serialiser(document: &Document) -> String {
                 }
                 out.push('\n');
             }
+            Bloc::Chart(chart) => {
+                out.push_str(&crate::langage::chart::source(chart));
+            }
             Bloc::Glossaire { tout } => {
                 out.push_str("{glossaire");
                 if *tout {
@@ -166,10 +169,124 @@ pub fn serialiser(document: &Document) -> String {
             Bloc::Sommaire => {
                 out.push_str("[[TOC]]\n");
             }
+            Bloc::Canonique(interne) => ecrire_bloc_canonique(interne, &mut out),
         }
     }
 
     out
+}
+
+/// Écrit un bloc dans la forme canonique unifiée.
+/// La forme courte d'un encadré, si le bloc en est un.
+fn callout_canonique(
+    proprietes: &crate::langage::schema::Proprietes,
+    contenu: &[Inline],
+) -> Option<String> {
+    if !crate::langage::callout::est_callout(proprietes) {
+        return None;
+    }
+
+    let type_ = crate::langage::callout::type_de(proprietes);
+    let titre = crate::langage::callout::titre_de(proprietes);
+    let mut out = String::from("{{e");
+    if !type_.trim().is_empty() {
+        out.push_str(" type=");
+        out.push_str(type_.trim());
+    }
+    if !titre.trim().is_empty() {
+        out.push_str(" titre=\"");
+        echapper_chaine_param(titre.trim(), &mut out);
+        out.push('"');
+    }
+    for (cle, valeur) in &proprietes.paires {
+        if cle == "titre" {
+            continue;
+        }
+        out.push(' ');
+        out.push_str(cle);
+        out.push('=');
+        if valeur.contains([' ', '"', '\\']) {
+            out.push('"');
+            echapper_chaine_param(valeur, &mut out);
+            out.push('"');
+        } else {
+            out.push_str(valeur);
+        }
+    }
+    out.push('|');
+    ecrire_inline(contenu, &mut out);
+    out.push_str("}}");
+    Some(out)
+}
+
+fn ecrire_bloc_canonique(interne: &Bloc, out: &mut String) {
+    match interne {
+        Bloc::Sommaire => out.push_str("{{s}}\n"),
+        Bloc::Bibliographie => out.push_str("{{bib}}\n"),
+        Bloc::IndexBiblique => out.push_str("{{idx}}\n"),
+        Bloc::Glossaire { tout } => {
+            out.push_str("{{gs");
+            if *tout {
+                out.push_str(" tout");
+            }
+            out.push_str("}}\n");
+        }
+        Bloc::Chart(chart) => out.push_str(&crate::langage::chart::source_canonique(chart)),
+        Bloc::Décor { proprietes, bloc } => {
+            if let Bloc::Citation(contenu) = bloc.as_ref()
+                && let Some(callout) = callout_canonique(proprietes, contenu)
+            {
+                out.push_str(&callout);
+                out.push('\n');
+                return;
+            }
+            let document = Document {
+                blocs: vec![interne.clone()],
+            };
+            out.push_str(&serialiser(&document));
+        }
+        Bloc::Graphique {
+            type_,
+            titre,
+            donnees,
+        } => {
+            out.push_str("{{gr");
+            if !type_.is_empty() {
+                out.push_str(" type=");
+                out.push_str(type_);
+            }
+            if !titre.is_empty() {
+                out.push_str(" titre=\"");
+                echapper_chaine_param(titre, out);
+                out.push('"');
+            }
+            out.push_str("}}\n");
+            for (label, valeur) in donnees {
+                out.push_str(label);
+                out.push_str(" | ");
+                out.push_str(&valeur.to_string());
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        Bloc::Tableau { .. } => {
+            out.push_str("{{t}}\n");
+            let document = Document {
+                blocs: vec![interne.clone()],
+            };
+            out.push_str(&serialiser(&document));
+        }
+        Bloc::Canonique(interne) => ecrire_bloc_canonique(interne, out),
+        autre => {
+            // Les autres blocs n'ont pas encore de forme canonique propre :
+            // on garde leur écriture historique plutôt que d'inventer une
+            // syntaxe que le parseur ne relirait pas.
+            let document = Document {
+                blocs: vec![autre.clone()],
+            };
+            out.push_str(&serialiser(&document));
+        }
+    }
 }
 
 /// Écrit un bloc comme s'il était seul — le corps d'un décor.
@@ -212,6 +329,14 @@ fn ecrire_seul(bloc: &Bloc, out: &mut String) {
 
 /// Écrit les propriétés : `clé=valeur`, les valeurs à espace acccolées.
 fn ecrire_proprietes(proprietes: &crate::langage::schema::Proprietes, out: &mut String) {
+    // Un callout a sa forme courte : `{callout note "Titre"}` ; ses écarts
+    // de style éventuels restent des propriétés explicites, relues telles
+    // quelles.
+    if proprietes.noms.first().map(String::as_str) == Some("callout") {
+        out.push_str(&crate::langage::callout::forme_proprietes(proprietes));
+        return;
+    }
+
     // Les noms d'abord — l'intention lit la première — puis les mesures.
     for (position, nom) in proprietes.noms.iter().enumerate() {
         if position > 0 {
@@ -299,6 +424,7 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                     crate::langage::references::FormeLivre::FrancaiseCourte => "court",
                     crate::langage::references::FormeLivre::Osis => "osis",
                     crate::langage::references::FormeLivre::SansPoint => "sanspoint",
+                    crate::langage::references::FormeLivre::Tob => "tob",
                 };
                 out.push_str("{{");
                 out.push_str(&ecrire_citation(elements));
@@ -363,6 +489,11 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 out.push_str(spec);
                 out.push('}');
             }
+            Inline::Meta(cle) => {
+                out.push_str("{{m ");
+                out.push_str(cle);
+                out.push_str("}}");
+            }
             Inline::Glo {
                 cle,
                 majuscule,
@@ -393,8 +524,149 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 echapper_cible(cible, out);
                 out.push(')');
             }
+            Inline::Canonique(interne) => ecrire_canonique(interne, out),
         }
     }
+}
+
+/// Écrit la forme canonique d'une balise, sans perdre son enveloppe.
+fn ecrire_canonique(interne: &Inline, out: &mut String) {
+    match interne {
+        Inline::Couleur { couleur, contenu } => {
+            out.push_str("{{c ");
+            out.push_str(couleur);
+            out.push('|');
+            ecrire_inline(contenu, out);
+            out.push_str("}}");
+        }
+        Inline::Date(spec) => {
+            out.push_str("{{d ");
+            out.push_str(spec);
+            out.push_str("}}");
+        }
+        Inline::Glo {
+            cle,
+            majuscule,
+            pluriel,
+        } => {
+            out.push_str("{{g ");
+            out.push_str(cle);
+            if *majuscule {
+                out.push_str(" majuscule");
+            }
+            if *pluriel {
+                out.push_str(" pluriel");
+            }
+            out.push_str("}}");
+        }
+        Inline::Bible(elements) => {
+            out.push_str("{{b ");
+            out.push_str(&ecrire_citation(elements));
+            out.push_str("}}");
+        }
+        Inline::BibleForme { elements, forme } => {
+            let suffixe = match forme {
+                crate::langage::references::FormeLivre::FrancaiseLongue => "long",
+                crate::langage::references::FormeLivre::FrancaiseCourte => "court",
+                crate::langage::references::FormeLivre::Osis => "osis",
+                crate::langage::references::FormeLivre::SansPoint => "sanspoint",
+                crate::langage::references::FormeLivre::Tob => "tob",
+            };
+            out.push_str("{{b ");
+            out.push_str(&ecrire_citation(elements));
+            out.push('|');
+            out.push_str(suffixe);
+            out.push_str("}}");
+        }
+        Inline::Meta(cle) => {
+            out.push_str("{{m ");
+            out.push_str(cle);
+            out.push_str("}}");
+        }
+        Inline::Canonique(interne) => ecrire_canonique(interne, out),
+        autre => ecrire_inline(std::slice::from_ref(autre), out),
+    }
+}
+
+/// Écrit une note de bas de page en texte source, **avec son balisage**.
+///
+/// Le panneau accepte les marqueurs inline (`**gras**`, `*italique*`,
+/// `{couleur:…}`, citation, lien, etc.). Seuls les crochets non appariés et
+/// une barre oblique finale sont échappés : sans cela, un `]` littéral
+/// refermerait la note avant la fin de la saisie.
+pub fn texte_note(contenu: &str) -> String {
+    let mut out = String::from("^[");
+    out.push_str(&contenu_note(contenu));
+    out.push(']');
+    out
+}
+
+/// Le contenu d'une note, échappé seulement pour rester à l'intérieur de ses
+/// crochets. Le balisage inline est conservé.
+pub(crate) fn contenu_note(contenu: &str) -> String {
+    let gardes = crochets_equilibres(contenu);
+    let mut out = String::with_capacity(contenu.len() + 2);
+    let mut echappe = false;
+
+    for (position, caractere) in contenu.char_indices() {
+        if echappe {
+            out.push(caractere);
+            echappe = false;
+            continue;
+        }
+
+        if caractere == '\\' {
+            out.push(caractere);
+            echappe = true;
+            continue;
+        }
+
+        if matches!(caractere, '[' | ']') && !gardes[position] {
+            out.push('\\');
+        }
+
+        out.push(caractere);
+    }
+
+    // Une barre finale échapperait le crochet fermant de la note : on la
+    // double pour qu'elle reste un caractère du texte.
+    if echappe {
+        out.push('\\');
+    }
+
+    out
+}
+
+/// Les positions des crochets qui forment une paire, en octets.
+///
+/// Un crochet isolé est échappé par [`contenu_note`] ; une paire — `[p. 45]`
+/// d'une citation, `[lien](cible)` — reste intacte pour que son balisage
+/// continue de fonctionner.
+fn crochets_equilibres(texte: &str) -> Vec<bool> {
+    let mut gardes = vec![false; texte.len()];
+    let mut pile = Vec::new();
+    let mut echappe = false;
+
+    for (position, caractere) in texte.char_indices() {
+        if echappe {
+            echappe = false;
+            continue;
+        }
+
+        match caractere {
+            '\\' => echappe = true,
+            '[' => pile.push(position),
+            ']' => {
+                if let Some(ouverture) = pile.pop() {
+                    gardes[ouverture] = true;
+                    gardes[position] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    gardes
 }
 
 /// Écrit du texte nu, en échappant les caractères qui ouvrent un marqueur.
@@ -424,6 +696,16 @@ fn echapper_cible(cible: &str, out: &mut String) {
             out.push('\\');
         }
 
+        out.push(caractere);
+    }
+}
+
+/// Échappe une valeur de paramètre entre guillemets.
+fn echapper_chaine_param(texte: &str, out: &mut String) {
+    for caractere in texte.chars() {
+        if caractere == '"' || caractere == '\\' {
+            out.push('\\');
+        }
         out.push(caractere);
     }
 }
@@ -838,6 +1120,34 @@ mod tests {
         assert_eq!(parse(&regenere), document);
     }
 
+    /// Le panneau de note accepte le balisage inline, et un crochet isolé
+    /// ne referme pas la note avant la fin de la saisie.
+    #[test]
+    fn une_note_saisie_garde_son_balisage() {
+        let texte = texte_note("Voir **gras**, *italique*, {rouge:rouge} et @dupont2023[p. 45].");
+
+        assert_eq!(
+            texte,
+            "^[Voir **gras**, *italique*, {rouge:rouge} et @dupont2023[p. 45].]"
+        );
+        let document = parse(&format!("{texte}\n"));
+
+        assert_eq!(
+            serialiser(&document),
+            format!("{texte}\n"),
+            "le balisage de la note revient sans perdre un caractère"
+        );
+
+        let texte = texte_note("un ] seul");
+        assert_eq!(texte, "^[un \\] seul]");
+        let document = parse(&format!("{texte}\n"));
+        assert_eq!(
+            serialiser(&document),
+            format!("{texte}\n"),
+            "le crochet isolé ne referme pas la note"
+        );
+    }
+
     /// Un texte qui ressemble à du balisage reste du texte.
     ///
     /// C'est le cas qui casse un sérialiseur naïf : une astérisque dans une
@@ -1087,6 +1397,22 @@ mod tests {
         let mut rangee: Vec<Inline> = Vec::new();
 
         for element in suite.drain(..) {
+            // Une citation ne se colle jamais au mot qui la précède : le
+            // `@` serait lu comme une adresse électronique. Une séparation
+            // d'un blanc est la forme canonique la plus simple.
+            let colle_au_mot = match rangee.last() {
+                Some(Inline::Texte(texte)) | Some(Inline::Litteral(texte)) => texte
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_'),
+                Some(Inline::Citation(_)) => true,
+                _ => false,
+            };
+
+            if colle_au_mot && matches!(element, Inline::Citation(_)) {
+                rangee.push(Inline::Texte(" ".to_string()));
+            }
+
             // Collé à un appel sans page, un lien reçoit son espace — sinon
             // son crochet serait lu comme la page —, et un texte qui
             // commencerait par un caractère de clé aussi — sinon il

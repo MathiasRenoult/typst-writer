@@ -29,6 +29,109 @@ fn etat_isole() -> State {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_tic_d_edition_ne_lance_pas_de_compilation() {
+    let mut state = etat_isole();
+    assert_eq!(state.mode, crate::app::state::ModeVue::Edition);
+    state.render.done = false;
+
+    let _ = update(&mut state, Message::RenderTick);
+
+    assert!(
+        !state.render.pending,
+        "sans vue de rendu, l'édition ne doit pas compiler le document"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_selection_et_la_recherche_du_rendu_se_routent() {
+    use typst::layout::{Abs, Point, Rect, Size};
+    use typst::syntax::Span;
+
+    let mut state = etat_isole();
+    let page = crate::typst::texte::PageTexte {
+        taille: Size::new(Abs::pt(500.0), Abs::pt(700.0)),
+        glyphes: vec![
+            crate::typst::texte::GlyphePlace {
+                texte: "Bonjour".into(),
+                rect: Rect::new(
+                    Point::new(Abs::pt(10.0), Abs::pt(10.0)),
+                    Point::new(Abs::pt(60.0), Abs::pt(24.0)),
+                ),
+                ligne: 0,
+                span: Span::detached(),
+            },
+            crate::typst::texte::GlyphePlace {
+                texte: " monde".into(),
+                rect: Rect::new(
+                    Point::new(Abs::pt(60.0), Abs::pt(10.0)),
+                    Point::new(Abs::pt(110.0), Abs::pt(24.0)),
+                ),
+                ligne: 0,
+                span: Span::detached(),
+            },
+        ],
+        liens: Vec::new(),
+        texte: "Bonjour monde".to_string(),
+        recherche: "bonjour monde".to_string(),
+        ancres: vec![Some(0); 7]
+            .into_iter()
+            .chain(vec![Some(1); 6])
+            .collect(),
+    };
+    let texte = std::sync::Arc::new(crate::typst::texte::DocumentTexte { pages: vec![page] });
+    state.render.lecteur_empreinte = Some("v1".to_string());
+    state.render.texte = Some(texte);
+    state.render.texte_empreinte = Some("v1".to_string());
+
+    let _ = update(
+        &mut state,
+        Message::SelectionApercuAppuyer {
+            page: 0,
+            point: (15.0, 15.0),
+            etendue: false,
+            clics: 1,
+        },
+    );
+    assert_eq!(
+        state
+            .render
+            .selection
+            .map(|selection| selection.ancre.glyphe),
+        Some(0)
+    );
+
+    let _ = update(
+        &mut state,
+        Message::SelectionApercuGlisser {
+            page: 0,
+            point: (70.0, 15.0),
+        },
+    );
+    assert_eq!(
+        state
+            .render
+            .selection
+            .map(|selection| selection.focus.glyphe),
+        Some(1)
+    );
+
+    let _ = update(&mut state, Message::RechercheApercuOuvrir);
+    let _ = update(
+        &mut state,
+        Message::RechercheApercuMotif("BONJOUR".to_string()),
+    );
+
+    assert!(state.render.recherche_apercu.visible);
+    assert_eq!(state.render.recherche_apercu.resultats.len(), 1);
+    assert_eq!(state.render.recherche_apercu.resultats[0].debut, 0);
+
+    let _ = update(&mut state, Message::RechercheApercuFermer);
+    assert!(!state.render.recherche_apercu.visible);
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn la_migration_a_plat_reprend_les_documents_dun_premier_lancement() {
     assert_eq!(
         std::env::var("TYPST_WRITER_TEST_ESPACE").as_deref(),
@@ -2293,10 +2396,13 @@ fn les_gestes_d_insertion_placent_texte_et_curseur() {
     state.editor.path = Some(state.project.dir.join("chapitres").join("01.typ"));
     let _ = state.editor.set_cursor_offset(state.editor.content().len());
     let _ = update(&mut state, Message::NoteInserer);
-    let _ = update(&mut state, Message::NoteTexte("typst".to_string()));
+    let _ = update(&mut state, Message::NoteTexte("un *mot*".to_string()));
     let _ = update(&mut state, Message::NoteValider);
     let contenu = state.editor.content();
-    assert!(contenu.ends_with("#footnote[typst]"), "{contenu}");
+    assert!(
+        contenu.ends_with("#footnote[un *mot*]"),
+        "les balises Typst restent dans la note : {contenu}"
+    );
 
     let _ = state.editor.set_cursor_offset(state.editor.content().len());
     let _ = update(&mut state, Message::EtiquetteInserer);
@@ -3669,11 +3775,33 @@ fn la_note_se_ecrit_dans_son_panneau_et_pose_sa_marque() {
         "la marque porte la note"
     );
 
+    // Le panneau accepte le balisage inline : ce sont les mêmes balises que
+    // dans le texte, pas du texte échappé.
+    let _ = state.editor.set_cursor_offset(state.editor.content().len());
+    let _ = update(&mut state, Message::NoteInserer);
+    let _ = update(
+        &mut state,
+        Message::NoteTexte("Voir **gras** et *italique*".to_string()),
+    );
+    let _ = update(&mut state, Message::NoteValider);
+    assert!(
+        state
+            .editor
+            .content()
+            .ends_with("^[Voir **gras** et *italique*]"),
+        "les balises vivent dans la note : {}",
+        state.editor.content()
+    );
+
     // Annuler n'écrit rien du tout.
     let _ = update(&mut state, Message::NoteInserer);
     let _ = update(&mut state, Message::NoteTexte("abandonnée".to_string()));
     let _ = update(&mut state, Message::NoteAnnuler);
-    assert_eq!(state.editor.content(), "^[voici ma note]", "rien de plus");
+    assert_eq!(
+        state.editor.content(),
+        "^[voici ma note]^[Voir **gras** et *italique*]",
+        "rien de plus"
+    );
 }
 
 #[test]
@@ -3765,18 +3893,115 @@ fn le_composeur_ecrit_le_code_a_sa_place() {
     assert!(state.extension.is_none(), "le composeur se referme");
     let contenu = state.editor.content();
     assert!(
-        contenu.contains("width: 12cm"),
-        "le réglage devient du code : {contenu}"
+        contenu.contains("{chart bar 12cm×6cm"),
+        "le réglage devient une balise compacte : {contenu}"
     );
     assert!(
-        contenu.contains("@local/cetz"),
-        "le paquet est nommé : {contenu}"
+        !contenu.contains("cetz"),
+        "primaviz a remplacé cetz : {contenu}"
     );
 
     // Annuler n'écrit rien.
     let _ = update(&mut state, Message::ExtensionOuvrir);
     let _ = update(&mut state, Message::ExtensionAnnuler);
     assert_eq!(state.editor.content(), contenu, "rien de plus");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_du_graphique_insere_une_balise_chart() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::ChartOuvrir);
+    assert!(state.chart.is_some(), "le panneau s'ouvre");
+
+    let _ = update(&mut state, Message::ChartType("pie".to_string()));
+    let _ = update(&mut state, Message::ChartTitre("Répartition".to_string()));
+    if let Some(dialogue) = state.chart.as_mut() {
+        dialogue.csv =
+            iced::widget::text_editor::Content::with_text("region,ventes\nNord,30\nSud,70\n");
+    }
+
+    let _ = update(&mut state, Message::ChartInserer);
+    assert!(state.chart.is_none(), "le panneau se referme");
+    let contenu = state.editor.content();
+    assert!(
+        contenu.contains("{chart pie \"Répartition\""),
+        "la balise compacte et le type sont posés : {contenu}"
+    );
+    assert!(
+        contenu.contains("Nord,30"),
+        "les données restent du CSV : {contenu}"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_du_graphique_refuse_un_csv_fautif_sans_rien_ecrire() {
+    let mut state = etat_isole();
+    let avant = state.editor.content();
+
+    let _ = update(&mut state, Message::ChartOuvrir);
+    if let Some(dialogue) = state.chart.as_mut() {
+        dialogue.csv = iced::widget::text_editor::Content::with_text("region,ventes\nNord\n");
+    }
+    let _ = update(&mut state, Message::ChartInserer);
+
+    assert!(state.chart.is_some(), "le panneau reste ouvert");
+    assert_eq!(state.editor.content(), avant, "rien n'est écrit");
+    assert!(
+        state
+            .note
+            .as_ref()
+            .is_some_and(|note| note.texte.contains("ligne 2")),
+        "la note dit la ligne fautive : {:?}",
+        state.note
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_du_callout_encadre_la_citation_sous_le_curseur() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("> Une citation.".into())),
+    );
+    let avant = state.editor.cursor_offset();
+
+    let _ = update(&mut state, Message::CalloutOuvrir);
+    let dialogue = state.callout.as_ref().expect("le panneau s'ouvre");
+    assert!(dialogue.sur_citation, "le curseur est dans une citation");
+    let _ = update(&mut state, Message::CalloutType("attention".to_string()));
+    let _ = update(&mut state, Message::CalloutTitre("Vigilance".to_string()));
+    let _ = update(&mut state, Message::CalloutInserer);
+
+    assert!(state.callout.is_none(), "le panneau se referme");
+    assert_eq!(
+        state.editor.content(),
+        "{callout attention \"Vigilance\"}\n> Une citation.",
+        "la citation existante est encadrée, sans être recopiée"
+    );
+    assert_eq!(
+        state.editor.cursor_offset(),
+        avant + "{callout attention \"Vigilance\"}\n".len(),
+        "le curseur reste dans la citation, après la balise"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_du_callout_insere_un_bloc_vide_quand_le_curseur_n_est_pas_dans_une_citation() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::CalloutOuvrir);
+    let _ = update(&mut state, Message::CalloutType("note".to_string()));
+    let _ = update(&mut state, Message::CalloutInserer);
+
+    assert_eq!(
+        state.editor.content(),
+        "{callout note}\n> ",
+        "le bloc et son curseur sont posés d'un seul geste"
+    );
 }
 
 /// Le glossaire se gère du panneau gauche : une entrée s'écrit, se
@@ -4137,6 +4362,47 @@ fn une_couleur_sur_une_selection_ne_perd_pas_le_texte() {
         state.editor.content(),
         "{#e74c3c:Un passage.}",
         "la sélection est teintée, jamais remplacée par du vide"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_prend_les_champs_sans_cliquer_ajouter() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::ReferenceBibliqueInserer);
+
+    let livres = crate::plugins::bible::livres(crate::plugins::bible::Traduction::Lsg);
+    let genese = livres
+        .iter()
+        .position(|livre| livre.osis == "Gen")
+        .expect("Genèse est dans la liste");
+    let _ = update(&mut state, Message::BiblePanneauLivre(genese));
+    let _ = update(&mut state, Message::BiblePanneauChapitre("3".into()));
+    let _ = update(&mut state, Message::BiblePanneauVersets("16".into()));
+
+    // Aucun « Ajouter » : l'insertion prend les champs tels quels.
+    let _ = update(&mut state, Message::BiblePanneauInserer);
+
+    assert_eq!(state.editor.content(), "{{Gn 3.16}}");
+    let (references, _) =
+        crate::plugins::bible::lire_groupe("Gn 3.16").expect("la balise se relit");
+    assert_eq!(references.len(), 1);
+    assert_eq!(references[0].livre, "Gen");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_prend_un_nom_tape_sans_selection() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::ReferenceBibliqueInserer);
+    let _ = update(&mut state, Message::BiblePanneauRecherche("Genèse".into()));
+    let _ = update(&mut state, Message::BiblePanneauChapitre("1".into()));
+    let _ = update(&mut state, Message::BiblePanneauInserer);
+
+    assert!(
+        state.editor.content().starts_with("{{Gn 1"),
+        "le nom tapé doit devenir le livre : {:?}",
+        state.editor.content()
     );
 }
 
@@ -4717,15 +4983,210 @@ fn la_completion_ecrit_la_forme_et_pas_le_libelle() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn un_arrobase_au_curseur_ouvre_le_composeur() {
+fn un_tab_sur_une_citation_ouverte_ouvre_le_menu_sans_manger_le_texte() {
     let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Voir @dup".into())),
+    );
+    state.reglages.fonctionnalites.bibliographie = true;
+    let avant = state.editor.content();
+
+    let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert_eq!(
+        state.editor.content(),
+        avant,
+        "Tab ne doit ni remplacer ni compléter le texte déjà tapé"
+    );
+    let composeur = state.composeur.as_ref().expect("le menu contextuel");
+    assert_eq!(composeur.etape, crate::app::composeur::Etape::Reference);
+    assert_eq!(
+        composeur.ancre,
+        avant.find('@').expect("la citation est là"),
+        "le menu s'ouvre sur la citation, pas ailleurs"
+    );
+    assert!(
+        composeur.edition.is_some(),
+        "la fermeture remplacera la citation en place"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_tab_hors_d_une_citation_garde_le_geste_de_l_editeur() {
+    let mut state = etat_isole();
+    state.reglages.fonctionnalites.bibliographie = true;
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Un texte".into())),
+    );
+
+    let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert!(
+        state.composeur.is_none(),
+        "Tab ne doit pas ouvrir de menu sans citation sous le curseur"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_tab_dans_un_code_ne_ouvre_pas_le_menu_de_citation() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("`@dup`".into())),
+    );
+    state.reglages.fonctionnalites.bibliographie = true;
+
+    let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert!(
+        state.composeur.is_none(),
+        "le contenu d'une bande de code n'est pas une citation"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_tab_dans_une_note_ouvre_le_menu_de_sa_citation() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Texte^[Voir @dup".into())),
+    );
+    state.reglages.fonctionnalites.bibliographie = true;
+    let avant = state.editor.content();
+
+    let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert_eq!(state.editor.content(), avant, "la note reste intacte");
+    let composeur = state.composeur.as_ref().expect("le menu de la citation");
+    assert_eq!(
+        composeur.ancre,
+        avant.find('@').expect("la citation de la note"),
+        "le menu s'ouvre sur la citation, dans la note"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_tab_sur_un_arrobase_seul_ouvre_aussi_le_menu() {
+    let mut state = etat_isole();
+    state.reglages.fonctionnalites.bibliographie = true;
     let _ = update(
         &mut state,
         Message::Editor(iced_code_editor::Message::Paste("@".into())),
     );
+
+    let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert_eq!(
+        state.editor.content(),
+        "@",
+        "l'arrobase reste dans la source"
+    );
+    let composeur = state.composeur.as_ref().expect("le menu contextuel");
+    assert!(composeur.saisie.is_empty(), "le champ part vide");
+    assert_eq!(composeur.edition, Some(1), "la plage remplacera l'arrobase");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_commande_citation_est_proposee_par_la_palette() {
+    let mut state = etat_isole();
+    state.reglages.fonctionnalites.bibliographie = true;
+    let _ = update(
+        &mut state,
+        Message::PaletteOuvrir(crate::app::palette::ModePalette::Systeme),
+    );
+    if let Some(palette) = state.palette.as_mut() {
+        palette.requete = "citation".to_string();
+        palette.selection = 0;
+    }
+    let items = state
+        .palette
+        .as_ref()
+        .map(|palette| palette.resultats(&state))
+        .unwrap_or_default();
+    assert!(
+        items.iter().any(|item| matches!(
+            item.action,
+            crate::app::palette::ItemAction::Commande(crate::app::palette::CommandeId::Citation)
+        )),
+        "la commande « Insérer une citation » est proposée"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_palette_rend_le_curseur_a_l_editeur_apres_insertion() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("..".into())),
+    );
+
+    assert!(state.palette.is_some(), "`..` ouvre la palette");
+    let _ = update(&mut state, Message::PaletteExecuter);
+
+    assert!(state.palette.is_none(), "la palette se referme");
+    assert_eq!(state.editor.content(), "{{c red|}}");
+    assert!(
+        state.editor.editor.is_focused(),
+        "le curseur revient dans l'éditeur après l'insertion"
+    );
+    assert_eq!(
+        state.editor.cursor_offset(),
+        8,
+        "le curseur est dans la balise"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_arrobase_tape_ouvre_le_composeur() {
+    let mut state = etat_isole();
+    state.reglages.fonctionnalites.bibliographie = true;
+    state.editor.editor.request_focus();
+    let _ = state
+        .editor
+        .update(iced_code_editor::Message::CanvasFocusGained);
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::CharacterInput('@')),
+    );
+
     assert!(
         state.composeur.is_some(),
-        "le @ tapé ouvre le composeur de notes"
+        "le `@` tapé ouvre le composeur de citation"
+    );
+    assert_eq!(state.editor.content(), "@", "le texte tapé est intact");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_geste_explicite_ouvre_le_composeur_sans_manger_le_texte() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste("Avant ".into())),
+    );
+    // Le bouton citation n'existe que si l'add-on bibliographie est actif ;
+    // l'épreuve l'active pour reproduire le geste réel de la barre.
+    state.reglages.fonctionnalites.bibliographie = true;
+
+    let _ = update(&mut state, Message::CitationOuvrir);
+
+    assert!(
+        state.composeur.is_some(),
+        "le bouton de citation ouvre le composeur"
+    );
+    assert_eq!(
+        state.editor.content(),
+        "Avant ",
+        "le document n'est pas touché avant la validation"
     );
 }
 
@@ -4873,4 +5334,354 @@ fn les_parametres_des_plugins_sont_un_panneau_distinct_des_normes() {
     let _ = update(&mut state, Message::MiseEnPageOuvrir);
     let panneau = state.mise_en_page.as_ref().expect("le panneau est ouvert");
     assert!(!panneau.plugins, "les normes ne sont pas les plugins");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn tab_et_maj_tab_changent_le_niveau_dune_liste_dans_lediteur() {
+    let mut state = etat_isole();
+    let source = "1. premier\n2. second\n";
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(source.to_string())),
+    );
+
+    let offset = state
+        .editor
+        .content()
+        .find("2. second")
+        .expect("la seconde ligne")
+        + 3;
+    let _ = state.editor.set_cursor_offset(offset);
+
+    // L'éditeur capte Tab ; l'application doit néanmoins prendre le geste
+    // pour la liste, et non insérer des espaces.
+    let _ = update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+    assert_eq!(
+        state.editor.content(),
+        "1. premier\n  2. second\n",
+        "Tab donne un niveau à la ligne numérotée"
+    );
+    assert_eq!(
+        state.editor.cursor_offset(),
+        offset + 2,
+        "le curseur suit le décalage de sa ligne"
+    );
+
+    // Maj+Tab est le message `FocusNavigationShiftTab` de l'éditeur : même
+    // porte, sens inverse.
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::FocusNavigationShiftTab),
+    );
+    assert_eq!(
+        state.editor.content(),
+        source,
+        "Maj+Tab rend son niveau initial"
+    );
+    assert_eq!(
+        state.editor.cursor_offset(),
+        offset,
+        "le curseur revient à sa place"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_etagere_creee_existe_meme_vide_et_se_range() {
+    let mut state = etat_isole();
+    let projets_avant = state.projects.len();
+
+    let _ = update(&mut state, Message::EtagereBrouillon("cours".to_string()));
+    let _ = update(&mut state, Message::EtagereCreer);
+    assert!(
+        state.etageres_ordre.iter().any(|nom| nom == "cours"),
+        "l'étagère vide est dans l'ordre"
+    );
+    assert_eq!(
+        state.projects.len(),
+        projets_avant,
+        "créer une étagère ne crée pas un projet"
+    );
+
+    let _ = update(
+        &mut state,
+        Message::EtagereBrouillon("articles".to_string()),
+    );
+    let _ = update(&mut state, Message::EtagereCreer);
+    let avant = state.etageres_ordre.clone();
+    let _ = update(&mut state, Message::EtagereMonter("articles".to_string()));
+    let apres = state.etageres_ordre.clone();
+    assert_eq!(
+        apres.len(),
+        avant.len(),
+        "monter une étagère n'en perd aucune"
+    );
+    assert_ne!(apres, avant, "l'ordre a changé");
+    assert_eq!(
+        apres.iter().position(|nom| nom == "articles"),
+        avant
+            .iter()
+            .position(|nom| nom == "articles")
+            .map(|p| p.saturating_sub(1)),
+        "l'étagère a gagné un rang"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn ctrl_clic_selectionne_sans_ouvrir_et_maj_clic_prend_la_plage() {
+    let mut state = etat_isole();
+    let premier = state.project.dir.clone();
+    let second = crate::project::create("autre-document").expect("second projet");
+    state.projects = crate::project::list_projects();
+    let avant = state.project.dir.clone();
+
+    state.controle_tenu = true;
+    let _ = update(&mut state, Message::ProjetCliquer(second.clone()));
+    state.controle_tenu = false;
+    assert!(
+        state.selection_projets.contains(&second),
+        "Ctrl+clic sélectionne le document"
+    );
+    assert_eq!(
+        state.project.dir, avant,
+        "la sélection n'ouvre pas le document"
+    );
+
+    state.maj_tenu = true;
+    let _ = update(&mut state, Message::ProjetCliquer(premier.clone()));
+    state.maj_tenu = false;
+    assert_eq!(
+        state.selection_projets.len(),
+        2,
+        "Maj+clic prend toute la plage"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn les_normes_se_changent_pour_tous_les_documents_selectionnes() {
+    let mut state = etat_isole();
+    let premier = state.project.dir.clone();
+    let second = crate::project::create("second-document").expect("second projet");
+    state.projects = crate::project::list_projects();
+
+    state.selection_projets.insert(premier.clone());
+    state.selection_projets.insert(second.clone());
+    let _ = update(&mut state, Message::SelectionNormes);
+    let lot = state.normes_lot.as_ref().expect("la fenêtre de normes");
+    assert_eq!(lot.cibles.len(), 2, "les deux documents sont visés");
+
+    let _ = update(
+        &mut state,
+        Message::NormesLotChoisir("Classique".to_string()),
+    );
+    let _ = update(&mut state, Message::NormesLotAppliquer);
+    assert!(state.normes_lot.is_none(), "la fenêtre se referme");
+    for dir in [&premier, &second] {
+        assert!(
+            dir.join(crate::mise_en_page::REGLAGES).is_file(),
+            "les normes sont écrites dans {}",
+            dir.display()
+        );
+    }
+}
+
+/// Le fichier de normes d'un projet porte le paramétrage des plugins : à
+/// l'ouverture, la traduction et l'ordre bibliques de la vue suivent.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn ouvrir_un_projet_norme_configure_les_plugins() {
+    let mut state = etat_isole();
+    let mut norme = crate::mise_en_page::modele::MiseEnPage::default();
+    norme.parametres_plugins.biblique.traduction = "darby".to_string();
+    norme.parametres_plugins.biblique.tri = "canonique".to_string();
+    std::fs::write(
+        state.project.dir.join(crate::mise_en_page::REGLAGES),
+        norme.ecrire().expect("les normes s'écrivent"),
+    )
+    .expect("le fichier de normes est posé");
+
+    state.refresh_context();
+
+    assert_eq!(
+        state.plugins.bible.traduction,
+        crate::plugins::bible::Traduction::Darby,
+        "la traduction vient du fichier de normes"
+    );
+    assert_eq!(
+        state.plugins.bible.tri,
+        crate::plugins::bible::TriReferences::Canonique,
+        "l'ordre vient du fichier de normes"
+    );
+}
+
+/// Le même contrat par le geste réel d'ouverture d'un projet : les normes du
+/// document ouvert configurent l'interface, l'éditeur et les plugins.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn ouvrir_un_projet_par_le_geste_configure_les_plugins() {
+    let mut state = etat_isole();
+    let second = crate::project::create("projet-norme").expect("second projet");
+    let mut norme = crate::mise_en_page::modele::MiseEnPage::default();
+    norme.parametres_plugins.biblique.traduction = "darby".to_string();
+    norme.parametres_plugins.biblique.tri = "canonique".to_string();
+    norme.fonctionnalites.bibliographie = false;
+    std::fs::write(
+        second.join(crate::mise_en_page::REGLAGES),
+        norme.ecrire().expect("les normes s'écrivent"),
+    )
+    .expect("le fichier de normes est posé");
+    state.plugins.bibliographie.edition = Some(
+        crate::plugins::bibliographie::EditionReference::nouvelle(true),
+    );
+
+    let _ = update(&mut state, Message::OpenProject(second.clone()));
+
+    assert_eq!(state.project.dir, second, "le projet a bien été ouvert");
+    assert_eq!(
+        state.plugins.bible.traduction,
+        crate::plugins::bible::Traduction::Darby,
+        "le plugin biblique suit les normes du projet ouvert"
+    );
+    assert_eq!(
+        state.plugins.bible.tri,
+        crate::plugins::bible::TriReferences::Canonique
+    );
+    assert!(
+        !state.reglages.fonctionnalites.bibliographie,
+        "l'interface lit l'activation du projet ouvert"
+    );
+    assert!(
+        state.plugins.bibliographie.edition.is_none(),
+        "une fenêtre du plugin débranché se referme à l'ouverture"
+    );
+}
+
+/// Le panneau de gestion des fichiers s'ouvre dans la fenêtre des normes et
+/// laisse le document intact tant qu'on n'a pas appliqué.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn le_panneau_des_fichiers_de_normes_souvre_sans_toucher_au_document() {
+    let mut state = etat_isole();
+    let avant = std::fs::read_to_string(state.project.dir.join(crate::mise_en_page::REGLAGES))
+        .unwrap_or_default();
+
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    let _ = update(&mut state, Message::MiseEnPagePanneau(9));
+
+    assert_eq!(
+        state.mise_en_page.as_ref().map(|dialogue| dialogue.panneau),
+        Some(9),
+        "le panneau des fichiers est celui qui est montré"
+    );
+    let apres = std::fs::read_to_string(state.project.dir.join(crate::mise_en_page::REGLAGES))
+        .unwrap_or_default();
+    assert_eq!(avant, apres, "ouvrir un panneau n'écrit aucune norme");
+}
+
+/// Appliquer une norme depuis la bibliothèque écrit son fichier et configure
+/// les plugins dans le même geste.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn appliquer_une_norme_de_la_bibliotheque_configure_les_plugins() {
+    let mut state = etat_isole();
+    let mut norme = crate::mise_en_page::modele::MiseEnPage::default();
+    norme.parametres_plugins.biblique.traduction = "darby".to_string();
+    norme.parametres_plugins.biblique.tri = "canonique".to_string();
+    crate::project::enregistrer_norme("Norme plugins", &norme).expect("norme dans la bibliothèque");
+
+    let _ = update(
+        &mut state,
+        Message::NormesAppliquerAuDocument("Norme plugins".to_string()),
+    );
+
+    let texte = std::fs::read_to_string(state.project.dir.join(crate::mise_en_page::REGLAGES))
+        .expect("le fichier de normes est écrit");
+    assert!(
+        texte.contains("parametres_plugins"),
+        "le paramétrage des plugins voyage avec la norme :\n{texte}"
+    );
+    assert_eq!(
+        state.plugins.bible.traduction,
+        crate::plugins::bible::Traduction::Darby
+    );
+    assert_eq!(
+        state.plugins.bible.tri,
+        crate::plugins::bible::TriReferences::Canonique
+    );
+}
+
+/// Retirer une norme demande son mot : la bibliothèque ne perd pas une
+/// entrée sur un clic malheureux, et un document qui utilisait la norme garde
+/// son propre fichier.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn supprimer_une_norme_demande_son_mot() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    assert!(
+        crate::project::norme("Classique").is_some(),
+        "la norme livrée est là avant le geste"
+    );
+
+    let _ = update(
+        &mut state,
+        Message::NormesSupprimerDemande("Classique".to_string()),
+    );
+    assert!(state.confirmation.is_some(), "le geste attend une réponse");
+    assert!(
+        crate::project::norme("Classique").is_some(),
+        "rien n'est retiré avant la réponse"
+    );
+
+    let _ = update(&mut state, Message::ConfirmationConfirmer);
+    assert!(
+        crate::project::norme("Classique").is_none(),
+        "la norme part après le mot"
+    );
+    assert!(state.confirmation.is_none(), "la question est consommée");
+}
+
+/// Un fichier importé entre dans la bibliothèque sous un nom distinct, et la
+/// fenêtre montre ce fichier comme la norme courante.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_fichier_de_normes_importe_entre_dans_la_bibliotheque() {
+    let mut state = etat_isole();
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+
+    let norme = crate::mise_en_page::modele::MiseEnPage {
+        page_de_titre: true,
+        parametres_plugins: crate::mise_en_page::modele::ParametresPlugins {
+            biblique: crate::mise_en_page::modele::ParametresBiblique {
+                traduction: "darby".to_string(),
+                tri: "canonique".to_string(),
+            },
+            callouts: Default::default(),
+        },
+        ..Default::default()
+    };
+    let chemin = state.project.dir.join("norme-importee.toml");
+    std::fs::write(&chemin, norme.ecrire().expect("norme sérialisée")).expect("fichier source");
+
+    let _ = update(&mut state, Message::NormesFichierImporte(Some(chemin)));
+
+    assert!(
+        crate::project::noms_de_normes()
+            .iter()
+            .any(|nom| nom == "norme-importee"),
+        "le fichier importé est une entrée de la bibliothèque"
+    );
+    let dialogue = state
+        .mise_en_page
+        .as_ref()
+        .expect("la fenêtre reste ouverte");
+    assert_eq!(dialogue.norme_originale, "norme-importee");
+    assert!(dialogue.reglages.page_de_titre);
+    let importee =
+        crate::project::norme("norme-importee").expect("la norme est dans la bibliothèque");
+    assert_eq!(importee.parametres_plugins.biblique.traduction, "darby");
+    assert_eq!(importee.parametres_plugins.biblique.tri, "canonique");
 }

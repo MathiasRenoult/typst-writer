@@ -6,8 +6,8 @@
 use crate::app::{Message, State};
 use crate::plugins::bible::{
     BiblePanneau, ElementCitation, FormeLivre, Reference, ReferenceCliquee, ReferenceEdition,
-    Traduction, afficher_groupe, afficher_groupe_forme, extrait, livres, position_reference,
-    references_depuis_texte,
+    Traduction, afficher_groupe, afficher_groupe_forme, depuis_texte, extrait, filtrer_livres,
+    livres, position_reference, references_depuis_texte,
 };
 use iced::Task;
 
@@ -18,29 +18,51 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
         Message::ReferenceBibliqueInserer => ouvrir_le_panneau(state),
 
         Message::BiblePanneauRecherche(recherche) => {
+            let tous = livres(Traduction::Lsg);
+            let filtres = filtrer_livres(&tous, &recherche);
             if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
                 panneau.recherche = recherche;
+                panneau.saisie_modifiee = true;
+                let choix_valide = panneau
+                    .livre
+                    .and_then(|index| tous.get(index))
+                    .is_some_and(|livre| filtres.iter().any(|filtre| filtre.osis == livre.osis));
+                if !choix_valide {
+                    panneau.livre = None;
+                }
             }
             Task::none()
         }
         Message::BiblePanneauLivre(index) => {
-            let total = livres(Traduction::Lsg).len();
+            let tous = livres(Traduction::Lsg);
+            let filtre = state
+                .plugins
+                .bible
+                .panneau
+                .as_ref()
+                .map(|panneau| panneau.recherche.clone())
+                .unwrap_or_default();
+            let filtres = filtrer_livres(&tous, &filtre);
             if let Some(panneau) = state.plugins.bible.panneau.as_mut()
-                && index < total
+                && let Some(livre) = tous.get(index)
+                && filtres.iter().any(|filtre| filtre.osis == livre.osis)
             {
                 panneau.livre = Some(index);
+                panneau.saisie_modifiee = true;
             }
             Task::none()
         }
         Message::BiblePanneauChapitre(chapitre) => {
             if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
                 panneau.chapitre = chapitre;
+                panneau.saisie_modifiee = true;
             }
             Task::none()
         }
         Message::BiblePanneauVersets(versets) => {
             if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
                 panneau.versets = versets;
+                panneau.saisie_modifiee = true;
             }
             Task::none()
         }
@@ -60,8 +82,10 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::BiblePanneauForme(forme) => {
+            let tous = livres(Traduction::Lsg);
             if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
                 panneau.forme = forme;
+                panneau.renouveler_choix(&tous, forme);
             }
             Task::none()
         }
@@ -138,9 +162,9 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
 
 /// Ouvre le panneau d'insertion et prend le clavier.
 fn ouvrir_le_panneau(state: &mut State) -> Task<Message> {
-    state.plugins.bible.panneau = Some(BiblePanneau::default());
+    state.plugins.bible.panneau = Some(BiblePanneau::avec_livres(&livres(Traduction::Lsg)));
     state.editor.editor.lose_focus();
-    iced::widget::operation::focus(crate::ui::bible::id_champ())
+    Task::none()
 }
 
 /// Prépare l'édition d'une référence de la consultation : le livre, le
@@ -227,6 +251,7 @@ fn enregistrer_edition(state: &mut State) -> Task<Message> {
             FormeLivre::FrancaiseCourte => "|court",
             FormeLivre::Osis => "|osis",
             FormeLivre::SansPoint => "|sanspoint",
+            FormeLivre::Tob => "|tob",
         });
     }
     let texte = format!("{{{{{corps}}}}}");
@@ -257,17 +282,14 @@ fn ajouter_au_panneau(state: &mut State) -> Task<Message> {
     let Some(panneau) = state.plugins.bible.panneau.as_mut() else {
         return Task::none();
     };
-    let Some(index) = panneau.livre else {
+    let tous = livres(Traduction::Lsg);
+    let Some(_) = livre_du_panneau(panneau, &tous) else {
         state.note = Some(crate::app::state::Note::info(
             "Choisissez d'abord un livre biblique.",
         ));
         return Task::none();
     };
-    let livres = livres(Traduction::Lsg);
-    let Some(livre) = livres.get(index) else {
-        return Task::none();
-    };
-    let nouvelles = references_depuis_texte(&livre.osis, &panneau.chapitre, &panneau.versets);
+    let nouvelles = references_du_panneau(panneau, &tous);
     if nouvelles.is_empty() {
         state.note = Some(crate::app::state::Note::info(
             "Indiquez un chapitre et des versets valides.",
@@ -277,17 +299,77 @@ fn ajouter_au_panneau(state: &mut State) -> Task<Message> {
 
     panneau.references.extend(nouvelles);
     panneau.versets.clear();
+    panneau.saisie_modifiee = false;
     Task::none()
+}
+
+/// Le livre désigné par la liste, ou par le texte encore dans le champ.
+///
+/// Le widget ne rend un livre que lorsqu'on choisit une option ; si l'auteur
+/// a tapé un nom exact puis a inséré sans cliquer, on le résout ici. Un texte
+/// ambigu ne désigne aucun livre : il ne faut pas prendre le premier venu.
+fn livre_du_panneau(
+    panneau: &BiblePanneau,
+    tous: &[crate::plugins::bible::LivreConnu],
+) -> Option<usize> {
+    if let Some(index) = panneau.livre
+        && index < tous.len()
+    {
+        return Some(index);
+    }
+
+    let recherche = panneau.recherche.trim();
+    if recherche.is_empty() {
+        return None;
+    }
+
+    let code = crate::langage::references::code_du_livre(recherche)
+        .or_else(|| depuis_texte(recherche).map(|reference| reference.livre));
+    if let Some(code) = code {
+        return tous.iter().position(|livre| livre.osis == code);
+    }
+
+    let filtres = filtrer_livres(tous, recherche);
+    if filtres.len() == 1 {
+        tous.iter().position(|livre| livre.osis == filtres[0].osis)
+    } else {
+        None
+    }
+}
+
+/// Les références décrites par les champs courants du panneau.
+fn references_du_panneau(
+    panneau: &BiblePanneau,
+    tous: &[crate::plugins::bible::LivreConnu],
+) -> Vec<Reference> {
+    let Some(index) = livre_du_panneau(panneau, tous) else {
+        return Vec::new();
+    };
+    let Some(livre) = tous.get(index) else {
+        return Vec::new();
+    };
+    references_depuis_texte(&livre.osis, &panneau.chapitre, &panneau.versets)
 }
 
 /// Pose la citation construite au curseur et referme le panneau.
 fn inserer_la_citation(state: &mut State) -> Task<Message> {
-    let vide = state
-        .plugins
-        .bible
-        .panneau
-        .as_ref()
-        .is_none_or(|panneau| panneau.references.is_empty());
+    let vide = {
+        let Some(panneau) = state.plugins.bible.panneau.as_mut() else {
+            return Task::none();
+        };
+        let tous = livres(Traduction::Lsg);
+        let nouvelles = if panneau.saisie_modifiee {
+            references_du_panneau(panneau, &tous)
+        } else {
+            Vec::new()
+        };
+        for reference in nouvelles {
+            if !panneau.references.contains(&reference) {
+                panneau.references.push(reference);
+            }
+        }
+        panneau.references.is_empty()
+    };
     if vide {
         state.note = Some(crate::app::state::Note::info(
             "Ajoutez au moins une référence avant d'insérer.",
@@ -318,6 +400,7 @@ fn inserer_la_citation(state: &mut State) -> Task<Message> {
             FormeLivre::FrancaiseCourte => "|court",
             FormeLivre::Osis => "|osis",
             FormeLivre::SansPoint => "|sanspoint",
+            FormeLivre::Tob => "|tob",
         });
     }
 
@@ -345,4 +428,61 @@ fn aller_a_la_reference(state: &mut State, reference: &str) -> Task<Message> {
         .editor
         .selectionner_plage(debut, fin)
         .map(Message::Editor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn genese(tous: &[crate::plugins::bible::LivreConnu]) -> usize {
+        tous.iter()
+            .position(|livre| livre.osis == "Gen")
+            .expect("la Genèse")
+    }
+
+    #[test]
+    fn les_champs_forment_une_reference_sans_cliquer_ajouter() {
+        let tous = livres(Traduction::Lsg);
+        let mut panneau = BiblePanneau::avec_livres(&tous);
+        assert_eq!(
+            panneau.choix.options().len(),
+            tous.len(),
+            "la liste cherchable porte tous les livres"
+        );
+        panneau.livre = Some(genese(&tous));
+        panneau.chapitre = "3".to_string();
+        panneau.versets = "16".to_string();
+
+        let references = references_du_panneau(&panneau, &tous);
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].livre, "Gen");
+        assert_eq!(references[0].chapitre, 3);
+        assert_eq!(references[0].verset_debut, 16);
+    }
+
+    #[test]
+    fn un_nom_tape_resout_le_livre_meme_sans_selection() {
+        let tous = livres(Traduction::Lsg);
+        let mut panneau = BiblePanneau::avec_livres(&tous);
+        panneau.recherche = "Genèse".to_string();
+        panneau.chapitre = "1".to_string();
+
+        let references = references_du_panneau(&panneau, &tous);
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].livre, "Gen");
+        assert_eq!(references[0].chapitre, 1);
+    }
+
+    #[test]
+    fn un_texte_ambigu_ne_designe_aucun_livre() {
+        let tous = livres(Traduction::Lsg);
+        let mut panneau = BiblePanneau::avec_livres(&tous);
+        panneau.recherche = "a".to_string();
+        panneau.chapitre = "1".to_string();
+
+        assert!(
+            references_du_panneau(&panneau, &tous).is_empty(),
+            "un filtre qui laisse plusieurs livres ne doit pas en choisir un"
+        );
+    }
 }

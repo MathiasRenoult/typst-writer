@@ -29,6 +29,23 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
                 if partage.lecteur.is_some() {
                     state.render.lecteur.clone_from(&partage.lecteur);
+                    state.render.lecteur_empreinte = Some(empreinte.clone());
+                    state.render.accorder_texte_au_pdf();
+                    let texte_pret = state.render.texte_est_pret(&empreinte);
+                    if let Some(document) = state.render.document.as_ref().filter(|_| !texte_pret) {
+                        state.render.texte_en_cours = Some(empreinte.clone());
+                        let tache = extraire_texte(document.clone(), empreinte.clone());
+                        let total = state
+                            .render
+                            .document
+                            .as_deref()
+                            .map_or(0, crate::typst::render::page_count);
+                        state.render.invalidate_rasterization(total);
+                        let raster = super::rasterisation::visible(state);
+
+                        return Task::batch([raster, tache]);
+                    }
+
                     let total = state
                         .render
                         .document
@@ -42,6 +59,16 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             if state.render.document.is_none() && !state.render.done {
                 state.render.pending = true;
                 return super::compile_task(state);
+            }
+
+            // Une vue de rendu ouverte après une compilation faite en édition
+            // n'a pas encore sa couche texte. Elle se prépare ici, une seule
+            // fois, sans attendre un nouveau cycle de compilation.
+            if let Some(document) = state.render.document.clone()
+                && !state.render.texte_est_pret(&empreinte)
+            {
+                state.render.texte_en_cours = Some(empreinte.clone());
+                return extraire_texte(document, empreinte);
             }
 
             if state.render.document.is_some()
@@ -93,18 +120,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return tache;
             }
 
-            if let Some(tache) = crate::app::epreuves::driver_composeur(state) {
-                return tache;
-            }
-
-            if let Some(tache) = crate::app::epreuves::driver_glyphe(state) {
-                return tache;
-            }
-
-            if let Some(tache) = crate::app::epreuves::driver_annulation(state) {
-                return tache;
-            }
-
             // Chaque fenêtre de rendu visible montre son document — celle
             // du démarrage aussi (bug-report-9 : l'initialisation laissait
             // l'aperçu vide tant qu'on ne basculait pas de mode).
@@ -117,17 +132,24 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // tics, et seulement quand le texte a changé. Le calculer chez elle,
             // c'était cloner le document entier à chaque image — deux fois,
             // puisque la barre d'état et le panneau le demandent chacun.
-            // Les glyphes suivent le texte, **quel que soit** le chemin qui
-            // l'a changé : frappe, citation insérée, remplacement, bloc
-            // déplacé. Leur repose est sensible au changement : un document
-            // immobile ne coûte rien, et il n'y a plus de chemin oublié.
-            state.editor.marques_a_jour();
-
-            if state.render.words_pending {
+            if state.render.words_pending
+                && state.render.words_depuis.is_none_or(|depuis| {
+                    depuis.elapsed()
+                        >= std::time::Duration::from_millis(crate::app::state::IDLE_DELAY_MS)
+                })
+            {
                 let content = state.editor.content();
 
                 state.render.words = Some(state.content_word_count(&content));
                 state.render.words_pending = false;
+                state.render.words_depuis = None;
+            }
+
+            // Sans vue de rendu, il n'y a rien à compiler ni à rasteriser.
+            // La compilation d'un gros document ne doit pas être le prix
+            // caché de l'écriture : elle reprend quand l'aperçu est demandé.
+            if !super::a_une_vue_de_rendu(state) {
+                return Task::none();
             }
 
             if state.render.pending {
@@ -155,6 +177,13 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::RenderDone(outcome) => {
             state.render.pending = false;
+            // Une compilation a eu lieu, même si son résultat est refusé
+            // ci-dessous : le tic suivant ne doit pas croire qu'aucune
+            // compilation n'a jamais été tentée et relancer la boucle à
+            // 100 ms. Le texte courant sera recompilé par `compile_due` au
+            // repos, sans transformer un document volumineux en bourrage CPU.
+            state.render.done = true;
+
             // Un retour périmé ne se fait pas passer pour l'état courant : le
             // texte a changé depuis la compilation, ou le projet portant ce
             // chemin a été remplacé sous le même nom. Comparer les deux
@@ -165,7 +194,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
             state.render.export_tente = false;
-            state.render.done = true;
             let chapter_page = outcome.chapter_page;
 
             state.render.content = outcome.content;
@@ -195,6 +223,11 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     lecteur: None,
                 });
 
+            // Le PDF exporté est la source de l'image ; la couche texte, elle,
+            // vient du document compilé. On garde le document cloné pour
+            // l'extraire hors du fil d'affichage.
+            let document_pour_texte = outcome.document.clone();
+
             if outcome.document.is_some() {
                 state.render.document = outcome.document;
             }
@@ -204,6 +237,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             // (double tampon) — mais elles sont marquées périmées, et seules
             // les pages visibles seront rasterisées à nouveau.
             state.render.revision += 1;
+            state
+                .render
+                .generation
+                .store(state.render.revision, std::sync::atomic::Ordering::Relaxed);
 
             // Les tâches de l'ancienne révision peuvent encore finir, mais
             // chacune porte sa propre clé et ne réserve plus de place pour la
@@ -235,73 +272,91 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             for index in 0..total {
                 state.render.stale.insert(index);
             }
+            state.render.qualite_rapide.clear();
 
             // Rendre les pages visibles, et amener l'aperçu sur le chapitre
-            // qu'on écrit s'il vient de changer.
-            Task::batch([
-                super::rasterisation::visible(state),
-                super::follow_chapter(state),
-            ])
+            // qu'on écrit s'il vient de changer. Quand un PDF neuf est en
+            // préparation, rasteriser l'ancien serait du travail perdu : on
+            // attend son arrivée, qui relancera la rasterisation.
+            //
+            // Hors de la vue de rendu, rien de tout cela n'est visible : ni
+            // extraction de texte, ni rasterisation, ni défilement d'aperçu.
+            // Une compilation de projet peut ainsi rester une compilation,
+            // même si le document compilé fait des centaines de pages.
+            let rendu_actif = state.mode == crate::app::state::ModeVue::Rendu;
+            let pdf_a_generer = rendu_actif
+                && !state.render.export_en_cours
+                && state.render.lecteur_empreinte.as_deref() != Some(state.render.content.as_str())
+                && document_pour_texte.is_some();
+            let mut taches = Vec::new();
+
+            if rendu_actif {
+                if !pdf_a_generer {
+                    taches.push(super::rasterisation::visible(state));
+                }
+                taches.push(super::follow_chapter(state));
+            }
+
+            if rendu_actif && let Some(document) = document_pour_texte.clone() {
+                let empreinte = state.render.content.clone();
+                state.render.texte_en_cours = Some(empreinte.clone());
+                taches.push(Task::perform(
+                    async move { crate::typst::texte::extraire(&document) },
+                    move |texte| Message::TexteApercuPret(empreinte.clone(), texte),
+                ));
+            }
+
+            // La vue de rendu montre le PDF du texte compilé, pas celui de la
+            // compilation précédente. On l'exporte ici depuis le document
+            // déjà compilé — sans relancer Typst — et on ne le remplace
+            // qu'avec un PDF qui porte la même empreinte. En cas d'échec de
+            // compilation, aucun document neuf n'existe : l'ancien PDF reste,
+            // marqué périmé par les diagnostics.
+            if pdf_a_generer && let Some(document) = document_pour_texte {
+                let empreinte = state.render.content.clone();
+                state.render.export_en_cours = true;
+
+                taches.push(Task::perform(
+                    async move { crate::typst::render::pdf_du_document(&document) },
+                    move |octets| {
+                        Message::PdfDocumentPret(
+                            empreinte.clone(),
+                            octets.ok_or_else(|| {
+                                "Le PDF du document n'a pas pu être généré.".to_string()
+                            }),
+                        )
+                    },
+                ));
+            }
+
+            Task::batch(taches)
         }
         Message::PdfApercu(resultat) => {
             state.render.export_en_cours = false;
+            let empreinte = state.render.export_empreinte.take();
 
-            let octets = match resultat {
-                Ok(octets) => octets,
-                Err(probleme) => {
-                    state.render.errors.push(crate::typst::render::Diagnostic {
-                        origine: crate::typst::render::Origine::ExportPdf,
-                        message: probleme.clone(),
-                        line: None,
-                        column: None,
-                        file: None,
-                    });
-                    state.note = Some(crate::app::state::Note::erreur(probleme));
-                    return Task::none();
-                }
-            };
-
-            match crate::typst::render::ouvrir_pdf(octets) {
-                Some(pdf) => {
-                    let partage = std::sync::Arc::new(pdf);
-
-                    if let Some(empreinte) = state.render.export_empreinte.take() {
-                        state
-                            .rendus_partages
-                            .entry(empreinte)
-                            .or_default()
-                            .completant(&crate::app::state::RenduPartage {
-                                document: None,
-                                lecteur: Some(partage.clone()),
-                            });
-                    }
-
-                    state.render.lecteur = Some(partage);
-                    let total = state
-                        .render
-                        .document
-                        .as_deref()
-                        .map_or(0, crate::typst::render::page_count);
-                    state.render.invalidate_rasterization(total);
-                    super::rasterisation::visible(state)
-                }
-                None => {
-                    state.render.errors.push(crate::typst::render::Diagnostic {
-                        origine: crate::typst::render::Origine::RenduPdf,
-                        message: "Le PDF généré'est pas lisible : le rendu reste en attente."
-                            .to_string(),
-                        line: None,
-                        column: None,
-                        file: None,
-                    });
-                    state.note = Some(crate::app::state::Note::erreur(
-                        "Le PDF généré'est pas lisible : le rendu reste en attente.".to_string(),
-                    ));
-                    Task::none()
-                }
+            // Le PDF exporté peut arriver après une frappe : il ne doit pas
+            // remplacer l'aperçu d'un texte qui n'est plus à l'écran.
+            let attendue = state.compilation_fingerprint();
+            if empreinte.as_deref() != Some(attendue.as_str()) {
+                return Task::none();
             }
+
+            installer_pdf(state, empreinte, resultat)
         }
-        Message::PageRendered(revision, index, image, boite) => {
+        Message::PdfDocumentPret(empreinte, resultat) => {
+            state.render.export_en_cours = false;
+
+            // Une compilation plus récente a pris la main : ce PDF décrit un
+            // document qui n'est plus affiché. Le prochain rendu en produira
+            // un pour la version courante.
+            if empreinte != state.render.content {
+                return Task::none();
+            }
+
+            installer_pdf(state, Some(empreinte), resultat)
+        }
+        Message::PageRendered(revision, index, image, boite, rapide) => {
             state.render.finish_page_render(revision, index);
 
             // Une compilation est arrivée pendant le rendu : cette image
@@ -336,10 +391,11 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.render.image_hashes.insert(index, image.hash);
 
                 // Un seul `Handle` par page, créé ici et réutilisé tel quel
-                // par `view()` : le backend retrouve sa texture et ne la
-                // retéléverse pas. L'ancienne image reste en place jusqu'à
-                // ce que celle-ci la remplace — l'écran ne passe jamais par
-                // le vide.
+                // par `view()` : le backend retrouve sa texture et ne le
+                // retéléverse pas. L'ancienne image reste **sous** la nouvelle
+                // jusqu'à ce que celle-ci soit dessinée : une page ne passe
+                // jamais par un blanc pendant le téléversement.
+                let ancienne = state.render.page_cache.remove(&index);
                 state.render.page_cache.insert(
                     index,
                     crate::app::state::Tranche {
@@ -348,8 +404,22 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                         largeur: boite.2,
                         hauteur: boite.3,
                         image: Handle::from_rgba(image.width, image.height, image.pixels),
+                        empreinte: state.render.lecteur_empreinte.clone(),
+                        precedente: ancienne.map(|mut tranche| {
+                            // Une seule image de secours : sinon la chaîne
+                            // grandirait à chaque rendu.
+                            tranche.precedente = None;
+                            Box::new(tranche)
+                        }),
                     },
                 );
+
+                // Une seule passe : la page rapide est la page finale. Le
+                // second rendu « fin » a été supprimé — il doublait le coût
+                // de chaque page pour une différence sous-perceptuelle.
+                if rapide {
+                    state.render.qualite_rapide.remove(&index);
+                }
 
                 // Une image peut arriver après qu'on a défilé ailleurs :
                 // la refuser tout de suite, plutôt que de la garder pour rien.
@@ -384,11 +454,23 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 (first, last)
             };
 
+            // La plage exacte sert au travail de rasterisation ; la plage
+            // avec marge ne sert qu'à garder des widgets et des images autour
+            // du viewport. Confondre les deux faisait rasteriser une page
+            // invisible à chaque défilement.
+            let visible_exact = state.render.document.as_deref().map(|document| {
+                let sizes =
+                    crate::ui::preview::sizes_of_with_zoom(document, bounds, state.render.zoom);
+                crate::ui::preview::visible_pages_exact(&sizes, scroll.1, scroll.1 + bounds.height)
+            });
+
             let unchanged = state.render.visible == Some((first, last))
+                && state.render.visible_exact == visible_exact
                 && state.render.viewport == Some(bounds)
                 && state.render.scroll == scroll;
 
             state.render.visible = Some((first, last));
+            state.render.visible_exact = visible_exact;
             state.render.scroll = scroll;
 
             // La place d'une page a changé : la taille d'affichage change, donc
@@ -435,7 +517,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 let sizes =
                     crate::ui::preview::sizes_of_with_zoom(&document, bounds, state.render.zoom);
 
-                for index in first..=last {
+                let (debut, fin) = state.render.visible_exact.unwrap_or((first, last));
+
+                for index in debut..=fin {
                     let Some(taille) = sizes.get(index).copied() else {
                         continue;
                     };
@@ -455,6 +539,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                         .is_some_and(|tranche| crate::ui::preview::tranche_couvre(tranche, region))
                     {
                         state.render.stale.insert(index);
+                        state.render.qualite_rapide.insert(index);
                     }
                 }
             }
@@ -630,4 +715,81 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         _ => Task::none(),
     }
+}
+
+/// Installe un PDF reçu et relance la rasterisation.
+///
+/// `empreinte` est celle du document que le PDF décrit ; sans elle, le PDF
+/// n'est pas rattaché au partage et la couche texte ne peut pas s'installer.
+fn installer_pdf(
+    state: &mut State,
+    empreinte: Option<String>,
+    resultat: Result<Vec<u8>, String>,
+) -> Task<Message> {
+    let octets = match resultat {
+        Ok(octets) => octets,
+        Err(probleme) => {
+            state.render.errors.push(crate::typst::render::Diagnostic {
+                origine: crate::typst::render::Origine::ExportPdf,
+                message: probleme.clone(),
+                line: None,
+                column: None,
+                file: None,
+            });
+            state.note = Some(crate::app::state::Note::erreur(probleme));
+            return Task::none();
+        }
+    };
+
+    match crate::typst::render::ouvrir_pdf(octets) {
+        Some(pdf) => {
+            let partage = std::sync::Arc::new(pdf);
+
+            if let Some(empreinte) = &empreinte {
+                state
+                    .rendus_partages
+                    .entry(empreinte.clone())
+                    .or_default()
+                    .completant(&crate::app::state::RenduPartage {
+                        document: None,
+                        lecteur: Some(partage.clone()),
+                    });
+            }
+
+            state.render.lecteur = Some(partage);
+            state.render.lecteur_empreinte = empreinte;
+            state.render.accorder_texte_au_pdf();
+            let total = state
+                .render
+                .document
+                .as_deref()
+                .map_or(0, crate::typst::render::page_count);
+            state.render.invalidate_rasterization(total);
+            super::rasterisation::visible(state)
+        }
+        None => {
+            state.render.errors.push(crate::typst::render::Diagnostic {
+                origine: crate::typst::render::Origine::RenduPdf,
+                message: "Le PDF généré n'est pas lisible : le rendu reste en attente.".to_string(),
+                line: None,
+                column: None,
+                file: None,
+            });
+            state.note = Some(crate::app::state::Note::erreur(
+                "Le PDF généré n'est pas lisible : le rendu reste en attente.".to_string(),
+            ));
+            Task::none()
+        }
+    }
+}
+
+/// Prépare l'extraction de la couche texte hors du fil d'affichage.
+fn extraire_texte(
+    document: std::sync::Arc<typst_layout::PagedDocument>,
+    empreinte: String,
+) -> Task<Message> {
+    Task::perform(
+        async move { crate::typst::texte::extraire(&document) },
+        move |texte| Message::TexteApercuPret(empreinte.clone(), texte),
+    )
 }

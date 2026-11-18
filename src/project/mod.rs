@@ -100,7 +100,13 @@ pub fn creer_au_nom_depuis(parent: &Path, nom: &str, base: &Path) -> Result<Path
 
 /// La copie de base : tout, sauf ce qui appartient à l'exécution.
 fn copier_la_base(base: &Path, dir: &Path) -> std::io::Result<()> {
-    const SAUF: &[&str] = &["verrou", "sauvegardes", "metadonnees.toml", ".typst-writer"];
+    const SAUF: &[&str] = &[
+        "verrou",
+        "sauvegardes",
+        "metadonnees.toml",
+        ".typst-writer",
+        ".miniatures",
+    ];
 
     for entree in std::fs::read_dir(base)? {
         let entree = entree?;
@@ -3139,6 +3145,158 @@ pub fn etageres() -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// Le fichier de l'ordre des étagères : une liste de noms, dans l'ordre où
+/// l'auteur les a arrangées. Il est séparé du classement des projets pour
+/// qu'une étagère **vide** existe quand même.
+pub const ETAGERES_ORDRE: &str = "etageres-ordre.json";
+
+fn lire_ordre_etageres() -> Vec<String> {
+    let chemin = work_dir().join(ETAGERES_ORDRE);
+    std::fs::read_to_string(chemin)
+        .ok()
+        .and_then(|brut| serde_json::from_str::<Vec<String>>(&brut).ok())
+        .unwrap_or_default()
+}
+
+fn ecrire_ordre_etageres(ordre: &[String]) -> Result<(), String> {
+    let brut = serde_json::to_string_pretty(ordre)
+        .map_err(|erreur| format!("L'ordre des étagères ne s'écrit pas : {erreur}."))?;
+    ecrire_atomique(&work_dir().join(ETAGERES_ORDRE), &brut)
+        .map_err(|erreur| format!("Le fichier d'ordre des étagères ne s'écrit pas : {erreur}."))
+}
+
+/// Une liste d'étagères sans doublons, noms vides écartés, ordre gardé.
+fn ordre_sans_doublons(ordre: Vec<String>) -> Vec<String> {
+    let mut vues = std::collections::HashSet::new();
+    let mut propre = Vec::new();
+    for nom in ordre {
+        let nom = nom.trim().to_string();
+        if !nom.is_empty() && vues.insert(nom.clone()) {
+            propre.push(nom);
+        }
+    }
+    propre
+}
+
+/// Les étagères dans l'ordre voulu, y compris celles qui sont encore vides.
+///
+/// Les anciens projets dont l'étagère n'a pas encore d'ordre sont ajoutés à
+/// la fin, par ordre alphabétique : une mise à jour ne disperse rien.
+pub fn etageres_ordonnees() -> Vec<String> {
+    let mut ordre = ordre_sans_doublons(lire_ordre_etageres());
+
+    let mut connues: Vec<String> = etageres()
+        .values()
+        .map(|nom| nom.trim().to_string())
+        .filter(|nom| !nom.is_empty())
+        .collect();
+    connues.sort();
+    connues.dedup();
+    for nom in connues {
+        if !ordre.iter().any(|etagere| etagere == &nom) {
+            ordre.push(nom);
+        }
+    }
+
+    ordre
+}
+
+/// Crée une étagère, même sans projet dedans. Le nom vide ne crée rien.
+pub fn creer_etagere(nom: &str) -> Result<(), String> {
+    let nom = nom.trim();
+
+    if nom.is_empty() {
+        return Err("Une étagère a un nom.".to_string());
+    }
+
+    let mut ordre = etageres_ordonnees();
+    if ordre.iter().any(|etagere| etagere == nom) {
+        return Ok(());
+    }
+
+    ordre.push(nom.to_string());
+    ecrire_ordre_etageres(&ordre)
+}
+
+fn assurer_etagere(nom: &str) -> Result<(), String> {
+    let nom = nom.trim();
+    if nom.is_empty() {
+        return Ok(());
+    }
+
+    let mut ordre = etageres_ordonnees();
+    if ordre.iter().any(|etagere| etagere == nom) {
+        return Ok(());
+    }
+
+    ordre.push(nom.to_string());
+    ecrire_ordre_etageres(&ordre)
+}
+
+/// Déplace une étagère d'un cran dans l'ordre — le geste d'arrangement de
+/// la bibliothèque. La première ne monte pas, la dernière ne descend pas.
+fn deplacer_dans_un_ordre(ordre: &mut [String], nom: &str, vers_le_haut: bool) {
+    let Some(position) = ordre.iter().position(|etagere| etagere == nom) else {
+        return;
+    };
+    let voisine = if vers_le_haut {
+        position.checked_sub(1)
+    } else {
+        Some(position + 1).filter(|voisine| *voisine < ordre.len())
+    };
+    let Some(voisine) = voisine else {
+        return;
+    };
+    ordre.swap(position, voisine);
+}
+
+pub fn deplacer_etagere(nom: &str, vers_le_haut: bool) -> Result<(), String> {
+    let mut ordre = etageres_ordonnees();
+    if !ordre.iter().any(|etagere| etagere == nom) {
+        return Err(format!("L'étagère « {nom} » n'existe pas."));
+    }
+    deplacer_dans_un_ordre(&mut ordre, nom, vers_le_haut);
+    ecrire_ordre_etageres(&ordre)
+}
+
+#[cfg(test)]
+mod tests_des_etageres_ordonnees {
+    use super::{deplacer_dans_un_ordre, ordre_sans_doublons};
+
+    #[test]
+    fn les_etageres_se_deplacent_sans_se_perdre() {
+        let mut ordre = vec![
+            "thèse".to_string(),
+            "articles".to_string(),
+            "cours".to_string(),
+        ];
+        deplacer_dans_un_ordre(&mut ordre, "articles", true);
+        assert_eq!(ordre, vec!["articles", "thèse", "cours"]);
+        deplacer_dans_un_ordre(&mut ordre, "articles", true);
+        assert_eq!(
+            ordre,
+            vec!["articles", "thèse", "cours"],
+            "la première ne bouge plus"
+        );
+        deplacer_dans_un_ordre(&mut ordre, "cours", false);
+        assert_eq!(
+            ordre,
+            vec!["articles", "thèse", "cours"],
+            "la dernière ne bouge plus"
+        );
+    }
+
+    #[test]
+    fn une_etagere_ne_se_duplique_pas() {
+        let ordre = ordre_sans_doublons(vec![
+            "thèse".to_string(),
+            " articles ".to_string(),
+            "thèse".to_string(),
+        ]);
+        assert_eq!(ordre, ["thèse", "articles"]);
+    }
+}
+
 /// Poser un projet sur une étagère — l'étagère vide l'en retire.
 pub fn definir_etagere(projet: &str, etagere: &str) -> Result<(), String> {
     let mut table = etageres();
@@ -3148,6 +3306,7 @@ pub fn definir_etagere(projet: &str, etagere: &str) -> Result<(), String> {
         table.remove(projet);
     } else {
         table.insert(projet.to_string(), etagere.to_string());
+        assurer_etagere(etagere)?;
     }
 
     let brut = serde_json::to_string_pretty(&table)
@@ -3261,49 +3420,385 @@ fn semer_normes(chemin: &std::path::Path) -> Result<(), String> {
         .map_err(|erreur| format!("Le fichier de normes ne s'écrit pas : {erreur}."))
 }
 
-/// La vignette d'un projet : sa première page, en image.
+/// Les proportions d'une couverture : le format A4, pour toute la
+/// bibliothèque, même quand le document lui-même est en Letter ou en A5.
+pub const LARGEUR_MINIATURE: u32 = 420;
+pub const HAUTEUR_MINIATURE: u32 = 594;
+
+/// Le dossier des couvertures choisies par l'auteur, à la racine du projet.
+pub const DOSSIER_MINIATURE: &str = "miniatures";
+
+/// Le fichier d'une couverture choisie : un PNG déjà recadré au format A4.
+pub const FICHIER_MINIATURE: &str = "couverture.png";
+
+/// Le cache des premières pages rendues : il vit dans le projet, sous un
+/// nom caché, et ne voyage jamais avec une copie ou un modèle.
+const CACHE_MINIATURE: &str = ".miniatures";
+const FICHIER_CACHE_MINIATURE: &str = "vignette.png";
+const FICHIER_EMPREINTE_MINIATURE: &str = "empreinte";
+
+/// Une couverture préparée : pixels RGBA pour l'affichage, PNG pour le
+/// disque. Les deux sont déjà au format A4.
+#[derive(Debug, Clone)]
+pub struct CouverturePreparee {
+    pub png: Vec<u8>,
+    pub pixels: Vec<u8>,
+    pub largeur: u32,
+    pub hauteur: u32,
+}
+
+/// Le chemin de la couverture choisie par l'auteur.
+pub fn chemin_couverture(dir: &Path) -> PathBuf {
+    dir.join(DOSSIER_MINIATURE).join(FICHIER_MINIATURE)
+}
+
+fn chemin_cache_miniature(dir: &Path) -> PathBuf {
+    dir.join(CACHE_MINIATURE).join(FICHIER_CACHE_MINIATURE)
+}
+
+fn chemin_empreinte_miniature(dir: &Path) -> PathBuf {
+    dir.join(CACHE_MINIATURE).join(FICHIER_EMPREINTE_MINIATURE)
+}
+
+fn nom_du_projet(dir: &Path) -> String {
+    dir.file_name()
+        .map(|nom| nom.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+/// Recadre une image choisie au centre, puis la ramène exactement à la
+/// taille d'une miniature A4. Une image plus large perd ses bords ; une
+/// image plus haute perd son haut et son bas — jamais le centre.
+pub fn preparer_couverture(octets: &[u8]) -> Result<CouverturePreparee, String> {
+    let source = image::load_from_memory(octets)
+        .map_err(|erreur| format!("Cette image ne peut pas être lue : {erreur}."))?;
+
+    Ok(preparer_image(source))
+}
+
+fn preparer_image(source: image::DynamicImage) -> CouverturePreparee {
+    let (largeur, hauteur) = (source.width().max(1), source.height().max(1));
+    let ratio_cible = f64::from(LARGEUR_MINIATURE) / f64::from(HAUTEUR_MINIATURE);
+    let ratio_source = f64::from(largeur) / f64::from(hauteur);
+
+    let (recadrage_largeur, recadrage_hauteur) = if ratio_source > ratio_cible {
+        (
+            (f64::from(hauteur) * ratio_cible).round().max(1.0) as u32,
+            hauteur,
+        )
+    } else {
+        (
+            largeur,
+            (f64::from(largeur) / ratio_cible).round().max(1.0) as u32,
+        )
+    };
+    let recadrage_largeur = recadrage_largeur.min(largeur);
+    let recadrage_hauteur = recadrage_hauteur.min(hauteur);
+    let x = (largeur - recadrage_largeur) / 2;
+    let y = (hauteur - recadrage_hauteur) / 2;
+
+    let image = source
+        .crop_imm(x, y, recadrage_largeur, recadrage_hauteur)
+        .resize_exact(
+            LARGEUR_MINIATURE,
+            HAUTEUR_MINIATURE,
+            image::imageops::FilterType::Lanczos3,
+        )
+        .to_rgba8();
+
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("un tampon en mémoire accepte toujours un PNG");
+
+    CouverturePreparee {
+        png,
+        pixels: image.into_raw(),
+        largeur: LARGEUR_MINIATURE,
+        hauteur: HAUTEUR_MINIATURE,
+    }
+}
+
+/// La première page rendue, ramenée au format A4 sans la déformer.
 ///
-/// Elle se rend par le même compilateur que le document : ce qui s'y
-/// voit est ce qui se compose. Un projet qui ne compile pas n'a pas de
-/// vignette — jamais une erreur à l'écran.
-pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)> {
-    let mut vignettes = Vec::new();
+/// Une page au format A4 remplit la miniature. Une page Letter, A5 ou
+/// paysage garde **toute** sa page : elle est centrée sur un fond blanc, et
+/// les marges qui manquent sont ajoutées — jamais le contenu coupé. C'est
+/// ce qui rend la couverture fidèle au document tout en gardant le même
+/// cadre pour toute la bibliothèque.
+fn normaliser_page(page: &crate::typst::render::PageImage) -> Option<CouverturePreparee> {
+    let source = image::RgbaImage::from_raw(page.width, page.height, page.pixels.clone())?;
+    let largeur = f64::from(page.width.max(1));
+    let hauteur = f64::from(page.height.max(1));
+    let echelle =
+        (f64::from(LARGEUR_MINIATURE) / largeur).min(f64::from(HAUTEUR_MINIATURE) / hauteur);
+    let largeur_redimensionnee = (largeur * echelle).round().max(1.0) as u32;
+    let hauteur_redimensionnee = (hauteur * echelle).round().max(1.0) as u32;
 
-    for dir in dirs {
-        let nom = dir
-            .file_name()
-            .map(|nom| nom.to_string_lossy().to_string())
-            .unwrap_or_default();
+    let redimensionnee = image::imageops::resize(
+        &source,
+        largeur_redimensionnee,
+        hauteur_redimensionnee,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let mut toile = image::RgbaImage::from_pixel(
+        LARGEUR_MINIATURE,
+        HAUTEUR_MINIATURE,
+        image::Rgba([255, 255, 255, 255]),
+    );
+    let x = i64::from((LARGEUR_MINIATURE - largeur_redimensionnee) / 2);
+    let y = i64::from((HAUTEUR_MINIATURE - hauteur_redimensionnee) / 2);
+    image::imageops::replace(&mut toile, &redimensionnee, x, y);
 
-        // Le secours : `main.typ` d'abord, puis le document d'écriture —
-        // un projet dont l'assemblage ne compile pas (une ancienne norme,
-        // un fichier manquant) montre malgré tout sa page de texte
-        // (bug-report-7, point 12). Un échec silencieux laissait toutes
-        // les couvertures à « Aperçu indisponible ».
-        //
-        // L'entrée d'un compilateur est le **contenu** de l'assemblage, pas
-        // son nom : la vignette montrait le texte « main.typ » lui-même,
-        // contre la promesse de cette fonction (bug-report-9, en passant).
-        let principal = std::fs::read_to_string(dir.join("main.typ")).unwrap_or_default();
-        let pdf = crate::typst::render::render_pdf(dir, &principal, &[]).or_else(|| {
-            let document = dir.join("document.tw");
-            let source = std::fs::read_to_string(&document).ok()?;
-            let genere = crate::langage::generer::generer(&crate::langage::parse(&source));
-            crate::typst::render::render_pdf(dir, &genere, &[])
-        });
+    let mut png = Vec::new();
+    toile
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("un tampon en mémoire accepte toujours un PNG");
 
-        let Some(octets) = pdf else {
-            continue;
-        };
+    Some(CouverturePreparee {
+        png,
+        pixels: toile.into_raw(),
+        largeur: LARGEUR_MINIATURE,
+        hauteur: HAUTEUR_MINIATURE,
+    })
+}
 
-        if let Some(image) = crate::typst::render::ouvrir_pdf(octets)
-            .and_then(|pdf| crate::typst::render::render_page(&pdf, 0, 0.35))
-        {
-            vignettes.push((nom, image.pixels, image.width, image.height));
+/// Rend la première page d'un projet, au format A4.
+fn generer_miniature(dir: &Path) -> Option<CouverturePreparee> {
+    // Le secours : `main.typ` d'abord, puis le document d'écriture — un
+    // projet dont l'assemblage ne compile pas (une ancienne norme, un
+    // fichier manquant) montre malgré tout sa page de texte (bug-report-7,
+    // point 12). Un échec silencieux laissait toutes les couvertures à
+    // « Aperçu indisponible ».
+    //
+    // L'entrée d'un compilateur est le **contenu** de l'assemblage, pas son
+    // nom : la vignette montrait le texte « main.typ » lui-même, contre la
+    // promesse de cette fonction (bug-report-9, en passant).
+    let principal = std::fs::read_to_string(dir.join("main.typ")).unwrap_or_default();
+    let pdf = crate::typst::render::render_pdf(dir, &principal, &[]).or_else(|| {
+        let document = dir.join("document.tw");
+        let source = std::fs::read_to_string(&document).ok()?;
+        let genere = crate::langage::generer::generer(&crate::langage::parse(&source));
+        crate::typst::render::render_pdf(dir, &genere, &[])
+    });
+
+    let pdf = crate::typst::render::ouvrir_pdf(pdf?)?;
+    let page = crate::typst::render::render_page(&pdf, 0, 1.0)?;
+
+    normaliser_page(&page)
+}
+
+fn charger_couverture_dir(dir: &Path) -> Option<CouverturePreparee> {
+    let octets = std::fs::read(chemin_couverture(dir)).ok()?;
+    preparer_couverture(&octets).ok()
+}
+
+fn charger_cache(dir: &Path) -> Option<CouverturePreparee> {
+    let octets = std::fs::read(chemin_cache_miniature(dir)).ok()?;
+    let image = image::load_from_memory(&octets).ok()?;
+    if image.width() != LARGEUR_MINIATURE || image.height() != HAUTEUR_MINIATURE {
+        return None;
+    }
+    let rgba = image.to_rgba8();
+
+    Some(CouverturePreparee {
+        png: octets,
+        pixels: rgba.into_raw(),
+        largeur: LARGEUR_MINIATURE,
+        hauteur: HAUTEUR_MINIATURE,
+    })
+}
+
+/// Empreinte du projet pour reconnaître une première page inchangée.
+///
+/// Elle inclut tous les fichiers qui peuvent changer la composition :
+/// sources, normes, styles, bibliographie, images. Les sauvegardes et le
+/// cache sont exclus — ils ne composent rien.
+fn empreinte_projet(dir: &Path) -> u64 {
+    fn melanger(empreinte: &mut u64, octets: &[u8]) {
+        for octet in octets {
+            *empreinte ^= u64::from(*octet);
+            *empreinte = empreinte.wrapping_mul(0x100000001b3);
         }
     }
 
+    fn parcourir(racine: &Path, dossier: &Path, empreinte: &mut u64, profondeur: usize) {
+        if profondeur > 32 {
+            return;
+        }
+        let Ok(entrees) = std::fs::read_dir(dossier) else {
+            return;
+        };
+        let mut chemins: Vec<PathBuf> = entrees.filter_map(Result::ok).map(|e| e.path()).collect();
+        chemins.sort();
+
+        for chemin in chemins {
+            let nom = chemin
+                .file_name()
+                .and_then(|nom| nom.to_str())
+                .unwrap_or("");
+            if nom == "sauvegardes" || nom == CACHE_MINIATURE || nom.starts_with(".verrou") {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&chemin) else {
+                continue;
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                melanger(empreinte, nom.as_bytes());
+                parcourir(racine, &chemin, empreinte, profondeur + 1);
+                continue;
+            }
+            let relatif = chemin.strip_prefix(racine).unwrap_or(&chemin);
+            melanger(empreinte, relatif.to_string_lossy().as_bytes());
+            melanger(empreinte, &meta.len().to_le_bytes());
+            if let Ok(modifie) = meta.modified()
+                && let Ok(duree) = modifie.duration_since(std::time::UNIX_EPOCH)
+            {
+                melanger(empreinte, &duree.as_secs().to_le_bytes());
+                melanger(empreinte, &duree.subsec_nanos().to_le_bytes());
+            }
+        }
+    }
+
+    let mut empreinte = 0xcbf29ce484222325;
+    parcourir(dir, dir, &mut empreinte, 0);
+    empreinte
+}
+
+fn cache_est_a_jour(dir: &Path, empreinte: u64) -> bool {
+    let Ok(marque) = std::fs::read_to_string(chemin_empreinte_miniature(dir)) else {
+        return false;
+    };
+    if marque.trim() != format!("{empreinte:016x}") {
+        return false;
+    }
+    image::image_dimensions(chemin_cache_miniature(dir))
+        .map(|(largeur, hauteur)| largeur == LARGEUR_MINIATURE && hauteur == HAUTEUR_MINIATURE)
+        .unwrap_or(false)
+}
+
+fn ecrire_cache(
+    dir: &Path,
+    couverture: &CouverturePreparee,
+    empreinte: u64,
+) -> std::io::Result<()> {
+    let cache = chemin_cache_miniature(dir);
+    if let Some(parent) = cache.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    ecrire_atomique_octets(&cache, &couverture.png)?;
+    ecrire_atomique(
+        &chemin_empreinte_miniature(dir),
+        &format!("{empreinte:016x}\n"),
+    )
+}
+
+/// Écrit la couverture choisie dans le projet. L'appelant tient le verrou
+/// du projet : c'est une écriture, pas un cache.
+pub fn ecrire_couverture(dir: &Path, png: &[u8]) -> Result<(), String> {
+    let chemin = chemin_couverture(dir);
+    if let Some(parent) = chemin.parent() {
+        std::fs::create_dir_all(parent).map_err(|erreur| {
+            format!("Le dossier des miniatures ne peut pas être créé : {erreur}.")
+        })?;
+    }
+    ecrire_atomique_octets(&chemin, png)
+        .map_err(|erreur| format!("La miniature ne peut pas être écrite : {erreur}."))
+}
+
+/// Les couvertures disponibles **tout de suite**, sans compiler : la
+/// couverture choisie par l'auteur, sinon la première page déjà en cache.
+/// Un projet jamais rendu n'a pas encore d'image ; le rafraîchissement la
+/// produira en arrière-plan.
+pub fn vignettes_immediates(dirs: &[PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)> {
+    dirs.iter()
+        .filter_map(|dir| {
+            let couverture = charger_couverture_dir(dir).or_else(|| charger_cache(dir))?;
+            Some((
+                nom_du_projet(dir),
+                couverture.pixels,
+                couverture.largeur,
+                couverture.hauteur,
+            ))
+        })
+        .collect()
+}
+
+/// Les couvertures dont la première page a changé, rendues en arrière-plan.
+///
+/// Le cache évite de recompiler tous les projets à chaque ouverture de la
+/// bibliothèque. Une couverture choisie par l'auteur ne se régénère jamais.
+#[cfg(test)]
+pub fn vignettes_a_rafraichir(dirs: &[PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)> {
+    vignettes_a_rafraichir_avec_annulation(dirs, None)
+}
+
+/// Variante annulable : `annulation` est consulté entre deux projets.
+///
+/// Le compilateur Typst n'est pas interruptible au milieu d'une page, mais la
+/// boucle ne doit pas continuer à compiler tous les projets quand l'auteur a
+/// déjà quitté la bibliothèque pour écrire. Le jeton est comparé à `depart` :
+/// toute nouvelle ouverture de la bibliothèque invalide l'ancienne passe.
+pub fn vignettes_a_rafraichir_avec_annulation(
+    dirs: &[PathBuf],
+    annulation: Option<(&std::sync::atomic::AtomicU64, u64)>,
+) -> Vec<(String, Vec<u8>, u32, u32)> {
+    let mut vignettes = Vec::new();
+
+    for dir in dirs {
+        if annulation.is_some_and(|(jeton, depart)| {
+            jeton.load(std::sync::atomic::Ordering::Relaxed) != depart
+        }) {
+            break;
+        }
+
+        if charger_couverture_dir(dir).is_some() {
+            continue;
+        }
+
+        let empreinte = empreinte_projet(dir);
+        if cache_est_a_jour(dir, empreinte) {
+            continue;
+        }
+
+        let Some(couverture) = generer_miniature(dir) else {
+            continue;
+        };
+        let _ = ecrire_cache(dir, &couverture, empreinte);
+        vignettes.push((
+            nom_du_projet(dir),
+            couverture.pixels,
+            couverture.largeur,
+            couverture.hauteur,
+        ));
+    }
+
     vignettes
+}
+
+/// La vignette d'un projet : sa première page, en image A4.
+///
+/// Elle se rend par le même compilateur que le document : ce qui s'y voit
+/// est ce qui se compose. Un projet qui ne compile pas n'a pas de vignette
+/// — jamais une erreur à l'écran. Cette fonction compile toujours ; la
+/// bibliothèque ouverte, elle, lit d'abord le cache par
+/// [`vignettes_immediates`], puis rafraîchit par [`vignettes_a_rafraichir`].
+#[cfg(test)]
+pub fn vignettes(dirs: &[std::path::PathBuf]) -> Vec<(String, Vec<u8>, u32, u32)> {
+    dirs.iter()
+        .filter_map(|dir| {
+            let couverture = generer_miniature(dir)?;
+            Some((
+                nom_du_projet(dir),
+                couverture.pixels,
+                couverture.largeur,
+                couverture.hauteur,
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -3479,7 +3974,8 @@ mod tests_paquets_locaux {
 mod tests_des_vignettes {
     /// La vignette est la **vraie première page** du projet — jamais le nom
     /// du fichier (bug-report-9 : l'entrée d'un compilateur est du contenu,
-    /// et la vignette compilait le texte « main.typ » lui-même).
+    /// et la vignette compilait le texte « main.typ » lui-même). Elle est
+    /// ensuite ramenée au cadre A4 commun à la bibliothèque.
     #[test]
     fn la_vignette_est_la_vraie_premiere_page() {
         let dir =
@@ -3488,18 +3984,172 @@ mod tests_des_vignettes {
         let contenu = "= Chapitre\n\nUn texte reconnaissable, longuement étalé sur la page.\n";
         std::fs::write(dir.join("main.typ"), contenu).expect("assemblage");
 
-        let vignettes = super::vignettes(std::slice::from_ref(&dir));
-        let (_, pixels, width, height) = vignettes.first().expect("une vignette").clone();
+        let vignette = super::generer_miniature(&dir).expect("une vignette");
 
-        // Le contrôle : la même page rendue directement depuis son contenu.
+        // Le contrôle : la même page rendue directement depuis son contenu,
+        // puis ramenée au même cadre A4.
         let octets = crate::typst::render::render_pdf(&dir, contenu, &[]).expect("PDF");
         let pdf = crate::typst::render::ouvrir_pdf(octets).expect("PDF lisible");
-        let page = crate::typst::render::render_page(&pdf, 0, 0.35).expect("page");
+        let page = crate::typst::render::render_page(&pdf, 0, 1.0).expect("page");
+        let attendue = super::normaliser_page(&page).expect("vignette normalisée");
 
-        assert_eq!((width, height), (page.width, page.height), "même géométrie");
         assert_eq!(
-            pixels, page.pixels,
+            (vignette.largeur, vignette.hauteur),
+            (super::LARGEUR_MINIATURE, super::HAUTEUR_MINIATURE),
+            "la vignette est au format A4"
+        );
+        assert_eq!(
+            vignette.pixels, attendue.pixels,
             "la vignette est la première page réelle"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Le format de la page composée ne décide pas du format de la
+    /// couverture : même une page Letter reste une vignette A4.
+    #[test]
+    fn une_page_letter_donne_une_vignette_a4() {
+        let dir = std::env::temp_dir().join(format!("tw-vignette-letter-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("projet de test");
+        std::fs::write(
+            dir.join("main.typ"),
+            "#set page(width: 8.5in, height: 11in)\n= Une page Letter\n\nDu texte.\n",
+        )
+        .expect("assemblage");
+
+        let vignette = super::generer_miniature(&dir).expect("une vignette");
+        assert_eq!(
+            (vignette.largeur, vignette.hauteur),
+            (super::LARGEUR_MINIATURE, super::HAUTEUR_MINIATURE),
+            "le cadre reste A4 même pour un document Letter"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn image_png(
+        largeur: u32,
+        hauteur: u32,
+        gauche: image::Rgba<u8>,
+        droite: image::Rgba<u8>,
+    ) -> Vec<u8> {
+        let source = image::RgbaImage::from_fn(largeur, hauteur, |x, _| {
+            if x < largeur / 2 { gauche } else { droite }
+        });
+        let mut png = Vec::new();
+        source
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("PNG de test");
+        png
+    }
+
+    /// Une image choisie perd ses bords, jamais le centre : le résultat est
+    /// exactement une couverture A4.
+    #[test]
+    fn une_image_choisie_est_recadree_au_centre_en_a4() {
+        let gauche = image::Rgba([255, 0, 0, 255]);
+        let droite = image::Rgba([0, 0, 255, 255]);
+        let source = image_png(800, 400, gauche, droite);
+
+        let couverture = super::preparer_couverture(&source).expect("couverture");
+        assert_eq!(
+            (couverture.largeur, couverture.hauteur),
+            (super::LARGEUR_MINIATURE, super::HAUTEUR_MINIATURE),
+            "l'image choisie prend le cadre A4"
+        );
+        assert_eq!(
+            &couverture.pixels[0..4],
+            &gauche.0,
+            "le bord gauche vient de la partie centrale de l'image"
+        );
+        let dernier = couverture.pixels.len() - 4;
+        assert_eq!(
+            &couverture.pixels[dernier..],
+            &droite.0,
+            "le bord droit vient de la partie centrale de l'image"
+        );
+    }
+
+    /// Le sélecteur accepte aussi le JPEG, pas seulement le PNG.
+    #[test]
+    fn une_image_jpeg_est_acceptee() {
+        let source =
+            image::RgbImage::from_fn(300, 300, |x, _| image::Rgb([(x % 255) as u8, 40, 80]));
+        let mut jpeg = Vec::new();
+        source
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .expect("JPEG de test");
+
+        let couverture = super::preparer_couverture(&jpeg).expect("couverture JPEG");
+        assert_eq!(
+            (couverture.largeur, couverture.hauteur),
+            (super::LARGEUR_MINIATURE, super::HAUTEUR_MINIATURE)
+        );
+    }
+
+    /// La couverture choisie est disponible avant toute compilation et
+    /// n'est jamais remplacée par la première page.
+    #[test]
+    fn une_couverture_choisie_prime_sur_la_premiere_page() {
+        let dir =
+            std::env::temp_dir().join(format!("tw-couverture-choisie-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("projet de test");
+        std::fs::write(dir.join("main.typ"), "#import \"absent.typ\": *\n")
+            .expect("assemblage cassé");
+        let png = image_png(
+            super::LARGEUR_MINIATURE,
+            super::HAUTEUR_MINIATURE,
+            image::Rgba([10, 20, 30, 255]),
+            image::Rgba([40, 50, 60, 255]),
+        );
+        super::ecrire_couverture(&dir, &png).expect("couverture écrite");
+
+        let immediates = super::vignettes_immediates(std::slice::from_ref(&dir));
+        assert_eq!(immediates.len(), 1, "la couverture choisie est disponible");
+        assert_eq!(
+            (immediates[0].2, immediates[0].3),
+            (super::LARGEUR_MINIATURE, super::HAUTEUR_MINIATURE)
+        );
+        assert!(
+            super::vignettes_a_rafraichir(std::slice::from_ref(&dir)).is_empty(),
+            "une couverture choisie ne se régénère jamais"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Le cache permet d'ouvrir la bibliothèque sans compiler : un document
+    /// devenu illisible après le rendu conserve sa couverture.
+    #[test]
+    fn le_cache_evite_de_compiler_a_l_ouverture() {
+        let dir = std::env::temp_dir().join(format!("tw-cache-vignette-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("projet de test");
+        std::fs::write(dir.join("main.typ"), "= Un titre\n\nDu texte.\n").expect("assemblage");
+
+        assert_eq!(
+            super::vignettes_a_rafraichir(std::slice::from_ref(&dir)).len(),
+            1,
+            "la première ouverture produit le cache"
+        );
+        assert!(
+            super::vignettes_a_rafraichir(std::slice::from_ref(&dir)).is_empty(),
+            "une deuxième ouverture ne recompile pas"
+        );
+
+        std::fs::write(dir.join("main.typ"), "#import \"absent.typ\": *\n")
+            .expect("assemblage cassé");
+        let immediates = super::vignettes_immediates(std::slice::from_ref(&dir));
+        assert_eq!(immediates.len(), 1, "le cache se lit sans compiler");
+        assert_eq!(
+            (immediates[0].2, immediates[0].3),
+            (super::LARGEUR_MINIATURE, super::HAUTEUR_MINIATURE)
         );
 
         let _ = std::fs::remove_dir_all(&dir);

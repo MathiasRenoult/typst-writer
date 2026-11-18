@@ -11,6 +11,12 @@ use iced::{Alignment, Element, Fill, Length, Theme};
 /// Hauteur d'une ligne.
 const ENTRY_HEIGHT: f32 = 32.0;
 
+/// Le pas d'un niveau de sommaire : une colonne de seize pixels par
+/// profondeur. Il est volontairement plus large qu'un simple retrait de
+/// texte : c'est l'écart qui rend la branche lisible, comme la colonne
+/// d'un fil de commentaires.
+const PAS_HIERARCHIE: f32 = 16.0;
+
 /// Largeur de la colonne des comptes de mots.
 ///
 /// Fixe, et alignée à droite : c'est ce qui fait qu'on parcourt la colonne des
@@ -114,7 +120,12 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
             for (index, entry) in state.render.outline.iter().enumerate() {
                 let level = niveaux[index];
-                let est_dernier = niveaux[index + 1..].iter().all(|suivant| *suivant <= level);
+                // La coude ne descend jusqu'au bas de la rangée que si
+                // l'entrée suivante est **son enfant**. Une feuille suivie
+                // d'une sœur n'a personne à rejoindre : son trait s'arrête au
+                // milieu, sinon il laisse un moignon au bord de la rangée et
+                // la ligne paraît coupée.
+                let est_dernier = !a_un_enfant(&niveaux, index);
 
                 // Les guides des ancêtres : un trait vertical là où la branche
                 // continue en dessous, rien là où elle s'achève. Les **traits**,
@@ -128,27 +139,77 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 // traits sont dessinés, le texte est nu — et sous la main, il
                 // se teinte, le curseur pointe (bug-report 2026-11-03).
                 let survole = state.survol_sommaire == Some(index);
-                sommaire = sommaire.push(
-                    mouse_area(
-                        row![
-                            barres_hiérarchiques(&guides, est_dernier, palette),
-                            palette
-                                .label(entry.text.trim())
-                                .size(theme::jetons::CORPS)
-                                .color(if survole {
-                                    palette.accent
-                                } else {
-                                    palette.text
-                                }),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .height(Length::Fixed(ENTRY_HEIGHT)),
+
+                // Un titre de niveau 1 est la tête du fil : plus grand, plus
+                // dense. Les réponses s'allègent à mesure qu'elles
+                // s'enfoncent, sans jamais perdre leur lisibilité. C'est la
+                // même lecture qu'un fil de commentaires : la branche se
+                // reconnaît à sa colonne avant de se reconnaître à sa taille.
+                let (taille, couleur, police) = if level == 0 {
+                    (
+                        theme::jetons::SAILLANT,
+                        if survole {
+                            palette.accent
+                        } else {
+                            palette.text
+                        },
+                        iced::Font {
+                            weight: iced::font::Weight::Semibold,
+                            ..palette.interface
+                        },
                     )
-                    .on_press(Message::GotoHeading(index))
-                    .on_enter(Message::SommaireSurvol(Some(index)))
-                    .on_exit(Message::SommaireSurvol(None))
-                    .interaction(iced::mouse::Interaction::Pointer),
+                } else if level == 1 {
+                    (
+                        theme::jetons::CORPS,
+                        if survole {
+                            palette.accent
+                        } else {
+                            palette.text
+                        },
+                        palette.interface,
+                    )
+                } else {
+                    (
+                        theme::jetons::DETAIL,
+                        if survole {
+                            palette.accent
+                        } else {
+                            palette.text_muted
+                        },
+                        palette.interface,
+                    )
+                };
+
+                let ligne = container(
+                    row![
+                        barres_hiérarchiques(&guides, est_dernier, level, palette),
+                        palette
+                            .label(entry.text.trim())
+                            .size(taille)
+                            .font(police)
+                            .color(couleur),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .height(Length::Fixed(ENTRY_HEIGHT)),
+                )
+                .width(Length::Fill)
+                .padding([0, 6])
+                .style(move |_| iced::widget::container::Style {
+                    background: survole.then_some(palette.surface_hover.into()),
+                    border: iced::Border {
+                        radius: crate::ui::theme::jetons::RAYON.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+
+                sommaire = sommaire.push(
+                    mouse_area(ligne)
+                        .on_press(Message::GotoHeading(index))
+                        .on_enter(Message::SommaireSurvol(Some(index)))
+                        .on_exit(Message::SommaireSurvol(None))
+                        .interaction(iced::mouse::Interaction::Pointer),
                 );
             }
 
@@ -680,13 +741,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
         // (bug-report 2026-11-03).
         let etageres = &state.etageres;
         let mut choix_etages = vec!["Mon étagère".to_string(), "Tous".to_string()];
-        let mut noms: Vec<String> = etageres
-            .values()
-            .filter(|etagere| !etagere.trim().is_empty())
-            .cloned()
-            .collect();
-        noms.sort();
-        noms.dedup();
+        let mut noms: Vec<String> = state.etageres_ordre.clone();
+        noms.extend(
+            etageres
+                .values()
+                .filter(|etagere| !etagere.trim().is_empty())
+                .cloned(),
+        );
+        let mut vus = std::collections::HashSet::new();
+        noms.retain(|nom| !nom.trim().is_empty() && vus.insert(nom.trim().to_string()));
         choix_etages.extend(noms);
 
         content = content.push(
@@ -1549,30 +1612,38 @@ pub fn projets_visibles<'a>(
 }
 
 /// La géométrie des barres hiérarchiques — **pure** : un niveau = une
-/// colonne de `PAS` pixels, toujours au même x, quoi que fasse la
+/// colonne de `PAS_HIERARCHIE` pixels, toujours au même x, quoi que fasse la
 /// police. Chaque segment est `(x1, y1, x2, y2)` dans le canevas.
 ///
 /// C'est la réponse au bug-report du 2026-11-03 : les lignes étaient
 /// « pas alignées et difformes » — dessinées dans la marge des widgets,
 /// elles dérivaient. Ici, la position ne dépend que des nombres.
+///
+/// Les entrées de niveau 1 n'ont pas de branche : leur pastille est dessinée
+/// par [`Barres`]. Cette fonction ne décrit donc que les réponses.
 fn segments(guides: &[bool], est_dernier: bool, hauteur: f32) -> Vec<(f32, f32, f32, f32)> {
-    const PAS: f32 = 14.0;
     let mut segments = Vec::new();
 
     // Les guides des ancêtres : pleins là où la branche continue.
     for (k, guide) in guides.iter().enumerate() {
         if *guide {
-            let x = k as f32 * PAS + PAS / 2.0;
+            let x = k as f32 * PAS_HIERARCHIE + PAS_HIERARCHIE / 2.0;
             segments.push((x, 0.0, x, hauteur));
         }
     }
 
     // La coude de l'entrée : le vertical — demi pour la dernière
-    // branche — et la barre qui va au texte.
-    let x = guides.len() as f32 * PAS + PAS / 2.0;
+    // branche — et la barre qui va jusqu'au bord de la colonne, là où
+    // commence le texte après l'espacement de la rangée.
+    let x = guides.len() as f32 * PAS_HIERARCHIE + PAS_HIERARCHIE / 2.0;
     let fin = if est_dernier { hauteur / 2.0 } else { hauteur };
     segments.push((x, 0.0, x, fin));
-    segments.push((x, hauteur / 2.0, x + PAS / 2.0 + 4.0, hauteur / 2.0));
+    segments.push((
+        x,
+        hauteur / 2.0,
+        x + PAS_HIERARCHIE / 2.0 + 8.0,
+        hauteur / 2.0,
+    ));
     segments
 }
 
@@ -1596,10 +1667,21 @@ fn guides_du_sommaire(niveaux: &[usize], index: usize) -> Vec<bool> {
         .collect()
 }
 
+/// L'entrée a-t-elle une entrée enfant juste après elle ?
+///
+/// C'est la seule chose qui doit prolonger son trait vertical jusqu'à la
+/// rangée suivante : une feuille suivie d'une sœur n'a personne à rejoindre.
+fn a_un_enfant(niveaux: &[usize], index: usize) -> bool {
+    let level = niveaux.get(index).copied().unwrap_or(0);
+
+    niveaux
+        .get(index + 1)
+        .is_some_and(|suivant| *suivant > level)
+}
+
 /// La largeur de la zone de barres, pour un nombre de guides.
 fn largeur_barres(guides: usize) -> f32 {
-    const PAS: f32 = 14.0;
-    guides as f32 * PAS + PAS + 8.0
+    guides as f32 * PAS_HIERARCHIE + PAS_HIERARCHIE + 8.0
 }
 
 /// Le canevas des barres : la géométrie, rien d'autre. Il **possède**
@@ -1607,6 +1689,7 @@ fn largeur_barres(guides: usize) -> f32 {
 struct Barres {
     guides: Vec<bool>,
     est_dernier: bool,
+    niveau: usize,
     palette: Palette,
 }
 
@@ -1622,6 +1705,34 @@ impl canvas::Program<Message> for Barres {
         _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, iced::Size::new(bounds.width, bounds.height));
+
+        // Un titre de niveau 1 est la **tête du fil** : une pastille au lieu
+        // d'une coude. Sans elle, la racine ressemblait à une réponse sortie
+        // d'un parent invisible ; la hiérarchie commençait par un trait qui
+        // ne menait nulle part.
+        if self.niveau == 0 {
+            let centre = iced::Point::new(PAS_HIERARCHIE / 2.0, bounds.height / 2.0);
+            frame.fill(
+                &canvas::Path::circle(centre, 3.5),
+                canvas::Fill::from(self.palette.accent),
+            );
+
+            // Quand une branche descend, le fil part de la pastille et
+            // rejoint la rangée suivante : c'est ce qui fait tenir le fil
+            // d'un commentaire à ses réponses.
+            if !self.est_dernier {
+                frame.fill(
+                    &canvas::Path::rectangle(
+                        iced::Point::new(centre.x.floor(), centre.y),
+                        iced::Size::new(1.0, bounds.height - centre.y),
+                    ),
+                    canvas::Fill::from(self.palette.border),
+                );
+            }
+
+            return vec![frame.into_geometry()];
+        }
+
         // Des **rectangles pleins** au pixel, pas des traits tracés : un
         // trait de 1 px à la demi-pixel s'antialiasse et reste flou —
         // c'est le « pas propre » que l'on voyait.
@@ -1651,11 +1762,13 @@ impl canvas::Program<Message> for Barres {
 fn barres_hiérarchiques(
     guides: &[bool],
     est_dernier: bool,
+    niveau: usize,
     palette: Palette,
 ) -> Element<'static, Message> {
     canvas::Canvas::new(Barres {
         guides: guides.to_vec(),
         est_dernier,
+        niveau,
         palette,
     })
     .width(Length::Fixed(largeur_barres(guides.len())))
@@ -1857,7 +1970,29 @@ mod tests_menu_etagere {
 
 #[cfg(test)]
 mod tests_barres {
-    use super::{guides_du_sommaire, largeur_barres, segments};
+    use super::{a_un_enfant, guides_du_sommaire, largeur_barres, segments};
+
+    /// Une feuille suivie d'une sœur ne continue pas sa branche : le trait
+    /// s'arrête au milieu, sinon il laisse un moignon au bord de la rangée.
+    #[test]
+    fn seuls_les_parents_prolongent_le_trait() {
+        let niveaux = [0, 1, 1, 0];
+
+        assert!(a_un_enfant(&niveaux, 0), "la racine a un enfant");
+        assert!(
+            !a_un_enfant(&niveaux, 1),
+            "la première feuille n'a pas d'enfant : elle est suivie d'une sœur"
+        );
+        assert!(!a_un_enfant(&niveaux, 2));
+        assert!(!a_un_enfant(&niveaux, 3));
+
+        let avec_petit_enfant = [0, 1, 2, 1];
+        assert!(
+            a_un_enfant(&avec_petit_enfant, 1),
+            "le niveau 2 a un enfant"
+        );
+        assert!(!a_un_enfant(&avec_petit_enfant, 2));
+    }
 
     /// AMÉLIORATION-005 : deux enfants d'un même parent gardent le trait de
     /// leur parent ; le trait s'arrête quand on quitte le sous-arbre.
@@ -1889,22 +2024,23 @@ mod tests_barres {
 
         // Un guide : le vertical d'ancêtre au milieu de sa colonne.
         let segs = segments(&[true], false, h);
-        assert_eq!(segs[0], (7.0, 0.0, 7.0, h), "le guide occupe sa colonne");
+        assert_eq!(segs[0], (8.0, 0.0, 8.0, h), "le guide occupe sa colonne");
 
         // La coude : le vertical de l'entrée à la colonne suivante, la
         // barre part de lui.
         let coude = segs[1];
-        assert_eq!(coude, (21.0, 0.0, 21.0, h), "la coude est pleine");
+        assert_eq!(coude, (24.0, 0.0, 24.0, h), "la coude est pleine");
         let barre = segs[2];
         assert_eq!(barre.0, coude.0, "la barre part du vertical");
         assert_eq!(barre.1, h / 2.0, "la barre est au milieu");
+        assert_eq!(barre.2, 40.0, "la barre rejoint le bord de la colonne");
 
         // La dernière branche : la coude s'arrête au milieu.
-        let segs = segments(&[], true, h);
-        assert_eq!(segs[0], (7.0, 0.0, 7.0, h / 2.0), "demi-trait");
+        let segs = segments(&[true], true, h);
+        assert_eq!(segs[1], (24.0, 0.0, 24.0, h / 2.0), "demi-trait");
 
-        // La largeur suit le même pas.
-        assert_eq!(largeur_barres(0), 22.0);
-        assert_eq!(largeur_barres(2), 50.0);
+        // La largeur suit le même pas ; la racine n'a que sa pastille.
+        assert_eq!(largeur_barres(0), 24.0);
+        assert_eq!(largeur_barres(2), 56.0);
     }
 }

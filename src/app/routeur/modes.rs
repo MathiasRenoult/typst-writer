@@ -27,8 +27,8 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
                 // Le texte affiché suit l'édition : au basculement, on
                 // compile d'entrée si le rendu est périmé — jamais l'image
                 // d'une frappe d'avant (bug-report-10, 6.2).
-                let frache =
-                    state.render.pending || state.render.content == state.compilation_fingerprint();
+                let empreinte = state.compilation_fingerprint();
+                let frache = state.render.pending || state.render.content == empreinte;
 
                 return if frache {
                     pdf
@@ -47,6 +47,11 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             } else {
                 crate::app::state::ModeVue::Typst
             };
+
+            // Le source Typst n'est généré qu'au moment où on le regarde.
+            if state.mode == crate::app::state::ModeVue::Typst {
+                state.actualiser_typst();
+            }
 
             Task::none()
         }

@@ -1,10 +1,20 @@
 use crate::typst::render::{CompileOutcome, PageImage};
 use iced_code_editor::Message as EditorMessage;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Le vocabulaire de la mise en forme vit chez l'éditeur ; le message
 /// de l'application ne fait que le porter.
 pub use crate::editor::FormatAction;
+
+/// Le format d'un export demandé depuis la bibliothèque.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatExport {
+    Pdf,
+    Tw,
+    Markdown,
+    Docx,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -80,6 +90,8 @@ pub enum Message {
 
     /// Insère une citation `@clé` à la position du curseur.
     InsertCitation(String),
+    /// Ouvre le composeur de citation au curseur, ou sur la citation qui s'y trouve.
+    CitationOuvrir,
 
     /// Ouvre la fenêtre d'édition d'une référence.
     ModifierReference(String),
@@ -135,6 +147,12 @@ pub enum Message {
     PdfDestination(Result<(PathBuf, Vec<u8>), String>),
     PdfApercu(Result<Vec<u8>, String>),
 
+    /// PDF produit depuis le document déjà compilé, pour la vue de rendu.
+    ///
+    /// L'empreinte est celle du document compilé : un PDF qui arrive après
+    /// une compilation plus récente ne remplace jamais le lecteur courant.
+    PdfDocumentPret(String, Result<Vec<u8>, String>),
+
     /// Résultat de l'export PDF : chemin du fichier ou message d'erreur.
     PdfExported(Result<String, String>),
 
@@ -152,7 +170,34 @@ pub enum Message {
     /// Porte le numéro de révision du document pour lequel le rendu a été
     /// demandé : si une compilation est arrivée entre-temps, l'image est
     /// écartée au lieu de remplacer une image plus récente.
-    PageRendered(u64, usize, Option<PageImage>, (f32, f32, f32, f32)),
+    PageRendered(u64, usize, Option<PageImage>, (f32, f32, f32, f32), bool),
+
+    /// La couche texte d'une compilation est prête.
+    TexteApercuPret(String, Arc<crate::typst::texte::DocumentTexte>),
+
+    /// Un geste de sélection dans l'aperçu : page, point de la page et
+    /// nombre de clics (1, 2 ou 3). `etendue` vient de `Maj`.
+    SelectionApercuAppuyer {
+        page: usize,
+        point: (f32, f32),
+        etendue: bool,
+        clics: u8,
+    },
+    SelectionApercuGlisser {
+        page: usize,
+        point: (f32, f32),
+    },
+    SelectionApercuRelacher,
+    SelectionApercuCopier,
+
+    /// Un lien de l'aperçu a été activé : page et rang du lien.
+    LienApercuActiver(usize, usize),
+
+    RechercheApercuOuvrir,
+    RechercheApercuFermer,
+    RechercheApercuMotif(String),
+    RechercheApercuSuivant,
+    RechercheApercuPrecedent,
 
     /// Le viewport de l'aperçu a changé : première page visible, dernière, et
     /// la place que le panneau laisse à une page.
@@ -200,9 +245,6 @@ pub enum Message {
 
     /// Échap : fermer sans rien laisser.
     ComposeurFermer,
-    NoteOverlayChamp(String),
-    NoteOverlayEnregistrer,
-    NoteOverlayFermer,
 
     /// ↑↓ : déplacer la sélection dans la liste des clés.
     ComposeurDeplacer(isize),
@@ -230,6 +272,18 @@ pub enum Message {
     NormesEcraser,
     NormesEnregistrer(String),
     NormesSupprimer(String),
+    /// Demande le mot de la suppression d'une norme (la corbeille n'efface
+    /// pas un fichier de normes : seule l'entrée de la bibliothèque part).
+    NormesSupprimerDemande(String),
+    /// Applique directement au document la norme nommée, sans passer par
+    /// la copie de travail de la fenêtre.
+    NormesAppliquerAuDocument(String),
+    /// Exporte une norme de la bibliothèque dans un fichier TOML.
+    NormesExporter(String),
+    /// Importe un fichier de normes dans la bibliothèque interne.
+    NormesFichierImporter,
+    /// Le fichier choisi pour l'import, ou l'annulation.
+    NormesFichierImporte(Option<std::path::PathBuf>),
 
     TableauOuvrir,
     TableauRangs(String),
@@ -339,12 +393,35 @@ pub enum Message {
 
     ProjetNom(String),
     SurvolReference(Option<String>),
+    /// Le pointeur quitte l'éditeur : la bulle de verset ne doit pas rester
+    /// collée à l'écran derrière lui.
+    BibleSurvolQuitter,
     SurvolOnglet(Option<u64>),
     SurvolProjet(Option<std::path::PathBuf>),
     BibliographieCreer,
     ZoteroRecherche(String),
 
     ProjetsVue,
+    /// Un clic sur une carte de la bibliothèque : ouvrir, ou sélectionner
+    /// selon les modificateurs tenus.
+    ProjetCliquer(std::path::PathBuf),
+    /// La sélection de la bibliothèque se vide.
+    SelectionVider,
+    /// Une étagère nouvelle se crée, même sans projet dedans.
+    EtagereCreer,
+    /// Une étagère monte ou descend dans l'ordre de la bibliothèque.
+    EtagereMonter(String),
+    EtagereDescendre(String),
+    /// La fenêtre de normes pour les documents sélectionnés.
+    SelectionNormes,
+    NormesLotChoisir(String),
+    NormesLotAccrocher(bool),
+    NormesLotAppliquer,
+    NormesLotFermer,
+    /// Exporter les documents sélectionnés dans un dossier choisi.
+    SelectionExporter(FormatExport),
+    /// Le compte rendu de l'export de la sélection.
+    SelectionExportee(Result<String, String>),
     /// Une entrée de sommaire est survolée (ou quittée).
     SommaireSurvol(Option<usize>),
     /// Le sommaire du panneau se replie ou se déplie.
@@ -389,6 +466,81 @@ pub enum Message {
     ExtensionInserer,
     /// Le composeur se ferme, rien n'est posé.
     ExtensionAnnuler,
+
+    /// Le panneau du graphique primaviz s'ouvre.
+    ChartOuvrir,
+    /// Le type du graphique choisi.
+    ChartType(String),
+    /// Le titre du graphique change.
+    ChartTitre(String),
+    /// Le sous-titre du graphique change.
+    ChartSousTitre(String),
+    /// Le titre de l'axe horizontal change.
+    ChartXLabel(String),
+    /// Le titre de l'axe vertical change.
+    ChartYLabel(String),
+    /// Une action dans l'éditeur CSV.
+    ChartCsv(iced::widget::text_editor::Action),
+    /// Importer un fichier CSV dans le panneau.
+    ChartImporter,
+    /// Le contenu importé, ou l'annulation.
+    ChartImporte(Option<String>),
+    /// La largeur change.
+    ChartLargeur(String),
+    /// La hauteur change.
+    ChartHauteur(String),
+    /// Le placement change.
+    ChartPlacement(String),
+    /// La légende s'affiche ou non.
+    ChartLegende(bool),
+    /// Les valeurs s'affichent ou non.
+    ChartValeurs(bool),
+    /// La grille s'affiche ou non.
+    ChartGrille(bool),
+    /// Les graduations s'affichent ou non.
+    ChartGraduations(bool),
+    /// Les points d'une ligne s'affichent ou non.
+    ChartPoints(bool),
+    /// L'aire sous une ligne est remplie ou non.
+    ChartAire(bool),
+    /// L'interpolation de la ligne change.
+    ChartCourbe(String),
+    /// Le camembert devient un anneau, ou cesse de l'être.
+    ChartDonut(bool),
+    /// La part du rayon du trou de l'anneau change.
+    ChartAnneau(String),
+    /// Les barres deviennent horizontales, ou redeviennent verticales.
+    ChartHorizontal(bool),
+    /// Le graphique se pose dans le document.
+    ChartInserer,
+    /// Le panneau se ferme sans rien poser.
+    ChartFermer,
+    /// Le panneau d'un callout s'ouvre.
+    CalloutOuvrir,
+    /// Le préréglage du callout choisi.
+    CalloutType(String),
+    /// Le titre du callout change.
+    CalloutTitre(String),
+    /// Un champ du style du callout change.
+    CalloutChamp(crate::langage::callout::CalloutChamp, String),
+    /// Une case du style du callout bascule (`gras`, `rupture`).
+    CalloutBascule(crate::langage::callout::CalloutChamp, bool),
+    /// Le style revient à celui du préréglage.
+    CalloutReinitialiser,
+    /// Un préréglage de callout est choisi dans les paramètres.
+    CalloutPresetChoisir(usize),
+    /// Un champ d'un préréglage change dans les paramètres.
+    CalloutPresetChamp(usize, crate::langage::callout::CalloutChamp, String),
+    /// Une case d'un préréglage bascule dans les paramètres.
+    CalloutPresetBascule(usize, crate::langage::callout::CalloutChamp, bool),
+    /// Un préréglage est ajouté à la norme.
+    CalloutPresetAjouter,
+    /// Un préréglage est retiré de la norme.
+    CalloutPresetSupprimer(usize),
+    /// Le callout s'applique à la citation, ou pose un bloc vide.
+    CalloutInserer,
+    /// Le panneau se ferme sans rien poser.
+    CalloutFermer,
     /// Le texte de la note en cours d'écriture dans son panneau.
     NoteTexte(String),
     /// La note s'écrit dans la ligne, la marque seule.
@@ -397,7 +549,16 @@ pub enum Message {
     NoteAnnuler,
     ModeBasculer,
     ModeTypst,
-    VignettesFaites(Vec<(String, Vec<u8>, u32, u32)>),
+    /// Les couvertures dont la première page a changé, prêtes en arrière-plan.
+    VignettesRafraichies(Vec<(String, Vec<u8>, u32, u32)>),
+    /// Choix d'une image pour remplacer la miniature d'un projet.
+    MiniatureChoisir(PathBuf),
+    /// L'image choisie, déjà recadrée au format A4 — ou l'erreur qui l'a
+    /// empêchée. `Ok(None)` : le choix a été annulé.
+    MiniaturePrete(
+        PathBuf,
+        Result<Option<crate::project::CouverturePreparee>, String>,
+    ),
 
     DragCommencer(String),
     DragSurvol(String),
@@ -479,6 +640,20 @@ pub enum Message {
 
     AideBasculer,
 
+    /// La palette de commandes : les balises, ou toutes les commandes.
+    PaletteOuvrir(crate::app::palette::ModePalette),
+    PaletteFermer,
+    PaletteRecherche(String),
+    PaletteDeplacer(i32),
+    PaletteChoisir(usize),
+    PaletteExecuter,
+    PaletteConfigurer,
+
+    /// Le formulaire générique d'une balise simple : un champ, puis insérer.
+    BaliseChamp(String, String),
+    BaliseInserer,
+    BaliseAnnuler,
+
     /// Le sélecteur de couleur s'ouvre sur la couleur courante.
     PickerCouleurOuvrir,
     /// Le sélecteur se ferme sans rien appliquer.
@@ -494,6 +669,11 @@ pub enum Message {
     EntetePiedImageChoisie(crate::mise_en_page::modele::Champ, String),
     /// Ouvre la roue pour une couleur des normes : la vignette cliquée.
     PickerCouleurPourReglage(crate::mise_en_page::modele::Champ),
+    /// Ouvre la roue pour la couleur du formulaire de balise ouvert.
+    PickerCouleurPourBalise,
+    /// Ouvre la roue pour une couleur de callout : le style en cours ou un
+    /// préréglage des paramètres.
+    PickerCouleurPourCallout(crate::app::state::CibleCouleur),
     /// Le choix : la couleur devient la dernière enregistrée — rien
     /// n'est inséré tant qu'on ne l'applique pas (bug-report-10, 5.4).
     PickerCouleurEnregistrer,
@@ -717,7 +897,41 @@ impl Message {
             | Message::EditionReferenceFermer
             | Message::ReferencesRechercheBascule
             | Message::SurvolReference(_)
-            | Message::ModifierReference(_) => Some(crate::base::valeurs::CLE_BIBLIOGRAPHIE),
+            | Message::ModifierReference(_)
+            | Message::CitationOuvrir => Some(crate::base::valeurs::CLE_BIBLIOGRAPHIE),
+
+            Message::ChartOuvrir
+            | Message::ChartType(_)
+            | Message::ChartTitre(_)
+            | Message::ChartSousTitre(_)
+            | Message::ChartXLabel(_)
+            | Message::ChartYLabel(_)
+            | Message::ChartCsv(_)
+            | Message::ChartImporter
+            | Message::ChartImporte(_)
+            | Message::ChartLargeur(_)
+            | Message::ChartHauteur(_)
+            | Message::ChartPlacement(_)
+            | Message::ChartLegende(_)
+            | Message::ChartValeurs(_)
+            | Message::ChartGrille(_)
+            | Message::ChartGraduations(_)
+            | Message::ChartPoints(_)
+            | Message::ChartAire(_)
+            | Message::ChartCourbe(_)
+            | Message::ChartDonut(_)
+            | Message::ChartAnneau(_)
+            | Message::ChartHorizontal(_)
+            | Message::ChartInserer => Some(crate::base::valeurs::CLE_GRAPHIQUES),
+
+            Message::CalloutOuvrir
+            | Message::CalloutType(_)
+            | Message::CalloutTitre(_)
+            | Message::CalloutChamp(_, _)
+            | Message::CalloutBascule(_, _)
+            | Message::CalloutReinitialiser
+            | Message::CalloutInserer
+            | Message::CalloutFermer => Some(crate::base::valeurs::CLE_CALLOUTS),
 
             _ => None,
         }
@@ -741,6 +955,10 @@ mod epreuves_de_plugin {
         assert_eq!(
             Message::ReferencesReplier.plugin(),
             Some(crate::base::valeurs::CLE_BIBLIOGRAPHIE)
+        );
+        assert_eq!(
+            Message::CalloutOuvrir.plugin(),
+            Some(crate::base::valeurs::CLE_CALLOUTS)
         );
         assert_eq!(Message::ProjetNom(String::new()).plugin(), None);
     }

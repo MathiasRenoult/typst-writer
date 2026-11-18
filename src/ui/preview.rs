@@ -1,10 +1,18 @@
 use crate::app::{Message, State};
 use crate::typst::render::Diagnostic;
+use crate::ui::apercu::CoucheApercu;
 use crate::ui::theme::Palette;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, image, scrollable, space};
+use iced::widget::{
+    button, canvas, column, container, image, row, scrollable, space, stack, text_input,
+};
 use iced::{ContentFit, Element, Fill, Length};
 use std::path::Path;
+
+/// Identifiant du champ de recherche de l'aperçu.
+pub(crate) fn id_recherche_apercu() -> iced::widget::Id {
+    iced::widget::Id::new("apercu-recherche")
+}
 
 /// Taille du texte courant.
 const BODY_SIZE: f32 = 14.0;
@@ -107,10 +115,12 @@ pub(crate) fn normalize_zoom(
     }
 }
 
-/// Pages rendues au-delà du viewport, de part et d'autre.
+/// Pages matérialisées au-delà du viewport, de part et d'autre.
 ///
-/// Une page de marge garantit qu'un défilement rapide ne révèle jamais un
-/// cadre vide, sans pour autant rasteriser tout le document.
+/// Cette marge ne garde que des widgets et des images déjà en cache : elle
+/// ne déborde jamais sur la plage exacte qui a le droit de rasteriser. Une
+/// page de marge peut donc apparaître comme papier jusqu'à son entrée réelle
+/// dans la fenêtre.
 const VIEWPORT_MARGIN: usize = 1;
 
 /// Identifiant du défilement de l'aperçu.
@@ -274,7 +284,25 @@ pub(crate) fn page_offset(sizes: &[(f32, f32)], index: usize) -> f32 {
 ///
 /// Le calcul utilise les hauteurs réelles des pages : il reste juste même sur
 /// un document dont les pages n'ont pas toutes la même taille.
-fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) {
+pub(crate) fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) {
+    let (first, last) = visible_pages_exact(sizes, top, bottom);
+
+    if sizes.is_empty() {
+        return (first, last);
+    }
+
+    (
+        first.saturating_sub(VIEWPORT_MARGIN),
+        (last + VIEWPORT_MARGIN).min(sizes.len() - 1),
+    )
+}
+
+/// Les pages qui touchent réellement la fenêtre, sans marge de préchargement.
+///
+/// La marge de [`visible_pages`] sert à garder des widgets autour du viewport ;
+/// elle ne doit pas demander de rasterisation : prefetcher une page invisible
+/// faisait payer un rendu complet à chaque défilement.
+pub(crate) fn visible_pages_exact(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) {
     let Some(last_index) = sizes.len().checked_sub(1) else {
         return (0, 0);
     };
@@ -304,10 +332,7 @@ fn visible_pages(sizes: &[(f32, f32)], top: f32, bottom: f32) -> (usize, usize) 
         last = index;
     }
 
-    (
-        first.saturating_sub(VIEWPORT_MARGIN),
-        (last + VIEWPORT_MARGIN).min(last_index),
-    )
+    (first, last)
 }
 
 pub fn vue<'a>(
@@ -423,7 +448,7 @@ pub fn vue<'a>(
     // widgets qu'un document d'une page, et la géométrie du défilement reste
     // exacte — les hauteurs de pages sont connues avant tout rendu.
     let last_index = sizes.len() - 1;
-    let (first, last) = render.visible.unwrap_or((0, last_index));
+    let (first, last) = render.visible.unwrap_or((0, 2.min(last_index)));
 
     let first = first.min(last_index);
     let last = last.clamp(first, last_index);
@@ -440,7 +465,7 @@ pub fn vue<'a>(
         .skip(first)
         .take(last.saturating_sub(first) + 1)
     {
-        content = content.push(page_view(render, palette, index, *size));
+        content = content.push(page_view(render, palette, index, *size, state.maj_tenu));
 
         // L'écart **après** la page : il l'accompagne, au lieu d'être posé par
         // la colonne entre deux widgets. C'est ce qui rend la hauteur du
@@ -469,27 +494,184 @@ pub fn vue<'a>(
         })
         .width(Fill)
         .height(Fill)
-        .on_scroll(move |viewport| {
-            // La marge intérieure du panneau n'est pas dans le repère du
-            // viewport : on la retire pour raisonner sur le contenu défilant.
-            let gauche = viewport.absolute_offset().x - PANEL_PADDING;
-            let top = viewport.absolute_offset().y - PANEL_PADDING;
-            let bottom = top + viewport.bounds().height;
+        .on_scroll({
+            let sizes = sizes.clone();
+            move |viewport| {
+                // La marge intérieure du panneau n'est pas dans le repère du
+                // viewport : on la retire pour raisonner sur le contenu défilant.
+                let gauche = viewport.absolute_offset().x - PANEL_PADDING;
+                let top = viewport.absolute_offset().y - PANEL_PADDING;
+                let bottom = top + viewport.bounds().height;
 
-            let (first, last) = visible_pages(&sizes, top, bottom);
+                let (first, last) = visible_pages(&sizes, top, bottom);
 
-            // La place que le panneau laisse à une page vient d'ici : la vue est
-            // seule à la connaître, et c'est elle qui décide de la taille
-            // d'affichage — donc de la finesse dont le rendu a besoin. Les
-            // bornes du viewport la portent, et ne changent qu'au
-            // redimensionnement : un défilement ne les retransmet donc pas.
-            Message::ViewportChanged(first, last, viewport.bounds(), Some((gauche, top)))
+                // La place que le panneau laisse à une page vient d'ici : la vue est
+                // seule à la connaître, et c'est elle qui décide de la taille
+                // d'affichage — donc de la finesse dont le rendu a besoin. Les
+                // bornes du viewport la portent, et ne changent qu'au
+                // redimensionnement : un défilement ne les retransmet donc pas.
+                Message::ViewportChanged(first, last, viewport.bounds(), Some((gauche, top)))
+            }
         });
 
     // La molette est dirigée (bug-report-9) : `Ctrl` la destine au zoom
     // seul — jamais au défilement — `Maj` au défilement horizontal, et
     // la molette simple laisse défiler verticalement.
-    MoletteDirigee::new(defilable.into(), state.controle_tenu).into()
+    let defilable: Element<'_, Message> = defilable.into();
+
+    // Le pied de page dit où l'on est dans le document. Il ne défile pas :
+    // sans lui, un lecteur de thèse ne sait pas sur quelle page il se trouve.
+    let indicateur = indicateur_page(render, palette, &sizes);
+
+    let mut colonne = column![].spacing(0).width(Fill).height(Fill);
+
+    // La barre de recherche reste au-dessus du document : elle ne défile
+    // pas avec les pages.
+    if render.recherche_apercu.visible {
+        colonne = colonne.push(barre_recherche(render, palette));
+    }
+
+    colonne = colonne.push(defilable).push(indicateur);
+
+    MoletteDirigee::new(colonne.into(), state.controle_tenu).into()
+}
+
+/// Le numéro de page courant, à partir du défilement du panneau.
+///
+/// `visible` contient une marge de pages autour de la fenêtre : il ne dit donc
+/// pas exactement la page qu'on lit. Le défilement, lui, désigne la page dont
+/// la tranche occupe le haut de la fenêtre.
+pub(crate) fn page_au_defilement(sizes: &[(f32, f32)], y: f32) -> Option<usize> {
+    if sizes.is_empty() {
+        return None;
+    }
+
+    let mut offset = 0.0;
+    for (index, (_, hauteur)) in sizes.iter().enumerate() {
+        let bas = offset + hauteur;
+        if y < bas {
+            return Some(index);
+        }
+        offset = bas + PAGE_GAP;
+    }
+
+    Some(sizes.len() - 1)
+}
+
+/// La petite barre « Page n / N » du panneau de rendu.
+fn indicateur_page<'a>(
+    render: &crate::app::state::RenderState,
+    palette: Palette,
+    sizes: &[(f32, f32)],
+) -> Element<'a, Message> {
+    let total = sizes.len();
+    let page = page_au_defilement(sizes, render.scroll.1).unwrap_or(0) + 1;
+
+    container(
+        palette
+            .label(format!("Page {page} / {total}"))
+            .size(11)
+            .color(palette.text_muted),
+    )
+    .padding([4, 10])
+    .width(Fill)
+    .style(move |_| container::Style {
+        background: Some(palette.surface.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+/// La barre de recherche du document rendu.
+fn barre_recherche<'a>(
+    render: &'a crate::app::state::RenderState,
+    palette: Palette,
+) -> Element<'a, Message> {
+    let recherche = &render.recherche_apercu;
+
+    let champ = text_input("Rechercher dans le rendu…", &recherche.motif)
+        .id(id_recherche_apercu())
+        .on_input(Message::RechercheApercuMotif)
+        .on_submit(Message::RechercheApercuSuivant)
+        .padding([6, 8])
+        .size(13);
+
+    let compteur = palette
+        .label(recherche.compteur())
+        .size(12)
+        .color(palette.text_muted);
+
+    let precedent = button(palette.label("↑").size(13))
+        .on_press(Message::RechercheApercuPrecedent)
+        .padding([5, 8])
+        .style(button::secondary);
+
+    let suivant = button(palette.label("↓").size(13))
+        .on_press(Message::RechercheApercuSuivant)
+        .padding([5, 8])
+        .style(button::secondary);
+
+    let fermer = button(palette.label("×").size(14))
+        .on_press(Message::RechercheApercuFermer)
+        .padding([5, 8])
+        .style(button::text);
+
+    container(
+        row![champ, compteur, precedent, suivant, fermer]
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
+    )
+    .padding([5, 8])
+    .width(Fill)
+    .style(move |_| container::Style {
+        background: Some(palette.surface.into()),
+        border: iced::Border {
+            color: palette.border,
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+/// Une tranche de page dans le cadre complet de la page.
+///
+/// Le fond papier n'est mis que sur la couche du dessous : une image neuve
+/// dont la texture n'est pas encore prête doit laisser voir l'ancienne, pas
+/// un rectangle blanc.
+fn couche_image<'a>(
+    tranche: &crate::app::state::Tranche,
+    width: f32,
+    height: f32,
+    paper: Option<iced::Color>,
+) -> Element<'a, Message> {
+    container(
+        container(
+            image(tranche.image.clone())
+                .width(Length::Fixed(tranche.largeur * width))
+                .height(Length::Fixed(tranche.hauteur * height))
+                .content_fit(ContentFit::Fill),
+        )
+        .padding(iced::Padding {
+            top: tranche.haut * height,
+            right: 0.0,
+            bottom: 0.0,
+            left: tranche.gauche * width,
+        }),
+    )
+    .width(Length::Fixed(width))
+    .height(Length::Fixed(height))
+    .style(move |_| container::Style {
+        background: paper.map(Into::into),
+        ..Default::default()
+    })
+    .into()
 }
 
 /// Une page : l'image si elle est rasterisée, sinon un cadre de la même
@@ -499,6 +681,7 @@ fn page_view(
     palette: Palette,
     index: usize,
     size: (f32, f32),
+    maj_tenu: bool,
 ) -> Element<'_, Message> {
     let (width, height) = size;
 
@@ -518,27 +701,25 @@ fn page_view(
     // page, et non le fond de l'application.
     let paper = render.paper.unwrap_or(iced::Color::WHITE);
 
-    match render.page_cache.get(&index) {
+    let base: Element<'_, Message> = match render.page_cache.get(&index) {
         // La tranche rendue se place dans le cadre de la page : le papier
         // reste dessous, la page hors écran n'a jamais été rasterisée.
-        Some(tranche) => container(
-            container(
-                image(tranche.image.clone())
-                    .width(Length::Fixed(tranche.largeur * width))
-                    .height(Length::Fixed(tranche.hauteur * height))
-                    .content_fit(ContentFit::Fill),
-            )
-            .padding(iced::Padding {
-                top: tranche.haut * height,
-                right: 0.0,
-                bottom: 0.0,
-                left: tranche.gauche * width,
-            }),
-        )
-        .width(Length::Fixed(width))
-        .height(Length::Fixed(height))
-        .style(paper_style(paper))
-        .into(),
+        Some(tranche) => {
+            let mut pile = iced::widget::Stack::new();
+
+            // L'image précédente reste sous la nouvelle : si le backend
+            // n'a pas encore téléversé la texture neuve, on voit l'ancienne
+            // plutôt qu'un blanc.
+            if let Some(ancienne) = &tranche.precedente {
+                pile = pile.push(couche_image(ancienne, width, height, Some(paper)));
+                pile = pile.push(couche_image(tranche, width, height, None));
+            } else {
+                pile = pile.push(couche_image(tranche, width, height, Some(paper)));
+            }
+            pile.width(Length::Fixed(width))
+                .height(Length::Fixed(height))
+                .into()
+        }
 
         // Aucune texture encore : le cadre est du papier, de la taille de la
         // page. Il n'apparaît donc jamais de trou dans le document.
@@ -558,7 +739,147 @@ fn page_view(
         .center_y(Fill)
         .style(paper_style(paper))
         .into(),
+    };
+
+    let Some(texte) = render.texte_affiche() else {
+        return base;
+    };
+
+    // La couche texte et l'image doivent décrire le même PDF. Après une
+    // compilation, l'ancienne image reste affichée le temps du nouveau rendu :
+    // dessiner le texte neuf dessus ferait glisser les surlignages.
+    let image_empreinte = render
+        .page_cache
+        .get(&index)
+        .and_then(|tranche| tranche.empreinte.as_deref());
+    if render.lecteur_empreinte.is_none() || image_empreinte != render.lecteur_empreinte.as_deref()
+    {
+        return base;
     }
+
+    let Some(page) = texte.page(index) else {
+        return base;
+    };
+
+    let selection = render
+        .selection
+        .map(|selection| {
+            texte
+                .surlignage_selection(index, selection.ancre, selection.focus)
+                .into_iter()
+                .map(|rect| rect_affichage(rect, page.taille, width, height))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut resultats = Vec::new();
+    let mut courant = None;
+
+    for (rang, resultat) in render.recherche_apercu.resultats.iter().enumerate() {
+        if resultat.page != index {
+            continue;
+        }
+
+        let rects = texte.surlignage_resultat(index, resultat.debut, resultat.fin);
+        let rects: Vec<iced::Rectangle> = rects
+            .into_iter()
+            .map(|rect| rect_affichage(rect, page.taille, width, height))
+            .collect();
+
+        if rang == render.recherche_apercu.courante {
+            courant = union_rectangles(&rects);
+        }
+
+        resultats.extend(rects);
+    }
+
+    let liens: Vec<iced::Rectangle> = page
+        .liens
+        .iter()
+        .map(|lien| rect_affichage(lien.rect, page.taille, width, height))
+        .collect();
+
+    let overlay = canvas::Canvas::new(CoucheApercu {
+        page: index,
+        taille_page: (page.taille.x.to_pt() as f32, page.taille.y.to_pt() as f32),
+        selection,
+        resultats,
+        courant,
+        liens,
+        couleur_selection: iced::Color {
+            a: 0.32,
+            ..palette.accent
+        },
+        couleur_resultat: iced::Color {
+            a: 0.24,
+            ..palette.warning
+        },
+        couleur_courante: iced::Color {
+            a: 0.48,
+            ..palette.accent
+        },
+        maj_tenu,
+    })
+    .width(Length::Fixed(width))
+    .height(Length::Fixed(height));
+
+    stack![base, overlay]
+        .width(Length::Fixed(width))
+        .height(Length::Fixed(height))
+        .into()
+}
+
+/// Convertit une boîte de la page en rectangle d'écran.
+fn rect_affichage(
+    rect: typst::layout::Rect,
+    taille: typst::layout::Size,
+    largeur: f32,
+    hauteur: f32,
+) -> iced::Rectangle {
+    let echelle_x = if taille.x.to_pt() > 0.0 {
+        largeur as f64 / taille.x.to_pt()
+    } else {
+        1.0
+    };
+    let echelle_y = if taille.y.to_pt() > 0.0 {
+        hauteur as f64 / taille.y.to_pt()
+    } else {
+        1.0
+    };
+
+    let x = (rect.min.x.to_pt() * echelle_x) as f32;
+    let y = (rect.min.y.to_pt() * echelle_y) as f32;
+    let largeur = ((rect.max.x.to_pt() - rect.min.x.to_pt()) * echelle_x) as f32;
+    let hauteur = ((rect.max.y.to_pt() - rect.min.y.to_pt()) * echelle_y) as f32;
+
+    iced::Rectangle {
+        x,
+        y,
+        width: largeur.max(1.0),
+        height: hauteur.max(1.0),
+    }
+}
+
+/// La boîte englobante d'un ensemble de rectangles.
+fn union_rectangles(rects: &[iced::Rectangle]) -> Option<iced::Rectangle> {
+    let premier = rects.first()?;
+    let mut union = *premier;
+
+    for rect in &rects[1..] {
+        let x = union.x.min(rect.x);
+        let y = union.y.min(rect.y);
+        let max_x = (union.x + union.width).max(rect.x + rect.width);
+        let max_y = (union.y + union.height).max(rect.y + rect.height);
+
+        union = iced::Rectangle {
+            x,
+            y,
+            width: max_x - x,
+            height: max_y - y,
+        };
+    }
+
+    Some(union)
 }
 
 /// Fond d'un cadre de page : le papier du document.
@@ -831,6 +1152,17 @@ mod tests {
 
     /// Les modes largeur, hauteur et zoom libre ont des rapports distincts.
     #[test]
+    fn le_numero_de_page_suit_le_defilement() {
+        let sizes = [(100.0, 100.0), (100.0, 100.0)];
+
+        assert_eq!(page_au_defilement(&sizes, 0.0), Some(0));
+        assert_eq!(page_au_defilement(&sizes, 99.0), Some(0));
+        assert_eq!(page_au_defilement(&sizes, 100.0), Some(1));
+        assert_eq!(page_au_defilement(&sizes, 500.0), Some(1));
+        assert_eq!(page_au_defilement(&[], 0.0), None);
+    }
+
+    #[test]
     fn zoom_modes_compute_the_expected_display_ratio() {
         let box_size = iced::Size::new(300.0, 220.0);
         let page = (600.0, 800.0);
@@ -963,6 +1295,18 @@ mod tests {
                 "page pointue {pointed} hors de [{first}, {last}] au scroll {scroll}"
             );
         }
+    }
+
+    /// La plage exacte ne précharge pas : seule la page réellement touchée
+    /// par la fenêtre a le droit de coûter une rasterisation.
+    #[test]
+    fn la_plage_exacte_ne_prefetche_pas() {
+        let sizes = sizes();
+        let (top, bottom) = window(0.0, 100.0);
+
+        assert_eq!(visible_pages_exact(&sizes, top, bottom), (0, 0));
+        assert_eq!(visible_pages(&sizes, top, bottom), (0, 1));
+        assert_eq!(visible_pages_exact(&[], 0.0, 300.0), (0, 0));
     }
 
     /// La marge d'une page est bien ajoutée des deux côtés.
@@ -1296,6 +1640,8 @@ mod tests_des_regions {
             largeur: 1.0,
             hauteur: 0.5,
             image: iced::widget::image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0]),
+            empreinte: None,
+            precedente: None,
         };
 
         assert!(

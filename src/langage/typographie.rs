@@ -108,6 +108,10 @@ pub struct Regles {
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
 
+    /// Les callouts prédéfinis du document, pour que `{callout note}` trouve
+    /// ses couleurs et ses mesures dans la norme.
+    pub callouts: crate::mise_en_page::modele::ParametresCallouts,
+
     /// Les mots et formats de la balise `{date:...}` — siècles,
     /// millénaires, dates pleines.
     pub dates: crate::langage::dates::Regles,
@@ -125,6 +129,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
@@ -143,6 +148,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
@@ -160,6 +166,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
@@ -178,6 +185,7 @@ impl Regles {
             guillemets_ouvrants: vec!['«'],
             guillemets_fermants: vec!['»'],
             numerotation_figures: String::new(),
+            callouts: crate::mise_en_page::modele::ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
@@ -328,7 +336,7 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 }
 
                 sortie.push(*caractere);
-                pousser_apres(regles.apres_signes, suivant, &mut sortie);
+                pousser_apres(regles, regles.apres_signes, suivant, &mut sortie);
             }
 
             // La virgule et le point, hors nombres : la même discipline,
@@ -342,7 +350,7 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 }
 
                 sortie.push(*caractere);
-                pousser_apres(regles.apres_virgule_point, suivant, &mut sortie);
+                pousser_apres(regles, regles.apres_virgule_point, suivant, &mut sortie);
             }
 
             // Les déclencheurs de guillemets sont ceux des normes : par
@@ -355,7 +363,11 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 let ambigu = regles.guillemets_ouvrants.contains(c)
                     && regles.guillemets_fermants.contains(c);
                 let ouvrir = if ambigu {
-                    suivant.is_some_and(|suivant| !suivant.is_whitespace())
+                    if ferme_apres_suite(caracteres.as_slice(), position, contexte, *c) {
+                        false
+                    } else {
+                        suivant.is_some_and(|suivant| !suivant.is_whitespace())
+                    }
                 } else {
                     regles.guillemets_ouvrants.contains(c)
                 };
@@ -396,7 +408,8 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
             // l'espace de composition n'appartient qu'aux `«»`, et un
             // guillemet droit, comme une apostrophe, colle à son texte.
             '"' => {
-                let ouvrant = suivant.is_some_and(|suivant| !suivant.is_whitespace());
+                let ouvrant = !ferme_apres_suite(caracteres.as_slice(), position, contexte, '"')
+                    && suivant.is_some_and(|suivant| !suivant.is_whitespace());
 
                 if ouvrant {
                     contexte.profondeur += 1;
@@ -425,6 +438,49 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
     sortie
 }
 
+/// Un guillemet ferme-t-il la citation après une suite de marques ?
+///
+/// Un guillemet placé après un mot et devant une ponctuation ferme la
+/// citation, même si cette ponctuation n'est pas précédée d'un blanc. Une
+/// suite de marques identiques (`"""` à la fermeture) est jugée par ce qui
+/// suit la suite : sans cela, chaque marque de la suite serait prise pour
+/// une nouvelle ouverture.
+///
+/// C'est le cas `« bonjour ».` d'un guillemet droit : sans cette règle, le
+/// point qui suit ferait croire au guillemet qu'il ouvre une nouvelle
+/// citation, et la fermeture ne serait jamais produite.
+fn ferme_apres_suite(
+    caracteres: &[char],
+    position: usize,
+    contexte: &Contexte,
+    marque: char,
+) -> bool {
+    let precedent = position
+        .checked_sub(1)
+        .and_then(|position| caracteres.get(position))
+        .copied()
+        .or(contexte.precedent);
+    // Une suite de guillemets identiques est jugée par ce qui la suit :
+    // `""test""` ouvre sur `test` et ferme sur la fin du texte. Sans cela,
+    // le second guillemet d'une fermeture `"""` serait pris pour une
+    // nouvelle ouverture.
+    let suivant = caracteres[position + 1..]
+        .iter()
+        .copied()
+        .find(|caractere| *caractere != marque)
+        .or(contexte.suivant);
+    let precede_du_texte = precedent.is_some_and(|caractere| !caractere.is_whitespace());
+    let suite_ferme = suivant.is_none_or(|caractere| {
+        caractere.is_whitespace()
+            || matches!(
+                caractere,
+                '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '…' | '»' | '›'
+            )
+    });
+
+    precede_du_texte && suite_ferme
+}
+
 /// Le signe est-il au milieu d'un nombre ?
 ///
 /// Une virgule ou un point entre deux chiffres est décimal : `3.14`, `1,2`.
@@ -446,9 +502,10 @@ fn est_un_nombre(
 }
 
 /// Pousse l'espace d'après un signe, si quelque chose suit.
-fn pousser_apres(espace: Espace, suivant: Option<&char>, sortie: &mut String) {
+fn pousser_apres(regles: &Regles, espace: Espace, suivant: Option<&char>, sortie: &mut String) {
     // Un guillemet fermant posera sa propre espace — jamais deux.
-    let suit = suivant.is_some_and(|c| !c.is_whitespace() && *c != '»');
+    let suit =
+        suivant.is_some_and(|c| !c.is_whitespace() && !regles.guillemets_fermants.contains(c));
 
     if suit
         && !sortie.ends_with(' ')
@@ -553,6 +610,12 @@ mod tests {
             format!("«{INSECABLE}un ‹{INSECABLE}deux{INSECABLE}› fin{INSECABLE}»")
         );
 
+        // La ponctuation qui suit ne change rien au guillemet explicite.
+        assert_eq!(
+            appliquer("« un ».", &regles),
+            format!("«{INSECABLE}un{INSECABLE}».")
+        );
+
         // La même notation compose autrement en anglais : le guillemet
         // colle au texte qu'il cite.
         let anglais = Regles::anglaise();
@@ -582,6 +645,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn les_quatre_guillemets_de_l_auteur() {
+        let regles = Regles::francaise();
+        let attendus = [
+            "Citations «Niveau ‹un de la \"citation\"›»",
+            "«test»",
+            "«‹test›»",
+            "«‹\"test\"›»",
+        ];
+        for (texte, attendu) in [
+            "Citations \"Niveau \"un de la \"citation\"\"\"",
+            "\"test\"",
+            "\"\"test\"\"",
+            "\"\"\"test\"\"\"",
+        ]
+        .into_iter()
+        .zip(attendus)
+        {
+            assert_eq!(appliquer(texte, &regles), attendu, "{texte:?}");
+        }
+
+        // Le même essai avec les déclencheurs personnalisés de la norme
+        // « Pers 1 » : les guillemets droits sont alors reconnus des deux
+        // côtés, et les espaces sont celles du français.
+        let mut personnalisees = regles.clone();
+        personnalisees.guillemets_ouvrants = "«\"".chars().collect();
+        personnalisees.guillemets_fermants = "»\"".chars().collect();
+        assert_eq!(
+            appliquer("\"test\"", &personnalisees),
+            format!("«{INSECABLE}test{INSECABLE}»")
+        );
+        assert_eq!(
+            appliquer("\"\"test\"\"", &personnalisees),
+            format!("«{INSECABLE}‹{INSECABLE}test{INSECABLE}›{INSECABLE}»")
+        );
+        assert_eq!(
+            appliquer("\"\"\"test\"\"\"", &personnalisees),
+            format!(
+                "«{INSECABLE}‹{INSECABLE}\"{INSECABLE}test{INSECABLE}\"{INSECABLE}›{INSECABLE}»"
+            )
+        );
+    }
+
+    /// Les guillemets droits se referment aussi quand ils terminent une
+    /// phrase, et quand la phrase continue après eux.
+    #[test]
+    fn le_guillemet_droit_se_referme_en_fin_de_phrase() {
+        let regles = Regles::francaise();
+
+        assert_eq!(appliquer("\"Bonjour\"", &regles), "«Bonjour»");
+        assert_eq!(
+            appliquer("Il dit \"bonjour\" et part.", &regles),
+            "Il dit «bonjour» et part."
+        );
+        assert_eq!(appliquer("\"Bonjour\".", &regles), "«Bonjour».");
+        assert_eq!(
+            appliquer("Il dit \"bonjour\", puis part.", &regles),
+            "Il dit «bonjour», puis part."
+        );
+    }
+
     /// ÉVOLUTION-002 : les caractères de frappe se choisissent, et la paire
     /// produite reste celle des niveaux. Un même caractère des deux côtés
     /// se décide au contexte.
@@ -603,6 +727,14 @@ mod tests {
         assert_eq!(
             appliquer("°un °deux° fin°", &regles),
             format!("«{INSECABLE}un ‹{INSECABLE}deux{INSECABLE}› fin{INSECABLE}»")
+        );
+
+        // Même devant une ponctuation qui n'est pas un blanc, le caractère
+        // contextuel ferme la citation ouverte : c'est le cas du guillemet
+        // droit final dans « Bonjour ».
+        assert_eq!(
+            appliquer("°un texte°.", &regles),
+            format!("«{INSECABLE}un texte{INSECABLE}».")
         );
     }
 

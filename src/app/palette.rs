@@ -1,0 +1,1287 @@
+//! Le catalogue des commandes, et la palette qui les rend accessibles.
+//!
+//! Deux entrées, un seul moteur :
+//!
+//! - `..` dans le texte ouvre les **balises et snippets** insérables ;
+//! - `/`, `Ctrl+K` ouvre toutes les **commandes**.
+//!
+//! Un `Message` n'est pas une commande : c'est ce que la commande produit.
+//! Le catalogue porte le nom, l'icône, la description et l'alias ; la palette
+//! les cherche, et l'exécuteur les transforme en message ou en insertion.
+
+use iced::Task;
+use iced_code_editor::Message as EditorMessage;
+
+use crate::app::{Message, State};
+use crate::base::texte::normaliser_recherche as normaliser;
+
+/// Le mode de la palette : ce qu'elle cherche.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModePalette {
+    /// Les balises et les snippets insérables.
+    Balises,
+    /// Toutes les commandes.
+    Systeme,
+}
+
+/// L'icône d'une commande. Le rendu la traduit en icône Lucide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Icone {
+    Fichier,
+    Dossier,
+    Bibliotheque,
+    Disquette,
+    Telecharger,
+    Mode,
+    Focus,
+    Recherche,
+    Aide,
+    Note,
+    Image,
+    Citation,
+    Tableau,
+    Graphique,
+    Encadre,
+    Glossaire,
+    Bible,
+    Etiquette,
+    Lien,
+    Calendrier,
+    Palette,
+    EtiquetteMeta,
+    Fragment,
+    Reglages,
+    Puzzle,
+    Plus,
+    Panneau,
+}
+
+/// La famille d'une commande — ce qui donne un premier classement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Categorie {
+    Fichier,
+    Projet,
+    Insertion,
+    Affichage,
+    Recherche,
+    Aide,
+    Reglage,
+}
+
+/// L'identité d'une commande système.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandeId {
+    Enregistrer,
+    Ouvrir,
+    NouveauChapitre,
+    NouveauProjet,
+    ExporterPdf,
+    BasculerRendu,
+    Focus,
+    Bibliotheque,
+    Normes,
+    Plugins,
+    Recherche,
+    Aide,
+    Citation,
+    GlossaireFenetre,
+    BasculerPanneau,
+    ThemeSuivant,
+    ModeTypst,
+    ExporterMarkdown,
+    ExporterDocx,
+    ExporterProjetTw,
+    ExporterProjetPortable,
+    OuvrirDossierDonnees,
+    SauverSous,
+}
+
+/// Une balise insérable. Les balises qui ouvrent un panneau gardent leur
+/// panneau : c'est lui qui porte les champs, pas une copie du formulaire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagId {
+    Couleur,
+    Date,
+    Glossaire,
+    Bible,
+    Note,
+    Figure,
+    Image,
+    Lien,
+    Renvoi,
+    Etiquette,
+    Tableau,
+    Graphique,
+    Encadre,
+    Extension,
+    Sommaire,
+    Bibliographie,
+    GlossaireSection,
+    IndexBiblique,
+    Meta,
+}
+
+/// Un fragment de texte prêt à poser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnippetId {
+    These,
+    Chapitre,
+    Section,
+    Citation,
+    Tableau,
+}
+
+/// L'effet d'une commande.
+#[derive(Clone, Copy)]
+pub enum Action {
+    Message(fn() -> Message),
+}
+
+/// Une commande du catalogue.
+pub struct Commande {
+    pub id: CommandeId,
+    pub titre: &'static str,
+    pub description: &'static str,
+    pub alias: &'static [&'static str],
+    pub categorie: Categorie,
+    pub icone: Icone,
+    pub raccourci: Option<&'static str>,
+    pub action: Action,
+}
+
+/// Une balise du catalogue.
+pub struct Balise {
+    pub id: TagId,
+    pub titre: &'static str,
+    pub description: &'static str,
+    pub alias: &'static [&'static str],
+    pub icone: Icone,
+}
+
+/// Un snippet du catalogue.
+pub struct Snippet {
+    pub id: SnippetId,
+    pub titre: &'static str,
+    pub description: &'static str,
+    pub alias: &'static [&'static str],
+    pub icone: Icone,
+}
+
+/// Le catalogue des commandes système.
+pub const COMMANDES: &[Commande] = &[
+    Commande {
+        id: CommandeId::Enregistrer,
+        titre: "Enregistrer",
+        description: "Écrire le document sur le disque",
+        alias: &["save", "sauver"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Disquette,
+        raccourci: Some("Ctrl+S"),
+        action: Action::Message(|| Message::SaveFile),
+    },
+    Commande {
+        id: CommandeId::Ouvrir,
+        titre: "Ouvrir un document",
+        description: "Choisir un fichier d'écriture",
+        alias: &["open", "ouvrir"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Dossier,
+        raccourci: Some("Ctrl+O"),
+        action: Action::Message(|| Message::OpenFile),
+    },
+    Commande {
+        id: CommandeId::NouveauChapitre,
+        titre: "Nouveau chapitre",
+        description: "Créer un chapitre dans le projet",
+        alias: &["chapitre", "chapter"],
+        categorie: Categorie::Projet,
+        icone: Icone::Plus,
+        raccourci: None,
+        action: Action::Message(|| Message::NewChapter),
+    },
+    Commande {
+        id: CommandeId::NouveauProjet,
+        titre: "Nouveau projet",
+        description: "Créer un projet d'écriture",
+        alias: &["projet", "project"],
+        categorie: Categorie::Projet,
+        icone: Icone::Bibliotheque,
+        raccourci: None,
+        action: Action::Message(|| Message::NewProject),
+    },
+    Commande {
+        id: CommandeId::ExporterPdf,
+        titre: "Exporter en PDF",
+        description: "Composer et enregistrer le document",
+        alias: &["export", "pdf"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Telecharger,
+        raccourci: None,
+        action: Action::Message(|| Message::ExportPdf),
+    },
+    Commande {
+        id: CommandeId::BasculerRendu,
+        titre: "Basculer édition / rendu",
+        description: "Voir le document composé ou revenir au texte",
+        alias: &["rendu", "apercu", "preview"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Mode,
+        raccourci: Some("Ctrl+E"),
+        action: Action::Message(|| Message::ModeBasculer),
+    },
+    Commande {
+        id: CommandeId::Focus,
+        titre: "Mode focus",
+        description: "Masquer les panneaux et écrire seul",
+        alias: &["focus", "plein écran"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Focus,
+        raccourci: Some("F11"),
+        action: Action::Message(|| Message::ToggleFocusMode),
+    },
+    Commande {
+        id: CommandeId::Bibliotheque,
+        titre: "Bibliothèque des projets",
+        description: "Ouvrir la liste des projets et des étagères",
+        alias: &["projets", "library"],
+        categorie: Categorie::Projet,
+        icone: Icone::Bibliotheque,
+        raccourci: None,
+        action: Action::Message(|| Message::ProjetsVue),
+    },
+    Commande {
+        id: CommandeId::Normes,
+        titre: "Normes du document",
+        description: "Papier, marges, titres, métadonnées",
+        alias: &["normes", "mise en page", "metadata"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Reglages,
+        raccourci: Some("Ctrl+P"),
+        action: Action::Message(|| Message::MiseEnPageOuvrir),
+    },
+    Commande {
+        id: CommandeId::Plugins,
+        titre: "Paramètres des plugins",
+        description: "Bibliographie, biblique, glossaire, graphiques",
+        alias: &["plugins", "extensions"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Puzzle,
+        raccourci: None,
+        action: Action::Message(|| Message::PluginsOuvrir),
+    },
+    Commande {
+        id: CommandeId::Recherche,
+        titre: "Rechercher dans le document",
+        description: "Trouver un mot ou une expression",
+        alias: &["chercher", "find", "search"],
+        categorie: Categorie::Recherche,
+        icone: Icone::Recherche,
+        raccourci: Some("Ctrl+F"),
+        action: Action::Message(|| Message::RechercheOuvrir),
+    },
+    Commande {
+        id: CommandeId::Aide,
+        titre: "Aide et raccourcis",
+        description: "Voir la carte des gestes",
+        alias: &["aide", "help", "raccourcis"],
+        categorie: Categorie::Aide,
+        icone: Icone::Aide,
+        raccourci: Some("F1"),
+        action: Action::Message(|| Message::AideBasculer),
+    },
+    Commande {
+        id: CommandeId::Citation,
+        titre: "Insérer une citation",
+        description: "Composer une référence bibliographique",
+        alias: &["citation", "référence", "zotero"],
+        categorie: Categorie::Insertion,
+        icone: Icone::Citation,
+        raccourci: None,
+        action: Action::Message(|| Message::CitationOuvrir),
+    },
+    Commande {
+        id: CommandeId::GlossaireFenetre,
+        titre: "Ouvrir le glossaire",
+        description: "Voir et gérer les termes du projet",
+        alias: &["glossaire", "glossary"],
+        categorie: Categorie::Projet,
+        icone: Icone::Glossaire,
+        raccourci: None,
+        action: Action::Message(|| Message::GlossaireFenetreOuvrir),
+    },
+    Commande {
+        id: CommandeId::BasculerPanneau,
+        titre: "Afficher ou masquer le panneau",
+        description: "Le panneau de travail à gauche",
+        alias: &["panneau", "sidebar", "latéral"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Panneau,
+        raccourci: None,
+        action: Action::Message(|| Message::ToggleSidebar),
+    },
+    Commande {
+        id: CommandeId::ThemeSuivant,
+        titre: "Changer de thème",
+        description: "Système, clair, sombre, puis système",
+        alias: &["thème", "apparence", "theme"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Mode,
+        raccourci: None,
+        action: Action::Message(|| Message::CycleTheme),
+    },
+    Commande {
+        id: CommandeId::ModeTypst,
+        titre: "Voir le Typst généré",
+        description: "Le code que l'application écrit vraiment",
+        alias: &["typst", "source", "code"],
+        categorie: Categorie::Affichage,
+        icone: Icone::Fichier,
+        raccourci: Some("Ctrl+Maj+E"),
+        action: Action::Message(|| Message::ModeTypst),
+    },
+    Commande {
+        id: CommandeId::ExporterMarkdown,
+        titre: "Exporter en Markdown",
+        description: "Un document Markdown à partager",
+        alias: &["markdown", "md", "export"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Telecharger,
+        raccourci: None,
+        action: Action::Message(|| Message::ExportMarkdown),
+    },
+    Commande {
+        id: CommandeId::ExporterDocx,
+        titre: "Exporter en DOCX",
+        description: "Un document Word, notes comprises",
+        alias: &["docx", "word", "export"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Telecharger,
+        raccourci: None,
+        action: Action::Message(|| Message::ExportDocx),
+    },
+    Commande {
+        id: CommandeId::ExporterProjetTw,
+        titre: "Exporter le projet en .tw unique",
+        description: "Un seul fichier transportable",
+        alias: &["tw", "projet", "unique"],
+        categorie: Categorie::Projet,
+        icone: Icone::Telecharger,
+        raccourci: None,
+        action: Action::Message(|| Message::ProjetExportTw),
+    },
+    Commande {
+        id: CommandeId::ExporterProjetPortable,
+        titre: "Exporter le projet en archive",
+        description: "Tout le projet dans une archive portable",
+        alias: &["archive", "portable", "projet"],
+        categorie: Categorie::Projet,
+        icone: Icone::Telecharger,
+        raccourci: None,
+        action: Action::Message(|| Message::ProjetExportPortable),
+    },
+    Commande {
+        id: CommandeId::OuvrirDossierDonnees,
+        titre: "Ouvrir le dossier de données",
+        description: "Les projets et leurs fichiers",
+        alias: &["dossier", "données", "data"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Dossier,
+        raccourci: None,
+        action: Action::Message(|| Message::OuvrirDossierDonnees),
+    },
+    Commande {
+        id: CommandeId::SauverSous,
+        titre: "Enregistrer sous…",
+        description: "Écrire le document à un autre chemin",
+        alias: &["sauver sous", "save as", "copie"],
+        categorie: Categorie::Fichier,
+        icone: Icone::Disquette,
+        raccourci: None,
+        action: Action::Message(|| Message::SaveAs),
+    },
+];
+
+/// Le catalogue des balises.
+pub const BALISES: &[Balise] = &[
+    Balise {
+        id: TagId::Couleur,
+        titre: "Couleur",
+        description: "Teinter un passage",
+        alias: &["c", "couleur", "color", "teinte"],
+        icone: Icone::Palette,
+    },
+    Balise {
+        id: TagId::Date,
+        titre: "Date",
+        description: "Écrire une date selon les normes",
+        alias: &["d", "date", "calendrier"],
+        icone: Icone::Calendrier,
+    },
+    Balise {
+        id: TagId::Glossaire,
+        titre: "Terme du glossaire",
+        description: "Appeler un terme défini dans le projet",
+        alias: &["g", "glossaire", "glo", "terme"],
+        icone: Icone::Glossaire,
+    },
+    Balise {
+        id: TagId::Bible,
+        titre: "Référence biblique",
+        description: "Composer une référence ou un groupe",
+        alias: &["b", "bible", "verset", "référence"],
+        icone: Icone::Bible,
+    },
+    Balise {
+        id: TagId::Meta,
+        titre: "Métadonnée",
+        description: "Appeler une valeur de metadonnees.toml",
+        alias: &["métadonnée", "metadata", "meta", "m"],
+        icone: Icone::EtiquetteMeta,
+    },
+    Balise {
+        id: TagId::Note,
+        titre: "Note de bas de page",
+        description: "Écrire une note au curseur",
+        alias: &["note", "footnote"],
+        icone: Icone::Note,
+    },
+    Balise {
+        id: TagId::Figure,
+        titre: "Figure",
+        description: "Insérer une image légendée",
+        alias: &["figure", "image", "légende"],
+        icone: Icone::Image,
+    },
+    Balise {
+        id: TagId::Image,
+        titre: "Image",
+        description: "Choisir une image du projet",
+        alias: &["image", "photo"],
+        icone: Icone::Image,
+    },
+    Balise {
+        id: TagId::Lien,
+        titre: "Lien",
+        description: "Écrire un lien avec son texte",
+        alias: &["lien", "link", "url"],
+        icone: Icone::Lien,
+    },
+    Balise {
+        id: TagId::Renvoi,
+        titre: "Renvoi",
+        description: "Appeler une étiquette du document",
+        alias: &["renvoi", "référence croisée", "ref"],
+        icone: Icone::Etiquette,
+    },
+    Balise {
+        id: TagId::Etiquette,
+        titre: "Étiquette",
+        description: "Poser une étiquette sur une figure",
+        alias: &["étiquette", "label", "ancre"],
+        icone: Icone::Etiquette,
+    },
+    Balise {
+        id: TagId::Tableau,
+        titre: "Tableau",
+        description: "Choisir la taille et insérer la grille",
+        alias: &["t", "tableau", "table"],
+        icone: Icone::Tableau,
+    },
+    Balise {
+        id: TagId::Graphique,
+        titre: "Graphique",
+        description: "Composer un graphique avec ses données",
+        alias: &["gr", "ch", "graphique", "chart", "diagramme"],
+        icone: Icone::Graphique,
+    },
+    Balise {
+        id: TagId::Encadre,
+        titre: "Encadré",
+        description: "Habiller une citation d'un encadré",
+        alias: &["e", "encadré", "callout", "encadre"],
+        icone: Icone::Encadre,
+    },
+    Balise {
+        id: TagId::Extension,
+        titre: "Extension",
+        description: "Insérer un fragment Typst paramétré",
+        alias: &["extension", "typst"],
+        icone: Icone::Fragment,
+    },
+    Balise {
+        id: TagId::Sommaire,
+        titre: "Sommaire",
+        description: "Poser la table des matières",
+        alias: &["s", "sommaire", "toc", "matières"],
+        icone: Icone::Tableau,
+    },
+    Balise {
+        id: TagId::Bibliographie,
+        titre: "Bibliographie",
+        description: "Poser la section bibliographie",
+        alias: &["bib", "bibliographie", "biblio"],
+        icone: Icone::Citation,
+    },
+    Balise {
+        id: TagId::GlossaireSection,
+        titre: "Section glossaire",
+        description: "Poser la liste finale du glossaire",
+        alias: &["gs", "glossaire", "section"],
+        icone: Icone::Glossaire,
+    },
+    Balise {
+        id: TagId::IndexBiblique,
+        titre: "Index biblique",
+        description: "Poser l'index des citations bibliques",
+        alias: &["idx", "index", "bible", "citations"],
+        icone: Icone::Bible,
+    },
+];
+
+/// Le catalogue des snippets.
+pub const SNIPPETS: &[Snippet] = &[
+    Snippet {
+        id: SnippetId::These,
+        titre: "Structure de thèse",
+        description: "Titre, introduction et cadre de travail",
+        alias: &["thèse", "these", "structure"],
+        icone: Icone::Fragment,
+    },
+    Snippet {
+        id: SnippetId::Chapitre,
+        titre: "Nouveau chapitre",
+        description: "Titre de niveau 1 et espace de rédaction",
+        alias: &["chapitre", "chapter"],
+        icone: Icone::Fichier,
+    },
+    Snippet {
+        id: SnippetId::Section,
+        titre: "Nouvelle section",
+        description: "Titre de niveau 2 et espace de rédaction",
+        alias: &["section", "sous-titre"],
+        icone: Icone::Fichier,
+    },
+    Snippet {
+        id: SnippetId::Citation,
+        titre: "Bloc de citation",
+        description: "Une citation à compléter",
+        alias: &["citation", "quote"],
+        icone: Icone::Citation,
+    },
+    Snippet {
+        id: SnippetId::Tableau,
+        titre: "Tableau simple",
+        description: "Grille de deux colonnes à compléter",
+        alias: &["tableau", "grille"],
+        icone: Icone::Tableau,
+    },
+];
+
+/// Un résultat de la palette : une commande, une balise, un snippet ou une
+/// métadonnée du projet.
+#[derive(Debug, Clone)]
+pub struct Item {
+    pub titre: String,
+    pub description: String,
+    pub alias: String,
+    pub categorie: Categorie,
+    pub icone: Icone,
+    pub raccourci: Option<&'static str>,
+    pub action: ItemAction,
+}
+
+#[derive(Debug, Clone)]
+pub enum ItemAction {
+    Commande(CommandeId),
+    Tag(TagId),
+    Snippet(SnippetId),
+    Meta(String),
+}
+
+/// L'état de la palette ouverte.
+#[derive(Debug, Clone)]
+pub struct Palette {
+    pub mode: ModePalette,
+    pub requete: String,
+    pub selection: usize,
+    /// La plage du déclencheur (`..` ou `/`) à retirer à l'insertion.
+    pub remplacement: Option<(usize, usize)>,
+    /// Les métadonnées visibles au moment de l'ouverture : la palette ne
+    /// relit pas `metadonnees.toml` à chaque image.
+    pub metadonnees: Vec<(String, String)>,
+}
+
+/// Un champ du formulaire d'une balise simple.
+#[derive(Debug, Clone)]
+pub struct ChampBalise {
+    pub cle: &'static str,
+    pub libelle: &'static str,
+    pub valeur: String,
+}
+
+/// Le formulaire d'une balise simple : les champs suffisent, le panneau
+/// spécialisé n'est pas nécessaire.
+#[derive(Debug, Clone)]
+pub struct BaliseDialogue {
+    pub tag: TagId,
+    pub champs: Vec<ChampBalise>,
+}
+
+impl BaliseDialogue {
+    /// Le formulaire d'une balise, ou `None` si elle a déjà son panneau.
+    pub fn depuis(tag: TagId) -> Option<Self> {
+        let champs = match tag {
+            TagId::Couleur => vec![
+                champ("couleur", "Couleur (red, #e74c3c…)", "red"),
+                champ("contenu", "Texte à teinter", ""),
+            ],
+            TagId::Date => vec![champ("spec", "Date (1789.07.14, XIXs…)", "")],
+            TagId::Glossaire => vec![champ("cle", "Clé du terme", "")],
+            TagId::Meta => vec![champ("cle", "Clé de la métadonnée", "auteur")],
+            TagId::Lien => vec![
+                champ("texte", "Texte du lien", ""),
+                champ("cible", "Adresse (https://…)", ""),
+            ],
+            _ => return None,
+        };
+
+        Some(Self { tag, champs })
+    }
+
+    pub fn id_champ(index: usize) -> iced::widget::Id {
+        iced::widget::Id::from(format!("balise-champ-{index}"))
+    }
+
+    pub fn valeur(&self, cle: &str) -> &str {
+        self.champs
+            .iter()
+            .find(|champ| champ.cle == cle)
+            .map(|champ| champ.valeur.as_str())
+            .unwrap_or("")
+    }
+
+    /// Le texte canonique, ou le motif qui empêche l'insertion.
+    pub fn texte(&self) -> Result<String, String> {
+        match self.tag {
+            TagId::Couleur => {
+                let couleur = self.valeur("couleur").trim();
+                if couleur.is_empty() {
+                    return Err("La couleur ne peut pas être vide.".to_string());
+                }
+                Ok(format!("{{{{c {couleur}|{}}}}}", self.valeur("contenu")))
+            }
+            TagId::Date => {
+                let spec = self.valeur("spec").trim();
+                if spec.is_empty() {
+                    return Err("La date ne peut pas être vide.".to_string());
+                }
+                Ok(format!("{{{{d {spec}}}}}"))
+            }
+            TagId::Glossaire => {
+                let cle = self.valeur("cle").trim();
+                if cle.is_empty() {
+                    return Err("La clé du terme ne peut pas être vide.".to_string());
+                }
+                Ok(format!("{{{{g {cle}}}}}"))
+            }
+            TagId::Meta => {
+                let cle = self.valeur("cle").trim();
+                if cle.is_empty() {
+                    return Err("La clé de la métadonnée ne peut pas être vide.".to_string());
+                }
+                Ok(format!("{{{{m {cle}}}}}"))
+            }
+            TagId::Lien => {
+                let texte = self.valeur("texte");
+                let cible = self.valeur("cible").trim();
+                if cible.is_empty() {
+                    return Err("L'adresse du lien ne peut pas être vide.".to_string());
+                }
+                Ok(format!("[{texte}]({cible})"))
+            }
+            _ => Err("Cette balise n'a pas de formulaire simple.".to_string()),
+        }
+    }
+}
+
+fn champ(cle: &'static str, libelle: &'static str, valeur: &str) -> ChampBalise {
+    ChampBalise {
+        cle,
+        libelle,
+        valeur: valeur.to_string(),
+    }
+}
+
+impl Palette {
+    /// L'identifiant du champ de recherche.
+    pub const ID_CHAMP: &'static str = "palette-commande";
+
+    pub fn id_champ() -> iced::widget::Id {
+        iced::widget::Id::new(Self::ID_CHAMP)
+    }
+
+    /// Ouvre la palette, en retenant le déclencheur qui vient d'être tapé.
+    fn depuis(mode: ModePalette, contenu: &str, curseur: usize) -> Self {
+        Self {
+            mode,
+            requete: String::new(),
+            selection: 0,
+            remplacement: declencheur(contenu, curseur, mode),
+            metadonnees: Vec::new(),
+        }
+    }
+
+    /// Les résultats visibles, filtrés par la requête et par les plugins
+    /// réellement branchés dans le document.
+    pub fn resultats(&self, state: &State) -> Vec<Item> {
+        let mut items = Vec::new();
+
+        if self.mode == ModePalette::Systeme {
+            for commande in COMMANDES
+                .iter()
+                .filter(|commande| commande_active(&state.reglages.fonctionnalites, commande.id))
+            {
+                items.push(item_de_commande(commande));
+            }
+        }
+
+        for balise in BALISES
+            .iter()
+            .filter(|balise| balise_active(&state.reglages.fonctionnalites, balise.id))
+        {
+            items.push(item_de_balise(balise));
+        }
+        for snippet in SNIPPETS {
+            items.push(item_de_snippet(snippet));
+        }
+
+        // Les métadonnées du projet sont des balises comme les autres :
+        // `{{m auteur}}` est aussi naturel que `{{date:...}}`.
+        for (cle, valeur) in &self.metadonnees {
+            items.push(Item {
+                titre: format!("Métadonnée · {cle}"),
+                description: valeur.clone(),
+                alias: cle.clone(),
+                categorie: Categorie::Insertion,
+                icone: Icone::EtiquetteMeta,
+                raccourci: None,
+                action: ItemAction::Meta(cle.clone()),
+            });
+        }
+
+        let requete = normaliser(&self.requete);
+        if !requete.is_empty() {
+            items.retain(|item| {
+                normaliser(&item.titre).contains(&requete)
+                    || normaliser(&item.alias).contains(&requete)
+                    || normaliser(&item.description).contains(&requete)
+            });
+        }
+
+        // Un préfixe passe avant une simple présence : taper « fig » doit
+        // d'abord proposer « Figure », pas une description qui le contient.
+        items.sort_by_key(|item| {
+            let titre = normaliser(&item.titre);
+            let alias = normaliser(&item.alias);
+            if titre.starts_with(&requete) || alias.starts_with(&requete) {
+                0
+            } else {
+                1
+            }
+        });
+
+        items.truncate(10);
+        items
+    }
+
+    /// L'élément sélectionné, s'il existe encore après un filtre.
+    pub fn selectionne(&self, state: &State) -> Option<Item> {
+        let items = self.resultats(state);
+        items
+            .get(self.selection.min(items.len().saturating_sub(1)))
+            .cloned()
+    }
+}
+
+/// Ouvre la palette depuis un message (`Ctrl+K`, `/`).
+pub fn ouvrir(state: &mut State, mode: ModePalette) -> Task<Message> {
+    poser(state, mode)
+}
+
+/// Installe une palette ouverte et lui donne le focus.
+fn poser(state: &mut State, mode: ModePalette) -> Task<Message> {
+    let contenu = state.editor.content();
+    let curseur = state.editor.cursor_offset();
+    let mut palette = Palette::depuis(mode, &contenu, curseur);
+    palette.metadonnees = metadonnees_visibles(state);
+    state.palette = Some(palette);
+    state.editor.editor.lose_focus();
+    iced::widget::operation::focus(Palette::id_champ())
+}
+
+/// Ouvre la palette si la frappe vient de poser un déclencheur.
+///
+/// Appelé après chaque frappe qui peut changer le contenu. Le déclencheur
+/// reste dans le texte tant qu'aucun choix n'est fait : Échap ne perd rien.
+pub fn ouvrir_si_declencheur(state: &mut State) -> Task<Message> {
+    if state.palette.is_some() {
+        return Task::none();
+    }
+
+    let contenu = state.editor.content();
+    let curseur = state.editor.cursor_offset();
+
+    let mode = if declencheur(&contenu, curseur, ModePalette::Systeme).is_some() {
+        ModePalette::Systeme
+    } else if declencheur(&contenu, curseur, ModePalette::Balises).is_some() {
+        ModePalette::Balises
+    } else {
+        return Task::none();
+    };
+
+    poser(state, mode)
+}
+
+/// Le déclencheur reconnu à la fin du texte, avec sa plage.
+pub fn declencheur(contenu: &str, curseur: usize, mode: ModePalette) -> Option<(usize, usize)> {
+    let curseur = curseur.min(contenu.len());
+
+    match mode {
+        ModePalette::Balises => {
+            if curseur < 2 || &contenu[curseur - 2..curseur] != ".." {
+                return None;
+            }
+            if !frontiere(contenu, curseur - 2) {
+                return None;
+            }
+            Some((curseur - 2, curseur))
+        }
+        ModePalette::Systeme => {
+            if curseur < 1 || &contenu[curseur - 1..curseur] != "/" {
+                return None;
+            }
+            if !frontiere(contenu, curseur - 1) {
+                return None;
+            }
+            Some((curseur - 1, curseur))
+        }
+    }
+}
+
+/// Le début d'un déclencheur est-il une frontière de mot ?
+fn frontiere(contenu: &str, debut: usize) -> bool {
+    if debut == 0 {
+        return true;
+    }
+
+    contenu[..debut]
+        .chars()
+        .next_back()
+        .is_some_and(char::is_whitespace)
+}
+
+/// Les métadonnées visibles du projet, sans les vides.
+fn metadonnees_visibles(state: &State) -> Vec<(String, String)> {
+    if let Some(dialogue) = state.mise_en_page.as_ref() {
+        return dialogue
+            .metadonnees
+            .paires
+            .iter()
+            .filter(|(_, valeur)| !valeur.trim().is_empty())
+            .cloned()
+            .collect();
+    }
+
+    crate::project::metadonnees::Metadonnees::charger(&state.project.dir)
+        .paires
+        .into_iter()
+        .filter(|(_, valeur)| !valeur.trim().is_empty())
+        .collect()
+}
+
+/// Une commande n'apparaît que si le plugin qu'elle pilote est branché.
+fn commande_active(
+    fonctionnalites: &crate::mise_en_page::modele::Fonctionnalites,
+    id: CommandeId,
+) -> bool {
+    use crate::base::valeurs::{CLE_BIBLIOGRAPHIE, CLE_GLOSSAIRE};
+
+    match id {
+        CommandeId::Citation => fonctionnalites.actif(CLE_BIBLIOGRAPHIE),
+        CommandeId::GlossaireFenetre => fonctionnalites.actif(CLE_GLOSSAIRE),
+        _ => true,
+    }
+}
+
+/// Une balise n'apparaît que si son plugin est branché. Les balises de base
+/// (couleur, date, tableau, lien…) restent toujours disponibles.
+fn balise_active(
+    fonctionnalites: &crate::mise_en_page::modele::Fonctionnalites,
+    id: TagId,
+) -> bool {
+    use crate::base::valeurs::{
+        CLE_BIBLIOGRAPHIE, CLE_CALLOUTS, CLE_GLOSSAIRE, CLE_GRAPHIQUES, CLE_REFERENCES_BIBLIQUES,
+    };
+
+    let plugin = match id {
+        TagId::Bible | TagId::IndexBiblique => Some(CLE_REFERENCES_BIBLIQUES),
+        TagId::Glossaire | TagId::GlossaireSection => Some(CLE_GLOSSAIRE),
+        TagId::Bibliographie => Some(CLE_BIBLIOGRAPHIE),
+        TagId::Graphique => Some(CLE_GRAPHIQUES),
+        TagId::Encadre => Some(CLE_CALLOUTS),
+        _ => None,
+    };
+
+    plugin.is_none_or(|cle| fonctionnalites.actif(cle))
+}
+
+fn item_de_commande(commande: &Commande) -> Item {
+    Item {
+        titre: commande.titre.to_string(),
+        description: commande.description.to_string(),
+        alias: commande.alias.join(" "),
+        categorie: commande.categorie,
+        icone: commande.icone,
+        raccourci: commande.raccourci,
+        action: ItemAction::Commande(commande.id),
+    }
+}
+
+fn item_de_balise(balise: &Balise) -> Item {
+    Item {
+        titre: balise.titre.to_string(),
+        description: balise.description.to_string(),
+        alias: balise.alias.join(" "),
+        categorie: Categorie::Insertion,
+        icone: balise.icone,
+        raccourci: None,
+        action: ItemAction::Tag(balise.id),
+    }
+}
+
+fn item_de_snippet(snippet: &Snippet) -> Item {
+    Item {
+        titre: snippet.titre.to_string(),
+        description: snippet.description.to_string(),
+        alias: snippet.alias.join(" "),
+        categorie: Categorie::Insertion,
+        icone: snippet.icone,
+        raccourci: None,
+        action: ItemAction::Snippet(snippet.id),
+    }
+}
+
+/// Traite les messages de la palette. `None` : ce message ne la concerne pas.
+pub fn traiter(state: &mut State, message: &Message) -> Option<Task<Message>> {
+    match message {
+        Message::PaletteOuvrir(mode) => Some(ouvrir(state, *mode)),
+        Message::PaletteFermer => {
+            state.palette = None;
+            Some(redonner_le_clavier(state))
+        }
+        Message::PaletteRecherche(requete) => {
+            if let Some(palette) = state.palette.as_mut() {
+                palette.requete = requete.clone();
+                palette.selection = 0;
+            }
+            Some(Task::none())
+        }
+        Message::PaletteDeplacer(delta) => {
+            let delta = *delta;
+            if state.palette.is_some() {
+                let total = state
+                    .palette
+                    .as_ref()
+                    .map(|palette| palette.resultats(state).len())
+                    .unwrap_or(0);
+
+                if total > 0 {
+                    let total = total as i32;
+                    if let Some(palette) = state.palette.as_mut() {
+                        palette.selection =
+                            ((palette.selection as i32 + delta).rem_euclid(total)) as usize;
+                    }
+                }
+            }
+            Some(Task::none())
+        }
+        Message::PaletteChoisir(rang) => Some(choisir_rang(state, Some(*rang), false)),
+        Message::PaletteExecuter => Some(choisir(state, false)),
+        Message::PaletteConfigurer => Some(choisir(state, true)),
+        Message::BaliseChamp(cle, valeur) => {
+            if let Some(dialogue) = state.balise_dialogue.as_mut()
+                && let Some(champ) = dialogue.champs.iter_mut().find(|champ| champ.cle == cle)
+            {
+                champ.valeur = valeur.clone();
+            }
+            Some(Task::none())
+        }
+        Message::BaliseInserer => {
+            let Some(dialogue) = state.balise_dialogue.take() else {
+                return Some(Task::none());
+            };
+            match dialogue.texte() {
+                Ok(texte) => {
+                    let insertion = state.editor.insert_at_cursor(&texte).map(Message::Editor);
+                    Some(Task::batch([insertion, redonner_le_clavier(state)]))
+                }
+                Err(motif) => {
+                    state.balise_dialogue = Some(dialogue);
+                    state.note = Some(crate::app::state::Note::erreur(motif));
+                    Some(Task::none())
+                }
+            }
+        }
+        Message::BaliseAnnuler => {
+            state.balise_dialogue = None;
+            Some(redonner_le_clavier(state))
+        }
+        _ => None,
+    }
+}
+
+/// Choisit l'élément sélectionné, puis l'exécute.
+fn choisir(state: &mut State, configurer: bool) -> Task<Message> {
+    choisir_rang(state, None, configurer)
+}
+
+/// Choisit un rang précis — le clic sur une ligne — ou la sélection
+/// courante quand aucun rang n'est donné.
+fn choisir_rang(state: &mut State, rang: Option<usize>, configurer: bool) -> Task<Message> {
+    let Some(palette) = state.palette.clone() else {
+        return Task::none();
+    };
+
+    let item = match rang {
+        Some(rang) => palette.resultats(state).get(rang).cloned(),
+        None => palette.selectionne(state),
+    };
+    let Some(item) = item else {
+        return Task::none();
+    };
+
+    state.palette = None;
+    let refocus = redonner_le_clavier(state);
+
+    let retrait = palette
+        .remplacement
+        .map(|(debut, fin)| {
+            state
+                .editor
+                .replace_span(debut, fin, "")
+                .map(Message::Editor)
+        })
+        .unwrap_or_else(Task::none);
+
+    let action = executer_item(state, &item, configurer);
+    Task::batch([retrait, refocus, action])
+}
+
+/// Exécute une entrée du catalogue.
+fn executer_item(state: &mut State, item: &Item, configurer: bool) -> Task<Message> {
+    match &item.action {
+        ItemAction::Commande(id) => COMMANDES
+            .iter()
+            .find(|commande| commande.id == *id)
+            .map(|commande| match commande.action {
+                Action::Message(message) => Task::done(message()),
+            })
+            .unwrap_or_else(Task::none),
+        ItemAction::Tag(tag) => {
+            if configurer {
+                configurer_tag(state, *tag)
+            } else {
+                inserer_tag(state, *tag)
+            }
+        }
+        ItemAction::Snippet(snippet) => inserer_snippet(state, *snippet),
+        ItemAction::Meta(cle) => inserer_texte(state, &format!("{{{{m {cle}}}}}"), 0),
+    }
+}
+
+/// L'insertion par défaut d'une balise : le gabarit minimal, curseur dedans.
+fn inserer_tag(state: &mut State, tag: TagId) -> Task<Message> {
+    match tag {
+        TagId::Couleur => inserer_texte(state, "{{c red|}}", 2),
+        TagId::Date => inserer_texte(state, "{{d }}", 2),
+        TagId::Glossaire => inserer_texte(state, "{{g }}", 2),
+        TagId::Bible => inserer_texte(state, "{{b }}", 2),
+        TagId::Lien => inserer_texte(state, "[]()", 3),
+        TagId::Meta => inserer_texte(state, "{{m }}", 2),
+        TagId::Note => Task::done(Message::NoteInserer),
+        TagId::Figure => Task::done(Message::FigureInserer),
+        TagId::Image => Task::done(Message::ImageInserer),
+        TagId::Renvoi => Task::done(Message::RenvoiInserer),
+        TagId::Etiquette => Task::done(Message::EtiquetteInserer),
+        TagId::Tableau => Task::done(Message::TableauOuvrir),
+        TagId::Graphique => Task::done(Message::ChartOuvrir),
+        TagId::Encadre => inserer_texte(state, "{{e type=note titre=\"Note\"|}}", 2),
+        TagId::Extension => Task::done(Message::ExtensionOuvrir),
+        TagId::Sommaire => Task::done(Message::SommaireInserer),
+        TagId::Bibliographie => Task::done(Message::BibliographieSectionInserer),
+        TagId::GlossaireSection => Task::done(Message::GlossaireSectionInserer),
+        TagId::IndexBiblique => Task::done(Message::BibleIndexInserer),
+    }
+}
+
+/// La configuration d'une balise : son formulaire simple, ou son panneau
+/// quand elle a des champs plus riches.
+fn configurer_tag(state: &mut State, tag: TagId) -> Task<Message> {
+    if let Some(dialogue) = BaliseDialogue::depuis(tag) {
+        state.balise_dialogue = Some(dialogue);
+        state.editor.editor.lose_focus();
+        return iced::widget::operation::focus(BaliseDialogue::id_champ(0));
+    }
+
+    match tag {
+        TagId::Note => Task::done(Message::NoteInserer),
+        TagId::Figure => Task::done(Message::FigureInserer),
+        TagId::Image => Task::done(Message::ImageInserer),
+        TagId::Tableau => Task::done(Message::TableauOuvrir),
+        TagId::Graphique => Task::done(Message::ChartOuvrir),
+        TagId::Encadre => Task::done(Message::CalloutOuvrir),
+        TagId::Extension => Task::done(Message::ExtensionOuvrir),
+        TagId::Bible => Task::done(Message::ReferenceBibliqueInserer),
+        _ => inserer_tag(state, tag),
+    }
+}
+
+fn inserer_snippet(state: &mut State, snippet: SnippetId) -> Task<Message> {
+    let (texte, recul) = match snippet {
+        SnippetId::These => (
+            "# Titre de la thèse\n\n## Introduction\n\nLe propos s'ouvre ici.\n\n",
+            0,
+        ),
+        SnippetId::Chapitre => ("\n\n# Titre du chapitre\n\n", 0),
+        SnippetId::Section => ("\n\n## Titre de la section\n\n", 0),
+        SnippetId::Citation => ("\n\n> ", 0),
+        SnippetId::Tableau => ("\n\n{{t}}\n| A | B |\n| --- | --- |\n|  |  |\n\n", 0),
+    };
+
+    inserer_texte(state, texte, recul)
+}
+
+fn inserer_texte(state: &mut State, texte: &str, recul: usize) -> Task<Message> {
+    state
+        .editor
+        .insert_avec_curseur(texte, recul)
+        .map(Message::Editor)
+}
+
+/// Rend le clavier et le curseur à l'éditeur après une palette ou un
+/// formulaire. `request_focus` seul ne suffit pas : le widget garde son
+/// drapeau de focus interne, et le curseur restait invisible.
+fn redonner_le_clavier(state: &mut State) -> Task<Message> {
+    state.editor.editor.request_focus();
+    state
+        .editor
+        .update(EditorMessage::CanvasFocusGained)
+        .map(Message::Editor)
+}
+
+#[cfg(test)]
+mod tests_de_la_palette {
+    use super::*;
+
+    #[test]
+    fn les_declencheurs_ne_prennent_que_leurs_frontieres() {
+        assert_eq!(
+            declencheur("Un texte ..", 11, ModePalette::Balises),
+            Some((9, 11)),
+            "deux points après un blanc ouvrent les balises"
+        );
+        assert_eq!(
+            declencheur("/", 1, ModePalette::Systeme),
+            Some((0, 1)),
+            "la barre en début de ligne ouvre les commandes"
+        );
+        assert_eq!(
+            declencheur("et /", 4, ModePalette::Systeme),
+            Some((3, 4)),
+            "la barre après un blanc ouvre les commandes"
+        );
+        assert_eq!(
+            declencheur("et/ou", 5, ModePalette::Systeme),
+            None,
+            "une barre collée à un mot ne déclenche rien"
+        );
+        assert_eq!(
+            declencheur("http://", 7, ModePalette::Systeme),
+            None,
+            "une URL ne déclenche pas la palette"
+        );
+        assert_eq!(
+            declencheur("phrase ..", 9, ModePalette::Balises),
+            Some((7, 9)),
+            "les points après un blanc ouvrent les balises"
+        );
+        assert_eq!(
+            declencheur("phrase...", 9, ModePalette::Balises),
+            None,
+            "une ellipse collée à un mot ne déclenche rien"
+        );
+    }
+
+    #[test]
+    fn le_catalogue_a_des_noms_et_des_icones() {
+        assert!(COMMANDES.iter().all(|commande| !commande.titre.is_empty()));
+        assert!(BALISES.iter().all(|balise| !balise.titre.is_empty()));
+        assert!(SNIPPETS.iter().all(|snippet| !snippet.titre.is_empty()));
+        assert!(
+            BALISES.iter().any(|balise| balise.id == TagId::Meta),
+            "la métadonnée a sa balise"
+        );
+    }
+
+    #[test]
+    fn le_formulaire_d_une_metadonnee_produit_sa_balise() {
+        let dialogue = BaliseDialogue::depuis(TagId::Meta).expect("formulaire");
+        assert_eq!(dialogue.texte().expect("texte"), "{{m auteur}}");
+    }
+
+    #[test]
+    fn un_formulaire_incomplet_ne_produit_rien() {
+        let mut dialogue = BaliseDialogue::depuis(TagId::Date).expect("formulaire");
+        dialogue.champs[0].valeur.clear();
+        assert!(dialogue.texte().is_err(), "une date vide est refusée");
+    }
+
+    #[test]
+    fn le_formulaire_de_couleur_produit_une_balise_courte() {
+        let mut dialogue = BaliseDialogue::depuis(TagId::Couleur).expect("formulaire");
+        dialogue.champs[0].valeur = "#e74c3c".to_string();
+        dialogue.champs[1].valeur = "important".to_string();
+        assert_eq!(dialogue.texte().expect("texte"), "{{c #e74c3c|important}}");
+    }
+
+    #[test]
+    fn seuls_les_plugins_branches_proposent_leurs_commandes() {
+        let mut fonctionnalites = crate::mise_en_page::modele::Fonctionnalites::default();
+        assert!(commande_active(&fonctionnalites, CommandeId::Citation));
+        assert!(balise_active(&fonctionnalites, TagId::Bible));
+
+        fonctionnalites.bibliographie = false;
+        fonctionnalites.references_bibliques = false;
+        fonctionnalites.glossaire = false;
+        assert!(
+            !commande_active(&fonctionnalites, CommandeId::Citation),
+            "la citation bibliographique disparaît"
+        );
+        assert!(
+            !commande_active(&fonctionnalites, CommandeId::GlossaireFenetre),
+            "la fenêtre du glossaire disparaît"
+        );
+        assert!(
+            !balise_active(&fonctionnalites, TagId::Bible),
+            "la balise biblique disparaît"
+        );
+        assert!(
+            !balise_active(&fonctionnalites, TagId::Glossaire),
+            "la balise de glossaire disparaît"
+        );
+        assert!(
+            balise_active(&fonctionnalites, TagId::Couleur),
+            "les balises de base restent"
+        );
+    }
+}

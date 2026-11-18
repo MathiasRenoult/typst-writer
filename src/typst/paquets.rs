@@ -20,6 +20,20 @@ use crate::services::stockage::packages_dir;
 /// L'identité Typst du glossaire embarqué.
 pub const GLOSSARIUM: &str = "@local/glossarium:0.5.10";
 
+/// L'identité Typst de primaviz, le moteur des graphiques.
+pub const PRIMAVIZ: &str = "@local/primaviz:0.12.1";
+
+/// L'identité Typst de showybox, le moteur des callouts.
+pub const SHOWYBOX: &str = "@local/showybox:2.0.4";
+
+/// Les fichiers de primaviz, vendus dans `vendor/primaviz/0.12.1/`.
+pub(crate) const PRIMAVIZ_FICHIERS: &[(&str, &str)] =
+    crate::typst::paquets_primaviz::PRIMAVIZ_FICHIERS;
+
+/// Les fichiers de showybox, vendus dans `vendor/showybox/2.0.4/`.
+pub(crate) const SHOWYBOX_FICHIERS: &[(&str, &str)] =
+    crate::typst::paquets_showybox::SHOWYBOX_FICHIERS;
+
 /// Les fichiers de glossarium 0.5.10, vendés dans `vendor/glossarium/`.
 /// Le chemin du paquet est déduit de son identité : `<ns>/<nom>/<version>/`.
 pub(crate) const GLOSSARIUM_FICHIERS: &[(&str, &str)] = &[
@@ -49,7 +63,22 @@ pub fn assurer_glossarium() -> Result<PathBuf> {
     installer_dans(&packages_dir(), GLOSSARIUM, GLOSSARIUM_FICHIERS)
 }
 
-/// Pose `fichiers` sous `racine/<ns>/<nom>/<version>/`.
+/// S'assure que primaviz est installé dans le dossier des paquets.
+///
+/// Idempotent : le point d'entrée du paquet fait foi.
+pub fn assurer_primaviz() -> Result<PathBuf> {
+    installer_dans_avec(&packages_dir(), PRIMAVIZ, PRIMAVIZ_FICHIERS, "src/lib.typ")
+}
+
+/// S'assure que showybox est installé dans le dossier des paquets.
+///
+/// Idempotent : le point d'entrée `showy.typ` fait foi.
+pub fn assurer_showybox() -> Result<PathBuf> {
+    installer_dans_avec(&packages_dir(), SHOWYBOX, SHOWYBOX_FICHIERS, "showy.typ")
+}
+
+/// Pose `fichiers` sous `racine/<ns>/<nom>/<version>/`, avec le point
+/// d'entrée du paquet qui décide de sa présence.
 ///
 /// Rend le chemin du paquet. Chaque appelant a son atelier (pid +
 /// nanosecondes) : deux installations parallèles ne partagent rien.
@@ -58,11 +87,22 @@ pub(crate) fn installer_dans(
     paquet: &str,
     fichiers: &[(&str, &str)],
 ) -> Result<PathBuf> {
+    installer_dans_avec(racine, paquet, fichiers, "glossarium.typ")
+}
+
+/// La même installation, avec le fichier qui fait foi pour reconnaître un
+/// paquet déjà posé.
+pub(crate) fn installer_dans_avec(
+    racine: &Path,
+    paquet: &str,
+    fichiers: &[(&str, &str)],
+    point_entree: &str,
+) -> Result<PathBuf> {
     let (ns, nom, version) = decouper_paquet(paquet)?;
     let destination = racine.join(ns).join(nom).join(version);
 
     // Déjà là : la présence du point d'entrée fait foi.
-    if destination.join("glossarium.typ").is_file() {
+    if destination.join(point_entree).is_file() {
         return Ok(destination);
     }
 
@@ -95,7 +135,7 @@ pub(crate) fn installer_dans(
             // son point d'entrée est là, c'est gagné ; sinon la place se
             // reprend.
             let _ = std::fs::remove_dir_all(&atelier);
-            if destination.join("glossarium.typ").is_file() {
+            if destination.join(point_entree).is_file() {
                 return Ok(destination);
             }
             std::fs::remove_dir_all(&destination)?;
@@ -183,6 +223,46 @@ mod tests {
             .filter(|nom| nom.starts_with(".tw-paquet-"))
             .collect();
         assert!(reste.is_empty(), "des ateliers sont restés : {reste:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// primaviz se pose avec son point d'entrée, pas celui du glossaire.
+    #[test]
+    fn primaviz_s_installe_avec_son_point_entree() {
+        let root = racine("primaviz");
+        let chemin = installer_dans_avec(&root, PRIMAVIZ, PRIMAVIZ_FICHIERS, "src/lib.typ")
+            .expect("installation de primaviz");
+
+        assert_eq!(chemin, root.join("local/primaviz/0.12.1"));
+        assert!(
+            chemin.join("src/lib.typ").is_file(),
+            "le point d'entrée est posé"
+        );
+        assert!(
+            chemin.join("src/charts/pie.typ").is_file(),
+            "les types sont posés"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// showybox se pose avec son point d'entrée et ses modules.
+    #[test]
+    fn showybox_s_installe_avec_son_point_entree() {
+        let root = racine("showybox");
+        let chemin = installer_dans_avec(&root, SHOWYBOX, SHOWYBOX_FICHIERS, "showy.typ")
+            .expect("installation de showybox");
+
+        assert_eq!(chemin, root.join("local/showybox/2.0.4"));
+        assert!(
+            chemin.join("showy.typ").is_file(),
+            "le point d'entrée est posé"
+        );
+        assert!(
+            chemin.join("lib/sections.typ").is_file(),
+            "les modules sont posés"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

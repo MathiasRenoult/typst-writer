@@ -5,58 +5,67 @@
 //! et sa GUI sans toucher au reste**. Voici la maison :
 //!
 //! 1. **Le paquet se résout localement** — `packages_dir()` et
-//!    [`crate::typst::render`] : un `#import "@local/cetz:…"` compile
+//!    [`crate::typst::render`] : un `#import "@local/primaviz:…"` compile
 //!    depuis le dossier des paquets, sans réseau ;
 //! 2. **Un trait décrit l'extension** — [`ExtensionPaquet`] : son
-//!    identité, son insertion (les paramètres → le code Typst) ;
+//!    identité, son insertion (les paramètres → la source `.tw`) ;
 //! 3. **Un registre les rassemble** — [`extensions`] : l'application ne
 //!    connaît que lui. Ajouter une extension = un type de plus dans le
 //!    registre.
 //!
-//! Le troisième jalon — la **GUI** de réglage (le composeur cetz) —
-//! s'ajoutera comme une vue par extension ; le trait grandira d'une
-//! méthode `vue` quand la première arrivera, pas avant.
+//! Le composeur générique reste le chemin rapide ; le panneau `{chart}`
+//! (bouton de la barre d'outils) est le chemin complet, avec le CSV en
+//! plusieurs lignes et l'import de fichier.
 
 use std::collections::BTreeMap;
 
 /// Un paquet Typst intégré à l'application.
 pub trait ExtensionPaquet: Send + Sync {
-    /// Son identité Typst — `@local/cetz:0.3.4`.
+    /// Son identité Typst — `@local/primaviz:0.12.1`.
     fn paquet(&self) -> &'static str;
 
     /// Son nom à l'écran.
     fn nom(&self) -> &'static str;
 
     /// Les paramètres qu'il propose : nom → défaut. C'est le cahier de
-    /// la future GUI : une saisie par ligne.
+    /// la GUI : une saisie par ligne.
     fn parametres(&self) -> &'static [(&'static str, &'static str)];
 
-    /// Les paramètres choisis deviennent le code Typst posé dans le
-    /// document — l'écrivain ne tape jamais ce code.
+    /// Les paramètres choisis deviennent la source posée dans le
+    /// document — l'écrivain ne tape jamais le CSV.
     fn inserer(&self, parametres: &BTreeMap<String, String>) -> String;
 }
 
 /// Le registre : ce que l'application offre. Ajouter une extension, c'est
 /// une ligne ici.
 pub fn extensions() -> Vec<Box<dyn ExtensionPaquet>> {
-    vec![Box::new(Cetz)]
+    vec![Box::new(Primaviz)]
 }
 
-/// La première extension — la preuve que la maison tient : ceTZ, le
-/// graphique, réglé par paramètres plutôt que tapé.
-pub struct Cetz;
+/// La première extension — primaviz, le graphique réglé par paramètres
+/// plutôt que tapé.
+pub struct Primaviz;
 
-impl ExtensionPaquet for Cetz {
+impl ExtensionPaquet for Primaviz {
     fn paquet(&self) -> &'static str {
-        "@local/cetz:0.3.4"
+        "@local/primaviz:0.12.1"
     }
 
     fn nom(&self) -> &'static str {
-        "Graphique (cetz)"
+        "Graphique (primaviz)"
     }
 
     fn parametres(&self) -> &'static [(&'static str, &'static str)] {
-        &[("largeur", "8cm"), ("hauteur", "5cm"), ("axes", "oui")]
+        &[
+            ("type", "bar"),
+            ("titre", ""),
+            ("largeur", "10cm"),
+            ("hauteur", "6cm"),
+            ("placement", "centre"),
+            ("legende", "oui"),
+            ("valeurs", "oui"),
+            ("donnees", "A,1;B,2"),
+        ]
     }
 
     fn inserer(&self, parametres: &BTreeMap<String, String>) -> String {
@@ -71,37 +80,64 @@ impl ExtensionPaquet for Cetz {
                 .filter(|v| !v.trim().is_empty())
                 .unwrap_or(defaut)
         }
-        let largeur = valeur(parametres, "largeur", "8cm");
-        let hauteur = valeur(parametres, "hauteur", "5cm");
-        let axes = valeur(parametres, "axes", "oui") == "oui";
-        format!(
-            "#{{\\n  import \\\"{}\\\": canvas, draw\\n  canvas(width: {}, height: {}, {{\\n    if {axes} {{ draw.set-style(mark: (fill: black)) }}\\n  }})\\n}}\\n",
-            self.paquet(),
-            largeur,
-            hauteur
-        )
+
+        let placement = match valeur(parametres, "placement", "centre")
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "gauche" | "left" => "gauche",
+            "droite" | "right" => "droite",
+            "pleine-largeur" | "pleine" | "full" => "pleine-largeur",
+            _ => "centre",
+        };
+        let chart = crate::langage::schema::Chart {
+            type_: crate::langage::chart::normaliser_type(valeur(parametres, "type", "bar"))
+                .to_string(),
+            titre: valeur(parametres, "titre", "").to_string(),
+            largeur: valeur(parametres, "largeur", "10cm").to_string(),
+            hauteur: valeur(parametres, "hauteur", "6cm").to_string(),
+            placement: placement.to_string(),
+            legende: oui(valeur(parametres, "legende", "oui")),
+            valeurs: oui(valeur(parametres, "valeurs", "oui")),
+            donnees: valeur(parametres, "donnees", "A,1;B,2").replace(';', "\n"),
+            ..crate::langage::schema::Chart::default()
+        };
+        crate::langage::chart::source(&chart)
     }
+}
+
+fn oui(valeur: &str) -> bool {
+    matches!(
+        valeur.trim().to_lowercase().as_str(),
+        "oui" | "true" | "1" | "vrai"
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Cetz, ExtensionPaquet, extensions};
+    use super::{ExtensionPaquet, Primaviz, extensions};
 
-    /// La maison tient : le registre parle, et l'extension écrit le code
-    /// à la place de l'écrivain.
+    /// Le registre parle, et l'extension écrit une balise primaviz à la
+    /// place de l'écrivain.
     #[test]
-    fn une_extension_ecrit_le_code_a_sa_place() {
+    fn une_extension_ecrit_la_balise_a_sa_place() {
         let registre = extensions();
         assert_eq!(registre.len(), 1, "la première extension est là");
-        assert_eq!(registre[0].nom(), "Graphique (cetz)");
+        assert_eq!(registre[0].nom(), "Graphique (primaviz)");
 
         let mut choix = std::collections::BTreeMap::new();
         choix.insert("largeur".to_string(), "12cm".to_string());
-        let code = Cetz.inserer(&choix);
-        assert!(code.contains("width: 12cm"), "le choix vient : {code}");
+        choix.insert("donnees".to_string(), "A,1;B,2".to_string());
+        let code = Primaviz.inserer(&choix);
         assert!(
-            code.contains("@local/cetz:0.3.4"),
-            "le paquet est nommé : {code}"
+            code.contains("{chart bar 12cm×6cm"),
+            "la balise compacte est posée : {code}"
         );
+        assert!(
+            code.contains("A,1\nB,2"),
+            "le CSV reprend ses lignes : {code}"
+        );
+        assert!(!code.contains("cetz"), "primaviz a remplacé cetz : {code}");
     }
 }

@@ -26,6 +26,38 @@ pub struct LivreConnu {
     pub abreviation: String,
 }
 
+/// Une entrée de la liste déroulante cherchable du panneau biblique.
+///
+/// Le libellé suit la forme d'affichage choisie (la forme TOB montre ses
+/// propres abréviations) ; le rang, lui, ne bouge jamais.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LivreChoix {
+    /// Le rang du livre dans la liste complète, canon et hors canon compris.
+    pub rang: usize,
+    /// Le libellé affiché et comparé par le widget.
+    pub libelle: String,
+}
+
+impl LivreChoix {
+    pub fn depuis(rang: usize, livre: &LivreConnu, forme: Option<FormeLivre>) -> Self {
+        let abreviation = match forme {
+            Some(FormeLivre::Tob) => crate::langage::references::abreviation_tob(&livre.osis)
+                .unwrap_or(&livre.abreviation),
+            _ => abreviation_francaise(&livre.osis).unwrap_or(&livre.abreviation),
+        };
+        Self {
+            rang,
+            libelle: format!("{} — {}", livre.nom, abreviation),
+        }
+    }
+}
+
+impl std::fmt::Display for LivreChoix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.libelle)
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct Chapitre {
     livre: String,
@@ -96,12 +128,55 @@ pub fn versets(reference: &Reference, traduction: Traduction) -> Vec<(u32, Strin
 }
 
 /// Les livres connus de la traduction (leurs noms et abréviations).
+///
+/// Les traductions embarquées ne contiennent que les 66 livres canoniques ;
+/// les deutérocanoniques et les apocryphes sont ajoutés après elles pour
+/// qu'on puisse les citer même sans texte consultable.
 pub fn livres(traduction: Traduction) -> Vec<LivreConnu> {
     let brut: &'static [u8] = match traduction {
         Traduction::Lsg => include_bytes!("../../../vendor/bible-fr/LSG-livres.json"),
         Traduction::Darby => include_bytes!("../../../vendor/bible-fr/DARBY-livres.json"),
     };
-    serde_json::from_slice(brut).expect("les livres sont lisibles")
+    let mut livres: Vec<LivreConnu> =
+        serde_json::from_slice(brut).expect("les livres sont lisibles");
+
+    for (osis, nom, abreviation) in crate::langage::references::livres_hors_canon() {
+        if !livres.iter().any(|livre| livre.osis == osis) {
+            livres.push(LivreConnu {
+                osis: osis.to_string(),
+                nom: nom.to_string(),
+                abreviation: abreviation.to_string(),
+            });
+        }
+    }
+
+    livres
+}
+
+/// Filtre une liste de livres déjà chargée : le panneau n'a pas à charger
+/// deux fois la table de la traduction. La casse et les accents sont pliés
+/// de la même manière que dans la palette.
+pub fn filtrer_livres(livres: &[LivreConnu], filtre: &str) -> Vec<LivreConnu> {
+    let filtre = crate::base::texte::normaliser_recherche(filtre.trim());
+    livres
+        .iter()
+        .filter(|livre| {
+            if filtre.is_empty() {
+                return true;
+            }
+            crate::base::texte::normaliser_recherche(&livre.nom).contains(&filtre)
+                || crate::base::texte::normaliser_recherche(&livre.abreviation).contains(&filtre)
+                || abreviation_francaise(&livre.osis).is_some_and(|abreviation| {
+                    crate::base::texte::normaliser_recherche(abreviation).contains(&filtre)
+                })
+                || crate::langage::references::abreviation_tob(&livre.osis).is_some_and(
+                    |abreviation| {
+                        crate::base::texte::normaliser_recherche(abreviation).contains(&filtre)
+                    },
+                )
+        })
+        .cloned()
+        .collect()
 }
 
 /// Les statistiques des livres cités (le système biblique) : ce qui est
@@ -216,7 +291,8 @@ impl Statistiques {
 /// la comparaison des échelles.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Analyse {
-    /// La couverture : le nombre de livres cités sur les 66.
+    /// La couverture : le nombre de livres cités sur ceux qui sont proposés
+    /// (canon, deutérocanoniques et apocryphes).
     pub livres_cites: usize,
     /// Les livres jamais cités, par testament.
     pub jamais_cites: Vec<String>,
@@ -267,12 +343,16 @@ impl Analyse {
     }
 }
 
-/// Les livres de l'Ancien Testament, pour la répartition.
-const LIVRES_ANCIEN: [&str; 39] = [
+/// Les livres de l'Ancien Testament, pour la répartition. Les
+/// deutérocanoniques et les apocryphes y sont rangés avec l'Ancien.
+const LIVRES_ANCIEN: &[&str] = &[
     "Gen", "Exod", "Lev", "Num", "Deut", "Josh", "Judg", "Ruth", "1Sam", "2Sam", "1Kgs", "2Kgs",
     "1Chr", "2Chr", "Ezra", "Neh", "Esth", "Job", "Ps", "Prov", "Eccl", "Song", "Isa", "Jer",
     "Lam", "Ezek", "Dan", "Hos", "Joel", "Amos", "Obad", "Jonah", "Mic", "Nah", "Hab", "Zeph",
-    "Hag", "Zech", "Mal",
+    "Hag", "Zech", "Mal", "Tob", "Jdt", "AddEst", "1Macc", "2Macc", "Wis", "Sir", "Bar", "EpJer",
+    "PrMan", "Ps151", "3Macc", "4Macc", "2Esd", "1Esd", "3Esd", "1En", "2En", "Jub", "TReu",
+    "TSim", "TLevi", "TJud", "TIss", "TZeb", "TDan", "TNaph", "TGad", "TAsh", "TJos", "TBen",
+    "2Bar", "3Bar", "ApAb", "ApZeph", "ApPet", "ApPaul", "ApMos",
 ];
 
 /// La référence sous un décalage du texte : la plage de la forme `{{…}}`
@@ -908,8 +988,13 @@ mod tests {
         releve.insert("Jn 3:17".to_string(), 2);
         releve.insert("Gn 1:1".to_string(), 1);
         let analyse = Analyse::depuis_releve(&releve);
-        assert_eq!(analyse.livres_cites, 2, "deux livres sur 66");
-        assert_eq!(analyse.jamais_cites.len(), 64, "les autres manquent");
+        let total = livres(Traduction::Lsg).len();
+        assert_eq!(analyse.livres_cites, 2, "deux livres cités");
+        assert_eq!(
+            analyse.jamais_cites.len(),
+            total - 2,
+            "les autres livres manquent"
+        );
         assert_eq!(analyse.favori, Some(("Jn".to_string(), 7)));
         assert_eq!(analyse.chapitre_favori, Some(("Jn 3".to_string(), 7)));
         assert_eq!(analyse.concentration, 100, "les trois sommets portent tout");
@@ -1024,9 +1109,29 @@ mod tests {
     #[test]
     fn les_livres_sont_nommes() {
         let livres = livres(Traduction::Lsg);
-        assert_eq!(livres.len(), 66);
+        assert_eq!(
+            livres.len(),
+            66 + crate::langage::references::livres_hors_canon().len()
+        );
         let genese = livres.iter().find(|l| l.osis == "Gen").expect("la Genèse");
         assert_eq!(genese.nom, "Genèse");
         assert_eq!(genese.abreviation, "Gen");
+    }
+
+    #[test]
+    fn la_recherche_ne_montre_que_les_livres_correspondants() {
+        let tous = livres(Traduction::Lsg);
+        let henoch = filtrer_livres(&tous, "henoch");
+        assert!(henoch.iter().any(|livre| livre.osis == "1En"));
+        assert!(!henoch.iter().any(|livre| livre.osis == "Gen"));
+
+        let genese = filtrer_livres(&tous, "genese");
+        assert!(genese.iter().any(|livre| livre.osis == "Gen"));
+        assert!(!genese.iter().any(|livre| livre.osis == "1En"));
+
+        assert!(
+            filtrer_livres(&tous, "introuvable").is_empty(),
+            "aucun livre ne correspond"
+        );
     }
 }

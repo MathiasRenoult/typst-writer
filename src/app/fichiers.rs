@@ -544,7 +544,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             let texte = if sur_typst(&state.editor) {
                 "#bibliography(\"references.bib\", full: true)".to_string()
             } else {
-                "{bibliographie}".to_string()
+                "{{bib}}".to_string()
             };
 
             state.editor.insert_at_cursor(&texte).map(Message::Editor)
@@ -588,7 +588,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     texte.push_str("\n\n");
                 }
             }
-            texte.push_str("{{index}}\n\n");
+            texte.push_str("{{idx}}\n\n");
             state.editor.insert_at_cursor(&texte).map(Message::Editor)
         }
 
@@ -601,7 +601,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             let texte = if sur_typst(&state.editor) {
                 "#outline()".to_string()
             } else {
-                "[[TOC]]".to_string()
+                "{{s}}".to_string()
             };
 
             state.editor.insert_at_cursor(&texte).map(Message::Editor)
@@ -611,7 +611,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             let texte = if sur_typst(&state.editor) {
                 "#print-glossary(tw-glossaire)".to_string()
             } else {
-                "{glossaire}".to_string()
+                "{{gs}}".to_string()
             };
 
             state.editor.insert_at_cursor(&texte).map(Message::Editor)
@@ -621,7 +621,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             let texte = if sur_typst(&state.editor) {
                 format!("#gls(\"{cle}\")")
             } else {
-                format!("{{glo:{cle}}}")
+                format!("{{{{g {cle}}}}}")
             };
 
             state.editor.insert_at_cursor(&texte).map(Message::Editor)
@@ -693,7 +693,8 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
         // (bug-report-7, point 15).
         Message::NoteInserer => {
             state.note_dialogue = Some(String::new());
-            Task::none()
+            state.editor.editor.lose_focus();
+            iced::widget::operation::focus(iced::widget::Id::new(crate::app::state::ID_NOTE_CHAMP))
         }
 
         Message::NoteTexte(texte) => {
@@ -707,17 +708,19 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             let Some(note) = state.note_dialogue.take() else {
                 return Task::none();
             };
-            if sur_typst(&state.editor) {
-                state
-                    .editor
-                    .insert_avec_curseur(&format!("#footnote[{note}]"), 0)
-                    .map(Message::Editor)
+            let source = if sur_typst(&state.editor) {
+                format!(
+                    "#footnote[{}]",
+                    crate::langage::serialiser::contenu_note(&note)
+                )
             } else {
-                state
-                    .editor
-                    .insert_avec_curseur(&format!("^[{note}]"), 0)
-                    .map(Message::Editor)
-            }
+                crate::langage::serialiser::texte_note(&note)
+            };
+
+            state
+                .editor
+                .insert_avec_curseur(&source, 0)
+                .map(Message::Editor)
         }
 
         Message::NoteAnnuler => {

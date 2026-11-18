@@ -25,10 +25,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 .label("La note de bas de page")
                 .size(theme::jetons::SAILLANT),
             text_input("écrivez la note…", note)
+                .id(iced::widget::Id::new(crate::app::state::ID_NOTE_CHAMP))
                 .on_input(Message::NoteTexte)
                 .on_submit(Message::NoteValider)
                 .padding(6)
-                .width(Length::Fixed(380.0)),
+                .width(Length::Fixed(480.0)),
             row![
                 button(palette.label("Poser la note").size(theme::jetons::DETAIL),)
                     .on_press(Message::NoteValider)

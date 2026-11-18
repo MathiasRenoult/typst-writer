@@ -70,7 +70,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // activer un plugin se fait dans les normes, le configurer se fait ici.
     bar = bar.push(icon_button(
         lucide_icons::iced::icon_puzzle::<Theme>(),
-        "Les paramètres des plugins : bibliographie, biblique, glossaire, graphiques",
+        "Les paramètres des plugins : bibliographie, biblique, glossaire, graphiques, callouts",
         Message::PluginsOuvrir,
         palette,
         state
@@ -78,6 +78,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .as_ref()
             .is_some_and(|dialogue| dialogue.plugins),
     ));
+
+    // Le graphique et le callout vivent avec les autres gestes d'insertion,
+    // dans le groupe central de la barre — pas à côté des commandes de
+    // projet. Un add-on débranché n'expose pas un bouton mort.
 
     bar = bar.push(separation(palette));
 
@@ -118,6 +122,26 @@ pub fn view(state: &State) -> Element<'_, Message> {
                             .size(theme::jetons::DETAIL),
                     )
                     .on_press(Message::ProjetModeleBascule)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Insérer une note de bas de page…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::NoteInserer)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
+                            .label("Insérer un graphique…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::ChartOuvrir)
                     .padding([4, 10])
                     .width(Length::Fill),
                 ),
@@ -201,6 +225,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
         Message::ExportPdf,
         palette,
         false,
+    ));
+
+    // La palette : le point d'entrée unique des commandes. Le menu `..` du
+    // texte reste le chemin d'insertion ; `Ctrl+K` ouvre celui-ci partout.
+    bar = bar.push(icon_button(
+        lucide_icons::iced::icon_command::<Theme>(),
+        "Commandes (Ctrl+K) — balises dans le texte avec ..",
+        Message::PaletteOuvrir(crate::app::palette::ModePalette::Systeme),
+        palette,
+        state.palette.is_some(),
     ));
 
     // TOPBAR-08 : la barre suit le mode (bug-report-7, point 1). Le zoom
@@ -471,12 +505,18 @@ pub fn view(state: &State) -> Element<'_, Message> {
             crate::app::message::FormatAction::Note,
             palette,
         ));
-        bar = bar.push(format_button(
-            "@",
-            "Insérer une citation bibliographique",
-            crate::app::message::FormatAction::Citation,
-            palette,
-        ));
+        if state
+            .reglages
+            .fonctionnalites
+            .actif(crate::base::valeurs::CLE_BIBLIOGRAPHIE)
+        {
+            bar = bar.push(toolbar_text_button(
+                "@",
+                "Insérer une citation bibliographique",
+                Message::CitationOuvrir,
+                palette,
+            ));
+        }
         bar = bar.push(format_button(
             "T",
             "Entourer la sélection d'un bloc Typst brut",
@@ -490,6 +530,26 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             false,
         ));
+
+        if state.reglages.fonctionnalites.graphiques {
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_chart_column::<Theme>(),
+                "Insérer un graphique : secteurs, barres, lignes, aires, points, boîtes",
+                Message::ChartOuvrir,
+                palette,
+                state.chart.is_some(),
+            ));
+        }
+
+        if state.reglages.fonctionnalites.callouts {
+            bar = bar.push(icon_button(
+                lucide_icons::iced::icon_text_quote::<Theme>(),
+                "Insérer un callout : encadrer une citation",
+                Message::CalloutOuvrir,
+                palette,
+                state.callout.is_some(),
+            ));
+        }
 
         bar = bar.push(icon_button(
             lucide_icons::iced::icon_table::<Theme>(),

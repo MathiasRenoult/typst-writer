@@ -87,6 +87,88 @@ pub struct MiseEnPage {
     /// Les fonctionnalités branchées ou non (la bibliographie, le
     /// glossaire, les graphiques).
     pub fonctionnalites: Fonctionnalites,
+
+    /// Les réglages propres aux plugins, embarqués dans le fichier de
+    /// normes avec la mise en page : ils suivent le document quand on
+    /// l'ouvre, sans dépendre d'un réglage de l'application.
+    pub parametres_plugins: ParametresPlugins,
+}
+
+/// Les réglages des plugins qui accompagnent une norme.
+///
+/// La mise en page dit **ce que le document compose** ; cette section dit
+/// **comment ses plugins se comportent à l'ouverture**. Elle voyage dans le
+/// même `mise-en-page.toml`, et un ancien fichier qui ne la connaît pas
+/// reçoit les défauts sans rien perdre.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParametresPlugins {
+    /// Le plugin biblique.
+    pub biblique: ParametresBiblique,
+
+    /// Les préréglages des callouts, embarqués dans la norme.
+    pub callouts: ParametresCallouts,
+}
+
+/// Les callouts prédéfinis d'un document.
+///
+/// La source nomme un préréglage (`{callout attention "…"}`) ; c'est ici que
+/// vivent ses couleurs, sa bordure et ses mesures. Le panneau d'insertion peut
+/// surcharger ces valeurs pour une occurrence, et la source garde alors ces
+/// écarts explicitement — le fichier de normes n'est pas modifié par surprise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParametresCallouts {
+    /// Les préréglages, dans l'ordre où le panneau les montre.
+    pub presets: Vec<crate::langage::callout::CalloutPreset>,
+}
+
+impl Default for ParametresCallouts {
+    fn default() -> Self {
+        Self {
+            presets: crate::langage::callout::presets_defaut(),
+        }
+    }
+}
+
+impl ParametresCallouts {
+    /// Le préréglage nommé, s'il existe.
+    pub fn preset(&self, cle: &str) -> Option<&crate::langage::callout::CalloutPreset> {
+        self.presets.iter().find(|preset| preset.cle == cle)
+    }
+
+    /// Un préréglage libre, pour le bouton « Nouveau » : une clé stable et
+    /// lisible, jamais en collision avec une autre.
+    pub fn cle_libre(&self) -> String {
+        for rang in 1.. {
+            let cle = format!("perso-{rang}");
+            if self.preset(&cle).is_none() {
+                return cle;
+            }
+        }
+
+        "perso".to_string()
+    }
+}
+
+/// Les réglages du plugin biblique embarqués dans une norme.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParametresBiblique {
+    /// La traduction consultée par défaut : `lsg` ou `darby`.
+    pub traduction: String,
+
+    /// L'ordre de la liste des références : `apparition` ou `canonique`.
+    pub tri: String,
+}
+
+impl Default for ParametresBiblique {
+    fn default() -> Self {
+        Self {
+            traduction: "lsg".to_string(),
+            tri: "apparition".to_string(),
+        }
+    }
 }
 
 /// La bibliographie d'un projet.
@@ -358,6 +440,8 @@ pub enum SystemeAbreviation {
     Osis,
     /// La forme courte sans point : « Gn », « Jn ».
     SansPoint,
+    /// Les abréviations de la TOB : « Gn », « 1 S », « 1 Co »…
+    Tob,
 }
 
 /// Les chiffres des chapitres et des versets.
@@ -652,6 +736,7 @@ impl Typographie {
             guillemets_ouvrants: self.guillemets_ouvrants.chars().collect(),
             guillemets_fermants: self.guillemets_fermants.chars().collect(),
             numerotation_figures: String::new(),
+            callouts: ParametresCallouts::default(),
             dates: crate::langage::dates::Regles::default(),
             references: references.clone(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
@@ -889,6 +974,64 @@ impl MiseEnPage {
             }
         }
 
+        // Les réglages embarqués des plugins : une valeur inconnue se dit
+        // plutôt que de retomber en silence sur le défaut.
+        if !matches!(
+            self.parametres_plugins.biblique.traduction.as_str(),
+            "lsg" | "darby"
+        ) {
+            out.push((
+                "traduction biblique du fichier de normes".to_string(),
+                format!(
+                    "« {} » n'est pas une traduction connue (lsg, darby)",
+                    self.parametres_plugins.biblique.traduction
+                ),
+            ));
+        }
+        if !matches!(
+            self.parametres_plugins.biblique.tri.as_str(),
+            "apparition" | "canonique"
+        ) {
+            out.push((
+                "ordre biblique du fichier de normes".to_string(),
+                format!(
+                    "« {} » n'est pas un ordre connu (apparition, canonique)",
+                    self.parametres_plugins.biblique.tri
+                ),
+            ));
+        }
+
+        // Les callouts prédéfinis : leurs couleurs et leurs mesures entrent
+        // dans Typst, donc une valeur douteuse se dit avant l'application.
+        if self.parametres_plugins.callouts.presets.is_empty() {
+            out.push((
+                "callouts prédéfinis".to_string(),
+                "il faut au moins un préréglage".to_string(),
+            ));
+        }
+        let mut cles = std::collections::HashSet::new();
+        for (rang, preset) in self.parametres_plugins.callouts.presets.iter().enumerate() {
+            if !cles.insert(preset.cle.as_str()) {
+                out.push((
+                    format!("callout prédéfini {}", rang + 1),
+                    format!("la clé « {} » est utilisée deux fois", preset.cle),
+                ));
+            }
+            for probleme in preset.problemes() {
+                out.push((
+                    format!(
+                        "callout prédéfini « {} »",
+                        if preset.nom.trim().is_empty() {
+                            &preset.cle
+                        } else {
+                            &preset.nom
+                        }
+                    ),
+                    probleme,
+                ));
+            }
+        }
+
         // La typographie : une valeur inconnue se perdait en silence, et
         // la règle tombait en « aucune » sans le dire à personne.
         let espaces = [
@@ -1083,6 +1226,10 @@ pub enum Champ {
     IndexRegrouperParLivre,
     IndexForme,
     IndexColonnes,
+    /// La traduction biblique consultée par défaut (`lsg`, `darby`).
+    BibliqueTraduction,
+    /// L'ordre de la liste biblique (`apparition`, `canonique`).
+    BibliqueTri,
 }
 
 impl MiseEnPage {
@@ -1275,6 +1422,7 @@ impl MiseEnPage {
                 SystemeAbreviation::FrancaiseLongue => "longue".to_string(),
                 SystemeAbreviation::Osis => "osis".to_string(),
                 SystemeAbreviation::SansPoint => "sans_point".to_string(),
+                SystemeAbreviation::Tob => "tob".to_string(),
             },
             Champ::ReferencesChiffres => match self.references.chiffres {
                 Chiffres::Arabes => "arabes".to_string(),
@@ -1297,8 +1445,11 @@ impl MiseEnPage {
                 Some(SystemeAbreviation::FrancaiseLongue) => "longue".to_string(),
                 Some(SystemeAbreviation::Osis) => "osis".to_string(),
                 Some(SystemeAbreviation::SansPoint) => "sans_point".to_string(),
+                Some(SystemeAbreviation::Tob) => "tob".to_string(),
             },
             Champ::IndexColonnes => self.index.colonnes.to_string(),
+            Champ::BibliqueTraduction => self.parametres_plugins.biblique.traduction.clone(),
+            Champ::BibliqueTri => self.parametres_plugins.biblique.tri.clone(),
         }
     }
 
@@ -1473,6 +1624,7 @@ impl MiseEnPage {
                     "longue" => SystemeAbreviation::FrancaiseLongue,
                     "osis" => SystemeAbreviation::Osis,
                     "sans_point" => SystemeAbreviation::SansPoint,
+                    "tob" => SystemeAbreviation::Tob,
                     _ => SystemeAbreviation::FrancaiseCourte,
                 }
             }
@@ -1499,12 +1651,15 @@ impl MiseEnPage {
                     "courte" => Some(SystemeAbreviation::FrancaiseCourte),
                     "osis" => Some(SystemeAbreviation::Osis),
                     "sans_point" => Some(SystemeAbreviation::SansPoint),
+                    "tob" => Some(SystemeAbreviation::Tob),
                     _ => None,
                 }
             }
             Champ::IndexColonnes => {
                 self.index.colonnes = valeur.trim().parse::<usize>().unwrap_or(1).clamp(1, 4);
             }
+            Champ::BibliqueTraduction => self.parametres_plugins.biblique.traduction = valeur,
+            Champ::BibliqueTri => self.parametres_plugins.biblique.tri = valeur,
         }
     }
 
@@ -1909,6 +2064,7 @@ mod tests_des_fonctionnalites {
         assert!(normes.fonctionnalites.bibliographie);
         assert!(normes.fonctionnalites.glossaire);
         assert!(normes.fonctionnalites.graphiques);
+        assert!(normes.fonctionnalites.callouts);
     }
 
     /// Une mise en page d'avant, sans le bloc, les porte toutes.
@@ -1919,6 +2075,43 @@ mod tests_des_fonctionnalites {
         assert!(normes.fonctionnalites.bibliographie);
         assert!(normes.fonctionnalites.glossaire);
         assert!(normes.fonctionnalites.graphiques);
+        assert!(normes.fonctionnalites.callouts);
+    }
+
+    /// Un fichier qui connaît la section mais pas le nouveau champ le reçoit
+    /// actif, sans erreur de lecture.
+    #[test]
+    fn un_ancien_bloc_de_fonctionnalites_recoit_les_callouts() {
+        let normes: MiseEnPage = toml::from_str(
+            "[fonctionnalites]\nbibliographie = false\nglossaire = true\ngraphiques = true\nreferences_bibliques = true",
+        )
+        .unwrap();
+
+        assert!(!normes.fonctionnalites.bibliographie);
+        assert!(normes.fonctionnalites.callouts);
+    }
+
+    /// Le fichier de normes porte aussi le paramétrage des plugins : la
+    /// traduction et l'ordre bibliques se relisent tels quels, et un ancien
+    /// fichier reçoit les défauts sans que rien ne manque.
+    #[test]
+    fn les_parametres_des_plugins_voyagent_avec_la_norme() {
+        let mut normes = MiseEnPage::default();
+        normes.parametres_plugins.biblique.traduction = "darby".to_string();
+        normes.parametres_plugins.biblique.tri = "canonique".to_string();
+        normes.fonctionnalites.glossaire = false;
+
+        let texte = normes.ecrire().expect("la norme s'écrit");
+        assert!(
+            texte.contains("parametres_plugins"),
+            "la section des plugins est dans le fichier :\n{texte}"
+        );
+        let relu = MiseEnPage::lire(&texte).expect("la norme se relit");
+        assert_eq!(relu, normes, "rien ne se perd en chemin");
+
+        let ancien = MiseEnPage::lire("sommaire = true").expect("l'ancien se lit");
+        assert_eq!(ancien.parametres_plugins, ParametresPlugins::default());
+        assert!(normes.problemes().is_empty());
     }
 
     /// La forme des livres, les chiffres et l'ordre canonique se règlent par

@@ -51,7 +51,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
 
             let mut grille = vec![entete, trait_];
             grille.extend(std::iter::repeat_n(rang, rangs.saturating_sub(1)));
-            let grille = grille.join("\n");
+            let grille = format!("{{{{t}}}}\n{}", grille.join("\n"));
 
             state.editor.insert_at_cursor(&grille).map(Message::Editor)
         }

@@ -1,6 +1,6 @@
 [package]
 name = "typst-writer"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.92"
 description = "Un éditeur pour écrire en Typst, avec le rendu du document final"
@@ -35,6 +35,15 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 typst-library = "=0.15.1"
 typst-syntax = "0.15.1"
 pdf-render = "=1.3.0"
+# Le calendrier local de `datetime.today()` : Typst expose la date par
+# `World::today`, mais ne fournit pas d'horloge. `time` est déjà la
+# bibliothèque de son `Datetime` ; l'ajouter explicitement donne la même
+# date à l'aperçu et à l'export.
+time = { version = "0.3.55", features = ["local-offset"] }
+# Les couvertures de la bibliothèque : décoder le JPG/PNG choisi, le
+# recadrer au format A4, et relire les vignettes mises en cache. Sans codecs
+# inutiles : seuls le PNG et le JPEG sont demandés à l'auteur.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # Le profil de développement n'optimise rien — c'est le bon réglage pour
 # déboguer **son propre** code, et le mauvais pour une application dont le
@@ -54,9 +63,6 @@ opt-level = 2
 [patch.crates-io]
 iced-code-editor = { path = "vendor/iced-code-editor" }
 pdf-render = { path = "vendor/pdf-render-1.3.0" }
-
-[dev-dependencies]
-image = "0.25"
 
 [profile.release]
 # Le debuginfo ne sert qu'aux débogueurs : les rapports de plantage gardent

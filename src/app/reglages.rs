@@ -22,6 +22,11 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             | Message::MiseEnPageTypographieDefaut(_)
             | Message::EntetePiedImage(_)
             | Message::EntetePiedImageChoisie(_, _)
+            | Message::CalloutPresetChoisir(_)
+            | Message::CalloutPresetChamp(_, _, _)
+            | Message::CalloutPresetBascule(_, _, _)
+            | Message::CalloutPresetAjouter
+            | Message::CalloutPresetSupprimer(_)
     ) && let Some(dialogue) = state.mise_en_page.as_mut()
     {
         dialogue.modifie = true;
@@ -214,6 +219,77 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             Task::none()
         }
 
+        // Les préréglages de callouts : le panneau montre une copie de la
+        // norme, et c'est seulement « Appliquer » qui l'écrit.
+        Message::CalloutPresetChoisir(index) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                let nombre = dialogue.reglages.parametres_plugins.callouts.presets.len();
+                dialogue.callout_preset = index.min(nombre.saturating_sub(1));
+            }
+            Task::none()
+        }
+
+        Message::CalloutPresetChamp(index, champ, valeur) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut()
+                && let Some(preset) = dialogue
+                    .reglages
+                    .parametres_plugins
+                    .callouts
+                    .presets
+                    .get_mut(index)
+            {
+                preset.modifier(champ, valeur);
+            }
+            Task::none()
+        }
+
+        Message::CalloutPresetBascule(index, champ, actif) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut()
+                && let Some(preset) = dialogue
+                    .reglages
+                    .parametres_plugins
+                    .callouts
+                    .presets
+                    .get_mut(index)
+            {
+                match champ {
+                    crate::langage::callout::CalloutChamp::Gras => preset.gras = actif,
+                    crate::langage::callout::CalloutChamp::Rupture => preset.rupture = actif,
+                    _ => {}
+                }
+            }
+            Task::none()
+        }
+
+        Message::CalloutPresetAjouter => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                let callouts = &mut dialogue.reglages.parametres_plugins.callouts;
+                let cle = callouts.cle_libre();
+                let mut preset = crate::langage::callout::preset_defaut("note");
+                preset.cle = cle;
+                preset.nom = "Nouveau callout".to_string();
+                preset.titre = String::new();
+                callouts.presets.push(preset);
+                dialogue.callout_preset = callouts.presets.len().saturating_sub(1);
+            }
+            Task::none()
+        }
+
+        Message::CalloutPresetSupprimer(index) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                let callouts = &mut dialogue.reglages.parametres_plugins.callouts;
+                if callouts.presets.len() > 1 && index < callouts.presets.len() {
+                    callouts.presets.remove(index);
+                    dialogue.callout_preset = index.min(callouts.presets.len() - 1);
+                } else if callouts.presets.len() <= 1 {
+                    state.note = Some(crate::app::state::Note::info(
+                        "Un callout prédéfini doit rester dans la norme.".to_string(),
+                    ));
+                }
+            }
+            Task::none()
+        }
+
         Message::MiseEnPageAccrocher(accrocher) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.accrocher = accrocher;
@@ -397,6 +473,7 @@ fn ouvrir_panneau(state: &mut State, plugins: bool) -> Task<Message> {
         reglages,
         plugins,
         panneau: 0,
+        callout_preset: 0,
         accrocher: accroche_manquante,
         accroche_manquante,
         regles_main: mise_en_page::regles_ecrites_a_la_main(&state.project.dir),
@@ -431,8 +508,11 @@ fn appliquer(state: &mut State) -> Task<Message> {
     let reglages = dialogue.reglages.clone();
     let accrocher = dialogue.accrocher;
     // Les normes appliquées sont celles que l'interface lit pour
-    // montrer ou cacher les fonctionnalités du projet.
+    // montrer ou cacher les fonctionnalités du projet, et celles qui
+    // configurent les plugins à l'ouverture.
     state.reglages = reglages.clone();
+    state.configurer_les_plugins_selon_les_normes();
+    state.render.pending = true;
     state.rafraichir_statistiques_bibliques();
 
     match mise_en_page::appliquer(&state.project.dir, &reglages, accrocher) {

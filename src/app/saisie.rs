@@ -8,6 +8,66 @@ use super::Message;
 use super::State;
 use iced::Task;
 
+/// Déplace la ligne du curseur d'un niveau de liste, sans passer par le
+/// tampon de l'éditeur. `Tab` et `Maj+Tab` arrivent ici par deux chemins :
+/// les messages historiques (`ListeIndenter` / `ListeDesindenter`) et les
+/// messages que l'éditeur émet lui-même quand il a le focus.
+fn decaler_la_liste(state: &mut State, indenter: bool) -> Task<Message> {
+    let contenu = state.editor.content();
+    let offset = state.editor.cursor_offset();
+    let (debut, _, ligne) = super::ligne_du_curseur(&contenu, offset);
+
+    // On ne remplace que le début de la ligne, jamais le document entier :
+    // sélectionner tout le texte pour y insérer deux espaces faisait défiler
+    // l'éditeur — et, par le suivi de l'aperçu, la page — à chaque Tab.
+    let (tache, curseur) = if indenter {
+        (state.editor.replace_span(debut, debut, "  "), offset + 2)
+    } else {
+        let retrait = (ligne.len() - ligne.trim_start().len()).min(2);
+
+        if retrait == 0 {
+            (Task::none(), offset)
+        } else {
+            (
+                state.editor.replace_span(debut, debut + retrait, ""),
+                offset.saturating_sub(retrait),
+            )
+        }
+    };
+
+    Task::batch([tache, state.editor.set_cursor_offset(curseur)]).map(Message::Editor)
+}
+
+/// L'éditeur a-t-il capté une tabulation qui appartient à une liste ?
+///
+/// Le widget de l'éditeur transforme `Tab` en `Message::Tab` et
+/// `Maj+Tab` en `Message::FocusNavigationShiftTab` **avant** que les
+/// raccourcis de l'application ne voient l'événement. Sans cette porte, la
+/// tabulation insérait ses espaces et la liste ne changeait jamais de
+/// niveau — le geste existait dans le plan de touches, mais jamais atteint.
+fn tabulation_sur_liste(
+    state: &mut State,
+    message: &iced_code_editor::Message,
+) -> Option<Task<Message>> {
+    let indenter = match message {
+        iced_code_editor::Message::Tab => true,
+        iced_code_editor::Message::FocusNavigationShiftTab => false,
+        _ => return None,
+    };
+
+    if super::pointeur_bloque(state) {
+        return None;
+    }
+
+    let contenu = state.editor.content();
+    let offset = state.editor.cursor_offset();
+    if !super::est_sur_une_liste(&contenu, offset) {
+        return None;
+    }
+
+    Some(decaler_la_liste(state, indenter))
+}
+
 pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::BlocDescendre => state.editor.deplacer_le_bloc(false).map(Message::Editor),
@@ -25,28 +85,8 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             ])
             .map(Message::Editor)
         }
-        Message::ListeDesindenter => {
-            let contenu = state.editor.content();
-            let offset = state.editor.cursor_offset();
-            let (neuf, curseur) = super::desindenter_la_ligne(&contenu, offset);
-
-            Task::batch([
-                state.editor.replace_span(0, contenu.len(), &neuf),
-                state.editor.set_cursor_offset(curseur),
-            ])
-            .map(Message::Editor)
-        }
-        Message::ListeIndenter => {
-            let contenu = state.editor.content();
-            let offset = state.editor.cursor_offset();
-            let (neuf, curseur) = super::indenter_la_ligne(&contenu, offset);
-
-            Task::batch([
-                state.editor.replace_span(0, contenu.len(), &neuf),
-                state.editor.set_cursor_offset(curseur),
-            ])
-            .map(Message::Editor)
-        }
+        Message::ListeDesindenter => decaler_la_liste(state, false),
+        Message::ListeIndenter => decaler_la_liste(state, true),
         Message::ComposeurSaisie(_)
         | Message::ComposeurAvancer
         | Message::ComposeurTerminer
@@ -135,17 +175,11 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.derniere_couleur = Some(nom.clone());
             }
 
-            // Le bouton « citation » est un `@` tapé par la main de l'outil.
-            let _declencheur_tape = matches!(action, crate::app::message::FormatAction::Citation);
-
             // Les statistiques des livres cités suivent le document (le
             // panneau, l add-on biblique).
             state.rafraichir_statistiques_bibliques();
-            state.render.words_pending = true;
-            let edit = state.editor.apply_format(action).map(Message::Editor);
-            let completion = super::declencher_si_besoin(state);
-
-            Task::batch([edit, completion])
+            state.mots_a_recalculer();
+            state.editor.apply_format(action).map(Message::Editor)
         }
         Message::TitreInserer(niveau) => {
             // L'insertion simple au curseur : `#` × n + espace. Pas de
@@ -157,21 +191,39 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .map(Message::Editor)
         }
         Message::Editor(message) => {
-            let _content_changed = crate::editor::EditorState::message_may_change_content(&message);
+            // Un clic dans le texte ferme le menu contextuel et rend la main
+            // à l'éditeur : la bulle ne bloque ni la lecture ni le curseur.
+            if state.composeur.is_some()
+                && matches!(
+                    message,
+                    iced_code_editor::Message::MouseClick(..)
+                        | iced_code_editor::Message::DoubleClick(_)
+                        | iced_code_editor::Message::TripleClick(_)
+                )
+            {
+                return Task::batch([
+                    crate::app::composeur::fermer_composeur(state, None),
+                    state.editor.update(message).map(Message::Editor),
+                ]);
+            }
 
-            // Un `@` qui vient d'être tapé est le déclencheur du composeur ;
-            // les autres frappes peuvent être l'édition d'une citation.
-            let _declencheur_tape =
-                matches!(message, iced_code_editor::Message::CharacterInput('@'));
+            // `Tab` sur une citation en cours d'écriture ouvre le menu
+            // contextuel sans rien consommer ; ailleurs, la tabulation garde
+            // son geste ordinaire.
+            if matches!(message, iced_code_editor::Message::Tab)
+                && let Some(tache) = crate::app::composeur::ouvrir_si_citation_au_curseur(state)
+            {
+                return tache;
+            }
 
-            // Un clic dans le texte a le dernier mot sur le composeur.
-            let clic_dans_le_texte = matches!(
-                message,
-                iced_code_editor::Message::MouseClick(..)
-                    | iced_code_editor::Message::DoubleClick(_)
-                    | iced_code_editor::Message::TripleClick(_)
-            );
+            // L'éditeur capte `Tab` et `Maj+Tab` pour ses propres gestes.
+            // Sur une liste, c'est le document qui commande : le niveau
+            // change, et la tabulation n'insère pas ses espaces.
+            if let Some(tache) = tabulation_sur_liste(state, &message) {
+                return tache;
+            }
 
+            let content_changed = crate::editor::EditorState::message_may_change_content(&message);
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
             // Le survol des références bibliques : ce qui est sous la souris
@@ -219,6 +271,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     .fonctionnalites
                     .actif(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES)
                 && !super::pointeur_bloque(state)
+                && state.composeur.is_none()
             {
                 let texte = state.editor.content();
                 if let Some(reference) = crate::plugins::bible::reference_sous(&texte, offset) {
@@ -246,68 +299,40 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     state.plugins.bible.survol_candidat = None;
                 }
             }
-            state.render.words_pending = true;
+
+            // Le texte défile sous le pointeur : la référence survolée n'est
+            // plus celle qu'on voit, et sa bulle doit disparaître.
+            if matches!(message, iced_code_editor::Message::Scrolled(_)) {
+                state.plugins.bible.survol = None;
+                state.plugins.bible.survol_candidat = None;
+            }
+
+            state.mots_a_recalculer();
 
             // L'aperçu suit ce qu'on lit — mais seulement quand le suivi est
             // demandé : le bouton de la barre d'outils en décide, et écrire
             // ailleurs dans l'assemblage ne doit pas arracher l'aperçu.
             let suivre = matches!(message, iced_code_editor::Message::Scrolled(_))
                 && state.layout.follow_preview;
-
+            let citation_tapee = matches!(&message, iced_code_editor::Message::CharacterInput('@'));
             let task = state.editor.update(message).map(Message::Editor);
 
-            if clic_dans_le_texte {
-                if state.composeur.is_some() {
-                    // La main est rendue au document, et la note en cours ne
-                    // s'écrit pas — le même geste qu'Échap.
-                    return Task::batch([
-                        task,
-                        crate::app::composeur::fermer_composeur(state, None),
-                    ]);
-                }
+            // La frappe vient peut-être de poser `..` ou `/` : la palette
+            // s'ouvre alors sans voler le texte, et son champ prend le relais.
+            let palette = if content_changed {
+                crate::app::palette::ouvrir_si_declencheur(state)
+            } else {
+                Task::none()
+            };
 
-                // **Le clic sur un glyphe est la seule porte d'édition d'une
-                // note.** Une citation ouvre son composeur ; un pied de page se
-                // déplie sous le curseur. Ailleurs, rien ne bouge — et surtout
-                // plus jamais l'édition d'une citation au fil de la frappe.
-                let contenu = state.editor.content();
-                let notes = crate::langage::marques::notes(&contenu);
-
-                if let Some(rang) = state.editor.note_au_clic(&notes) {
-                    let note = notes[rang].clone();
-
-                    return match note.nature {
-                        crate::langage::marques::Nature::Appel => {
-                            let ouverture =
-                                crate::langage::parse::appel_autour(&contenu, note.debut + 1)
-                                    .map(|(references, debut, fin)| {
-                                        crate::app::composeur::ouvrir_edition(
-                                            state, references, debut, fin,
-                                        )
-                                    })
-                                    .unwrap_or_else(Task::none);
-
-                            Task::batch([task, ouverture])
-                        }
-                        crate::langage::marques::Nature::PiedDePage => {
-                            // L'overlay de note : le texte s'édite en bas
-                            // de l'écran, sans déplier la note sous le
-                            // curseur ni déranger le fil du document.
-                            let texte = &contenu[note.debut..note.fin];
-                            let nu = texte
-                                .strip_prefix("^[")
-                                .and_then(|s| s.strip_suffix(']'))
-                                .unwrap_or(texte);
-                            state.note_overlay = Some(crate::app::state::NoteOverlay {
-                                contenu: nu.to_string(),
-                                debut: note.debut,
-                                fin: note.fin,
-                            });
-                            Task::none()
-                        }
-                    };
-                }
-            }
+            // `@` ouvre le composeur de citation dès la frappe. Le `@` d'une
+            // adresse électronique ne passe pas la frontière, et le composeur
+            // ne s'ouvre pas dans une bande de code.
+            let citation = if citation_tapee {
+                crate::app::composeur::ouvrir_si_citation_au_curseur(state)
+            } else {
+                None
+            };
 
             let suivi = if suivre {
                 super::follow_editor_scroll(state)
@@ -315,13 +340,12 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 Task::none()
             };
 
-            // La frappe filtre la liste ; la navigation au curseur la ferme.
-            // Le défilement, lui, la garde ouverte et met à jour son ancre.
-            let completion = super::declencher_si_besoin(state);
-
-            crate::app::epreuves::actif("lsp");
-
-            Task::batch(vec![task, completion, suivi])
+            Task::batch(vec![
+                task,
+                palette,
+                citation.unwrap_or_else(Task::none),
+                suivi,
+            ])
         }
         _ => Task::none(),
     }

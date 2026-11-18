@@ -10,10 +10,32 @@ fautives sont dites champ par champ avant que quoi que ce soit ne soit
 
 Les normes **activent ou désactivent** les add-ons. Les paramètres propres
 à un plugin — style bibliographique, références bibliques, glossaire,
-graphiques — ont leur **panneau séparé**, ouvert par le bouton de la barre
-d'outils « Paramètres des plugins ». C'est la même séparation que dans le
-document : les normes disent ce qui est actif, le plugin dit comment il se
-comporte.
+graphiques, callouts — se règlent dans le panneau des plugins, mais ils appartiennent
+au **même fichier de normes** que la mise en page : le fichier
+`mise-en-page.toml` les emporte avec lui. Quand un document est ouvert,
+l'interface, l'éditeur et les plugins prennent donc sa mise en page et son
+paramétrage de plugins. Le panneau des plugins est séparé pour la
+commodité ; ce n'est pas un réglage de l'application.
+
+## Fichiers de normes
+
+La fenêtre des normes porte l'onglet **Fichiers de normes** (bouton
+« Fichiers… »). Il gère la bibliothèque interne :
+
+- **Charger** met le fichier dans la fenêtre, sans toucher au document ;
+- **Appliquer au document** écrit son `mise-en-page.toml`, son gabarit
+  Typst et met à jour les plugins ;
+- **Importer un fichier…** ajoute un `.toml` à la bibliothèque ; le nom du
+  fichier devient le nom de la norme, suffixé si ce nom est déjà pris ;
+- **Exporter** écrit une copie `.toml` sans jamais écraser un fichier
+  existant ;
+- **Supprimer** retire l'entrée de la bibliothèque ; le geste demande son
+  mot, car un fichier de normes ne se reconstitue pas à l'identique.
+
+Une norme importée reste une **norme interne** : elle est proposée à la
+création d'un projet comme les normes livrées. Le nom de la copie et le
+bouton d'enregistrement créent une nouvelle entrée à partir des réglages
+courants.
 
 Les champs numériques se règlent à la **molette** ou aux **flèches** ▲▼
 — la valeur garde son unité : `11pt` devient `12pt`, `2cm` devient `3cm`.
@@ -72,14 +94,21 @@ moteur Typst ; vérifiez tout de même leur place dans le PDF exporté.
 
 ## Les plugins
 
-Le panneau des plugins est distinct des normes. Il porte quatre onglets :
+Le panneau des plugins est une fenêtre séparée, mais ses valeurs font
+partie du **fichier de normes** du document. Il porte quatre onglets :
 
 - **Bibliographie** — le style des citations et de la liste finale,
   l'import d'un fichier `.csl` et les styles installés dans Zotero ;
-- **Biblique** — la forme des livres (abréviation, nom complet, OSIS,
-  sans point), les chiffres arabes ou romains, les séparateurs, le gabarit
-  de citation, l'ordre canonique et l'index des citations (pages,
-  regroupement, forme, colonnes) ;
+- **Biblique** — la traduction consultée (LSG ou Darby), l'ordre de la
+  liste (apparition ou canonique), la forme des livres (abréviation, nom
+  complet, OSIS, sans point ou TOB), les chiffres arabes ou romains, les
+  séparateurs, le gabarit de citation, l'ordre canonique et l'index des
+  citations (pages, regroupement, forme, colonnes) ;
+- **Biblique — les livres hors canon** : Tobie, Judith, Sagesse, Siracide,
+  Baruch, les Maccabées, les Esdras additionnels, Hénoch, les Jubilés, les
+  Testaments des douze patriarches et les principales apocalypses sont
+  proposés dans le panneau d'insertion. Leurs références se composent et
+  s'indexent, sans texte de traduction embarqué ;
 - **Glossaire** — un renvoi vers le panneau du glossaire, où se gèrent les
   termes ;
 - **Graphiques** — un renvoi vers la fenêtre d'insertion, qui porte les

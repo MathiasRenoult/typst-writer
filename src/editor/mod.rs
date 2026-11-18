@@ -12,7 +12,6 @@ pub enum FormatAction {
     ListePuce,
     ListeNumero,
     CitationBloc,
-    Citation,
     Note,
     BlocTypst,
 }
@@ -21,8 +20,17 @@ pub struct EditorState {
     pub editor: CodeEditor,
     pub path: Option<PathBuf>,
 
-    /// AST courant du fichier `.tw`, recalculé à chaque modification du source.
+    /// AST courant du fichier `.tw`.
+    ///
+    /// Pour un petit document, il suit chaque frappe ; au-delà de
+    /// [`PARSE_IMMEDIAT_MAX`], il est marqué périmé et reconstruit à la
+    /// première lecture (action, compilation ou rendu).
     pub document: Option<crate::langage::Document>,
+
+    /// Un texte volumineux a changé sans que son AST ait été reconstruit.
+    /// La frappe ne doit pas payer un parse complet à chaque caractère : la
+    /// structure est rejouée quand une action ou le rendu la demande.
+    document_dirty: bool,
 }
 
 /// Taille du texte de rédaction.
@@ -40,76 +48,7 @@ pub const SYNTAX: &str = "typ";
 /// Extension de coloration Markdown utilisée par `document.tw`.
 pub const MARKDOWN_SYNTAX: &str = "tw";
 
-/// Traduit les plages d'octets des notes en marques de lignes.
-///
-/// Une note qui s'étire sur plusieurs lignes devient une marque par ligne
-/// touchée : le glyphe n'apparaît qu'au premier rangon, la suite se tait
-/// sans se signer deux fois.
-fn marques_du_contenu(
-    contenu: &str,
-    notes: &[crate::langage::marques::Note],
-) -> Vec<(iced_code_editor::Marque, usize)> {
-    use crate::langage::marques::Note;
-
-    // Les bases d'octets de chaque ligne, et la fin du texte en sentinelle.
-    let mut bases = Vec::new();
-    let mut base = 0usize;
-
-    for ligne in contenu.split_inclusive('\n') {
-        bases.push(base);
-        base += ligne.len();
-    }
-
-    bases.push(base);
-
-    let translate = |octet: usize| -> (usize, usize) {
-        let ligne = bases.partition_point(|b| *b <= octet).saturating_sub(1);
-        let colonne = contenu[bases[ligne]..octet].chars().count();
-
-        (ligne, colonne)
-    };
-
-    let mut marques: Vec<(iced_code_editor::Marque, usize)> = Vec::new();
-
-    for (
-        rang,
-        Note {
-            debut, fin, numero, ..
-        },
-    ) in notes.iter().enumerate()
-    {
-        let mut premiere = true;
-        let mut ligne = translate(*debut).0;
-
-        while ligne + 1 < bases.len() && bases[ligne] < *fin {
-            let base_ligne = bases[ligne];
-            let fin_ligne = bases[ligne + 1];
-            let couvert_debut = (*debut).max(base_ligne);
-            let couvert_fin = (*fin).min(fin_ligne);
-
-            if couvert_debut < couvert_fin {
-                let (_, debut_col) = translate(couvert_debut);
-                let (_, fin_col) = translate(couvert_fin);
-                let label = if premiere {
-                    numero.to_string()
-                } else {
-                    String::new()
-                };
-
-                marques.push((
-                    iced_code_editor::Marque::new(rang, ligne, debut_col, fin_col, label),
-                    rang,
-                ));
-                premiere = false;
-            }
-
-            ligne += 1;
-        }
-    }
-
-    marques
-}
-
+/// L'extension de grammaire selon le fichier ouvert.
 fn syntax_for_path(path: &std::path::Path) -> &'static str {
     if path.extension().is_some_and(|extension| extension == "tw") {
         MARKDOWN_SYNTAX
@@ -164,12 +103,21 @@ fn apply_look(
 /// ligne en revenant à gauche.
 const LINE_HEIGHT: f32 = 1.6;
 
+/// En dessous de cette taille, l'AST est rejoué immédiatement : le coût est
+/// imperceptible et les actions qui suivent une frappe trouvent une structure
+/// fraîche. Au-dessus, la frappe marque seulement l'AST comme périmé ; une
+/// action explicite ou le rendu le reconstruit. Sans cette borne, taper dans
+/// un document de plusieurs méga-octets rejouait tout le parseur à chaque
+/// caractère.
+const PARSE_IMMEDIAT_MAX: usize = 16 * 1024;
+
 impl Default for EditorState {
     fn default() -> Self {
         let mut state = Self {
             editor: CodeEditor::new("", SYNTAX),
             path: None,
             document: None,
+            document_dirty: false,
         };
 
         // La recherche propre au crate — sans expressions régulières ni rappel
@@ -186,12 +134,17 @@ impl EditorState {
         let document = path
             .extension()
             .is_some_and(|extension| extension == "tw")
-            .then(|| crate::langage::parse(&content));
+            .then(|| (content.len() <= PARSE_IMMEDIAT_MAX).then(|| crate::langage::parse(&content)))
+            .flatten();
+        let document_dirty = path
+            .extension()
+            .is_some_and(|extension| extension == "tw" && content.len() > PARSE_IMMEDIAT_MAX);
         let syntax = syntax_for_path(&path);
         let mut state = Self {
             editor: CodeEditor::new(&content, syntax),
             path: Some(path),
             document,
+            document_dirty,
         };
 
         // La recherche propre au crate — sans expressions régulières ni rappel
@@ -231,13 +184,44 @@ impl EditorState {
         self.document = self
             .is_intermediate()
             .then(|| crate::langage::parse(&self.editor.content()));
+        self.document_dirty = false;
+    }
+
+    /// Rejoue l'AST s'il a été différé, pour une action ou le rendu.
+    pub fn actualiser_document(&mut self) {
+        if self.document_dirty {
+            self.refresh_document();
+        }
+    }
+
+    /// L'AST courant, y compris si une frappe volumineuse l'a laissé périmé.
+    ///
+    /// Version de lecture : elle ne modifie pas l'état de l'éditeur, ce qui
+    /// permet de l'appeler depuis la compilation, qui ne dispose que d'un
+    /// `&State`.
+    pub fn document_pour_lecture(&self) -> Option<crate::langage::Document> {
+        if !self.is_intermediate() {
+            return None;
+        }
+        if self.document_dirty {
+            Some(crate::langage::parse(&self.editor.content()))
+        } else {
+            self.document.clone()
+        }
     }
 
     /// Réconcilie la projection avec le document partagé, sans réinitialiser
     /// le curseur, le défilement ni l’historique commun.
     pub fn synchroniser_source(&mut self) {
-        self.refresh_document();
-        self.marques_a_jour();
+        // La projection arrive souvent sur une vue en arrière-plan : rejouer
+        // son parse maintenant serait exactement le coût qu'on vient
+        // d'éviter pendant la frappe. Il sera fait à la première lecture.
+        if self.is_intermediate() {
+            self.document_dirty = true;
+        } else {
+            self.document = None;
+            self.document_dirty = false;
+        }
     }
 
     /// Le message peut-il modifier le texte ou sa sérialisation ?
@@ -339,55 +323,14 @@ impl EditorState {
         let task = self.editor.update(&message);
 
         if content_may_change {
-            self.refresh_document();
-            self.marques_a_jour();
+            if self.is_intermediate() && self.editor.content().len() > PARSE_IMMEDIAT_MAX {
+                self.document_dirty = true;
+            } else {
+                self.refresh_document();
+            }
         }
 
         task
-    }
-
-    /// Repose les glyphes de notes : le contenu a changé, ou le curseur.
-    ///
-    /// C'est la **seule** règle de pliage : chaque note du document devient un
-    /// glyphe, sauf le pied de page sous le curseur, qui s'ouvre pour s'y
-    /// écrire. Elle suit **chaque** changement — le composeur qui remplace une
-    /// citation, la complétion qui insère une clé, la frappe, l'annulation —
-    /// parce qu'un contenu sans son glyphe est un texte à nu : le Suppr y
-    /// grignote les caractères de la clé, et le `.tw` s'abîme.
-    ///
-    /// Elle est appelée à **chaque tic** : les éditions qui ne viennent pas
-    /// du clavier — une citation insérée, un remplacement, un bloc déplacé —
-    /// ne passent par aucun message d'éditeur, et c'étaient elles qui
-    /// laissaient des glyphes sur du texte qui n'était plus le leur.
-    /// La comparaison fait qu'un document immobile ne dérange jamais le
-    /// cache d'habillage.
-    pub fn marques_a_jour(&mut self) {
-        use crate::langage::marques::Nature;
-
-        let contenu = self.content();
-        let offset = self.cursor_offset();
-        let notes = crate::langage::marques::notes(&contenu)
-            .into_iter()
-            .filter(|note| {
-                !(note.nature == Nature::PiedDePage && note.debut < offset && offset < note.fin)
-            })
-            .collect::<Vec<_>>();
-
-        // Ne reposer les marques que si elles ont changé : un document
-        // immobile ne dérange pas le cache d'habillage, et c'est ce qui
-        // rend la mise à jour à chaque tic sans prix.
-        let attendues = marques_du_contenu(&contenu, &notes);
-        let formes: Vec<iced_code_editor::Marque> =
-            attendues.iter().map(|(marque, _)| marque.clone()).collect();
-
-        if self.editor.marques() != formes.as_slice() {
-            self.set_marques(&notes);
-        }
-    }
-
-    /// Le nombre de glyphes posés sur le document.
-    pub fn nombre_de_glyphes(&self) -> usize {
-        self.editor.nombre_de_marques()
     }
 
     /// Poursuit la structure Markdown du bloc courant au retour à la ligne.
@@ -464,8 +407,10 @@ impl EditorState {
     /// `recul` octets avant la fin du texte inséré — entre les crochets
     /// d'une note, sur la légende d'une figure (R5, gestes d'insertion).
     pub fn insert_avec_curseur(&mut self, texte: &str, recul: usize) -> Task<EditorMessage> {
+        let curseur = self.cursor_offset();
         let insertion = self.insert_at_cursor(texte);
-        let placement = self.set_cursor_offset(self.cursor_offset().saturating_sub(recul));
+        let cible = curseur + texte.len().saturating_sub(recul.min(texte.len()));
+        let placement = self.set_cursor_offset(cible);
 
         Task::batch([insertion, placement])
     }
@@ -493,7 +438,6 @@ impl EditorState {
         }
 
         self.refresh_document();
-        self.marques_a_jour();
 
         Task::batch(tasks)
     }
@@ -525,25 +469,19 @@ impl EditorState {
         self.editor.selectionner(debut, fin);
         self.refresh_document();
 
-        let tache = if text.is_empty() {
+        if text.is_empty() {
             // Le collage vide est interdit (il prendrait le presse-papiers) :
             // c'est le retour arrière qui efface la sélection.
             self.editor.update(&EditorMessage::Backspace)
         } else {
             self.editor.update(&EditorMessage::Paste(text.to_string()))
-        };
-
-        // Le glyphe suit le contenu aussitôt — jamais un moment à nu où la
-        // clé se montrerait et où le Suppr grignoterait ses caractères.
-        self.marques_a_jour();
-
-        tache
+        }
     }
 
     /// La position (ligne, colonne) d'un décalage en octets du document.
     fn position_de_offset(&self, offset: usize) -> (usize, usize) {
         let content = self.content();
-        let offset = offset.min(content.len());
+        let offset = crate::base::texte::offset_sur_caractere(&content, offset);
         let avant = &content[..offset];
 
         (
@@ -572,8 +510,9 @@ impl EditorState {
         let task = match action {
             FormatAction::Gras => self.wrap_selection("**", "**"),
             FormatAction::Italique => self.wrap_selection("*", "*"),
-            FormatAction::Couleur(couleur) => self.wrap_selection(&format!("{{{couleur}:"), "}"),
-            FormatAction::Citation => self.insert_at_cursor("@"),
+            FormatAction::Couleur(couleur) => {
+                self.wrap_selection(&format!("{{{{c {couleur}|"), "}}")
+            }
             FormatAction::Note => self.wrap_selection("^[", "]"),
             FormatAction::Titre(niveau) => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Titre(niveau.clamp(1, 6)))
@@ -742,12 +681,9 @@ impl EditorState {
 
     /// Où le curseur se trouve **dans la vue**, et non dans le document.
     ///
-    /// `cursor_screen_position` porte mal son nom : elle rend l'ordonnée du
-    /// curseur dans **tout le document** (le rang de la ligne visuelle multiplié
-    /// par la hauteur de ligne, sans soustraction du défilement). Un menu posé à
-    /// cette ordonnée se retrouve des milliers de pixels sous la fenêtre dès
-    /// qu'on écrit au-delà du premier écran — c'est-à-dire toujours, dans un
-    /// chapitre. Le défilement se soustrait donc ici, une fois.
+    /// `cursor_screen_position` rend l'ordonnée du curseur dans **tout le
+    /// document** ; le défilement se soustrait ici, une fois. C'est la place
+    /// du menu contextuel de citation, qui doit rester près de la main.
     pub fn cursor_view_position(&self) -> iced::Point {
         let point = self
             .editor
@@ -763,13 +699,7 @@ impl EditorState {
     /// La vue suit le curseur : c'est ce qui fait d'un saut une navigation, et
     /// non un simple changement de position.
     pub fn set_cursor(&mut self, line: usize, column: usize) -> Task<EditorMessage> {
-        let tache = self.editor.set_cursor(line, column);
-
-        // Le pied de page sous le curseur s'ouvre pour s'y écrire, et se
-        // replie dès qu'on le quitte : le curseur compte comme un changement.
-        self.marques_a_jour();
-
-        tache
+        self.editor.set_cursor(line, column)
     }
 
     /// La position du curseur, et où il tombe dans le texte.
@@ -795,34 +725,6 @@ impl EditorState {
         }
 
         content.len()
-    }
-
-    /// Pose les glyphes de notes : les plages que l'éditeur fond en un numéro.
-    ///
-    /// Les plages viennent en octets du document ; elles sont traduites en
-    /// colonnes de lignes, la seule monnaie que le moteur de rendu connaît.
-    pub fn set_marques(&mut self, notes: &[crate::langage::marques::Note]) {
-        let contenu = self.content();
-        let marques = marques_du_contenu(&contenu, notes)
-            .into_iter()
-            .map(|(marque, _)| marque)
-            .collect::<Vec<_>>();
-
-        self.editor.set_marques(marques);
-    }
-
-    /// La note que le dernier clic a visée, s'il a touché un glyphe.
-    ///
-    /// C'est la **seule** porte d'édition d'une note : l'hôte retrouve sa
-    /// note dans la liste des siennes, et décide seul de l'ouvrir.
-    pub fn note_au_clic(&self, notes: &[crate::langage::marques::Note]) -> Option<usize> {
-        let (ligne, debut, _fin) = self.editor.dernier_clic_sur_marque()?;
-        let contenu = self.content();
-
-        marques_du_contenu(&contenu, notes)
-            .into_iter()
-            .find(|(marque, _)| marque.ligne == ligne && marque.debut == debut)
-            .map(|(_, rang)| rang)
     }
 
     /// Écrit le contenu courant sur le disque.
@@ -951,10 +853,44 @@ fn markdown_continuation(line: &str) -> Option<(String, usize, usize)> {
 mod tests {
     use super::*;
 
-    /// Insérer une citation pose son glyphe **aussitôt** — jamais un moment où
-    /// la clé se montre à nu, et où le Suppr en grignoterait les caractères.
+    /// Un accent dans le texte ne doit jamais faire couper une tranche au
+    /// milieu de son UTF-8 : la place du curseur après un gabarit se calcule
+    /// en octets, elle aussi.
     #[test]
-    fn inserer_une_citation_pose_le_glyphe_aussitot() {
+    fn un_accent_ne_casse_pas_le_placement_du_curseur() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "é".to_string());
+        assert_eq!(editor.position_de_offset(1), (0, 0));
+
+        let _ = editor.editor.set_cursor(0, 1);
+        let _ = editor.insert_avec_curseur(" <>", 1);
+        assert_eq!(editor.content(), "é <>");
+        assert_eq!(editor.editor.cursor_position(), (0, 3));
+    }
+
+    /// Une frappe dans un gros `.tw` ne rejoue pas tout le parseur.
+    ///
+    /// Le test regarde l'état différé — c'est le contrat de performance — puis
+    /// vérifie que la lecture de l'AST rend bien le texte courant.
+    #[test]
+    fn une_frappe_volumineuse_differe_le_parse() {
+        let contenu = "mot ".repeat(PARSE_IMMEDIAT_MAX / 4 + 1);
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), contenu);
+
+        let _ = editor.update(EditorMessage::CharacterInput('a'));
+
+        assert!(editor.document_dirty, "le parse est différé");
+        let document = editor
+            .document_pour_lecture()
+            .expect("la lecture rejoue l'AST");
+        let actuel = crate::langage::parse(&editor.content());
+        assert_eq!(document.texte_nu(), actuel.texte_nu());
+    }
+
+    /// Une citation insérée reste du texte visible : l'éditeur ne la replie
+    /// plus en un glyphe, et le curseur peut la parcourir caractère par
+    /// caractère.
+    #[test]
+    fn une_citation_reste_du_texte_visible() {
         let mut editor = EditorState::default();
         let texte = "Avant la note et après.";
         let _ = editor.update(EditorMessage::Paste(texte.to_string()));
@@ -963,21 +899,9 @@ mod tests {
         let _ = editor.replace_span(ancre, ancre, "@dupont2023[p. 45]");
 
         assert_eq!(
-            editor.nombre_de_glyphes(),
-            1,
-            "le glyphe est posé, sans délai"
-        );
-
-        // Et le Suppr emporte le glyphe entier, jamais la dernière lettre de
-        // la clé : c'était la porte de corruption du `.tw`.
-        let notes = crate::langage::marques::notes(&editor.content());
-        let _ = editor.set_cursor_offset(notes[0].debut);
-        let _ = editor.update(EditorMessage::Delete);
-
-        assert_eq!(
             editor.content(),
-            "Avant la note et après.",
-            "la note part entière, le texte d'après intact"
+            "Avant la note@dupont2023[p. 45] et après.",
+            "la source reste intacte, sans glyphe ni repli"
         );
     }
 
@@ -1001,61 +925,6 @@ mod tests {
         );
     }
 
-    /// Une note sur deux lignes s'emporte d'un seul geste : Backspace sur son
-    /// bord ne laisse pas la moitié derrière lui.
-    #[test]
-    fn une_note_sur_deux_lignes_part_entiere() {
-        let mut editor = EditorState::default();
-        let texte = "Avant @dupont2023[p. 45];\n@martin2020 et tout ce qui suit.";
-        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
-
-        let notes = crate::langage::marques::notes(&editor.content());
-        editor.set_marques(&notes);
-        let note = notes[0].clone();
-
-        let _ = editor.set_cursor_offset(note.fin);
-        let _ = editor.update(EditorMessage::Backspace);
-
-        assert_eq!(
-            editor.content(),
-            "Avant  et tout ce qui suit.",
-            "la note part entière, ses deux rangons avec elle"
-        );
-    }
-
-    /// Supprimer une note puis l'annuler : le document revient entier, et le
-    /// glyphe ne plie rien d'autre que la note.
-    #[test]
-    fn annuler_la_suppression_dune_note_rend_le_document_entier() {
-        let mut editor = EditorState::default();
-        let texte = "Avant la note @dupont2023[p. 45] et tout ce qui suit après.";
-        let _ = editor.update(EditorMessage::Paste(texte.to_string()));
-
-        let notes = crate::langage::marques::notes(&editor.content());
-        editor.set_marques(&notes);
-        assert_eq!(notes.len(), 1);
-        let note = notes[0].clone();
-
-        // Le curseur sur le bord droit de la note : une frappe l'emporte.
-        let _ = editor.set_cursor_offset(note.fin);
-        let _ = editor.update(EditorMessage::Backspace);
-
-        let _ = editor.update(EditorMessage::Undo);
-
-        assert_eq!(editor.content(), texte, "le document revient entier");
-
-        // Les glyphes suivent, comme dans l'application.
-        let notes = crate::langage::marques::notes(&editor.content());
-        editor.set_marques(&notes);
-
-        assert_eq!(notes.len(), 1);
-        assert_eq!(
-            (notes[0].debut, notes[0].fin),
-            (note.debut, note.fin),
-            "le glyphe ne couvre que la note, jamais le texte d'après"
-        );
-    }
-
     /// Le remplacement d'une citation ne touche jamais le texte d'avant.
     ///
     /// L'ancien chemin effaçait à rebours, ses retours arrière comptés en
@@ -1068,11 +937,8 @@ mod tests {
         let texte = "Un début de phrase bien à lui, et @dupont2023[p. 45] la suite.";
         let _ = editor.update(EditorMessage::Paste(texte.to_string()));
 
-        // La citation est pliée en glyphe, comme dans l'éditeur : c'est ce
-        // caractère entier que le premier retour arrière emportait d'un coup.
-        let notes = crate::langage::marques::notes(&editor.content());
-        editor.set_marques(&notes);
-
+        // La citation est du texte visible, comme dans l'éditeur : c'est
+        // exactement la plage que le remplacement doit couvrir.
         let debut = texte.find("@dupont2023").expect("la citation est là");
         let fin = texte.find(" la suite").expect("la suite est là");
         let _ = editor.replace_span(debut, fin, "@martin2020");

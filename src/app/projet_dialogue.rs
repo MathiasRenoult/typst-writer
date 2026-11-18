@@ -28,6 +28,10 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ProjetDepuisEtagere(etagere) => {
+            if !etagere.trim().is_empty() {
+                let _ = crate::project::creer_etagere(&etagere);
+                state.etageres_ordre = crate::project::etageres_ordonnees();
+            }
             let bases = crate::app::projet_bases(state);
             state.projet_dialogue = Some(crate::app::state::ProjetDialogue {
                 base: String::new(),
@@ -227,6 +231,9 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                             state.note = Some(crate::app::state::Note::erreur(format!(
                                 "Rangement non enregistré : {erreur}"
                             )));
+                        } else {
+                            state.etageres = crate::project::etageres();
+                            state.etageres_ordre = crate::project::etageres_ordonnees();
                         }
                     }
 

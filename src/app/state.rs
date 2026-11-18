@@ -5,7 +5,11 @@ use crate::typst::render::Diagnostic;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+use crate::app::recherche_apercu::RechercheApercu;
+use crate::typst::texte::{DocumentTexte, SelectionApercu};
 
 /// Délai de repos avant que l'aperçu ne se mette à jour.
 ///
@@ -80,6 +84,20 @@ pub struct ProjetDialogue {
     pub cible: Option<std::path::PathBuf>,
 }
 
+/// Le changement de normes pour plusieurs documents sélectionnés dans la
+/// bibliothèque : une seule norme, appliquée à tous.
+#[derive(Debug, Clone)]
+pub struct NormesLot {
+    /// Les documents visés, dans l'ordre de la sélection.
+    pub cibles: Vec<PathBuf>,
+
+    /// La norme choisie dans le catalogue.
+    pub norme: String,
+
+    /// Écrire l'accroche dans les `main.typ` qui ne l'ont pas encore.
+    pub accrocher: bool,
+}
+
 /// Le sélecteur de couleur : une teinte, une saturation, une valeur.
 ///
 /// C'est la roue entière, en trois nombres — les conversions vivent dans
@@ -91,6 +109,184 @@ pub struct ExtensionDialogue {
     pub choix: usize,
     /// Les valeurs saisies, par nom de paramètre.
     pub valeurs: std::collections::BTreeMap<String, String>,
+}
+
+/// Le panneau d'un graphique primaviz : ses paramètres et son CSV.
+///
+/// Le CSV vit dans un `text_editor` : l'auteur y colle plusieurs lignes et
+/// voit ce qu'il colle, au lieu d'un champ d'une seule ligne qui mangerait
+/// les retours à la ligne.
+pub struct ChartDialogue {
+    /// Le type : `pie`, `bar`, `line`, `scatter`, `box`, `area` ou `lollipop`.
+    pub type_: String,
+    /// Le titre, vide quand il n'y en a pas.
+    pub titre: String,
+    /// Le sous-titre, vide quand il n'y en a pas.
+    pub sous_titre: String,
+    /// Le titre de l'axe horizontal.
+    pub x_label: String,
+    /// Le titre de l'axe vertical.
+    pub y_label: String,
+    /// La largeur Typst.
+    pub largeur: String,
+    /// La hauteur Typst.
+    pub hauteur: String,
+    /// `centre`, `gauche`, `droite` ou `pleine-largeur`.
+    pub placement: String,
+    /// Afficher la légende.
+    pub legende: bool,
+    /// Afficher les valeurs ou les pourcentages.
+    pub valeurs: bool,
+    /// Afficher la grille.
+    pub grille: bool,
+    /// Afficher les graduations des axes.
+    pub graduations: bool,
+    /// Les points de la ligne.
+    pub points: bool,
+    /// Remplir l'aire sous la ligne.
+    pub aire: bool,
+    /// `linear`, `smooth` ou `catmull-rom`.
+    pub courbe: String,
+    /// Le trou du camembert (`donut`).
+    pub donut: bool,
+    /// La part du rayon occupée par le trou, en pourcentage.
+    pub anneau: String,
+    /// Des barres horizontales.
+    pub horizontal: bool,
+    /// Les données CSV, telles que collées ou importées.
+    pub csv: iced::widget::text_editor::Content,
+}
+
+impl Default for ChartDialogue {
+    fn default() -> Self {
+        Self {
+            type_: "bar".to_string(),
+            titre: String::new(),
+            sous_titre: String::new(),
+            x_label: String::new(),
+            y_label: String::new(),
+            largeur: "10cm".to_string(),
+            hauteur: "6cm".to_string(),
+            placement: "centre".to_string(),
+            legende: true,
+            valeurs: true,
+            grille: false,
+            graduations: false,
+            points: true,
+            aire: false,
+            courbe: "linear".to_string(),
+            donut: false,
+            anneau: "40%".to_string(),
+            horizontal: false,
+            csv: iced::widget::text_editor::Content::new(),
+        }
+    }
+}
+
+impl ChartDialogue {
+    /// L'identifiant du champ CSV : la fenêtre s'ouvre dessus.
+    pub fn id_csv() -> iced::widget::Id {
+        iced::widget::Id::new("chart-csv")
+    }
+
+    /// La forme attendue par le générateur.
+    pub fn vers_schema(&self) -> crate::langage::schema::Chart {
+        crate::langage::schema::Chart {
+            type_: self.type_.clone(),
+            titre: self.titre.clone(),
+            sous_titre: self.sous_titre.clone(),
+            x_label: self.x_label.clone(),
+            y_label: self.y_label.clone(),
+            largeur: self.largeur.clone(),
+            hauteur: self.hauteur.clone(),
+            placement: self.placement.clone(),
+            legende: self.legende,
+            valeurs: self.valeurs,
+            grille: self.grille,
+            graduations: self.graduations,
+            points: self.points,
+            aire: self.aire,
+            courbe: self.courbe.clone(),
+            donut: self.donut,
+            anneau: self.anneau.clone(),
+            horizontal: self.horizontal,
+            donnees: self.csv.text(),
+        }
+    }
+}
+
+/// Le panneau d'un callout : le préréglage, le titre, et le bloc à habiller.
+///
+/// Le panneau ne recopie pas la citation : il l'habille sur place quand le
+/// curseur y est déjà, sinon il pose un bloc de citation vide et laisse le
+/// curseur dedans. Une seule vérité, le texte du document.
+pub struct CalloutDialogue {
+    /// La clé du préréglage : `citation`, `note`, `attention`, ou un nom
+    /// défini dans les paramètres du plugin.
+    pub type_: String,
+    /// Le titre de la bande, vide pour un cadre sans titre.
+    pub titre: String,
+    /// Le curseur était-il déjà dans une citation à l'ouverture ?
+    pub sur_citation: bool,
+    /// Le style en cours d'édition.
+    pub style: crate::langage::callout::CalloutPreset,
+    /// Le préréglage d'origine, pour n'écrire que les écarts utiles.
+    pub base: crate::langage::callout::CalloutPreset,
+}
+
+impl Default for CalloutDialogue {
+    fn default() -> Self {
+        let base = crate::langage::callout::preset_defaut("note");
+        Self {
+            type_: base.cle.clone(),
+            titre: base.titre.clone(),
+            sur_citation: false,
+            style: base.clone(),
+            base,
+        }
+    }
+}
+
+impl CalloutDialogue {
+    /// L'identifiant du champ de titre : la fenêtre s'ouvre dessus.
+    pub fn id_titre() -> iced::widget::Id {
+        iced::widget::Id::new("callout-titre")
+    }
+
+    /// Ouvre le panneau sur un préréglage du document, ou sur `note`.
+    pub fn depuis(presets: &[crate::langage::callout::CalloutPreset], sur_citation: bool) -> Self {
+        let base = presets
+            .iter()
+            .find(|preset| preset.cle == "note")
+            .cloned()
+            .or_else(|| presets.first().cloned())
+            .unwrap_or_else(|| crate::langage::callout::preset_defaut("note"));
+        Self {
+            type_: base.cle.clone(),
+            titre: base.titre.clone(),
+            sur_citation,
+            style: base.clone(),
+            base,
+        }
+    }
+
+    /// Applique un préréglage choisi dans le panneau.
+    pub fn choisir(&mut self, preset: crate::langage::callout::CalloutPreset) {
+        self.type_ = preset.cle.clone();
+        self.titre = preset.titre.clone();
+        self.style = preset.clone();
+        self.base = preset;
+    }
+
+    /// La balise source, avec seulement les écarts de style.
+    pub fn vers_source(&self) -> String {
+        crate::langage::callout::source_avec_style(
+            &self.type_,
+            &self.titre,
+            &self.style,
+            &self.base,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +306,21 @@ pub struct PickerCouleur {
     /// Une cible de normes : le champ des normes qui reçoit le hex — la
     /// vignette d'une couleur ouvre la roue pour cette couleur-là.
     pub reglage: Option<crate::mise_en_page::modele::Champ>,
+    /// Une cible de callout : une couleur du panneau d'insertion ou d'un
+    /// préréglage des paramètres.
+    pub callout: Option<CibleCouleur>,
+    /// La roue écrit dans le formulaire de la balise `couleur` ouverte
+    /// dans la palette.
+    pub balise: bool,
+}
+
+/// Où la roue écrit une couleur de callout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CibleCouleur {
+    /// Le style du callout en cours d'insertion.
+    Insertion(crate::langage::callout::CalloutChamp),
+    /// Un préréglage de la norme, dans les paramètres du plugin.
+    Preset(usize, crate::langage::callout::CalloutChamp),
 }
 
 /// Un geste qui défait quelque chose, en attente de son mot.
@@ -143,6 +354,9 @@ pub struct Importation {
     pub empreinte: u64,
 }
 
+/// L'identifiant du champ de la note : le panneau s'ouvre dessus.
+pub const ID_NOTE_CHAMP: &str = "note-champ";
+
 /// L'état de l'application.
 ///
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
@@ -150,6 +364,10 @@ pub struct Importation {
 pub struct State {
     /// La liste de complétion ouverte — locale (feuille de route, phase 1).
     pub completion: Option<Completion>,
+    /// La palette de commandes, quand elle est ouverte.
+    pub palette: Option<crate::app::palette::Palette>,
+    /// Le formulaire d'une balise simple, quand il est ouvert.
+    pub balise_dialogue: Option<crate::app::palette::BaliseDialogue>,
     /// Les normes appliquées du projet : l'interface y lit les
     /// fonctionnalités branchées pour montrer ou cacher leurs gestes
     /// (demande de l'auteur).
@@ -176,10 +394,27 @@ pub struct State {
     /// Les étagères des projets, chargées avec la liste — jamais par la
     /// vue (feuille de route, phase 4, point 4.1).
     pub etageres: std::collections::BTreeMap<String, String>,
+    /// L'ordre des étagères, y compris les étagères vides.
+    pub etageres_ordre: Vec<String>,
+    /// Les projets sélectionnés dans la bibliothèque (Ctrl/Maj+clic).
+    pub selection_projets: std::collections::BTreeSet<PathBuf>,
+    /// L'ancre d'une sélection par Maj+clic.
+    pub dernier_projet_selectionne: Option<PathBuf>,
+    /// Le changement de normes en lot, quand il est ouvert.
+    pub normes_lot: Option<NormesLot>,
     /// L'état des plugins de la vue active : le biblique y range son
     /// panneau, sa référence cliquée et son analyse ; `Vue::echanger` le fait
     /// voyager avec l'onglet.
     pub plugins: crate::plugins::Plugins,
+
+    /// Le projet et les paramètres de plugins qui ont déjà configuré
+    /// `plugins`. Cela évite de réinitialiser un choix de vue à chaque
+    /// sauvegarde, tout en suivant un changement de projet ou de norme.
+    pub plugins_pour: Option<(
+        std::path::PathBuf,
+        crate::mise_en_page::modele::ParametresPlugins,
+        crate::mise_en_page::modele::Fonctionnalites,
+    )>,
 
     /// Entrées de bibliographie citables (le `.bib` du projet).
     pub bibliography: Vec<BibliographyEntry>,
@@ -264,8 +499,19 @@ pub struct State {
     /// choisie et ses paramètres — ses champs naissent de `parametres()`.
     pub extension: Option<ExtensionDialogue>,
 
+    /// Le panneau d'un graphique primaviz — ouvert par le bouton de la
+    /// barre d'outils ou par le menu Projet.
+    pub chart: Option<ChartDialogue>,
+
+    /// Le panneau d'un callout — ouvert par la barre d'outils.
+    pub callout: Option<CalloutDialogue>,
+
     /// Les vignettes des projets : nom → pixels RGBA.
     pub vignettes: Vec<(String, Vec<u8>, u32, u32)>,
+
+    /// Jeton d'annulation du rafraîchissement des vignettes : changer de
+    /// valeur interrompt la boucle qui compilerait les projets en arrière-plan.
+    pub vignettes_generation: Arc<AtomicU64>,
 
     /// Le mode de la fenêtre d'édition.
     pub mode: ModeVue,
@@ -361,9 +607,6 @@ pub struct State {
     /// qu'à la fin, et Échap ne laisse rien.
     pub composeur: Option<crate::app::composeur::Composeur>,
 
-    /// L'overlay de note de bas de page : son contenu et la plage qu'il remplace.
-    pub note_overlay: Option<NoteOverlay>,
-
     /// Renommage de chapitre en cours, s'il y en a un.
     pub renaming: Option<ChapterRename>,
 
@@ -436,6 +679,9 @@ pub struct DialogueMiseEnPage {
     /// Le panneau ouvert : 0 la mise en page, 1 la typographie.
     pub panneau: usize,
 
+    /// Le préréglage de callout sélectionné dans l'onglet Callouts.
+    pub callout_preset: usize,
+
     /// Accrocher la mise en page à `main.typ` lors de l'application.
     pub accrocher: bool,
 
@@ -468,21 +714,6 @@ pub struct DialogueMiseEnPage {
 
     /// Les réglages ont-ils changé depuis le chargement ?
     pub modifie: bool,
-}
-
-/// aussi courante.
-/// L'édition d'une référence en cours.
-///
-/// Les champs utiles seuls — nom, prénom, titre, année — et la clé, qui ne
-/// bouge pas : elle est citée dans les documents, la changer les casserait.
-/// L'overlay d'édition d'une note de bas de page.
-#[derive(Debug, Clone)]
-pub struct NoteOverlay {
-    /// Le texte de la note, sans les marqueurs `^[` et `]`.
-    pub contenu: String,
-    /// La plage en octets que la note occupe dans le document.
-    pub debut: usize,
-    pub fin: usize,
 }
 
 /// Ce que l'application vient de dire.
@@ -751,6 +982,15 @@ pub struct Tranche {
     pub hauteur: f32,
     /// Les pixels, tels que le backend les montre.
     pub image: Handle,
+    /// L'empreinte du PDF dont cette tranche est issue.
+    ///
+    /// Sert à ne pas dessiner la couche texte d'un PDF neuf sur l'image de
+    /// l'ancien, le temps que la nouvelle page soit rasterisée.
+    pub empreinte: Option<String>,
+    /// L'image précédente, gardée **sous** la nouvelle pendant le téléversement
+    /// de sa texture. Sans elle, une page changerait en blanc le temps que le
+    /// backend graphique reçoive les nouveaux pixels.
+    pub precedente: Option<Box<Tranche>>,
 }
 
 impl Default for Tranche {
@@ -761,6 +1001,8 @@ impl Default for Tranche {
             largeur: 0.0,
             hauteur: 0.0,
             image: Handle::from_rgba(1, 1, vec![0, 0, 0, 0]),
+            empreinte: None,
+            precedente: None,
         }
     }
 }
@@ -814,6 +1056,34 @@ pub struct RenderState {
     /// Le PDF exporté, source de l'affichage (bug-report-9, T4) : le
     /// lecteur le rasterise, et c'est exactement le fichier livré.
     pub lecteur: Option<Arc<crate::typst::render::DocumentPdf>>,
+
+    /// L'empreinte du texte du PDF affiché.
+    ///
+    /// Distincte de `revision`, qui change aussi au zoom : c'est elle qui
+    /// apparie la couche texte et l'image, jamais deux documents différents.
+    pub lecteur_empreinte: Option<String>,
+
+    /// La couche texte du PDF affiché, extraite du `PagedDocument`.
+    pub texte: Option<Arc<DocumentTexte>>,
+
+    /// L'empreinte de la couche texte installée.
+    pub texte_empreinte: Option<String>,
+
+    /// Une couche texte extraite pour un PDF qui n'est pas encore arrivé.
+    pub texte_en_attente: Option<(String, Arc<DocumentTexte>)>,
+    /// L'empreinte d'une extraction de texte actuellement en cours.
+    ///
+    /// Sans ce drapeau, un tick de rendu pouvait relancer la même extraction
+    /// avant que la première n'ait répondu : sur un gros document, plusieurs
+    /// extractions simultanées saturent un cœur et allouent plusieurs couches
+    /// texte pour rien.
+    pub texte_en_cours: Option<String>,
+
+    /// La sélection courante dans l'aperçu.
+    pub selection: Option<SelectionApercu>,
+
+    /// La recherche dans le document rendu.
+    pub recherche_apercu: RechercheApercu,
 
     /// Un export PDF est en cours — la bascule vers la vue rendu le
     /// déclenche systématiquement (bug-report-9).
@@ -871,9 +1141,18 @@ pub struct RenderState {
     /// image jusqu'à l'arrivée de la nouvelle (aucun cadre gris).
     pub stale: HashSet<usize>,
 
+    /// Pages entrées dans la fenêtre pendant un défilement. Leur rendu
+    /// utilise la passe rapide, qui est aussi la passe finale de l'aperçu.
+    pub qualite_rapide: HashSet<usize>,
+
     /// Première et dernière page visibles à l'écran (inclusives), d'après le
     /// dernier scroll. `None` avant le premier rendu de la vue.
     pub visible: Option<(usize, usize)>,
+
+    /// Les pages qui touchent réellement la fenêtre, sans la marge de
+    /// préchargement. C'est cette plage, et non la précédente, qui a le droit
+    /// de lancer des rasterisations.
+    pub visible_exact: Option<(usize, usize)>,
 
     /// Place que le panneau laisse à une page, telle que la vue la mesure.
     ///
@@ -930,12 +1209,25 @@ pub struct RenderState {
     /// même ceux qui ne touchent pas au texte.
     pub words_pending: bool,
 
+    /// Instant de la dernière frappe qui a invalidé le compte.
+    ///
+    /// Un recomptage de `.tw` rejoue le parseur ; le faire à chaque tic pendant
+    /// une frappe continue revenait à parser le document dix fois par seconde.
+    /// Le compte attend donc le repos, comme la compilation.
+    pub words_depuis: Option<std::time::Instant>,
+
     /// Révision des images attendues par l'aperçu.
     ///
     /// Elle change à chaque compilation et chaque invalidation de densité
     /// (zoom, dimensions du panneau ou écran). Une rasterisation lancée pour
     /// l'ancienne révision ne peut ainsi valider une image devenue trop petite.
     pub revision: u64,
+
+    /// Génération partagée avec les tâches de rasterisation.
+    ///
+    /// Une tâche qui démarre après une invalidation n'a plus de travail à
+    /// faire : elle le constate avant de payer le rendu.
+    pub generation: Arc<AtomicU64>,
 
     /// Page où commence le chapitre en cours, telle que la dernière
     /// compilation l'a rapportée.
@@ -994,6 +1286,14 @@ pub struct RenderState {
 
 /// Ce que l'application sait montrer de son état, sans le modifier.
 impl State {
+    /// Marque le compte de mots comme périmé, sans le recalculer.
+    ///
+    /// Toute frappe repousse le repos : le parseur de `.tw` ne sera rejoué
+    /// qu'une fois la main levée.
+    pub fn mots_a_recalculer(&mut self) {
+        self.render.mots_a_recalculer();
+    }
+
     /// Nombre de mots visibles du contenu ouvert, selon son format.
     pub fn content_word_count(&self, content: &str) -> usize {
         let is_intermediate = self
@@ -1043,6 +1343,12 @@ impl State {
 }
 
 impl RenderState {
+    /// Invalide le compte de mots et repousse son recalcul au repos.
+    pub fn mots_a_recalculer(&mut self) {
+        self.words_pending = true;
+        self.words_depuis = Some(Instant::now());
+    }
+
     /// Le dernier aperçu valide est affiché alors que la compilation
     /// actuelle a échoué : il est **ancien**, et doit se dire tel.
     ///
@@ -1131,12 +1437,14 @@ impl RenderState {
     /// densité sera rasterisée pour les seules pages visibles.
     pub fn invalidate_rasterization(&mut self, total_pages: usize) {
         self.revision += 1;
+        self.generation.store(self.revision, Ordering::Relaxed);
 
         // Les tâches en vol **gardent leur place** : les effacer rouvrait
         // le plafond à chaque invalidation, et un redimensionnement
         // continu lançait des rafales de rendus dont les précédents
         // tournaient encore. Elles libéreront la leur en finissant.
         self.image_hashes.clear();
+        self.qualite_rapide.clear();
         self.stale.retain(|index| *index < total_pages);
         self.stale.extend(0..total_pages);
     }
@@ -1218,6 +1526,67 @@ impl RenderState {
         self.chapter_page.is_some() && self.followed_chapter.as_deref() != Some(open)
     }
 
+    /// La couche texte correspond-elle déjà à cette compilation ?
+    pub fn texte_est_pret(&self, empreinte: &str) -> bool {
+        self.texte_empreinte.as_deref() == Some(empreinte)
+            || self
+                .texte_en_attente
+                .as_ref()
+                .is_some_and(|(attendue, _)| attendue == empreinte)
+            || self.texte_en_cours.as_deref() == Some(empreinte)
+    }
+
+    /// Installe la couche texte quand le PDF qu'elle décrit est affiché.
+    pub fn preparer_texte(&mut self, empreinte: String, texte: Arc<DocumentTexte>) {
+        if self.texte_en_cours.as_deref() == Some(empreinte.as_str()) {
+            self.texte_en_cours = None;
+        }
+        self.texte_en_attente = Some((empreinte, texte));
+        self.installer_texte_si_pret();
+    }
+
+    /// Installe la couche en attente si son empreinte est celle du PDF.
+    pub fn installer_texte_si_pret(&mut self) {
+        let Some((empreinte, texte)) = self.texte_en_attente.clone() else {
+            return;
+        };
+
+        if self.lecteur_empreinte.as_deref() != Some(empreinte.as_str()) {
+            return;
+        }
+
+        self.texte = Some(texte.clone());
+        self.texte_empreinte = Some(empreinte);
+        self.texte_en_attente = None;
+        self.selection = None;
+
+        if !self.recherche_apercu.motif.is_empty() {
+            self.recherche_apercu.resultats =
+                crate::app::recherche_apercu::chercher(&texte, &self.recherche_apercu.motif);
+            self.recherche_apercu.courante = 0;
+        }
+    }
+
+    /// Après l'arrivée d'un PDF, garde le texte qui lui correspond.
+    pub fn accorder_texte_au_pdf(&mut self) {
+        if self.texte_empreinte != self.lecteur_empreinte {
+            self.texte = None;
+            self.texte_empreinte = None;
+            self.selection = None;
+            self.recherche_apercu.resultats.clear();
+            self.recherche_apercu.courante = 0;
+        }
+
+        self.installer_texte_si_pret();
+    }
+
+    /// La couche texte réellement affichable.
+    pub fn texte_affiche(&self) -> Option<&DocumentTexte> {
+        self.texte.as_deref()
+    }
+
+    /// Le changement de document repart d'un rendu vierge, sans conserver
+    /// d'image ni de travail en cours.
     pub fn reset(&mut self) {
         // Le lecteur montre le PDF du projet quitté : il part avec lui.
         self.lecteur = None;
@@ -1231,6 +1600,13 @@ impl RenderState {
         self.errors.clear();
         self.warnings.clear();
         self.document = None;
+        self.lecteur_empreinte = None;
+        self.texte = None;
+        self.texte_empreinte = None;
+        self.texte_en_attente = None;
+        self.texte_en_cours = None;
+        self.selection = None;
+        self.recherche_apercu = RechercheApercu::default();
         self.seen.clear();
         self.changed_at = None;
         self.compiled_newlines = 0;
@@ -1241,7 +1617,9 @@ impl RenderState {
         self.page_cache.clear();
         self.rendering.clear();
         self.stale.clear();
+        self.qualite_rapide.clear();
         self.visible = None;
+        self.visible_exact = None;
         // La place du panneau appartient à la disposition, pas au document :
         // elle survit à un changement de chapitre.
         self.requested = 0;
@@ -1251,16 +1629,74 @@ impl RenderState {
         // vient du projet, comme pour tout chapitre non ouvert.
         self.words = None;
         self.words_pending = true;
+        self.words_depuis = None;
         // Un document qu'on ouvre doit être amené à l'écran : oublier le
         // chapitre déjà suivi évite d'hériter du précédent.
         self.followed_chapter = None;
         self.save_pending = false;
         self.revision += 1;
+        self.generation.store(self.revision, Ordering::Relaxed);
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// La couche texte ne s'affiche jamais sur une image d'un autre document.
+    #[test]
+    fn la_couche_texte_attend_le_pdf_quelle_decrit() {
+        let mut render = RenderState::default();
+        let texte = Arc::new(crate::typst::texte::DocumentTexte { pages: Vec::new() });
+
+        render.lecteur_empreinte = Some("v1".to_string());
+        render.preparer_texte("v2".to_string(), texte.clone());
+        assert!(
+            render.texte.is_none(),
+            "un texte neuf ne se pose pas sur l'ancien PDF"
+        );
+
+        render.lecteur_empreinte = Some("v2".to_string());
+        render.accorder_texte_au_pdf();
+        assert!(render.texte.is_some(), "le PDF v2 installe le texte v2");
+    }
+
+    /// Une extraction en cours n'est pas relancée par le tick suivant.
+    #[test]
+    fn une_extraction_en_cours_ne_se_relance_pas() {
+        let render = RenderState {
+            texte_en_cours: Some("v1".to_string()),
+            ..RenderState::default()
+        };
+
+        assert!(render.texte_est_pret("v1"));
+        assert!(!render.texte_est_pret("v2"));
+    }
+
+    /// Une couche installée est oubliée si le PDF affiché change de version.
+    #[test]
+    fn un_pdf_d_une_autre_version_retire_l_ancienne_couche() {
+        let mut render = RenderState::default();
+        let texte = Arc::new(crate::typst::texte::DocumentTexte { pages: Vec::new() });
+
+        render.lecteur_empreinte = Some("v1".to_string());
+        render.preparer_texte("v1".to_string(), texte);
+        assert!(render.texte.is_some());
+
+        render.lecteur_empreinte = Some("v2".to_string());
+        render.accorder_texte_au_pdf();
+        assert!(render.texte.is_none(), "le texte de v1 ne reste pas sur v2");
+    }
+
+    /// Une invalidation efface les marques de rendu rapide.
+    #[test]
+    fn une_invalidation_efface_les_marques_de_qualite() {
+        let mut render = RenderState::default();
+        render.qualite_rapide.insert(3);
+
+        render.invalidate_rasterization(10);
+
+        assert!(render.qualite_rapide.is_empty());
+    }
 
     /// Une invalidation ne rouvre pas le plafond : les rendus en vol
     /// gardent leur place, et c'est leur fin qui libère la suivante.

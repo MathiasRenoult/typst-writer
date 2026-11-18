@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// Le dossier des paquets Typst installés : `<ns>/<nom>/<version>/`.
 ///
 /// C'est le premier jalon de l'architecture paquets (bug-report-7,
-/// point 4) : les `#import "@preview/cetz:…"` résolvent **localement**,
+/// point 4) : les `#import "@local/primaviz:…"` résolvent **localement**,
 /// sans réseau. `TYPST_WRITER_PAQUETS` détourne la racine (tests,
 /// installation partagée).
 pub fn packages_dir() -> std::path::PathBuf {

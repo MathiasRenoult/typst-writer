@@ -390,8 +390,8 @@ fn editor_style(file: &crate::theming::ThemeFile) -> iced_code_editor::Style {
         selection_color: alpha(pick(editor.selection, colors.surface_active()), 0.55),
         bracket_match_color: alpha(pick(editor.bracket_match, colors.accent.0), 0.4),
         ime_preedit_background_color: alpha(colors.surface_hover(), 0.5),
-        // Les glyphes de notes — les numéros qui tiennent lieu de citations —
-        // se teintent à l'accent : un repère, pas du texte courant.
+        // Les repères posés par l'éditeur sur le texte se teintent à
+        // l'accent : un signal, pas du texte courant.
         mark_color: colors.accent.0,
     }
 }

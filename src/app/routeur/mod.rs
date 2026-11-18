@@ -8,8 +8,11 @@
 
 pub mod addons;
 pub mod aide;
+pub mod apercu;
 pub mod bible;
 pub mod bibliographie;
+pub mod callout;
+pub mod chart;
 pub mod confirmation;
 pub mod couleurs;
 pub mod edition;
@@ -18,7 +21,6 @@ pub mod fenetre;
 pub mod glossaire;
 pub mod modes;
 pub mod normes;
-pub mod notes;
 pub mod onglets;
 pub mod projets;
 pub mod suppressions;

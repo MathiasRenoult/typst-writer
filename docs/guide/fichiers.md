@@ -8,12 +8,14 @@ Chaque projet vit dans son dossier, sous `~/.typst-writer/projets/`
     mon-travail/
     ├── document.tw            ce que vous écrivez
     ├── main.typ               l'assemblage, et ses réglages Typst
-    ├── mise-en-page.toml      les normes, telles que vous les réglez
+    ├── mise-en-page.toml      les normes et le paramétrage des plugins
     ├── mise-en-page.typ       leur traduction pour Typst — générée
     ├── references.bib         la bibliographie locale
     ├── references.json        le relevé des références bibliques citées
     ├── glossaire.toml         les termes du glossaire
     ├── styles/                les styles CSL importés
+    ├── miniatures/            la couverture choisie (couverture.png)
+    ├── .miniatures/           le cache des premières pages (supprimable)
     ├── references-zotero.bib  l'export de la collection Zotero liée
     ├── zotero.json            la collection Zotero liée au projet
     ├── sauvegardes/           les versions précédentes des documents
@@ -27,7 +29,9 @@ détruit rien de ce qui existe.
 
     ~/.typst-writer/
     ├── session.json   l'état de la dernière session
+    ├── normes.json    la bibliothèque des fichiers de normes
     ├── etageres.json  le classement des projets sur les étagères
+    ├── etageres-ordre.json  l'ordre des étagères, y compris vides
     ├── themes/        les thèmes : livrés une fois, puis à vous
     ├── corbeille/     les suppressions — rien ne part dans le vide
     └── projets/       vos projets
@@ -39,7 +43,9 @@ et un geste qui défait quelque chose **demande son mot** avant de partir :
 `Échap` est toujours « Annuler ».
 
 Les projets se classent sur des **étagères** — glisser une carte de
-projet d'une étagère à l'autre. Le classement vit dans `etageres.json`.
+projet d'une étagère à l'autre. Une étagère peut rester vide : son nom et
+sa place vivent dans `etageres-ordre.json`, et les flèches de la galerie
+la déplacent.
 
 Les instances récentes utilisent une ancre de verrouillage
 `.verrou-natif`, qui reste dans le projet même après fermeture. Ne la

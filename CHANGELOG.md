@@ -4,6 +4,90 @@ Les versions sont classées de la plus récente à la plus ancienne. Chaque
 entrée décrit les fonctionnalités et les corrections livrées avec la version
 correspondante.
 
+## 0.6.0 — écrire sans quitter le document (2026-11-18)
+
+### Une seule porte pour les gestes
+
+- **La palette de commandes** réunit les actions, les éléments à insérer et
+  les extraits de texte. `Ctrl+K` ou `/` ouvre les commandes, `..` ouvre les
+  balises et les modèles de passage.
+- Les commandes et les balises d'un module désactivé disparaissent de la
+  palette : l'interface ne propose que ce que le document peut réellement
+  utiliser.
+- Les formulaires d'insertion montrent désormais des choix utiles : couleurs
+  rapides et roue chromatique, formes de date courantes, termes du glossaire
+  déjà présents dans le projet.
+- Les balises courantes ont une écriture courte et cohérente : `{{c …|…}}`,
+  `{{d …}}`, `{{g …}}`, `{{b …}}`, `{{m …}}`, `{{e …|…}}`, `{{gr …}}`,
+  `{{t}}`, `{{s}}`, `{{bib}}`, `{{gs}}`, `{{idx}}`. Les anciennes écritures
+  restent lues.
+
+### Citations et bibliographie
+
+- **`@` ouvre le composeur de citation** dès la frappe ; il reste possible de
+  passer par le bouton de la barre ou par la commande. Une adresse
+  électronique ne déclenche rien.
+- Le composeur permet de choisir une référence, une page, puis d'en ajouter
+  d'autres dans la même note. Une citation déjà écrite se rouvre au curseur.
+- Les références viennent de la bibliographie locale, d'un fichier `.bib` ou
+  d'une collection Zotero en lecture seule ; les styles de citation Zotero
+  sont reconnus.
+- Le curseur revient dans le document après une insertion, sans perdre le
+  fil de l'écriture.
+
+### La Bible, jusqu'aux livres hors canon
+
+- Le panneau d'insertion utilise une **liste de livres cherchable** : on
+  tape un nom, la liste se filtre, et un livre inexistant ne peut pas être
+  choisi.
+- Les champs livre, chapitre et versets sont pris en compte au moment
+  d'insérer, même sans cliquer sur **Ajouter**.
+- Les abréviations de la **TOB** sont proposées, et les deutérocanoniques
+  comme les apocryphes — Tobie, Judith, Sagesse, Siracide, Baruch,
+  Maccabées, Esdras additionnels, Hénoch, Jubilés, Testaments des
+  patriarches, apocalypses — sont citables et indexables.
+- L'index biblique donne les pages réelles du document ; les statistiques
+  montrent les livres cités et permettent de rejoindre une référence d'un
+  clic. Une bulle de verset suit la souris et s'ouvre au-dessus ou en dessous
+  selon la place disponible.
+
+### Lire le document final
+
+- Le lecteur de PDF intégré permet de sélectionner et copier le texte
+  composé, de chercher une expression, de suivre les liens et de parcourir
+  les pages.
+- Le numéro de page, le surlignage de la recherche et le défilement ont été
+  stabilisés ; le rendu ne bloque plus l'écriture.
+- Les documents longs se chargent et se composent plus calmement : le texte
+  reste fluide pendant la frappe, les pages se mettent à jour sans lancer de
+  travail inutile.
+
+### Un espace de travail plus sûr
+
+- Les copies précédentes, les sauvegardes automatiques et la récupération
+  après une écriture interrompue restent disponibles.
+- Le verrou de projet empêche deux fenêtres d'écrire le même document.
+- Les projets s'exportent en archive portable ou en fichier `.tw` unique.
+- Les sauvegardes, la corbeille et l'ouverture du dossier de données sont
+  accessibles depuis l'application.
+
+### Mise en page et export
+
+- Les normes du document règlent papier, marges, en-tête et pied de page,
+  typographie, titres, couleurs, décor, numérotation et modules.
+- Les encadrés, les graphiques, les tableaux, les dates et les métadonnées
+  ont leurs formulaires d'insertion ; les métadonnées du projet s'appellent
+  comme des balises (`{{m auteur}}`).
+- Les exports PDF, Markdown et DOCX restent disponibles, ainsi que le projet
+  portable.
+
+### Vérification
+
+- **702 tests réussis / 0 échec / 190 ignorés**, batterie applicative verte,
+  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo build --release` et `cargo deny check` verts.
+
+
 ## 0.5.0 — les plugins à leur place, les références au clair (2026-11-11)
 
 ### Le panneau de travail

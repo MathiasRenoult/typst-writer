@@ -3,7 +3,11 @@
 //! Le texte, lui, appartient au document ; ici vivent le panneau de
 //! statistiques, la référence cliquée, le survol et la portée choisie.
 
-use super::domaine::{Analyse, ElementCitation, FormeLivre, Reference, Statistiques, Traduction};
+use super::domaine::{
+    Analyse, ElementCitation, FormeLivre, LivreChoix, LivreConnu, Reference, Statistiques,
+    Traduction,
+};
+use iced::widget::combo_box;
 
 /// L'ordre des références dans le panneau.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -20,18 +24,59 @@ pub enum TriReferences {
 pub struct BiblePanneau {
     /// Le filtre de la liste des livres.
     pub recherche: String,
+    /// La liste déroulante cherchable : un seul champ, et ses options.
+    pub choix: combo_box::State<LivreChoix>,
     /// Le livre choisi, par son rang dans la liste.
     pub livre: Option<usize>,
     /// Le chapitre, en chiffres.
     pub chapitre: String,
     /// Les versets : `16`, `16-18`, `16, 17`.
     pub versets: String,
+    /// La saisie a-t-elle changé depuis le dernier **Ajouter** ? C'est elle
+    /// que l'insertion prend sans clic quand elle est encore en attente.
+    pub saisie_modifiee: bool,
     /// Les références déjà ajoutées à la citation.
     pub references: Vec<Reference>,
     /// Un texte libre, ajouté entre guillemets à la fin de la citation.
     pub texte_libre: String,
     /// La forme choisie pour cette citation ; `None` hérite du document.
     pub forme: Option<FormeLivre>,
+}
+
+impl BiblePanneau {
+    /// Le panneau neuf, avec sa liste déroulante déjà remplie.
+    ///
+    /// La liste est construite une fois à l'ouverture : le widget filtre
+    /// ensuite ses propres options au fil de la frappe.
+    pub fn avec_livres(livres: &[LivreConnu]) -> Self {
+        let options = livres
+            .iter()
+            .enumerate()
+            .map(|(rang, livre)| LivreChoix::depuis(rang, livre, None))
+            .collect();
+        Self {
+            choix: combo_box::State::new(options),
+            ..Self::default()
+        }
+    }
+
+    /// Reconstruit les libellés de la liste quand la forme d'affichage change.
+    ///
+    /// La sélection reste la même ; seule la façon de nommer les livres suit
+    /// la forme (la TOB montre ses abréviations).
+    pub fn renouveler_choix(&mut self, livres: &[LivreConnu], forme: Option<FormeLivre>) {
+        let options: Vec<LivreChoix> = livres
+            .iter()
+            .enumerate()
+            .map(|(rang, livre)| LivreChoix::depuis(rang, livre, forme))
+            .collect();
+        let selection = self.livre.and_then(|index| {
+            livres
+                .get(index)
+                .map(|livre| LivreChoix::depuis(index, livre, forme))
+        });
+        self.choix = combo_box::State::with_selection(options, selection.as_ref());
+    }
 }
 
 /// La référence cliquée dans l'éditeur : sa place et ce qu'on en fait.

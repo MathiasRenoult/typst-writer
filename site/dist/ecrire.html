@@ -55,6 +55,7 @@
 <tr><td><code>&gt; texte</code></td><td>une citation de bloc</td></tr>
 <tr><td><code>- élément</code></td><td>une liste à puces</td></tr>
 <tr><td><code>1. élément</code></td><td>une liste numérotée</td></tr>
+<tr><td><code>Tab</code> / <code>Maj+Tab</code></td><td>enfoncer / remonter la ligne de liste sous le curseur</td></tr>
 <tr><td>```<code> </code>`<code>typst </code>``<code> … </code>``<code> </code>`<code> </code>```</td><td>un bloc Typst brut, inséré tel quel</td></tr>
 <tr><td>trois lignes vides consécutives</td><td>un saut de page</td></tr>
 <tr><td><code>// texte</code></td><td>un commentaire — conservé dans le <code>.tw</code>, ignoré au rendu</td></tr>
@@ -76,9 +77,12 @@
 <tr><td><code>[texte](https://…)</code></td><td>un lien</td></tr>
 <tr><td><code>^[texte]</code></td><td>une note libre, en bas de page</td></tr>
 </tbody></table>
+<p>La note reste elle aussi visible dans sa source : le panneau d&#x27;insertion écrit <code>^[texte]</code>, et le rendu en fait une note de bas de page. Rien n&#x27;est remplacé par un signe dans le fichier. Une note peut contenir une citation (<code>^[Voir @dupont2023[p. 45].]</code>) : elle est composée dans la note, pas à la place de la note.</p>
 <h2>Les citations</h2>
 <p><code>@cle</code> appelle une référence de la bibliographie ; <code>@cle[p. 45]</code> porte la page. Plusieurs appels d&#x27;un geste — <code>@dupont[p. 45]; @martin</code> — ne font jamais qu&#x27;<strong>une</strong> note de bas de page, avec les deux mentions.</p>
-<p>L&#x27;appel est un <strong>glyphe numéroté</strong> — ¹, ² — dans le fil du texte, un caractère entier : il se déplace, se sélectionne et se supprime d&#x27;un seul geste. <strong>Cliquer dessus</strong> ouvre le composeur de notes ; les flèches parcourent la note puis les clés, <code>Échap</code> abandonne sans rien écrire.</p>
+<p>La citation reste <strong>visible dans sa source</strong> : l&#x27;éditeur ne la remplace jamais par un glyphe numéroté. C&#x27;est un texte comme un autre — on le déplace, on le sélectionne et on le corrige caractère par caractère, et <code>@dupont2023</code> reste lisible dans le document. La numérotation et la note sont produites au rendu, pas dans le fichier.</p>
+<p>Le bouton citation de la barre supérieure ouvre le composeur à l&#x27;endroit du curseur. Il sert aussi à réécrire une citation existante lorsque le curseur s&#x27;y trouve. Tant que l&#x27;on n&#x27;a pas validé, le document n&#x27;est pas modifié ; <code>Échap</code> ne laisse rien. Écrire un <code>@</code> à la main reste possible : il ne déclenche plus de fenêtre intempestive.</p>
+<p>En cours d&#x27;écriture, <code>@exemple</code> puis <code>Tab</code> ouvre aussi le menu contextuel, posé près du curseur : le document reste visible derrière lui, et la source n&#x27;est pas modifiée. Le menu permet de choisir la référence, de saisir sa page (<code>p. 45</code>, <code>pp. 12-15</code>…), puis d&#x27;ajouter une autre référence à la même citation. <code>Tab</code> fait avancer d&#x27;une étape, <code>Entrée</code> insère, <code>Échap</code> abandonne sans rien écrire ; un clic dans le texte ferme le menu et rend la main à l&#x27;éditeur.</p>
 <p>Voir <a href="bibliographie.md">La bibliographie</a>.</p>
 <h2>Les références bibliques</h2>
 <p>Une référence s&#x27;écrit entre doubles accolades : <code>{{Jn 3.16}}</code>. La forme standard est le **nom abrégé suivi de <code>chapitre.verset</code>** ; le livre peut aussi être nommé en entier ou en code OSIS, et les livres numérotés acceptent <code>1Jn</code> comme <code>1 Jean</code>. Les formes historiques <code>Jn 3:16</code> et <code>Jn 3,16</code> restent lues.</p>
@@ -160,14 +164,34 @@ $$
 <p>Une ligne qui porte plus de cellules que l&#x27;en-tête <strong>élargit le tableau</strong> au lieu de perdre la fin de la ligne ; les cellules Unicode se relisent telles quelles. Vérifiez tout de même le rendu d&#x27;un tableau irrégulier dans le PDF avant de le remettre.</p>
 <p>Le décor l&#x27;habille comme tout bloc — <code>{encadré}</code> prend sa tenue dans les normes.</p>
 <h2>Les graphiques</h2>
-<p>Un graphique se déclare par un bloc <code>{graphique}</code> suivi de ses données :</p>
-<pre><code>{graphique type=barre titre=&quot;Évolution&quot;}
-Jan | 10
-Fév | 20
-Mar | 15
+<p>Un graphique se déclare par une balise <code>{chart}</code> suivie de ses données en CSV. La forme concise est :</p>
+<pre><code>{chart bar &quot;Évolution&quot; 10cm×6cm centre}
+Jan,10
+Fév,20
+Mar,15
 </code></pre>
-<p>Chaque ligne est <code>libellé | valeur</code>. Le <code>type</code> dit la forme : <code>barre</code> (par défaut), <code>ligne</code> ou <code>secteur</code>. Le <code>titre</code> est facultatif — il devient la légende de la figure.</p>
-<p>Les graphiques utilisent le paquet Typst <a href="https://typst.app/universe/package/cetz">cetz</a>. Sa résolution dans l&#x27;application doit être vérifiée avant de compter sur ce rendu.</p>
+<p>Le premier mot est le type : <code>bar</code> (par défaut), <code>pie</code> (secteurs), <code>line</code> (lignes), <code>scatter</code> (nuage de points) ou <code>box</code> (boîtes à moustaches). Le titre, entre guillemets, est facultatif. La taille <code>largeur×hauteur</code> et le placement — <code>centre</code>, <code>gauche</code>, <code>droite</code> ou <code>pleine</code> — le sont aussi ; <code>{chart pie &quot;Répartition&quot;}</code> suffit pour un graphique simple. <code>sans-legende</code> et <code>sans-valeurs</code> désactivent les deux options quand le type les connaît. La forme longue <code>type=… titre=… largeur=…</code> reste lue pour les documents existants.</p>
+<p>Les colonnes dépendent du type :</p>
+<ul>
+<li><code>bar</code>, <code>pie</code>, <code>line</code> : <code>étiquette,valeur</code> ;</li>
+<li><code>scatter</code> : <code>x,y</code> ;</li>
+<li><code>box</code> : <code>étiquette,min,q1,médiane,q3,max</code>.</li>
+</ul>
+<p>Les documents qui portent encore l&#x27;ancien bloc <code>{graphique}</code> restent lus : le générateur les traduit vers primaviz, sans changer leur source.</p>
+<p>Une ligne d&#x27;en-tête est reconnue et sautée. La virgule et le point-virgule sont acceptés comme séparateurs, et les valeurs entre guillemets gardent leurs virgules. Le bouton <strong>Insérer un graphique</strong> de la barre d&#x27;outils ouvre le panneau complet : type, titre, taille, placement, légende, valeurs et un vrai champ CSV où coller plusieurs lignes ou importer un fichier. Il n&#x27;y a pas d&#x27;aperçu séparé : le document composé est la prévisualisation.</p>
+<p>Les graphiques utilisent le paquet Typst <a href="https://typst.app/universe/package/primaviz">primaviz</a>, vendu avec l&#x27;application et installé localement — aucun téléchargement au rendu.</p>
+<h2>Les callouts</h2>
+<p>Un callout encadre une citation sans la recopier. La balise se pose devant le bloc de citation :</p>
+<pre><code>{callout note &quot;À retenir&quot;}
+&gt; Une distinction utile pour la suite.
+</code></pre>
+<p>Le premier mot après <code>callout</code> est le ton : <code>citation</code> (neutre), <code>note</code>, <code>important</code>, <code>attention</code> ou <code>astuce</code>. Le titre, entre guillemets, est facultatif ; sans lui, le cadre garde sa couleur mais n&#x27;a pas de bande de titre. Les alias anglais <code>quote</code>, <code>warning</code> et <code>tip</code> sont aussi lus.</p>
+<p>Le bouton <strong>Insérer un callout</strong> ouvre le panneau : ton, titre, puis « Encadrer cette citation » si le curseur est déjà dans une citation ; sinon « Insérer le callout » pose une citation vide et y place le curseur. Le texte reste toujours dans le document — le panneau ne le recopie pas.</p>
+<p>Les callouts utilisent le paquet Typst <a href="https://typst.app/universe/package/showybox">showybox</a>, vendu avec l&#x27;application et installé localement : le rendu ne dépend d&#x27;aucun téléchargement. Cinq tons sobres sont fournis ; le type inconnu retombe sur <code>note</code>, jamais sur une erreur de compilation.</p>
+<h2>Lire l&#x27;aperçu</h2>
+<p>Le panneau de rendu est un lecteur du PDF exporté. Le texte peut y être sélectionné au glisser, au double-clic pour un mot et au triple-clic pour une ligne ; <code>Ctrl+C</code> copie la sélection. <code>Maj+clic</code> étend la sélection à partir de son point de départ.</p>
+<p>Dans une vue de rendu, <code>Ctrl+F</code> cherche dans le <strong>document composé</strong> — titres, notes et bibliographie compris — et non dans la source. La barre compte les occurrences, <code>F3</code> et <code>Maj+F3</code> passent au résultat suivant ou précédent, et les résultats sont surlignés dans la page. <code>Échap</code> ferme la recherche. Dans l&#x27;éditeur, <code>Ctrl+F</code> garde son sens habituel.</p>
+<p>Les liens du document sont actifs : un lien interne amène à la page visée, un lien externe ouvre l&#x27;adresse avec l&#x27;outil du système. Un pied de page discret indique la page courante et le nombre total de pages du document.</p>
 <h2>Le décor : l&#x27;intention, jamais la mesure</h2>
 <p><strong>La source dit l&#x27;intention, les normes disent la mesure.</strong> Par défaut, un bloc paraît comme les normes du document le disent — rien à écrire.</p>
 <p>Quand un bloc doit paraître autrement, un <strong>nom</strong> le précède :</p>

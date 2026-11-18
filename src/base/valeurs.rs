@@ -15,6 +15,8 @@ pub const CLE_GLOSSAIRE: &str = "glossaire";
 pub const CLE_GRAPHIQUES: &str = "graphiques";
 /// Clé de l'add-on des références bibliques.
 pub const CLE_REFERENCES_BIBLIQUES: &str = "references_bibliques";
+/// Clé de l'add-on des callouts.
+pub const CLE_CALLOUTS: &str = "callouts";
 
 /// Les fonctionnalités du projet : chacune se débranche, et son interface
 /// disparaît avec elle — ses boutons, ses sections de panneau.
@@ -29,11 +31,20 @@ pub struct AddOns {
     /// Le glossaire : ses boutons, sa section, sa fenêtre.
     pub glossaire: bool,
 
-    /// Les graphiques (cetz) : le bouton d'insertion.
+    /// Les graphiques (primaviz) : le bouton d'insertion.
     pub graphiques: bool,
 
     /// L'add-on des références bibliques : son insertion, son survol, sa trace.
     pub references_bibliques: bool,
+
+    /// Les callouts : les citations encadrées et leurs tons.
+    #[serde(default = "actif_par_defaut")]
+    pub callouts: bool,
+}
+
+/// Un add-on nouveau est actif dans les documents qui ne le connaissent pas.
+fn actif_par_defaut() -> bool {
+    true
 }
 
 impl Default for AddOns {
@@ -43,6 +54,7 @@ impl Default for AddOns {
             glossaire: true,
             graphiques: true,
             references_bibliques: true,
+            callouts: true,
         }
     }
 }
@@ -56,6 +68,7 @@ impl AddOns {
             CLE_GLOSSAIRE => self.glossaire = actif,
             CLE_GRAPHIQUES => self.graphiques = actif,
             CLE_REFERENCES_BIBLIQUES => self.references_bibliques = actif,
+            CLE_CALLOUTS => self.callouts = actif,
             _ => {}
         }
     }
@@ -68,6 +81,7 @@ impl AddOns {
             CLE_GLOSSAIRE => self.glossaire,
             CLE_GRAPHIQUES => self.graphiques,
             CLE_REFERENCES_BIBLIQUES => self.references_bibliques,
+            CLE_CALLOUTS => self.callouts,
             _ => true,
         }
     }
@@ -103,6 +117,11 @@ pub const PLUGINS: &[PluginDesc] = &[
         "Les termes définis et leurs occurrences.",
     ),
     PluginDesc::new(CLE_GRAPHIQUES, "Graphiques", "Les figures et les courbes."),
+    PluginDesc::new(
+        CLE_CALLOUTS,
+        "Callouts",
+        "Les citations encadrées et leurs tons.",
+    ),
     PluginDesc::new(
         CLE_REFERENCES_BIBLIQUES,
         "Références bibliques",

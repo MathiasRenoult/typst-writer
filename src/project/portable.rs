@@ -897,9 +897,20 @@ mod tests_tw_unique {
         let mut meta = crate::project::metadonnees::Metadonnees::base();
         meta.definir("", "titre".to_string(), "Ma thèse".to_string());
         meta.sauver(&depart).expect("métadonnées");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            page_de_titre: true,
+            parametres_plugins: crate::mise_en_page::modele::ParametresPlugins {
+                biblique: crate::mise_en_page::modele::ParametresBiblique {
+                    traduction: "darby".to_string(),
+                    tri: "canonique".to_string(),
+                },
+                callouts: Default::default(),
+            },
+            ..Default::default()
+        };
         std::fs::write(
             depart.join(crate::mise_en_page::REGLAGES),
-            "page_de_titre = true\n",
+            normes.ecrire().expect("normes sérialisées"),
         )
         .expect("normes");
         std::fs::write(
@@ -927,6 +938,11 @@ mod tests_tw_unique {
         );
         let normes = crate::mise_en_page::charger(&arrivee);
         assert!(normes.page_de_titre, "les normes reviennent");
+        assert_eq!(
+            normes.parametres_plugins.biblique.traduction, "darby",
+            "le paramétrage des plugins voyage dans le .tw"
+        );
+        assert_eq!(normes.parametres_plugins.biblique.tri, "canonique");
         assert!(
             std::fs::read_to_string(arrivee.join("references.bib"))
                 .expect("bibliographie")

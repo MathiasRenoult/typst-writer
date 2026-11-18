@@ -1,6 +1,10 @@
 # Langage intermédiaire — conception
 
-> **Statut : syntaxe gelée ; pipeline `.tw` raccordé au projet, au rendu et à l'export.**
+> **Statut : syntaxe étendue par les formes canoniques `{{…}}` ; les balises
+> courantes ont un nom court, les noms longs restent des alias, et les blocs
+> (encadré, graphique simple, tableau, fin de document) ont leur forme
+> canonique. Le pipeline `.tw` reste raccordé au projet, au rendu et à
+> l'export.**
 > Ce document est la référence de `document.tw`, l'AST et les deux traductions
 > qui l'encadrent. Le moteur Typst existant reste le seul moteur de composition
 > et de rendu.
@@ -59,11 +63,22 @@ leur recette et leurs preuves.
 | Liste à puces | `- élément` | liste Typst à puces |
 | Liste numérotée | `1. élément`, `2. élément` | liste Typst numérotée |
 | Bloc Typst brut | bloc clôturé par ` ```typst` et ` ``` ` | contenu inséré tel quel |
+| Encadré | `{{e type=note titre="…"\|texte}}` | `showybox` |
+| Graphique simple | `{{gr type=barre titre="…"}}` puis `label \| valeur` | `primaviz` |
+| Graphique primaviz | `{{ch …}}` puis le CSV | `primaviz` |
+| Tableau explicite | `{{t}}` puis la grille Markdown | tableau Typst |
+| Bloc de fin | `{{s}}`, `{{bib}}`, `{{gs}}`, `{{idx}}` | sommaire, bibliographie, glossaire, index |
 
 Les lignes d'un paragraphe qui se suivent sont jointes par une espace. Les
 espaces de fin de ligne et les lignes blanches supplémentaires sont normalisés
 par la sérialisation. Si le contenu d'un bloc brut contient déjà un fence, le
 sérialiseur allonge son délimiteur pour préserver le round-trip.
+
+Les livres deutérocanoniques et les apocryphes (Tobie, Judith, Sagesse,
+Siracide, Baruch, Maccabées, Esdras additionnels, Hénoch, Jubilés,
+Testaments des douze patriarches, apocalypses principales) suivent la même
+grammaire ; leur texte n'est pas embarqué, mais leur référence se compose et
+s'indexe.
 
 L'éditeur `.tw` utilise la grammaire de coloration Markdown (pas Typst). Les
 crochets, parenthèses et accolades se ferment automatiquement, sans doubler
@@ -80,16 +95,23 @@ citations de bloc ; Entrée sur un marqueur vide quitte la structure.
 | Code | `` `texte` `` | ` `texte` `` |
 | Littéral | `\x` | le caractère nu, sans interprétation |
 | Formule en ligne | `$x^2$` | `$x^2$` — math Typst |
-| Couleur | `{couleur:texte}` | `#text(fill: couleur)[texte]` |
+| Couleur | `{{c couleur\|texte}}` (ou `{{couleur …}}`) | `#text(fill: couleur)[texte]` |
+| Date | `{{d …}}` (ou `{{date …}}`) | date composée par les normes |
+| Terme du glossaire | `{{g clé}}` (ou `{{glossaire clé}}`) | `#gls("clé")` |
+| Métadonnée | `{{m clé}}` | `#sys.inputs.at("clé", default: "")` |
+| Référence biblique | `{{Jean 3:16}}` ou `{{b Jean 3:16}}` | référence rendue par le plugin biblique |
 | Citation bibliographique | `@clé`, `@clé[p. 45]`, `@clé; @autre` | une note, jamais deux |
 | Lien | `[texte](cible)` | `#link("cible")[texte]` |
 | Note de bas de page | `^[texte]` | `#footnote[texte]` |
 
 La couleur est une valeur Typst (par exemple `red`, `#ff0000` ou une expression
-`rgb(...)`). La clé bibliographique est une suite de lettres, chiffres, tirets
-et soulignements. Le style par défaut du projet est `chicago-notes` : Typst rend
-les citations bibliographiques en notes de bas de page, puis imprime la
-bibliographie. Un style défini explicitement dans `main.typ` reste prioritaire.
+`rgb(...)`). La clé bibliographique est une suite de lettres, chiffres, tirets,
+soulignements, points et deux-points — les clés BibTeX réelles ne se limitent
+pas aux identifiants Rust. Un `@` collé à la fin d'un mot est une adresse
+électronique, pas une citation : `user@example.com` reste du texte. Le style
+par défaut du projet est `chicago-notes` : Typst rend les citations
+bibliographiques en notes de bas de page, puis imprime la bibliographie. Un
+style défini explicitement dans `main.typ` reste prioritaire.
 
 ### Échappement
 

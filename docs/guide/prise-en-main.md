@@ -39,9 +39,25 @@ indépendantes (édition, rendu, Typst).
 ## La bibliothèque
 
 Le bouton « Bibliothèque » ouvre la galerie plein écran : les projets se
-voient par couvertures, rangés sur des **étagères** que l'on déplace à la
-souris. Un bouton « + Nouveau projet ici » crée un projet dans
-l'étagère.
+voient par couvertures, rangés sur des **étagères** que l'on crée librement,
+y compris vides. Les flèches ↑ ↓ d'une étagère la déplacent dans l'ordre de
+la galerie ; le bouton « + Nouveau projet » d'une étagère y pose le projet
+à naître.
+
+Un **clic** ouvre un projet. **Ctrl+clic** ajoute ou retire un document de
+la sélection, **Maj+clic** sélectionne toute la plage entre le dernier
+document choisi et celui-ci. Dès qu'une sélection existe, ses actions
+rapides paraissent : export PDF, export Typst Writer (`.tw`), changement
+des normes (une norme appliquée à tous), export Markdown et export DOCX.
+Les exports vont dans un dossier choisi, un fichier par document, et
+n'écrasent jamais un fichier existant.
+
+Chaque couverture est la **première page réelle** du projet, toujours
+présentée au format A4 — même si le document est composé en Letter, en A5
+ou en paysage. Les pages déjà rendues sont mises en cache : la galerie
+s'ouvre sans recompiler les projets. Le bouton « Changer la miniature »
+accepte une image **PNG ou JPG**, la recadre au centre au format A4 et la
+garde avec le projet ; elle remplace alors la première page.
 
 ## Ce qui se voit tout de suite
 

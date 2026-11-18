@@ -32,10 +32,12 @@ Dans le texte :
 
 | Ce que vous écrivez | Ce que le document rend |
 | --- | --- |
-| `{glo:sdo}` | la forme du terme, développée à la première occurrence |
-| `{glo:sdo pluriel}` | la forme plurielle |
-| `{glo:sdo majuscule}` | la même, avec majuscule — en début de phrase |
-| `{glo:sdo majuscule pluriel}` | la majuscule et le pluriel |
+| `{{g sdo}}` | la forme du terme, développée à la première occurrence |
+| `{{g sdo pluriel}}` | la forme plurielle |
+| `{{g sdo majuscule}}` | la même, avec majuscule — en début de phrase |
+| `{{g sdo majuscule pluriel}}` | la majuscule et le pluriel |
+
+Les formes historiques `{glo:sdo}` et ses variantes restent lues.
 
 Sur un chapitre `.typ` brut, l'insertion au curseur écrit la forme
 Typst équivalente : `#gls("sdo")`.
@@ -45,14 +47,14 @@ Typst équivalente : `#gls("sdo")`.
 Là où vous la voulez — en général à la fin :
 
 ```
-{glossaire}
+{{gs}}
 ```
 
 Par défaut, la liste ne montre que les termes **référencés** dans le
-document. `{glossaire: tout}` y ajoute ceux que vous avez définis sans
-les citer.
+document. `{{gs tout}}` y ajoute ceux que vous avez définis sans les citer.
+Les formes historiques `{glossaire}` et `{glossaire: tout}` restent lues.
 
-Sans `{glossaire}`, les termes se composent sans lien : il n'y a pas de
+Sans `{{gs}}`, les termes se composent sans lien : il n'y a pas de
 liste où pointer. Un terme dont la clé n'existe pas se compose en
 `[clé]` et se signale dans les diagnostics — le document compile
 toujours.

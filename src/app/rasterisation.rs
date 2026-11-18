@@ -9,6 +9,7 @@
 use super::Message;
 use super::State;
 use iced::Task;
+use std::sync::atomic::Ordering;
 pub(super) fn visible(state: &mut State) -> Task<Message> {
     let Some(document) = state.render.document.clone() else {
         return Task::none();
@@ -24,9 +25,14 @@ pub(super) fn visible(state: &mut State) -> Task<Message> {
     // qu'on voit. `iced` n'en signale d'ailleurs aucun tant que le contenu
     // tient dans la fenêtre — auquel cas tout est visible d'un coup, et trois
     // pages suffisent à couvrir ce cas comme le précédent.
-    let (first, last) = state.render.visible.unwrap_or((0, 2));
+    let (first, last) = state
+        .render
+        .visible_exact
+        .or(state.render.visible)
+        .unwrap_or((0, 2));
     let total = crate::typst::render::page_count(&document);
     let revision = state.render.revision;
+    let generation = state.render.generation.clone();
     let box_size = state
         .render
         .viewport
@@ -38,9 +44,19 @@ pub(super) fn visible(state: &mut State) -> Task<Message> {
     let scroll = state.render.scroll;
     let fenetre = (box_size.width, box_size.height);
 
-    let candidates: Vec<usize> = (first..=last.min(total.saturating_sub(1)))
+    let mut candidates: Vec<usize> = (first..=last.min(total.saturating_sub(1)))
         .filter(|index| state.render.stale.contains(index))
         .collect();
+
+    // La page au centre de la fenêtre d'abord, puis ses voisines : les
+    // emplacements de rasterisation sont rares, et une page à peine visible
+    // ne doit pas prendre celui de la page qu'on lit.
+    let centre = if let Some((premiere, derniere)) = state.render.visible {
+        (premiere + derniere) / 2
+    } else {
+        0
+    };
+    candidates.sort_by_key(|index| index.abs_diff(centre));
 
     // Réserver avant de construire les tâches : deux changements de viewport
     // qui arrivent avant la réponse ne doivent pas rasteriser deux fois la
@@ -56,6 +72,7 @@ pub(super) fn visible(state: &mut State) -> Task<Message> {
         .into_iter()
         .map(|index| {
             let pdf = pdf.clone();
+            let generation = generation.clone();
 
             // La densité est celle de **l'affichage** : la page est montrée
             // réduite — le panneau est plus étroit qu'une page — et le rendu
@@ -67,6 +84,7 @@ pub(super) fn visible(state: &mut State) -> Task<Message> {
                 crate::ui::preview::display_ratio_for_zoom(box_size, page, state.render.zoom),
                 scale_factor,
             );
+            let rapide = state.render.qualite_rapide.contains(&index);
 
             // La **région** à rendre : la fenêtre visible, élargie de la
             // marge — jamais la page entière (bug-report-9, fluidité).
@@ -91,11 +109,22 @@ pub(super) fn visible(state: &mut State) -> Task<Message> {
 
             Task::perform(
                 async move {
-                    crate::typst::render::render_region(
-                        &pdf, index, density, x0, y0, largeur, hauteur,
+                    if generation.load(Ordering::Relaxed) != revision {
+                        return None;
+                    }
+
+                    // Une seule passe pour l'aperçu. Le mode rapide de
+                    // `pdf-render` est un pipeline u8 dont l'écart avec le
+                    // pipeline f32 est sous-perceptuel ; le second passage
+                    // « fin » doublait le coût de chaque page pendant un
+                    // défilement pour un gain invisible.
+                    let qualite = pdf_render::RasterQuality::Speed;
+
+                    crate::typst::render::render_region_avec_qualite(
+                        &pdf, index, density, x0, y0, largeur, hauteur, qualite,
                     )
                 },
-                move |image| Message::PageRendered(revision, index, image, boite),
+                move |image| Message::PageRendered(revision, index, image, boite, rapide),
             )
         })
         .collect();

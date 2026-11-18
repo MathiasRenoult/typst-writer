@@ -18,14 +18,15 @@ pub const FICHIER: &str = "metadonnees.toml";
 /// Les noms de balises que la langue s'est réservés : une métadonnée ne
 /// les porte pas, sous peine de confondre sa balise `{clé}` avec une
 /// balise système (bug-report-10, 4.5). Ce sont les tiges que le parseur
-/// reconnaît — `{date:}`, `{glo:}`, `{glossaire}`, `{graphique`,
-/// `{bibliographie}`, la couleur, `[[TOC]]` — plus `titre` et `date`,
-/// déjà tenus ailleurs.
-const CLES_RESERVEES: [&str; 8] = [
+/// reconnaît — `{date:}`, `{glo:}`, `{glossaire}`, `{graphique}`,
+/// `{chart}`, `{bibliographie}`, la couleur, `[[TOC]]` — plus `titre` et
+/// `date`, déjà tenus ailleurs.
+const CLES_RESERVEES: [&str; 9] = [
     "date",
     "glo",
     "glossaire",
     "graphique",
+    "chart",
     "bibliographie",
     "couleur",
     "toc",
@@ -399,6 +400,7 @@ mod tests_des_profils {
             cle_reservee("bibliographie"),
             "la bibliographie est au système"
         );
+        assert!(cle_reservee("chart"), "chart est au système");
         assert!(!cle_reservee("directeur"), "une clé de l'auteur passe");
         assert!(!cle_reservee("matiere"), "une clé de l'auteur passe");
     }

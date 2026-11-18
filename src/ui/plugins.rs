@@ -5,7 +5,8 @@
 //! le plugin biblique sa forme de livre et ses chiffres.
 
 use iced::widget::{
-    Space, button, checkbox, column, container, row, scrollable, text, text_input, tooltip,
+    Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Element, Length};
 
@@ -14,7 +15,13 @@ use crate::app::state::State;
 use crate::ui::theme::{self, Palette};
 
 /// Les onglets des plugins.
-const ONGLETS: [&str; 4] = ["Bibliographie", "Biblique", "Glossaire", "Graphiques"];
+const ONGLETS: [&str; 5] = [
+    "Bibliographie",
+    "Biblique",
+    "Glossaire",
+    "Graphiques",
+    "Callouts",
+];
 
 /// La fenêtre des paramètres d'un plugin.
 ///
@@ -34,7 +41,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 0 => lucide_icons::iced::icon_book_open::<iced::Theme>(),
                 1 => lucide_icons::iced::icon_book_marked::<iced::Theme>(),
                 2 => lucide_icons::iced::icon_book_a::<iced::Theme>(),
-                _ => lucide_icons::iced::icon_chart_line::<iced::Theme>(),
+                3 => lucide_icons::iced::icon_chart_line::<iced::Theme>(),
+                _ => lucide_icons::iced::icon_text_quote::<iced::Theme>(),
             },
             15.0,
             palette.text,
@@ -56,17 +64,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette,
             "Le glossaire se gère dans son panneau : ses termes, leurs formes et leurs citations.",
         ),
-        _ => explication(
-            palette,
-            "Les graphiques se règlent dans la fenêtre d'insertion, avec leurs données.",
-        ),
+        3 => corps_graphiques(palette),
+        _ => corps_callouts(palette, dialogue),
     };
 
     let entete = row![
         palette.label("Paramètres des plugins").size(16),
         Space::new().width(Length::Fill),
         palette
-            .label("Les normes activent ; ce panneau configure.")
+            .label("Le fichier de normes règle aussi ces paramètres.")
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
     ]
@@ -123,10 +129,19 @@ fn corps_biblique<'a>(
         crate::mise_en_page::modele::SystemeAbreviation::FrancaiseLongue => "Nom complet",
         crate::mise_en_page::modele::SystemeAbreviation::Osis => "OSIS",
         crate::mise_en_page::modele::SystemeAbreviation::SansPoint => "Sans point",
+        crate::mise_en_page::modele::SystemeAbreviation::Tob => "TOB",
     };
     let chiffres = match reglages.references.chiffres {
         crate::mise_en_page::modele::Chiffres::Arabes => "Arabes",
         crate::mise_en_page::modele::Chiffres::Romains => "Romains",
+    };
+    let traduction = match reglages.parametres_plugins.biblique.traduction.as_str() {
+        "darby" => "J.N. Darby",
+        _ => "Louis Segond 1910",
+    };
+    let tri = match reglages.parametres_plugins.biblique.tri.as_str() {
+        "canonique" => "Ordre canonique",
+        _ => "Ordre d'apparition",
     };
 
     let mut corps = column![
@@ -134,8 +149,60 @@ fn corps_biblique<'a>(
             .label("Les références bibliques s'écrivent selon ces choix par défaut.")
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
+        row![
+            palette
+                .label("Traduction consultée")
+                .size(theme::jetons::DETAIL)
+                .width(Length::Fill),
+            iced::widget::pick_list(
+                vec!["Louis Segond 1910", "J.N. Darby"],
+                Some(traduction),
+                |choisi| {
+                    Message::MiseEnPageChamp(
+                        crate::mise_en_page::modele::Champ::BibliqueTraduction,
+                        if choisi == "J.N. Darby" {
+                            "darby"
+                        } else {
+                            "lsg"
+                        }
+                        .to_string(),
+                    )
+                },
+            )
+            .width(Length::Fixed(190.0)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            palette
+                .label("Ordre de la liste")
+                .size(theme::jetons::DETAIL)
+                .width(Length::Fill),
+            iced::widget::pick_list(
+                vec!["Ordre d'apparition", "Ordre canonique"],
+                Some(tri),
+                |choisi| {
+                    Message::MiseEnPageChamp(
+                        crate::mise_en_page::modele::Champ::BibliqueTri,
+                        if choisi == "Ordre canonique" {
+                            "canonique"
+                        } else {
+                            "apparition"
+                        }
+                        .to_string(),
+                    )
+                },
+            )
+            .width(Length::Fixed(190.0)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        palette
+            .label("Ces paramètres voyagent dans le fichier de normes du document.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
         iced::widget::pick_list(
-            vec!["Abréviation", "Nom complet", "OSIS", "Sans point"],
+            vec!["Abréviation", "Nom complet", "OSIS", "Sans point", "TOB"],
             Some(forme),
             |choisi| Message::MiseEnPageChamp(
                 crate::mise_en_page::modele::Champ::ReferencesLivre,
@@ -143,6 +210,7 @@ fn corps_biblique<'a>(
                     "Nom complet" => "longue",
                     "OSIS" => "osis",
                     "Sans point" => "sans_point",
+                    "TOB" => "tob",
                     _ => "courte",
                 }
                 .to_string(),
@@ -150,7 +218,7 @@ fn corps_biblique<'a>(
         )
         .width(Length::Fixed(190.0)),
         palette
-            .label("Une balise peut choisir sa forme : {{Jn 3.16|long}}.")
+            .label("Une balise peut choisir sa forme : {{Jn 3.16|long}} ou {{1 S 1.1|tob}}.")
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
         iced::widget::pick_list(vec!["Arabes", "Romains"], Some(chiffres), |choisi| {
@@ -284,6 +352,7 @@ fn corps_biblique<'a>(
         Some(crate::mise_en_page::modele::SystemeAbreviation::FrancaiseLongue) => "Longue",
         Some(crate::mise_en_page::modele::SystemeAbreviation::Osis) => "OSIS",
         Some(crate::mise_en_page::modele::SystemeAbreviation::SansPoint) => "Sans point",
+        Some(crate::mise_en_page::modele::SystemeAbreviation::Tob) => "TOB",
     };
     corps = corps.push(
         row![
@@ -298,6 +367,7 @@ fn corps_biblique<'a>(
                     "Longue",
                     "OSIS",
                     "Sans point",
+                    "TOB",
                 ],
                 Some(forme_index),
                 |choisi| {
@@ -308,6 +378,7 @@ fn corps_biblique<'a>(
                             "Longue" => "longue",
                             "OSIS" => "osis",
                             "Sans point" => "sans_point",
+                            "TOB" => "tob",
                             _ => "herite",
                         }
                         .to_string(),
@@ -418,6 +489,350 @@ fn jeton_aide<'a>(palette: Palette, jeton: &'a str, aide: &'a str) -> Element<'a
         tooltip::Position::Top,
     )
     .gap(6)
+    .into()
+}
+
+/// L'onglet des graphiques : ce que le panneau d'insertion expose.
+fn corps_graphiques(palette: Palette) -> iced::widget::Column<'static, Message> {
+    column![
+        palette
+            .label("Le panneau d'insertion choisit le type et écrit la balise `{chart …}`.")
+            .size(theme::jetons::CORPS),
+        palette
+            .label(
+                "Types : secteurs, barres, lignes, aires, nuage de points, boîtes à \
+                 moustaches et sucettes. Options : titre, sous-titre, axes, grille, \
+                 graduations, points, aire remplie, courbe, anneau et barres horizontales."
+            )
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        palette
+            .label(
+                "Les données restent dans le document, en CSV ; les options sont des \
+                 propriétés explicites de la balise. Aucun aperçu n'est nécessaire : \
+                 le document composé est la prévisualisation."
+            )
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    ]
+    .spacing(10)
+}
+
+/// L'onglet des callouts : les préréglages vivent dans la norme, le panneau
+/// d'insertion les choisit et peut en écarter ponctuellement le style.
+fn corps_callouts<'a>(
+    palette: Palette,
+    dialogue: &'a crate::app::state::DialogueMiseEnPage,
+) -> iced::widget::Column<'a, Message> {
+    let presets = &dialogue.reglages.parametres_plugins.callouts.presets;
+    if presets.is_empty() {
+        return column![
+            palette
+                .label("Aucun callout prédéfini dans cette norme.")
+                .size(theme::jetons::CORPS),
+            button(
+                palette
+                    .label("Créer un préréglage")
+                    .size(theme::jetons::DETAIL)
+            )
+            .on_press(Message::CalloutPresetAjouter)
+            .padding([6, 12]),
+        ]
+        .spacing(10);
+    }
+
+    let index = dialogue.callout_preset.min(presets.len() - 1);
+    let preset = &presets[index];
+    let libelles: Vec<String> = presets.iter().map(|p| p.nom.clone()).collect();
+    let mut corps = column![
+        palette
+            .label("Callouts prédéfinis")
+            .size(theme::jetons::SAILLANT),
+        palette
+            .label(
+                "La source nomme un préréglage : `{callout attention \"Titre\"}`. \
+                 Le panneau d'insertion peut ensuite changer son apparence pour une \
+                 occurrence ; ces écarts restent dans la source."
+            )
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        row![
+            pick_list(libelles, Some(preset.nom.clone()), move |choisi: String| {
+                Message::CalloutPresetChoisir(
+                    presets.iter().position(|p| p.nom == choisi).unwrap_or(0),
+                )
+            })
+            .padding(4)
+            .width(Length::Fill),
+            button(palette.label("Nouveau").size(theme::jetons::DETAIL))
+                .on_press(Message::CalloutPresetAjouter)
+                .padding([4, 8]),
+            button(palette.label("Supprimer").size(theme::jetons::DETAIL))
+                .on_press(Message::CalloutPresetSupprimer(index))
+                .padding([4, 8]),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        palette
+            .label(format!("Clé dans la source : {}", preset.cle))
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        champ_preset(
+            palette,
+            "Nom affiché",
+            index,
+            crate::langage::callout::CalloutChamp::Nom,
+            &preset.nom
+        ),
+        champ_preset(
+            palette,
+            "Titre proposé",
+            index,
+            crate::langage::callout::CalloutChamp::Titre,
+            &preset.titre
+        ),
+        palette.label("Couleurs").size(theme::jetons::SAILLANT),
+        couleur_preset(
+            palette,
+            "Bordure",
+            index,
+            crate::langage::callout::CalloutChamp::Bordure,
+            &preset.bordure
+        ),
+        couleur_preset(
+            palette,
+            "Fond du corps",
+            index,
+            crate::langage::callout::CalloutChamp::Fond,
+            &preset.fond
+        ),
+        couleur_preset(
+            palette,
+            "Fond du titre",
+            index,
+            crate::langage::callout::CalloutChamp::TitreFond,
+            &preset.titre_fond
+        ),
+        couleur_preset(
+            palette,
+            "Texte du titre",
+            index,
+            crate::langage::callout::CalloutChamp::TitreTexte,
+            &preset.titre_texte
+        ),
+        couleur_preset(
+            palette,
+            "Texte du corps",
+            index,
+            crate::langage::callout::CalloutChamp::CorpsTexte,
+            &preset.corps_texte
+        ),
+        palette.label("Mesures").size(theme::jetons::SAILLANT),
+        row![
+            champ_preset(
+                palette,
+                "Épaisseur",
+                index,
+                crate::langage::callout::CalloutChamp::Epaisseur,
+                &preset.epaisseur
+            ),
+            champ_preset(
+                palette,
+                "Rayon",
+                index,
+                crate::langage::callout::CalloutChamp::Rayon,
+                &preset.rayon
+            ),
+        ]
+        .spacing(8),
+        row![
+            champ_preset(
+                palette,
+                "Marge x",
+                index,
+                crate::langage::callout::CalloutChamp::MargeX,
+                &preset.marge_x
+            ),
+            champ_preset(
+                palette,
+                "Marge y",
+                index,
+                crate::langage::callout::CalloutChamp::MargeY,
+                &preset.marge_y
+            ),
+            champ_preset(
+                palette,
+                "Largeur",
+                index,
+                crate::langage::callout::CalloutChamp::Largeur,
+                &preset.largeur
+            ),
+        ]
+        .spacing(8),
+        row![
+            liste_preset(palette, "Bordure", preset, index),
+            liste_alignement_preset(palette, preset, index),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            checkbox(preset.gras)
+                .label("Titre en gras")
+                .on_toggle(move |actif| {
+                    Message::CalloutPresetBascule(
+                        index,
+                        crate::langage::callout::CalloutChamp::Gras,
+                        actif,
+                    )
+                })
+                .size(theme::jetons::CORPS),
+            checkbox(preset.rupture)
+                .label("Coupure entre pages")
+                .on_toggle(move |actif| {
+                    Message::CalloutPresetBascule(
+                        index,
+                        crate::langage::callout::CalloutChamp::Rupture,
+                        actif,
+                    )
+                })
+                .size(theme::jetons::CORPS),
+        ]
+        .spacing(16),
+        palette
+            .label("Ces réglages sont enregistrés avec la norme, pas dans l'application.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    ]
+    .spacing(10);
+
+    corps = corps.push(
+        palette
+            .label("Le panneau d'insertion part de ce préréglage et n'écrit que les écarts.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    );
+    corps
+}
+
+/// Un champ texte d'un préréglage.
+fn champ_preset<'a>(
+    palette: Palette,
+    libelle: &'a str,
+    index: usize,
+    champ: crate::langage::callout::CalloutChamp,
+    valeur: &'a str,
+) -> Element<'a, Message> {
+    row![
+        palette
+            .label(libelle)
+            .size(theme::jetons::DETAIL)
+            .width(Length::Fixed(110.0)),
+        text_input("", valeur)
+            .on_input(move |valeur| Message::CalloutPresetChamp(index, champ, valeur))
+            .padding([4, 6])
+            .width(Length::Fill),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Une couleur d'un préréglage, avec la roue.
+fn couleur_preset<'a>(
+    palette: Palette,
+    libelle: &'a str,
+    index: usize,
+    champ: crate::langage::callout::CalloutChamp,
+    valeur: &'a str,
+) -> Element<'a, Message> {
+    row![
+        palette
+            .label(libelle)
+            .size(theme::jetons::DETAIL)
+            .width(Length::Fixed(110.0)),
+        text_input("#000000", valeur)
+            .on_input(move |valeur| Message::CalloutPresetChamp(index, champ, valeur))
+            .padding([4, 6])
+            .width(Length::Fixed(110.0)),
+        button(palette.label("Roue…").size(theme::jetons::DETAIL))
+            .on_press(Message::PickerCouleurPourCallout(
+                crate::app::state::CibleCouleur::Preset(index, champ)
+            ))
+            .padding([3, 7]),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Le style de bordure d'un préréglage.
+fn liste_preset<'a>(
+    palette: Palette,
+    libelle: &'a str,
+    preset: &crate::langage::callout::CalloutPreset,
+    index: usize,
+) -> Element<'a, Message> {
+    let courant = match preset.bordure_style.as_str() {
+        "dashed" => "Tirets",
+        "dotted" => "Pointillés",
+        _ => "Trait plein",
+    };
+    row![
+        palette.label(libelle).size(theme::jetons::DETAIL),
+        pick_list(
+            vec!["Trait plein", "Tirets", "Pointillés"],
+            Some(courant),
+            move |choisi: &'static str| Message::CalloutPresetChamp(
+                index,
+                crate::langage::callout::CalloutChamp::BordureStyle,
+                match choisi {
+                    "Tirets" => "dashed",
+                    "Pointillés" => "dotted",
+                    _ => "solid",
+                }
+                .to_string(),
+            )
+        )
+        .padding(4)
+        .width(Length::Fixed(130.0)),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// L'alignement du titre d'un préréglage.
+fn liste_alignement_preset<'a>(
+    palette: Palette,
+    preset: &crate::langage::callout::CalloutPreset,
+    index: usize,
+) -> Element<'a, Message> {
+    let courant = match preset.alignement.as_str() {
+        "center" => "Centre",
+        "right" => "Droite",
+        _ => "Gauche",
+    };
+    row![
+        palette.label("Alignement").size(theme::jetons::DETAIL),
+        pick_list(
+            vec!["Gauche", "Centre", "Droite"],
+            Some(courant),
+            move |choisi: &'static str| Message::CalloutPresetChamp(
+                index,
+                crate::langage::callout::CalloutChamp::Alignement,
+                match choisi {
+                    "Centre" => "center",
+                    "Droite" => "right",
+                    _ => "left",
+                }
+                .to_string(),
+            )
+        )
+        .padding(4)
+        .width(Length::Fixed(130.0)),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
     .into()
 }
 

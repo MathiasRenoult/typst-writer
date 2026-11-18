@@ -1,7 +1,9 @@
 # Rechercher et remplacer
 
-`Ctrl+F` ouvre la barre de recherche ; `Échap` la ferme. Elle flotte sur
-le texte, et le reste de l'éditeur continue de vivre derrière elle.
+`Ctrl+F` ouvre la barre de recherche ; `Échap` la ferme. Dans une vue de
+rendu, `Ctrl+F` cherche dans le document composé — voir la section « Lire
+l'aperçu » du guide Écrire — et la barre de l'éditeur garde son rôle pour
+la source.
 
 ## Deux modes : littéral ou expression régulière
 

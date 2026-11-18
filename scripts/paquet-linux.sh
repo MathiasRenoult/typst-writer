@@ -31,7 +31,10 @@ mkdir -p "$dossier/bin" \
          "$dossier/share/doc/typst-writer"
 
 cp target/release/typst-writer "$dossier/bin/typst-writer"
-cp README.md CHANGELOG.md "$dossier/share/doc/typst-writer/"
+cp README.md CHANGELOG.md RELEASE_NOTES.md "$dossier/share/doc/typst-writer/"
+# Dans le paquet, le guide est installé à côté du README, pas dans docs/ :
+# les liens du README doivent rester valables une fois installé.
+sed -i 's#docs/guide/#guide/#g' "$dossier/share/doc/typst-writer/README.md"
 cp -r docs/guide "$dossier/share/doc/typst-writer/guide"
 if [ -f LICENSE ]; then
     cp LICENSE "$dossier/share/doc/typst-writer/"

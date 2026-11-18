@@ -66,8 +66,8 @@ pub struct Composeur {
     /// poser sur une clé la surligne. Une seule liste, un seul geste.
     pub position: usize,
 
-    /// L'offset, dans le document, où la note s'insérera : celui du `@`
-    /// déclencheur, que le composeur a mangé.
+    /// L'offset, dans le document, où la citation s'insérera ou commencera à
+    /// être remplacée. Le texte source n'est jamais retiré à l'ouverture.
     pub ancre: usize,
 
     /// La fin de la plage que la note remplacera, en édition d'une citation
@@ -355,24 +355,105 @@ pub fn reserved_keys() -> Vec<iced::keyboard::Key> {
     ]
 }
 
-#[allow(dead_code)] // Rebranché par la complétion locale (feuille de route).
-/// Repose les glyphes de notes : le document change, les numéros suivent.
+/// Ouvre le menu contextuel de citation si le curseur est dans un appel.
 ///
-/// C'est ici que « dynamique » a lieu — à chaque frappe, à chaque déplacement
-/// du curseur. La règle de pliage est **une**, dans l'éditeur
-/// (`EditorState::marques_a_jour`) : elle suit aussi les remplacements faits
-/// par le composeur, qui ne passent pas par la boucle des messages.
-/// Ouvre le composeur de notes, sur le `@` qui vient d'être tapé.
+/// C'est le geste `Tab` demandé par l'auteur : `@exemple` est encore en cours
+/// d'écriture, et le menu s'ouvre **sans rien consommer**. Le texte source
+/// reste intact ; le menu ne fait que proposer la bibliothèque, la page et les
+/// références supplémentaires. Aucun menu ne s'ouvre dans du code ou une
+/// adresse électronique.
+pub fn ouvrir_si_citation_au_curseur(state: &mut State) -> Option<Task<Message>> {
+    if state.composeur.is_some()
+        || crate::app::pointeur_bloque(state)
+        || state
+            .editor
+            .editor
+            .selected_text()
+            .is_some_and(|texte| !texte.is_empty())
+    {
+        return None;
+    }
+
+    if !state
+        .reglages
+        .fonctionnalites
+        .actif(crate::base::valeurs::CLE_BIBLIOGRAPHIE)
+    {
+        return None;
+    }
+
+    let contenu = state.editor.content();
+    let offset = state.editor.cursor_offset();
+
+    if crate::langage::citation::dans_une_bande_opaque(&contenu, offset) {
+        return None;
+    }
+
+    if let Some((references, debut, fin)) = crate::langage::parse::appel_autour(&contenu, offset) {
+        return Some(ouvrir_edition(state, references, debut, fin));
+    }
+
+    crate::langage::citation::appel_incomplet_au_curseur(&contenu, offset)
+        .map(|(debut, fin)| ouvrir_plage(state, debut, fin))
+}
+
+/// Ouvre le composeur sur une plage de citation incomplète.
 ///
-/// Le déclencheur **part** : le `@`, et ce qui a pu être tapé derrière, sont
-/// mangés — leur place est dans le champ du panneau. Le document ne revoit
-/// donc la note qu'à la fin, et Échap ne laisse rien. Le clavier part aux
-/// champs ; l'éditeur le rend, et ne le reprend qu'à la fermeture.
-pub fn ouvrir_composeur(
-    state: &mut State,
-    context: &crate::editor::completion::Context,
-) -> Task<Message> {
-    let cles = state
+/// La plage reste dans le document ; elle ne sera remplacée qu'à la
+/// validation. C'est ce qui permet à `Tab` d'ouvrir un menu après `@exemple`
+/// sans jamais perdre le texte déjà tapé.
+fn ouvrir_plage(state: &mut State, debut: usize, fin: usize) -> Task<Message> {
+    let cles = cles_du_projet(state);
+    state.editor.editor.lose_focus();
+    state.completion = None;
+
+    let mut composeur = Composeur::ouvert(cles, debut);
+    composeur.edition = Some(fin);
+    state.composeur = Some(composeur);
+
+    champ_composeur()
+}
+
+/// Ouvre le composeur au curseur — ou sur la citation qui s'y trouve.
+///
+/// C'est le geste explicite : aucun `@` n'est consommé, aucun texte n'est
+/// modifié avant la validation. Si le curseur est dans un appel existant,
+/// le composeur le recharge pour le réécrire ; sinon il s'ouvre à la
+/// position du curseur et la citation sera insérée à la fermeture.
+pub fn ouvrir_au_curseur(state: &mut State) -> Task<Message> {
+    let contenu = state.editor.content();
+    let offset = state.editor.cursor_offset();
+
+    if crate::langage::citation::dans_une_bande_opaque(&contenu, offset) {
+        return Task::none();
+    }
+
+    if let Some((references, debut, fin)) = crate::langage::parse::appel_autour(&contenu, offset) {
+        return ouvrir_edition(state, references, debut, fin);
+    }
+
+    if let Some((debut, fin)) =
+        crate::langage::citation::appel_incomplet_au_curseur(&contenu, offset)
+    {
+        return ouvrir_plage(state, debut, fin);
+    }
+
+    let cles = cles_du_projet(state);
+    state.editor.editor.lose_focus();
+    state.completion = None;
+
+    let composeur = Composeur::ouvert(cles, offset);
+    state.composeur = Some(composeur);
+
+    champ_composeur()
+}
+
+/// Les clés citables du projet, avec leur genre et leur texte de recherche.
+///
+/// Une seule collecte pour le geste de création et celui d'édition : les
+/// deux fenêtres montrent exactement la même bibliographie.
+fn cles_du_projet(state: &State) -> Vec<(String, String, String)> {
+    state
         .bibliography
         .iter()
         .map(|entry| {
@@ -389,22 +470,7 @@ pub fn ouvrir_composeur(
             );
             (entry.key.clone(), entry.kind.clone(), recherche)
         })
-        .collect();
-
-    // L'ancre est celle du `@` déclencheur : le mot tapé commence juste après.
-    let ancre = context.start.saturating_sub(1);
-    let manges = state.editor.cursor_offset() - ancre;
-
-    // Toute réponse tinymist encore en vol n'a plus lieu d'être.
-
-    let manger = state.editor.replace_before(manges, "").map(Message::Editor);
-    state.editor.editor.lose_focus();
-
-    let mut composeur = Composeur::ouvert(cles, ancre);
-    composeur.saisir(context.typed.clone());
-    state.composeur = Some(composeur);
-
-    Task::batch([manger, champ_composeur()])
+        .collect()
 }
 
 /// Ouvre le composeur **sur une citation déjà écrite**, pour la réécrire.
@@ -418,27 +484,11 @@ pub fn ouvrir_edition(
     debut: usize,
     fin: usize,
 ) -> Task<Message> {
-    let cles = state
-        .bibliography
-        .iter()
-        .map(|entry| {
-            let auteurs = entry
-                .auteurs
-                .iter()
-                .map(|(nom, prenom)| format!("{nom} {prenom}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let recherche = format!(
-                "{auteurs} {} {}",
-                entry.titre,
-                entry.annee.clone().unwrap_or_default()
-            );
-            (entry.key.clone(), entry.kind.clone(), recherche)
-        })
-        .collect();
+    let cles = cles_du_projet(state);
 
     // Toute réponse tinymist encore en vol n'a plus lieu d'être.
     state.editor.editor.lose_focus();
+    state.completion = None;
 
     let mut composeur = Composeur::ouvert(cles, debut);
     composeur.charger(references);
@@ -532,12 +582,11 @@ pub fn composeur_update(state: &mut State, message: Message) -> Task<Message> {
     }
 }
 
-/// Ferme le composeur, et écrit la note s'il y en a une.
+/// Ferme le composeur, et écrit la citation s'il y en a une.
 ///
 /// C'est le **seul** endroit où le document reçoit quelque chose du
-/// composeur : la note entière, d'un seul tenant, à la place du `@`
-/// déclencheur mangé. Quand il n'y a rien — Échap —, rien ne s'écrit : c'est
-/// tout le sens de « Échap ne laisse rien ».
+/// composeur : aucun texte n'a été retiré à l'ouverture, la citation
+/// s'insère donc à l'ancre. Quand il n'y a rien — Échap —, rien ne s'écrit.
 pub fn fermer_composeur(state: &mut State, texte: Option<String>) -> Task<Message> {
     let Some(composeur) = state.composeur.take() else {
         return Task::none();
@@ -553,10 +602,10 @@ pub fn fermer_composeur(state: &mut State, texte: Option<String>) -> Task<Messag
         return refocus;
     };
 
-    // Ce qui précède le curseur depuis l'ancre : le `@` mangé, et rien d'autre
-    // — sauf si la frappe a devancé le focus, auquel cas elle part avec. En
-    // édition, c'est la plage de la citation d'origine qui est remplacée.
-    state.render.words_pending = true;
+    // Ce qui précède le curseur depuis l'ancre : rien, en création, puisque
+    // l'ouverture n'a rien retiré. En édition, c'est la plage de la citation
+    // d'origine qui est remplacée.
+    state.mots_a_recalculer();
 
     let edition = match composeur.edition {
         Some(fin) => {
@@ -568,9 +617,8 @@ pub fn fermer_composeur(state: &mut State, texte: Option<String>) -> Task<Messag
                 .map(Message::Editor)
         }
         None => {
-            // En création, la plage va du `@` mangé (l'ancre) au curseur : ce
-            // que la frappe a écrit par-dessus. Même remplacement en une
-            // sélection — jamais de retours arrière à compter.
+            // En création, l'ancre et le curseur sont au même endroit :
+            // la citation s'insère, sans avoir à effacer quoi que ce soit.
             let fin = state.editor.cursor_offset();
             let texte = separer(state, fin, texte);
 

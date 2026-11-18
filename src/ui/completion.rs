@@ -1,14 +1,12 @@
 //! La fenêtre de suggestions de citation.
 //!
-//! Une fenêtre **fixe, au centre de l'écran**, ouverte par un `@`. À la
-//! différence d'une bulle accrochée au curseur, elle n'a pas à calculer sa
-//! place : elle est au centre, toujours, et rien ne peut la recouvrir ni la
-//! faire sortir de l'écran. C'est ce qui la rend simple, et ce qui rend les
-//! clics prévisibles.
+//! La liste de complétion des commandes `#` reste une fenêtre **fixe, au
+//! centre de l'écran**. Le **composeur de notes** de références, lui, est une
+//! bulle posée près du curseur par `ui::editor` : il ne couvre ni ne bloque le
+//! document, et un clic dans le texte le referme.
 //!
-//! Elle a deux visages. Le **composeur de notes** pour les références — choisir,
-//! donner la page, ajouter une autre référence à la même note — et la liste de
-//! complétion du serveur pour les commandes `#`.
+//! Ses deux visages : choisir une référence, donner la page, ajouter une autre
+//! référence à la même note ; ou la liste de complétion du serveur.
 
 use iced::widget::{Space, button, column, container, row, text_input};
 use iced::{Alignment, Element, Length};
@@ -33,8 +31,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
         return crate::ui::bible::view(state, panneau);
     }
 
-    if let Some(composeur) = state.composeur.as_ref() {
-        return fenetre_composeur(composeur, palette, state.editor.is_intermediate());
+    if state.composeur.is_some() {
+        // Le composeur est une bulle posée sur l'éditeur, pas une fenêtre
+        // centrale : il vit dans `ui::editor`, près du curseur. Ici, sa place
+        // reste vide.
+        return container(Space::new()).into();
     }
 
     let Some(open) = state.completion.as_ref() else {
@@ -91,7 +92,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 /// Le visage composeur : la note se choisit, se pagine, et s'écrit à la fin.
-fn fenetre_composeur<'a>(
+///
+/// Le contenu seul est rendu : il est posé en bulle près du curseur par
+/// `ui::editor`, sans voile. La fenêtre reste donc non invasive — le texte
+/// demeure visible derrière elle.
+pub(super) fn contenu_composeur<'a>(
     composeur: &'a Composeur,
     palette: Palette,
     intermediaire: bool,
@@ -178,15 +183,7 @@ fn fenetre_composeur<'a>(
         .padding(16)
         .style(bubble_style(palette));
 
-    // Une modale : le voile arrête les clics, et l'éditeur a rendu le focus
-    // à l'ouverture. On ne travaille plus à travers la fenêtre.
-    crate::ui::voile(
-        container(fenetre)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-    )
+    fenetre.into()
 }
 
 /// Le fond d'un bouton au survol : une brume, jamais un bloc.
