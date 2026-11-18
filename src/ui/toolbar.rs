@@ -178,6 +178,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 iced_aw::menu::Item::new(
                     button(
                         palette
+                            .label("Importer un document .typ…")
+                            .size(theme::jetons::DETAIL),
+                    )
+                    .on_press(Message::OpenFile)
+                    .padding([4, 10])
+                    .width(Length::Fill),
+                ),
+                iced_aw::menu::Item::new(
+                    button(
+                        palette
                             .label("Exporter le projet (archive)…")
                             .size(theme::jetons::DETAIL),
                     )

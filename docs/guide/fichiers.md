@@ -33,6 +33,7 @@ détruit rien de ce qui existe.
     ├── etageres.json  le classement des projets sur les étagères
     ├── etageres-ordre.json  l'ordre des étagères, y compris vides
     ├── themes/        les thèmes : livrés une fois, puis à vous
+    ├── bibles/        les versions bibliques que vous avez ajoutées
     ├── corbeille/     les suppressions — rien ne part dans le vide
     └── projets/       vos projets
 

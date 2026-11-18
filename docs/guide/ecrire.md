@@ -63,8 +63,15 @@ disponibles pour les réglages fins.
 | `^[texte]` | une note libre, en bas de page |
 | `{{c red\|texte}}` | un passage teinté (forme canonique courte) |
 | `{{d 1789.07.14}}` | une date composée par les normes |
+| `{{d aujourd'hui}}` | la date du jour, au moment de la composition |
+| `{{d maintenant}}` | la date et l'heure de la composition |
 | `{{g clé}}` | un terme du glossaire |
 | `{{m auteur}}` | une métadonnée du projet |
+
+`aujourd'hui` et `maintenant` sont évalués au moment où le document est
+composé, pas à chaque frappe. Pour une composition reproductible — même
+sortie à chaque essai —, la variable d'environnement `SOURCE_DATE_EPOCH`
+fixe l'horloge.
 
 La note reste elle aussi visible dans sa source : le panneau d'insertion écrit
 `^[texte]`, et le rendu en fait une note de bas de page. Rien n'est remplacé
@@ -163,10 +170,12 @@ syntaxe : Tobie, Judith, Sagesse, Siracide, Baruch, les Maccabées, les
 Psaumes additionnels, Hénoch, les Jubilés, les Testaments des douze
 patriarches et les principales apocalypses. Leurs références se composent
 et s'indexent ; les deux traductions embarquées ne fournissent pas leur
-texte, donc la bulle de consultation les signale sans verset.
+texte, mais une version ajoutée peut le fournir (voir
+[les versions bibliques](bibles.md)).
 
 Une référence peut nommer sa **traduction** : `{{Jn 3.16|lsg}}` rend
-`Jn 3.16 (LSG)`, `{{Jn 3.16|darby}}` rend `Jn 3.16 (DARBY)`. La
+`Jn 3.16 (LSG)`, `{{Jn 3.16|darby}}` rend `Jn 3.16 (DARBY)`. Une version
+ajoutée s'appelle par son code, par exemple `{{Tob 1.1|vulgate}}`. La
 traduction se met sur chaque référence, avant le suffixe de forme de la
 balise s'il y en a un (`{{Jn 3.16|lsg|long}}`). Sans précision, aucune
 mention de traduction n'est ajoutée à la citation.
@@ -250,6 +259,24 @@ La légende peut se séparer de l'alt par une barre :
     ![description](figs/planche.png | La vraie légende)
 
 C'est la légende qui paraît dans la figure numérotée.
+
+## Les liens internes
+
+Un titre, un sous-titre ou une figure reçoit une **ancre** stable. Un lien
+interne s'écrit `[[référence|texte]]` :
+
+    [[titre-introduction|voir l'introduction]]
+    [[figure-planche|la planche]]
+
+Taper `[[` ouvre la recherche des éléments linkables du document : la liste
+se filtre à la frappe, `Tab` ou `Entrée` insère l'ancre choisie, et le
+curseur attend le texte du lien. Les ancres sont fabriquées à partir du
+titre ou de la légende ; deux éléments qui portent le même texte reçoivent
+un suffixe (`…-2`, `…-3`). Une ancre ne contient que lettres, chiffres,
+tirets, points, deux-points et soulignés. Si un titre est renommé, les liens
+qui visaient son ancienne ancre ne trouvent plus leur cible : le panneau
+gauche les signale sous **liens internes à vérifier**, et un clic sélectionne
+le lien dans la source.
 
 ## Les formules
 

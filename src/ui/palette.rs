@@ -29,6 +29,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
             "Que veux-tu insérer ?  (balise, snippet, métadonnée)"
         }
         crate::app::palette::ModePalette::Systeme => "Quelle commande ?",
+        crate::app::palette::ModePalette::Liens => "Vers quel titre ou quelle figure ?",
     };
 
     let champ = text_input(invitation, &palette.requete)
@@ -39,13 +40,11 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let entete = row![
         theme_palette
-            .label(
-                if matches!(palette.mode, crate::app::palette::ModePalette::Balises) {
-                    "Insérer"
-                } else {
-                    "Commandes"
-                }
-            )
+            .label(match palette.mode {
+                crate::app::palette::ModePalette::Balises => "Insérer",
+                crate::app::palette::ModePalette::Systeme => "Commandes",
+                crate::app::palette::ModePalette::Liens => "Liens internes",
+            })
             .size(theme::jetons::TITRE),
         Space::new().width(Length::Fill),
         theme_palette
@@ -76,7 +75,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
     };
 
     let pied = theme_palette
-        .label("↑↓ choisir · Entrée insérer · Tab configurer · Échap fermer")
+        .label(
+            if matches!(palette.mode, crate::app::palette::ModePalette::Liens) {
+                "↑↓ choisir · Entrée/Tab insérer · Échap fermer"
+            } else {
+                "↑↓ choisir · Entrée insérer · Tab configurer · Échap fermer"
+            },
+        )
         .size(theme::jetons::DETAIL)
         .color(theme_palette.text_muted);
 

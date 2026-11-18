@@ -11,12 +11,13 @@ dans `docs/design/`, et ne regardent pas l'usage.
 2. [Écrire](ecrire.md) — la syntaxe de `document.tw`, de la ligne au graphique, et les références bibliques.
 3. [La bibliographie](bibliographie.md) — les références, la fiche, Zotero.
 4. [Le glossaire](glossaire.md) — les termes, leurs formes, la liste finale.
-5. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied, et les paramètres des plugins.
-6. [Rechercher et remplacer](recherche.md) — les expressions régulières.
-7. [Les raccourcis](raccourcis.md) — le clavier, entier.
-8. [Les fichiers](fichiers.md) — où tout vit, ce qu'on en garde, ce qui
+5. [Les versions bibliques](bibles.md) — ajouter une traduction et ses livres.
+6. [Les normes](normes.md) — mise en page, typographie, décor, en-tête et pied, et les paramètres des plugins.
+7. [Rechercher et remplacer](recherche.md) — les expressions régulières.
+8. [Les raccourcis](raccourcis.md) — le clavier, entier.
+9. [Les fichiers](fichiers.md) — où tout vit, ce qu'on en garde, ce qui
    voyage.
-9. [Installer sous Linux](installation-linux.md) — le paquet, d'un geste.
+10. [Installer sous Linux](installation-linux.md) — le paquet, d'un geste.
 
 ## Le principe de l'écriture
 

@@ -524,6 +524,13 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 echapper_cible(cible, out);
                 out.push(')');
             }
+            Inline::LienInterne { reference, texte } => {
+                out.push_str("[[");
+                out.push_str(reference);
+                out.push('|');
+                ecrire_inline(texte, out);
+                out.push_str("]]");
+            }
             Inline::Canonique(interne) => ecrire_canonique(interne, out),
         }
     }
@@ -1419,7 +1426,7 @@ mod tests {
             // grossirait la clé.
             if rangee.last().is_some_and(appel_nu) {
                 let colle = match &element {
-                    Inline::Lien { .. } => true,
+                    Inline::Lien { .. } | Inline::LienInterne { .. } => true,
                     Inline::Texte(texte) => {
                         texte.starts_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_')
                     }
@@ -1455,7 +1462,7 @@ mod tests {
 
     fn inline_au_hasard(hasard: &mut Hasard, dans_emphase: bool) -> Inline {
         // La portée des choix : sans emphase sous une emphase.
-        let portee = if dans_emphase { 7 } else { 9 };
+        let portee = if dans_emphase { 7 } else { 10 };
 
         match hasard.entier(portee) {
             0..=1 => texte_au_hasard(hasard),
@@ -1488,6 +1495,10 @@ mod tests {
                 .to_string(),
             },
             7 => Inline::Citation(references_au_hasard(hasard)),
+            8 => Inline::LienInterne {
+                reference: "titre-introduction".to_string(),
+                texte: inlines_au_hasard(hasard, dans_emphase),
+            },
             _ => emphase_au_hasard(hasard),
         }
     }

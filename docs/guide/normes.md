@@ -99,11 +99,14 @@ partie du **fichier de normes** du document. Il porte quatre onglets :
 
 - **Bibliographie** — le style des citations et de la liste finale,
   l'import d'un fichier `.csl` et les styles installés dans Zotero ;
-- **Biblique** — la traduction consultée (LSG ou Darby), l'ordre de la
+- **Biblique** — la traduction consultée (LSG, Darby ou une version ajoutée
+  depuis [les versions bibliques](bibles.md)), l'ordre de la
   liste (apparition ou canonique), la forme des livres (abréviation, nom
   complet, OSIS, sans point ou TOB), les chiffres arabes ou romains, les
   séparateurs, le gabarit de citation, l'ordre canonique et l'index des
-  citations (pages, regroupement, forme, colonnes) ;
+  citations (pages, regroupement, canon, forme, colonnes). Le canon choisi
+  sépare les livres canoniques des livres non canoniques ; « Tout le corpus »
+  garde une seule liste ;
 - **Biblique — les livres hors canon** : Tobie, Judith, Sagesse, Siracide,
   Baruch, les Maccabées, les Esdras additionnels, Hénoch, les Jubilés, les
   Testaments des douze patriarches et les principales apocalypses sont
@@ -116,8 +119,9 @@ partie du **fichier de normes** du document. Il porte quatre onglets :
 
 Une balise biblique peut choisir sa propre forme avec `|long`, `|court`,
 `|osis` ou `|sanspoint` ; elle gagne sur le réglage du projet. Une
-référence peut aussi nommer sa traduction avec `|lsg` ou `|darby` ; elle
-est alors affichée dans la citation.
+référence peut aussi nommer sa traduction avec `|lsg`, `|darby` ou le code
+d'une version ajoutée (par exemple `|vulgate`) ; elle est alors affichée dans
+la citation.
 
 ## Les titres par niveau
 

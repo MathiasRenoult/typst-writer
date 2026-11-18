@@ -60,13 +60,17 @@ fn importer(source: &str, avertissements: &mut Vec<String>) -> Document {
 
         if lignes[index].trim_start().starts_with("//") {
             avertissements.push("une ligne de commentaire Typst".to_string());
-            return brut(source);
+            ajouter_brut(&mut texte_tw, lignes[index]);
+            index += 1;
+            continue;
         }
 
         if let Some((niveau, titre)) = titre_typst(lignes[index]) {
             let Some(titre) = convertir_inline(titre) else {
                 avertissements.push("un titre portant du balisage Typst".to_string());
-                return brut(source);
+                ajouter_brut(&mut texte_tw, lignes[index]);
+                index += 1;
+                continue;
             };
 
             separer_bloc(&mut texte_tw);
@@ -89,7 +93,9 @@ fn importer(source: &str, avertissements: &mut Vec<String>) -> Document {
                 let contenu = &lignes[index][2..];
                 let Some(contenu) = convertir_inline(contenu) else {
                     avertissements.push("une liste portant du balisage Typst".to_string());
-                    return brut(source);
+                    ajouter_brut(&mut texte_tw, lignes[index]);
+                    index += 1;
+                    continue;
                 };
 
                 if puces {
@@ -107,19 +113,37 @@ fn importer(source: &str, avertissements: &mut Vec<String>) -> Document {
             continue;
         }
 
+        // Un bloc déjà brut dans la source (une migration précédente) se
+        // garde tel quel : l'ajouter à nouveau créerait des fences imbriqués.
+        if lignes[index].trim_start().starts_with("```") {
+            separer_bloc(&mut texte_tw);
+            let mut fin = index + 1;
+            while fin < lignes.len() && !lignes[fin].trim_start().starts_with("```") {
+                fin += 1;
+            }
+            let fin = (fin + 1).min(lignes.len());
+            texte_tw.push_str(&lignes[index..fin].join("\n"));
+            texte_tw.push_str("\n\n");
+            index = fin;
+            continue;
+        }
+
         // Paragraphes : les lignes Typst consécutives deviennent un seul bloc.
         let debut = index;
         let mut lignes_paragraphe = Vec::new();
+        let mut ligne_brute = false;
 
         while index < lignes.len()
             && !lignes[index].trim().is_empty()
             && titre_typst(lignes[index]).is_none()
             && !lignes[index].starts_with("- ")
             && !lignes[index].starts_with("+ ")
+            && !lignes[index].trim_start().starts_with("```")
         {
             let Some(ligne) = convertir_inline(lignes[index].trim()) else {
                 avertissements.push("une ligne portant du balisage Typst".to_string());
-                return brut(source);
+                ligne_brute = true;
+                break;
             };
 
             lignes_paragraphe.push(ligne);
@@ -127,10 +151,16 @@ fn importer(source: &str, avertissements: &mut Vec<String>) -> Document {
         }
 
         if lignes_paragraphe.is_empty() {
+            if ligne_brute {
+                ajouter_brut(&mut texte_tw, lignes[index]);
+                index += 1;
+                continue;
+            }
             // Une ligne qui ressemble à un titre mais n'a pas la syntaxe
             // reconnue ne doit ni boucler ni être altérée.
             if index == debut {
-                return brut(source);
+                ajouter_brut(&mut texte_tw, lignes[index]);
+                index += 1;
             }
 
             continue;
@@ -148,18 +178,23 @@ fn importer(source: &str, avertissements: &mut Vec<String>) -> Document {
         }
 
         texte_tw.push_str(&paragraphe);
+
+        if ligne_brute {
+            ajouter_brut(&mut texte_tw, lignes[index]);
+            index += 1;
+        }
     }
 
     parse(&texte_tw)
 }
 
-/// Le chapitre entier en bloc brut. Les fins de ligne s'y rognent : elles
-/// n'ont pas de sens en Typst, et les garderait grossir d'un cycle à l'autre
-/// — la migration doit être idempotente.
-fn brut(source: &str) -> Document {
-    Document {
-        blocs: vec![Bloc::Brut(source.trim_end().to_string())],
-    }
+/// Ajoute une ligne Typst comme un bloc brut protégé : elle reste compilable
+/// et lisible, sans être confondue avec le texte qui l'entoure.
+fn ajouter_brut(texte: &mut String, source: &str) {
+    separer_bloc(texte);
+    texte.push_str("```typst\n");
+    texte.push_str(source.trim_end());
+    texte.push_str("\n```\n\n");
 }
 
 fn separer_bloc(texte: &mut String) {
@@ -181,7 +216,17 @@ fn titre_typst(ligne: &str) -> Option<(usize, &str)> {
         return None;
     }
 
-    Some((niveau, ligne[niveau..].trim()))
+    let titre = ligne[niveau..].trim();
+    // Un titre Typst peut porter une ancre finale (`<titre-introduction>`),
+    // notamment celle que notre générateur pose pour les liens internes.
+    // Elle ne fait pas partie du texte affiché.
+    let titre = titre
+        .rsplit_once(" <")
+        .filter(|(_, ancre)| ancre.ends_with('>'))
+        .map(|(texte, _)| texte.trim_end())
+        .unwrap_or(titre);
+
+    Some((niveau, titre))
 }
 
 /// Convertit les emphases Typst simples et échappe les marqueurs littéraux.
@@ -452,7 +497,14 @@ mod tests {
         assert_eq!(
             importer_typst(source),
             Document {
-                blocs: vec![Bloc::Brut(source.to_string())],
+                blocs: vec![
+                    Bloc::Brut("// commentaire conservé".to_string()),
+                    Bloc::Brut("#set page(margin: 2cm)".to_string()),
+                    Bloc::Titre {
+                        niveau: 1,
+                        contenu: vec![Inline::Texte("Titre".to_string())],
+                    },
+                ],
             }
         );
     }

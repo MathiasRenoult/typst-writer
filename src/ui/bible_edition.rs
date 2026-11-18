@@ -21,11 +21,19 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
 
-    fenetre(edition, state.resolved.palette)
+    fenetre(
+        edition,
+        state.resolved.palette,
+        state.plugins.bible.traduction,
+    )
 }
 
-fn fenetre<'a>(edition: &'a ReferenceEdition, palette: Palette) -> Element<'a, Message> {
-    let tous = livres(Traduction::Lsg);
+fn fenetre<'a>(
+    edition: &'a ReferenceEdition,
+    palette: Palette,
+    traduction: Traduction,
+) -> Element<'a, Message> {
+    let tous = livres(traduction);
     let options: Vec<String> = tous.iter().map(|livre| livre.nom.clone()).collect();
     let courant = edition
         .livre

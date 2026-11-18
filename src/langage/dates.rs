@@ -76,6 +76,25 @@ pub enum Date {
         jour: u32,
         format: Option<String>,
     },
+    /// La date du jour, au moment de la composition.
+    Aujourdhui { format: Option<String> },
+    /// L'heure de la composition, avec la date.
+    Maintenant { format: Option<String> },
+}
+
+/// L'heure locale, ou UTC à défaut de fuseau lisible.
+///
+/// `SOURCE_DATE_EPOCH` fige l'horloge pour une composition reproductible :
+/// c'est le même contrat que les outils de build reproductibles, et cela
+/// permet à une date dynamique de ne pas changer à chaque essai.
+fn maintenant_local() -> time::OffsetDateTime {
+    if let Ok(epoch) = std::env::var("SOURCE_DATE_EPOCH")
+        && let Ok(secondes) = epoch.trim().parse::<i64>()
+        && let Ok(date) = time::OffsetDateTime::from_unix_timestamp(secondes)
+    {
+        return date;
+    }
+    time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc())
 }
 
 /// Analyse le contenu d'une balise `{date:...}`.
@@ -83,6 +102,31 @@ pub fn analyser(spec: &str) -> Option<Date> {
     let spec = spec.trim();
     if spec.is_empty() {
         return None;
+    }
+
+    // Les formes dynamiques : la date du jour, ou l'heure de composition.
+    let (mot, queue) = spec.split_once(char::is_whitespace).unwrap_or((spec, ""));
+    let mot_normalise = mot.to_lowercase().replace('’', "'");
+    let format_dynamique = |queue: &str| -> Option<Option<String>> {
+        let queue = queue.trim();
+        if queue.is_empty() {
+            return Some(None);
+        }
+        let format = queue.strip_prefix('"')?.strip_suffix('"')?;
+        (!format.trim().is_empty()).then(|| Some(format.to_string()))
+    };
+    match mot_normalise.as_str() {
+        "aujourd'hui" | "aujourdhui" => {
+            return Some(Date::Aujourdhui {
+                format: format_dynamique(queue)?,
+            });
+        }
+        "maintenant" => {
+            return Some(Date::Maintenant {
+                format: format_dynamique(queue)?,
+            });
+        }
+        _ => {}
     }
 
     // Une période : `-`? romain `s|m` `?`? — le romain en majuscules ou
@@ -185,6 +229,36 @@ pub fn rendre(date: &Date, regles: &Regles) -> String {
                 .filter(|f| !f.trim().is_empty())
                 .unwrap_or(&regles.format);
             composer_format(*an, *mois, *jour, format, &regles.langue)
+        }
+        Date::Aujourdhui { format } => {
+            let maintenant = maintenant_local();
+            let format = format
+                .as_deref()
+                .filter(|f| !f.trim().is_empty())
+                .unwrap_or(&regles.format);
+            composer_format(
+                maintenant.year(),
+                u32::from(maintenant.month() as u8),
+                u32::from(maintenant.day()),
+                format,
+                &regles.langue,
+            )
+        }
+        Date::Maintenant { format } => {
+            let maintenant = maintenant_local();
+            let format = format
+                .as_deref()
+                .filter(|f| !f.trim().is_empty())
+                .unwrap_or("dd/MM/yyyy HH:mm");
+            composer_format_heure(
+                maintenant.year(),
+                u32::from(maintenant.month() as u8),
+                u32::from(maintenant.day()),
+                u32::from(maintenant.hour()),
+                u32::from(maintenant.minute()),
+                format,
+                &regles.langue,
+            )
         }
     }
 }
@@ -339,6 +413,53 @@ fn nom_du_jour(jour: usize, langue: &str, abrege: bool) -> String {
     } else {
         noms[rang].to_string()
     }
+}
+
+/// Compose une date et une heure : les mêmes jetons de date, plus `HH`, `H`,
+/// `mm`, `m`, `ss` et `s`. Les noms de mois restent ceux de la langue.
+fn composer_format_heure(
+    an: i32,
+    mois: u32,
+    jour: u32,
+    heure: u32,
+    minute: u32,
+    format: &str,
+    langue: &str,
+) -> String {
+    let semaine = jour_de_la_semaine(an, mois, jour);
+    let jetons: [(&str, String); 16] = [
+        ("yyyy", format!("{an:04}")),
+        ("yy", format!("{:02}", an.rem_euclid(100))),
+        ("MMMM", nom_du_mois(mois, langue, false)),
+        ("MMM", nom_du_mois(mois, langue, true)),
+        ("MM", format!("{mois:02}")),
+        ("dddd", nom_du_jour(semaine, langue, false)),
+        ("ddd", nom_du_jour(semaine, langue, true)),
+        ("dd", format!("{jour:02}")),
+        ("HH", format!("{heure:02}")),
+        ("H", heure.to_string()),
+        ("mm", format!("{minute:02}")),
+        ("M", mois.to_string()),
+        ("d", jour.to_string()),
+        ("ss", "00".to_string()),
+        ("s", "0".to_string()),
+        ("m", minute.to_string()),
+    ];
+    let mut out = String::new();
+    let mut reste = format;
+    'dehors: while !reste.is_empty() {
+        for (jeton, valeur) in &jetons {
+            if reste.starts_with(jeton) {
+                out.push_str(valeur);
+                reste = &reste[jeton.len()..];
+                continue 'dehors;
+            }
+        }
+        let caractere = reste.chars().next().expect("non vide");
+        out.push(caractere);
+        reste = &reste[caractere.len_utf8()..];
+    }
+    out
 }
 
 fn composer_format(an: i32, mois: u32, jour: u32, format: &str, langue: &str) -> String {
@@ -570,6 +691,31 @@ mod tests {
         assert!(analyser("XIXx").is_none());
         assert!(analyser("2026.13.01").is_none());
         assert!(analyser("sans chiffres").is_none());
+    }
+
+    /// Les formes dynamiques se lisent, et l'heure porte bien une heure.
+    #[test]
+    fn les_formes_dynamiques_se_composent() {
+        let regles = Regles::default();
+
+        let a = analyser("aujourd'hui").expect("aujourd'hui");
+        assert!(matches!(a, Date::Aujourdhui { .. }));
+        let texte = rendre(&a, &regles);
+        assert_eq!(texte.len(), 10, "la date par défaut : {texte}");
+
+        let m = analyser("maintenant").expect("maintenant");
+        assert!(matches!(m, Date::Maintenant { .. }));
+        let texte = rendre(&m, &regles);
+        assert!(texte.contains(':'), "l'heure est présente : {texte}");
+        assert!(texte.len() >= 16, "date et heure : {texte}");
+
+        let m = analyser("maintenant \"HH:mm\"").expect("format d'heure");
+        let texte = rendre(&m, &regles);
+        assert_eq!(texte.len(), 5, "seule l'heure : {texte}");
+        assert!(texte.contains(':'), "{texte}");
+
+        assert!(analyser("aujourd'hui \"dd/MM/yyyy\"").is_some());
+        assert!(analyser("maintenant \"format").is_none());
     }
 
     /// Les romains vont dans les deux sens.

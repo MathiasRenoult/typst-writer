@@ -1409,6 +1409,18 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
             continue;
         }
 
+        // Lien interne : `[[référence|texte]]`. Avant le lien externe, qui
+        // verrait le premier crochet comme un texte de lien.
+        if let Some((reference, texte_lien, apres)) = lien_interne(reste) {
+            vider!();
+            elements.push(Inline::LienInterne {
+                reference,
+                texte: parse_inline(&texte_lien),
+            });
+            reste = apres;
+            continue;
+        }
+
         // Lien : `[texte](cible)`.
         if let Some((texte_lien, cible, apres)) = lien(reste) {
             vider!();
@@ -1870,6 +1882,28 @@ fn lire_page(texte: &str) -> Option<(String, &str)> {
 /// Le texte se lit jusqu'au crochet fermant à l'épreuve de l'imbrication —
 /// il peut contenir une note ou un autre lien —, et la cible jusqu'à la
 /// parenthèse fermante, déséchappée.
+/// Un lien interne : `[[référence|texte]]`.
+fn lien_interne(texte: &str) -> Option<(String, String, &str)> {
+    let apres_ouvert = texte.strip_prefix("[[")?;
+    let fin = apres_ouvert.find("]]")?;
+    let interieur = &apres_ouvert[..fin];
+    let (reference, texte_lien) = interieur.split_once('|').unwrap_or((interieur, interieur));
+    let reference = reference.trim();
+    if reference.is_empty()
+        || reference.contains(['[', ']', '\n'])
+        || !reference
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.:".contains(c))
+    {
+        return None;
+    }
+    Some((
+        reference.to_string(),
+        texte_lien.to_string(),
+        &apres_ouvert[fin + 2..],
+    ))
+}
+
 fn lien(texte: &str) -> Option<(String, String, &str)> {
     let apres_ouvert = texte.strip_prefix('[')?;
 

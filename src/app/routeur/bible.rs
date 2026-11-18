@@ -18,7 +18,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
         Message::ReferenceBibliqueInserer => ouvrir_le_panneau(state),
 
         Message::BiblePanneauRecherche(recherche) => {
-            let tous = livres(Traduction::Lsg);
+            let tous = livres(state.plugins.bible.traduction);
             let filtres = filtrer_livres(&tous, &recherche);
             if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
                 panneau.recherche = recherche;
@@ -34,7 +34,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::BiblePanneauLivre(index) => {
-            let tous = livres(Traduction::Lsg);
+            let tous = livres(state.plugins.bible.traduction);
             let filtre = state
                 .plugins
                 .bible
@@ -82,7 +82,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::BiblePanneauForme(forme) => {
-            let tous = livres(Traduction::Lsg);
+            let tous = livres(state.plugins.bible.traduction);
             if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
                 panneau.forme = forme;
                 panneau.renouveler_choix(&tous, forme);
@@ -118,12 +118,71 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::BibleAllerReference(reference) => aller_a_la_reference(state, &reference),
         Message::BibleTraduction(traduction) => {
+            let tous = livres(traduction);
             state.plugins.bible.traduction = traduction;
+            if let Some(panneau) = state.plugins.bible.panneau.as_mut() {
+                let forme = panneau.forme;
+                panneau.renouveler_choix(&tous, forme);
+                panneau.livre = None;
+                panneau.saisie_modifiee = true;
+            }
             if let Some(cliquee) = state.plugins.bible.reference_cliquee.as_mut() {
                 cliquee.extrait = extrait(&cliquee.references, traduction);
             }
             Task::none()
         }
+        Message::BibleVersionImporter => Task::perform(
+            async {
+                let reponse = rfd::AsyncMessageDialog::new()
+                    .set_title("Ajouter une version biblique")
+                    .set_level(rfd::MessageLevel::Warning)
+                    .set_description(
+                        "N'installez qu'une version dont vous détenez les droits. \
+                         L'application ne fournit ni ne télécharge aucun texte biblique.",
+                    )
+                    .set_buttons(rfd::MessageButtons::OkCancel)
+                    .show()
+                    .await;
+                if reponse != rfd::MessageDialogResult::Ok {
+                    return None;
+                }
+                rfd::AsyncFileDialog::new()
+                    .add_filter("Version biblique (JSON)", &["json"])
+                    .pick_file()
+                    .await
+                    .map(|fichier| fichier.path().to_path_buf())
+            },
+            Message::BibleVersionImported,
+        ),
+        Message::BibleVersionImported(Some(chemin)) => {
+            match crate::langage::versions::installer(&chemin) {
+                Ok(version) => {
+                    let traduction = Traduction::depuis_code(&version.id).unwrap_or_default();
+                    state.plugins.bible.traduction = traduction;
+                    if state.plugins.bible.panneau.is_some() {
+                        state.plugins.bible.panneau =
+                            Some(BiblePanneau::avec_livres(&livres(traduction)));
+                    }
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Version « {} » installée : {} livre(s), {} chapitre(s).",
+                        version.nom,
+                        version.livres.len(),
+                        version
+                            .livres
+                            .iter()
+                            .map(|livre| livre.chapitres.len())
+                            .sum::<usize>()
+                    )));
+                }
+                Err(erreur) => {
+                    state.note = Some(crate::app::state::Note::info(format!(
+                        "Version biblique non installée : {erreur}"
+                    )));
+                }
+            }
+            Task::none()
+        }
+        Message::BibleVersionImported(None) => Task::none(),
         Message::BibleReferenceModifier(index) => preparer_edition(state, index),
         Message::BibleEditionLivre(index) => {
             if let Some(edition) = state.plugins.bible.edition.as_mut() {
@@ -162,7 +221,9 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
 
 /// Ouvre le panneau d'insertion et prend le clavier.
 fn ouvrir_le_panneau(state: &mut State) -> Task<Message> {
-    state.plugins.bible.panneau = Some(BiblePanneau::avec_livres(&livres(Traduction::Lsg)));
+    state.plugins.bible.panneau = Some(BiblePanneau::avec_livres(&livres(
+        state.plugins.bible.traduction,
+    )));
     state.editor.editor.lose_focus();
     Task::none()
 }
@@ -176,7 +237,7 @@ fn preparer_edition(state: &mut State, index: usize) -> Task<Message> {
     let Some(ElementCitation::Reference(reference)) = cliquee.elements.get(index) else {
         return Task::none();
     };
-    let tous = livres(Traduction::Lsg);
+    let tous = livres(state.plugins.bible.traduction);
     let livre = tous.iter().position(|livre| livre.osis == reference.livre);
     let chapitre = if reference.chapitre_fin > reference.chapitre {
         format!("{}-{}", reference.chapitre, reference.chapitre_fin)
@@ -212,7 +273,7 @@ fn enregistrer_edition(state: &mut State) -> Task<Message> {
     };
     let Some(livre) = edition
         .livre
-        .and_then(|index| livres(Traduction::Lsg).get(index).cloned())
+        .and_then(|index| livres(state.plugins.bible.traduction).get(index).cloned())
     else {
         state.note = Some(crate::app::state::Note::info(
             "Choisissez le livre de la référence.",
@@ -279,10 +340,10 @@ fn enregistrer_edition(state: &mut State) -> Task<Message> {
 /// versets. Le livre et le chapitre restent en place : on en ajoute une
 /// autre du même chapitre d'un geste.
 fn ajouter_au_panneau(state: &mut State) -> Task<Message> {
+    let tous = livres(state.plugins.bible.traduction);
     let Some(panneau) = state.plugins.bible.panneau.as_mut() else {
         return Task::none();
     };
-    let tous = livres(Traduction::Lsg);
     let Some(_) = livre_du_panneau(panneau, &tous) else {
         state.note = Some(crate::app::state::Note::info(
             "Choisissez d'abord un livre biblique.",
@@ -353,11 +414,11 @@ fn references_du_panneau(
 
 /// Pose la citation construite au curseur et referme le panneau.
 fn inserer_la_citation(state: &mut State) -> Task<Message> {
+    let tous = livres(state.plugins.bible.traduction);
     let vide = {
         let Some(panneau) = state.plugins.bible.panneau.as_mut() else {
             return Task::none();
         };
-        let tous = livres(Traduction::Lsg);
         let nouvelles = if panneau.saisie_modifiee {
             references_du_panneau(panneau, &tous)
         } else {

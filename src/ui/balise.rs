@@ -162,11 +162,13 @@ fn choix_couleur(palette: Palette) -> Element<'static, Message> {
 /// Les formes de date les plus courantes : le champ garde la main pour une
 /// date ou un format sur mesure.
 fn choix_date(palette: Palette) -> Element<'static, Message> {
-    const FORMES: [(&str, &str); 7] = [
+    const FORMES: [(&str, &str); 9] = [
         ("Date", "1789.07.14"),
         ("Date longue", "1789.07.14 \"d MMMM yyyy\""),
         ("Date complète", "1789.07.14 \"dddd d MMMM yyyy\""),
         ("Mois et année", "1789.07.14 \"MMMM yyyy\""),
+        ("Aujourd'hui", "aujourd'hui"),
+        ("Maintenant", "maintenant"),
         ("Siècle", "XIXs"),
         ("Siècle long", "XIXs?"),
         ("Avant J.-C.", "-IVs?"),

@@ -19,7 +19,7 @@ use iced::{Alignment, Element, Length};
 /// La fenêtre du panneau d'insertion.
 pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Message> {
     let palette = state.resolved.palette;
-    let tous_les_livres = crate::plugins::bible::livres(Traduction::Lsg);
+    let tous_les_livres = crate::plugins::bible::livres(state.plugins.bible.traduction);
     let choix_courant = panneau.livre.and_then(|index| {
         tous_les_livres
             .get(index)
@@ -39,6 +39,30 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
     .spacing(theme::jetons::PAS)
     .align_y(Alignment::Center);
 
+    let traductions = Traduction::toutes();
+    let libelles: Vec<String> = traductions.iter().map(Traduction::libelle).collect();
+    let version = row![
+        palette
+            .label("Version")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+        Space::new().width(Length::Fill),
+        pick_list(
+            libelles,
+            Some(state.plugins.bible.traduction.libelle()),
+            move |choix: String| {
+                let traduction = traductions
+                    .iter()
+                    .copied()
+                    .find(|traduction| traduction.libelle() == choix)
+                    .unwrap_or_default();
+                Message::BibleTraduction(traduction)
+            },
+        )
+        .width(Length::Fixed(260.0)),
+    ]
+    .align_y(Alignment::Center);
+
     let choix_livre = combo_box(
         &panneau.choix,
         "Chercher un livre",
@@ -56,8 +80,8 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
     let note_hors_canon: Element<'_, Message> = if hors_canon {
         palette
             .label(
-                "Ce livre est hors du canon protestant : sa référence est citée, \
-                 mais la traduction embarquée n'en fournit pas le texte.",
+                "Ce livre est hors du canon protestant : sa référence est citée ; \
+                 vérifiez que la version consultée en fournit le texte.",
             )
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted)
@@ -222,6 +246,7 @@ pub fn view<'a>(state: &'a State, panneau: &'a BiblePanneau) -> Element<'a, Mess
     let fenetre = container(
         column![
             entete,
+            version,
             choix_livre,
             champs,
             note_hors_canon,

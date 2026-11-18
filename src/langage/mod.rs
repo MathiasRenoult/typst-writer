@@ -19,6 +19,7 @@ pub mod citation;
 pub mod export;
 pub mod generer;
 pub mod index_citations;
+pub mod liens;
 pub mod migration;
 pub mod parse;
 pub mod pipeline;
@@ -31,6 +32,7 @@ pub mod portable;
 pub mod schema;
 pub mod serialiser;
 pub mod typographie;
+pub mod versions;
 
 pub use parse::parse;
 pub use schema::Document;

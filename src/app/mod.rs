@@ -888,6 +888,12 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         return Task::none();
     }
 
+    // Le diagnostic des liens cassés ne se contente pas d'un compte : un clic
+    // sélectionne le lien fautif dans la source, prêt à être corrigé.
+    if let Message::LienInterneAller(reference) = &message {
+        return aller_au_lien_interne(state, reference);
+    }
+
     // Les routeurs de domaine passent après la garde : un message de plugin
     // qui écrit dans le projet ne contourne jamais la lecture seule.
     match message.plugin() {
@@ -2893,6 +2899,27 @@ fn map_outline_to_source(
             Some(entry)
         })
         .collect()
+}
+
+/// Sélectionne dans la source le lien interne qui ne trouve plus sa cible.
+fn aller_au_lien_interne(state: &mut State, reference: &str) -> Task<Message> {
+    let aiguille = format!("[[{reference}");
+    let contenu = state.editor.content();
+    let Some(debut) = contenu.find(&aiguille) else {
+        state.note = Some(crate::app::state::Note::info(
+            "Ce lien n'est plus dans le document.",
+        ));
+        return Task::none();
+    };
+    let fin = contenu[debut..]
+        .find("]]")
+        .map(|offset| debut + offset + 2)
+        .unwrap_or(debut + aiguille.len());
+    state.editor.editor.request_focus();
+    state
+        .editor
+        .selectionner_plage(debut, fin)
+        .map(Message::Editor)
 }
 
 /// Lance la compilation du document (moteur Typst en bibliothèque).

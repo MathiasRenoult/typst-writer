@@ -155,7 +155,8 @@ impl ParametresCallouts {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ParametresBiblique {
-    /// La traduction consultée par défaut : `lsg` ou `darby`.
+    /// La traduction consultée par défaut : `lsg`, `darby` ou le code d'une
+    /// version biblique ajoutée localement.
     pub traduction: String,
 
     /// L'ordre de la liste des références : `apparition` ou `canonique`.
@@ -362,6 +363,97 @@ impl Default for EntetePiedDePage {
     }
 }
 
+/// Le canon biblique qui décide de la séparation de l'index.
+///
+/// Le canon ne change jamais le texte cité : il dit seulement quels livres
+/// l'index place sous « Livres canoniques » et lesquels sous « Livres non
+/// canoniques ». `Tout` conserve une seule liste, comme avant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Canon {
+    /// Les 66 livres du canon protestant.
+    Protestant,
+    /// Le canon catholique, avec les deutérocanoniques.
+    Catholique,
+    /// Le canon orthodoxe, avec ses livres supplémentaires.
+    Orthodoxe,
+    /// Le canon de l'Église orthodoxe tewahedo.
+    Tewahedo,
+    /// Tout le corpus connu, sans séparation.
+    #[default]
+    Tout,
+}
+
+impl Canon {
+    /// Le code écrit dans les normes.
+    pub fn code(self) -> &'static str {
+        match self {
+            Canon::Protestant => "protestant",
+            Canon::Catholique => "catholique",
+            Canon::Orthodoxe => "orthodoxe",
+            Canon::Tewahedo => "tewahedo",
+            Canon::Tout => "tout",
+        }
+    }
+
+    /// Le libellé de la liste de choix.
+    pub fn libelle(self) -> &'static str {
+        match self {
+            Canon::Protestant => "Protestant",
+            Canon::Catholique => "Catholique",
+            Canon::Orthodoxe => "Orthodoxe",
+            Canon::Tewahedo => "Téwahedo",
+            Canon::Tout => "Tout le corpus",
+        }
+    }
+
+    /// Ce livre appartient-il au canon choisi ?
+    pub fn contient(self, osis: &str) -> bool {
+        match self {
+            Canon::Tout => true,
+            Canon::Protestant => CANON_PROTESTANT.contains(&osis),
+            Canon::Catholique => {
+                CANON_PROTESTANT.contains(&osis) || CANON_CATHOLIQUE.contains(&osis)
+            }
+            Canon::Orthodoxe => {
+                CANON_PROTESTANT.contains(&osis)
+                    || CANON_CATHOLIQUE.contains(&osis)
+                    || CANON_ORTHODOXE.contains(&osis)
+            }
+            Canon::Tewahedo => {
+                CANON_PROTESTANT.contains(&osis)
+                    || CANON_CATHOLIQUE.contains(&osis)
+                    || CANON_ORTHODOXE.contains(&osis)
+                    || CANON_TEWAHEDO.contains(&osis)
+            }
+        }
+    }
+}
+
+/// Les 66 livres du canon protestant, en codes OSIS.
+const CANON_PROTESTANT: &[&str] = &[
+    "Gen", "Exod", "Lev", "Num", "Deut", "Josh", "Judg", "Ruth", "1Sam", "2Sam", "1Kgs", "2Kgs",
+    "1Chr", "2Chr", "Ezra", "Neh", "Esth", "Job", "Ps", "Prov", "Eccl", "Song", "Isa", "Jer",
+    "Lam", "Ezek", "Dan", "Hos", "Joel", "Amos", "Obad", "Jonah", "Mic", "Nah", "Hab", "Zeph",
+    "Hag", "Zech", "Mal", "Matt", "Mark", "Luke", "John", "Acts", "Rom", "1Cor", "2Cor", "Gal",
+    "Eph", "Phil", "Col", "1Thess", "2Thess", "1Tim", "2Tim", "Titus", "Phlm", "Heb", "Jas",
+    "1Pet", "2Pet", "1John", "2John", "3John", "Jude", "Rev",
+];
+
+/// Les deutérocanoniques du canon catholique.
+const CANON_CATHOLIQUE: &[&str] = &[
+    "Tob", "Jdt", "AddEst", "1Macc", "2Macc", "Wis", "Sir", "Bar", "EpJer",
+];
+
+/// Les livres supplémentaires du canon orthodoxe.
+const CANON_ORTHODOXE: &[&str] = &["1Esd", "2Esd", "3Esd", "PrMan", "Ps151", "3Macc", "4Macc"];
+
+/// Les livres propres au canon tewahedo.
+const CANON_TEWAHEDO: &[&str] = &[
+    "1En", "2En", "Jub", "TReu", "TSim", "TLevi", "TJud", "TIss", "TZeb", "TDan", "TNaph", "TGad",
+    "TAsh", "TJos", "TBen", "2Bar", "3Bar", "ApAb", "ApZeph", "ApPet", "ApPaul", "ApMos",
+];
+
 /// La configuration de l'index des citations bibliques.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -374,6 +466,8 @@ pub struct IndexCitations {
     pub forme: Option<SystemeAbreviation>,
     /// Le nombre de colonnes de l'index (1 à 4).
     pub colonnes: usize,
+    /// Le canon qui sépare les livres canoniques des autres.
+    pub canon: Canon,
 }
 
 impl Default for IndexCitations {
@@ -383,6 +477,7 @@ impl Default for IndexCitations {
             regrouper_par_livre: false,
             forme: None,
             colonnes: 1,
+            canon: Canon::Tout,
         }
     }
 }
@@ -976,14 +1071,15 @@ impl MiseEnPage {
 
         // Les réglages embarqués des plugins : une valeur inconnue se dit
         // plutôt que de retomber en silence sur le défaut.
-        if !matches!(
-            self.parametres_plugins.biblique.traduction.as_str(),
-            "lsg" | "darby"
-        ) {
+        if crate::langage::references::Traduction::depuis_code(
+            &self.parametres_plugins.biblique.traduction,
+        )
+        .is_none()
+        {
             out.push((
                 "traduction biblique du fichier de normes".to_string(),
                 format!(
-                    "« {} » n'est pas une traduction connue (lsg, darby)",
+                    "« {} » n'est pas une traduction installée",
                     self.parametres_plugins.biblique.traduction
                 ),
             ));
@@ -1226,7 +1322,9 @@ pub enum Champ {
     IndexRegrouperParLivre,
     IndexForme,
     IndexColonnes,
-    /// La traduction biblique consultée par défaut (`lsg`, `darby`).
+    IndexCanon,
+    /// La traduction biblique consultée par défaut (`lsg`, `darby` ou une
+    /// version ajoutée).
     BibliqueTraduction,
     /// L'ordre de la liste biblique (`apparition`, `canonique`).
     BibliqueTri,
@@ -1448,6 +1546,7 @@ impl MiseEnPage {
                 Some(SystemeAbreviation::Tob) => "tob".to_string(),
             },
             Champ::IndexColonnes => self.index.colonnes.to_string(),
+            Champ::IndexCanon => self.index.canon.code().to_string(),
             Champ::BibliqueTraduction => self.parametres_plugins.biblique.traduction.clone(),
             Champ::BibliqueTri => self.parametres_plugins.biblique.tri.clone(),
         }
@@ -1657,6 +1756,15 @@ impl MiseEnPage {
             }
             Champ::IndexColonnes => {
                 self.index.colonnes = valeur.trim().parse::<usize>().unwrap_or(1).clamp(1, 4);
+            }
+            Champ::IndexCanon => {
+                self.index.canon = match valeur.as_str() {
+                    "protestant" => Canon::Protestant,
+                    "catholique" => Canon::Catholique,
+                    "orthodoxe" => Canon::Orthodoxe,
+                    "tewahedo" => Canon::Tewahedo,
+                    _ => Canon::Tout,
+                }
             }
             Champ::BibliqueTraduction => self.parametres_plugins.biblique.traduction = valeur,
             Champ::BibliqueTri => self.parametres_plugins.biblique.tri = valeur,

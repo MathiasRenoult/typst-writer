@@ -4,6 +4,41 @@ Les versions sont classées de la plus récente à la plus ancienne. Chaque
 entrée décrit les fonctionnalités et les corrections livrées avec la version
 correspondante.
 
+## 0.6.1 — les balises bibliques de bout en bout (2026-11-18)
+
+La 0.6.0 a livré la palette et les formes canoniques. Cette version corrige
+ce qui restait sur le chemin des citations bibliques et de la saisie.
+
+- L'index des citations reconnaît les balises canoniques `{{b …}}` produites
+  par l'application, en plus des anciennes écritures.
+- L'index peut séparer les livres canoniques et non canoniques selon le canon
+  choisi (protestant, catholique, orthodoxe, téwahedo ou tout le corpus).
+- Les titres, sous-titres et figures sont linkables par `[[référence|texte]]` ;
+  taper `[[` ouvre la recherche, et les liens sans cible sont signalés dans le
+  panneau gauche.
+- Un document `.typ` peut être importé et traduit en `.tw` : titres, emphases,
+  listes et commentaires passent ; le reste est conservé en bloc Typst brut.
+- `{{d aujourd'hui}}` et `{{d maintenant}}` composent la date et l'heure de la
+  composition ; `SOURCE_DATE_EPOCH` permet une sortie reproductible.
+- Des versions bibliques locales peuvent être ajoutées depuis un fichier JSON,
+  avec le nombre de livres et les textes apocryphes propres à chaque édition.
+- La forme canonique refuse les liens imbriqués, et la propriété de round-trip
+  couvre désormais les liens internes.
+- Cliquer une référence ou la survoler fonctionne aussi dans une balise
+  canonique : la bulle de verset et la fiche d'édition retrouvent le livre.
+- La palette ne découpe plus une chaîne au milieu d'un caractère accentué
+  lorsque le curseur revient sur une frontière ; un `É` ne fait plus tomber
+  l'application.
+- La batterie applicative retrouve son binaire de test, quel que soit le
+  répertoire de sortie de Cargo ; les 167 épreuves passent.
+- Les épreuves de couleur, de glossaire, de graphique et d'index suivent la
+  syntaxe courte désormais produite par l'application.
+
+**Vérification** : 717 tests réussis, 0 échec, 193 ignorés ; batterie
+applicative 167/167 ; `cargo fmt --check`, `cargo build --release`,
+`cargo clippy --all-targets -- -D warnings`, `git diff --check` et
+`cargo deny check` verts.
+
 ## 0.6.0 — écrire sans quitter le document (2026-11-18)
 
 ### Une seule porte pour les gestes

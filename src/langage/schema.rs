@@ -362,6 +362,14 @@ pub enum Inline {
     Note(Vec<Inline>),
     /// Un lien : `[texte](https://…)`.
     Lien { texte: Vec<Inline>, cible: String },
+    /// Un lien interne : `[[référence|texte]]`, vers un titre, une figure
+    /// ou une image du même document.
+    LienInterne {
+        /// L'ancre de l'élément visé, telle que `liens::collecter` la donne.
+        reference: String,
+        /// Le texte affiché du lien.
+        texte: Vec<Inline>,
+    },
     /// Une balise écrite dans la forme canonique unifiée : `{{couleur red|…}}`,
     /// `{{date …}}`, `{{glossaire …}}`, `{{bible …}}`.
     ///
@@ -601,7 +609,17 @@ impl Inline {
             // La clé est un identifiant — c'est ce qui rend l'écriture
             // `{glo:clé majuscule pluriel}` univoque.
             Inline::Glo { cle, .. } => crate::project::glossaire::EntreeGlossaire::cle_valide(cle),
-            Inline::Lien { texte, cible } => inline_canonique(texte) && !cible.contains('\n'),
+            Inline::Lien { texte, cible } => {
+                inline_canonique(texte) && !cible.contains('\n') && !contient_lien(texte)
+            }
+            Inline::LienInterne { reference, texte } => {
+                !reference.trim().is_empty()
+                    && reference
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "-_.:".contains(c))
+                    && inline_canonique(texte)
+                    && !contient_lien(texte)
+            }
         }
     }
 
@@ -733,7 +751,7 @@ fn inline_canonique(inline: &[Inline]) -> bool {
 
         if appel_sans_page(avant) {
             // Un lien collé : son crochet serait la page de l'appel.
-            if matches!(apres, Inline::Lien { .. }) {
+            if matches!(apres, Inline::Lien { .. } | Inline::LienInterne { .. }) {
                 return false;
             }
 
@@ -788,6 +806,27 @@ fn contient_emphase(inline: &[Inline]) -> bool {
             contient_emphase(std::slice::from_ref(interne.as_ref())) || element.est_emphase()
         }
         Inline::Lien { texte, .. } => contient_emphase(texte),
+        Inline::LienInterne { texte, .. } => contient_emphase(texte),
+        _ => false,
+    })
+}
+
+/// Un lien se trouve-t-il **quelque part** sous ces éléments ?
+///
+/// Un lien dans le texte d'un autre lien rendrait la source ambiguë : les
+/// crochets du lien intérieur se confondent avec ceux du lien extérieur. La
+/// forme canonique l'interdit ; les notes et emphases restent permises.
+fn contient_lien(inline: &[Inline]) -> bool {
+    inline.iter().any(|element| match element {
+        Inline::Lien { .. } | Inline::LienInterne { .. } => true,
+        Inline::Gras(contenu)
+        | Inline::Italique(contenu)
+        | Inline::GrasItalique(contenu)
+        | Inline::Souligne(contenu)
+        | Inline::Barre(contenu)
+        | Inline::Note(contenu)
+        | Inline::Couleur { contenu, .. } => contient_lien(contenu),
+        Inline::Canonique(interne) => contient_lien(std::slice::from_ref(interne.as_ref())),
         _ => false,
     })
 }
@@ -923,6 +962,7 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
                 }
             }
             Inline::Lien { texte, .. } => out.push_str(&inline_texte_nu(texte)),
+            Inline::LienInterne { texte, .. } => out.push_str(&inline_texte_nu(texte)),
         }
     }
 

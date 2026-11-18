@@ -1702,7 +1702,7 @@ mod tests {
             overrides[0].0,
             PathBuf::from(&root).join("document.generated.typ")
         );
-        assert_eq!(overrides[0].1, "= Titre\n\nDu *gras*.\n\n");
+        assert_eq!(overrides[0].1, "= Titre <titre-titre>\n\nDu *gras*.\n\n");
 
         let outcome = crate::typst::render::compile(&root, &entry, &overrides);
 

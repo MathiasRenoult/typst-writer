@@ -324,8 +324,14 @@ pub enum Message {
     BibleTri(crate::plugins::bible::TriReferences),
     /// Aller à la première occurrence de cette référence dans l'éditeur.
     BibleAllerReference(String),
+    /// Aller à la première occurrence d'un lien interne cassé.
+    LienInterneAller(String),
     /// Choisir la traduction de la consultation biblique.
     BibleTraduction(crate::plugins::bible::Traduction),
+    /// Choisir un fichier de version biblique à installer.
+    BibleVersionImporter,
+    /// Le fichier choisi, s'il y en a un.
+    BibleVersionImported(Option<PathBuf>),
     /// Ouvrir l'édition d'une référence de la consultation.
     BibleReferenceModifier(usize),
     BibleEditionLivre(usize),
@@ -874,6 +880,8 @@ impl Message {
             | Message::BibleTri(_)
             | Message::BibleAllerReference(_)
             | Message::BibleTraduction(_)
+            | Message::BibleVersionImporter
+            | Message::BibleVersionImported(_)
             | Message::BibleReferenceModifier(_)
             | Message::BibleEditionLivre(_)
             | Message::BibleEditionChapitre(_)

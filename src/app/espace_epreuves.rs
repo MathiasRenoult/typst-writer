@@ -5147,6 +5147,50 @@ fn la_palette_rend_le_curseur_a_l_editeur_apres_insertion() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_double_crochet_ouvre_les_liens_et_insere_l_ancre() {
+    let mut state = etat_isole();
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "# Introduction\n\n[[".to_string(),
+        )),
+    );
+
+    assert!(
+        state
+            .palette
+            .as_ref()
+            .is_some_and(|palette| palette.mode == crate::app::palette::ModePalette::Liens),
+        "`[[` ouvre les liens internes"
+    );
+    let items = state
+        .palette
+        .as_ref()
+        .map(|palette| palette.resultats(&state))
+        .unwrap_or_default();
+    assert!(
+        items.iter().any(|item| matches!(
+            item.action,
+            crate::app::palette::ItemAction::LienInterne { .. }
+        )),
+        "le titre est proposé : {items:?}"
+    );
+
+    let _ = update(&mut state, Message::PaletteExecuter);
+    assert!(
+        state.editor.content().contains("[[titre-introduction|]]"),
+        "l'ancre du titre est insérée : {}",
+        state.editor.content()
+    );
+    assert!(state.editor.editor.is_focused(), "le clavier revient");
+    assert!(
+        state.editor.cursor_offset() == state.editor.content().len() - 2,
+        "le curseur attend le texte du lien"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn un_arrobase_tape_ouvre_le_composeur() {
     let mut state = etat_isole();
     state.reglages.fonctionnalites.bibliographie = true;

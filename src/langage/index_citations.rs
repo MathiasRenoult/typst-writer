@@ -12,7 +12,7 @@ use super::references::{
     Reference, afficher, afficher_nombres, forme_du_livre, mention_traduction, nom_du_livre,
     rang_du_livre,
 };
-use crate::mise_en_page::modele::{IndexCitations, References};
+use crate::mise_en_page::modele::{Canon, IndexCitations, References};
 
 /// Une entrée de l'index : une référence, et le nombre de ses occurrences.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,8 @@ pub struct GroupeIndex {
     pub nom: String,
     /// Les références du livre, dans l'ordre canonique interne.
     pub entrees: Vec<EntreeIndex>,
+    /// Ce livre appartient-il au canon choisi pour l'index ?
+    pub canonique: bool,
 }
 
 /// L'index préparé pour un document.
@@ -45,6 +47,8 @@ pub struct IndexBiblique {
     pub regrouper_par_livre: bool,
     /// Le nombre de colonnes du rendu (1 à 4).
     pub colonnes: usize,
+    /// Le canon qui sépare les livres canoniques des non-canoniques.
+    pub canon: Canon,
 }
 
 impl IndexBiblique {
@@ -108,12 +112,13 @@ impl IndexBiblique {
                     GroupeIndex {
                         nom,
                         entrees: vec![entree],
+                        canonique: config.canon.contient(&reference.livre),
                     },
                 ));
             }
         }
 
-        groupes.sort_by_key(|(rang, _)| *rang);
+        groupes.sort_by_key(|(rang, groupe)| (!groupe.canonique, *rang));
         for (_, groupe) in &mut groupes {
             groupe.entrees.sort_by_key(|entree| {
                 (
@@ -130,6 +135,7 @@ impl IndexBiblique {
             afficher_pages: config.afficher_pages,
             regrouper_par_livre: config.regrouper_par_livre,
             colonnes: config.colonnes.clamp(1, 4),
+            canon: config.canon,
         }
     }
 
@@ -162,7 +168,17 @@ impl IndexBiblique {
                 "  let present = key => occurrences(key).len() + occurrences_notes(key).len()\n",
             );
 
+            let mut section = None;
             for groupe in &self.groupes {
+                if self.canon != Canon::Tout && section != Some(groupe.canonique) {
+                    let titre = if groupe.canonique {
+                        "Livres canoniques"
+                    } else {
+                        "Livres non canoniques"
+                    };
+                    corps.push_str(&format!("  [{titre}]\n"));
+                    section = Some(groupe.canonique);
+                }
                 if self.regrouper_par_livre {
                     corps.push_str(&format!("  [{} :]\n", groupe.nom));
                 }
@@ -179,7 +195,17 @@ impl IndexBiblique {
             }
             corps.push_str("}\n\n");
         } else {
+            let mut section = None;
             for groupe in &self.groupes {
+                if self.canon != Canon::Tout && section != Some(groupe.canonique) {
+                    let titre = if groupe.canonique {
+                        "Livres canoniques"
+                    } else {
+                        "Livres non canoniques"
+                    };
+                    corps.push_str(&format!("*{titre}*\n\n"));
+                    section = Some(groupe.canonique);
+                }
                 if self.regrouper_par_livre {
                     corps.push_str(&format!("{} :\n\n", groupe.nom));
                 }
@@ -290,6 +316,42 @@ mod tests {
         assert_eq!(index.groupes[0].nom, "Jean");
         assert_eq!(index.groupes[0].entrees[0].libelle, "3.16");
         assert!(index.rendre_typst().contains("Jean :"));
+    }
+
+    #[test]
+    fn les_livres_hors_canon_sont_separes_par_le_canon() {
+        let doc = document("{{Jn 3.16 ; Tob 1.1}}\n");
+        let config = IndexCitations {
+            canon: crate::mise_en_page::modele::Canon::Protestant,
+            regrouper_par_livre: true,
+            forme: Some(crate::mise_en_page::modele::SystemeAbreviation::FrancaiseLongue),
+            ..Default::default()
+        };
+        let index = IndexBiblique::construire(&doc, &References::default(), &config);
+        assert_eq!(index.groupes.len(), 2);
+        assert!(
+            index
+                .groupes
+                .iter()
+                .any(|groupe| groupe.canonique && groupe.nom == "Jean"),
+            "{index:?}"
+        );
+        assert!(
+            index
+                .groupes
+                .iter()
+                .any(|groupe| !groupe.canonique && groupe.nom == "Tobie"),
+            "{index:?}"
+        );
+        let typst = index.rendre_typst();
+        assert!(typst.contains("*Livres canoniques*"), "{typst}");
+        assert!(typst.contains("*Livres non canoniques*"), "{typst}");
+
+        // « Tout le corpus » ne fabrique pas de section : une seule liste.
+        let config = IndexCitations::default();
+        let index = IndexBiblique::construire(&doc, &References::default(), &config);
+        let typst = index.rendre_typst();
+        assert!(!typst.contains("Livres canoniques"), "{typst}");
     }
 
     #[test]

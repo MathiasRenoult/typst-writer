@@ -1,8 +1,10 @@
 //! Les références bibliques : le modèle, les textes, la lecture.
 //!
-//! Les deux traductions sont **embarquées** (le produit reste autonome,
-//! sans service extérieur) : Louis Segond 1910 (LSG) et J.N. Darby (DARBY),
-//! toutes deux dans le domaine public. Les textes sont rangés sous
+//! Deux traductions sont **embarquées** (le produit reste autonome, sans
+//! service extérieur) : Louis Segond 1910 (LSG) et J.N. Darby (DARBY), toutes
+//! deux dans le domaine public. L'auteur peut ajouter d'autres versions
+//! locales — voir [`crate::langage::versions`] — dont le nombre de livres
+//! varie librement. Les textes embarqués sont rangés sous
 //! `vendor/bible-fr/`, un chapitre par ligne.
 //!
 //! Une référence est un livre, un chapitre et une plage de versets ; un
@@ -68,7 +70,7 @@ struct Chapitre {
 
 type Table = HashMap<(String, u32), Chapitre>;
 
-fn chapitres(t: Traduction) -> &'static Table {
+fn chapitres(t: Traduction) -> Option<&'static Table> {
     static LSG: OnceLock<Table> = OnceLock::new();
     static DARBY: OnceLock<Table> = OnceLock::new();
     let (cache, brut): (&OnceLock<Table>, &'static [u8]) = match t {
@@ -77,8 +79,9 @@ fn chapitres(t: Traduction) -> &'static Table {
             &DARBY,
             include_bytes!("../../../vendor/bible-fr/DARBY.jsonl"),
         ),
+        Traduction::Externe(_) => return None,
     };
-    cache.get_or_init(|| {
+    Some(cache.get_or_init(|| {
         let mut table = HashMap::new();
         for ligne in brut.split(|b| *b == b'\n') {
             if ligne.is_empty() {
@@ -88,7 +91,35 @@ fn chapitres(t: Traduction) -> &'static Table {
             table.insert((chapitre.livre.clone(), chapitre.chapitre), chapitre);
         }
         table
-    })
+    }))
+}
+
+/// Les versets d'un chapitre d'une version ajoutée, déjà filtrés.
+fn versets_externes(reference: &Reference, index: u16) -> Vec<(u32, String)> {
+    let mut sortie = Vec::new();
+    if reference.chapitre_fin < reference.chapitre {
+        return sortie;
+    }
+
+    for chapitre_numero in reference.chapitre..=reference.chapitre_fin {
+        let versets = crate::langage::versions::chapitres(index, &reference.livre, chapitre_numero);
+        let debut = if chapitre_numero == reference.chapitre {
+            reference.verset_debut
+        } else {
+            1
+        };
+        let fin = if chapitre_numero == reference.chapitre_fin {
+            reference.verset_fin
+        } else {
+            u32::MAX
+        };
+        sortie.extend(
+            versets
+                .into_iter()
+                .filter(|(numero, _)| *numero >= debut && *numero <= fin),
+        );
+    }
+    sortie
 }
 
 /// Les versets d'une référence, dans la traduction demandée.
@@ -97,7 +128,12 @@ fn chapitres(t: Traduction) -> &'static Table {
 /// dans l'ordre : le premier chapitre à partir de `verset_debut`, les
 /// suivants en entier, le dernier jusqu'à `verset_fin`.
 pub fn versets(reference: &Reference, traduction: Traduction) -> Vec<(u32, String)> {
-    let table = chapitres(traduction);
+    let Some(table) = chapitres(traduction) else {
+        return match traduction {
+            Traduction::Externe(index) => versets_externes(reference, index),
+            _ => Vec::new(),
+        };
+    };
     let mut sortie = Vec::new();
     if reference.chapitre_fin < reference.chapitre {
         return sortie;
@@ -134,9 +170,21 @@ pub fn versets(reference: &Reference, traduction: Traduction) -> Vec<(u32, Strin
 /// les deutérocanoniques et les apocryphes sont ajoutés après elles pour
 /// qu'on puisse les citer même sans texte consultable.
 pub fn livres(traduction: Traduction) -> Vec<LivreConnu> {
+    if let Traduction::Externe(index) = traduction {
+        return crate::langage::versions::livres(index)
+            .into_iter()
+            .map(|livre| LivreConnu {
+                osis: livre.osis,
+                nom: livre.nom,
+                abreviation: livre.abreviation,
+            })
+            .collect();
+    }
+
     let brut: &'static [u8] = match traduction {
         Traduction::Lsg => include_bytes!("../../../vendor/bible-fr/LSG-livres.json"),
         Traduction::Darby => include_bytes!("../../../vendor/bible-fr/DARBY-livres.json"),
+        Traduction::Externe(_) => unreachable!("les versions ajoutées sont traitées plus haut"),
     };
     let mut livres: Vec<LivreConnu> =
         serde_json::from_slice(brut).expect("les livres sont lisibles");

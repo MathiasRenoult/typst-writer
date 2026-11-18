@@ -7,7 +7,7 @@ mémoire, un livre, un article — sans jamais perdre de vue la page finale.
 Le texte reste simple et lisible ; la mise en page est composée par Typst,
 le moteur qui produit aussi le PDF.
 
-Version 0.6.0 · Linux.
+Version 0.6.1 · Linux.
 
 ## L'idée
 
@@ -77,6 +77,12 @@ référence montre le verset dans une bulle ; l'index biblique donne les
 pages réelles du document, et les statistiques disent quels livres ont été
 cités.
 
+Une version biblique supplémentaire s'ajoute localement, à partir d'un
+fichier JSON dont vous détenez les droits : elle peut contenir autant de
+livres que son édition, dans son ordre propre, et se choisit comme les deux
+traductions embarquées. Voir
+[les versions bibliques](docs/guide/bibles.md).
+
 ### Une mise en page qui suit le document
 
 Les mesures ne sont pas écrites au milieu du texte. Elles vivent dans les
@@ -111,8 +117,8 @@ soignée.
 Le paquet Linux s'installe sans `sudo` :
 
 ```sh
-tar -xzf typst-writer-0.6.0-linux-x86_64.tar.gz
-cd typst-writer-0.6.0-linux-x86_64
+tar -xzf typst-writer-0.6.1-linux-x86_64.tar.gz
+cd typst-writer-0.6.1-linux-x86_64
 ./install.sh
 ```
 

@@ -22,6 +22,8 @@ pub enum ModePalette {
     Balises,
     /// Toutes les commandes.
     Systeme,
+    /// Les éléments linkables du document (`[[`).
+    Liens,
 }
 
 /// L'icône d'une commande. Le rendu la traduit en icône Lucide.
@@ -596,6 +598,7 @@ pub enum ItemAction {
     Tag(TagId),
     Snippet(SnippetId),
     Meta(String),
+    LienInterne { reference: String },
 }
 
 /// L'état de la palette ouverte.
@@ -736,37 +739,53 @@ impl Palette {
     pub fn resultats(&self, state: &State) -> Vec<Item> {
         let mut items = Vec::new();
 
-        if self.mode == ModePalette::Systeme {
-            for commande in COMMANDES
-                .iter()
-                .filter(|commande| commande_active(&state.reglages.fonctionnalites, commande.id))
-            {
-                items.push(item_de_commande(commande));
+        if self.mode == ModePalette::Liens {
+            let document = crate::langage::parse(&state.editor.content());
+            for element in crate::langage::liens::collecter(&document) {
+                items.push(Item {
+                    titre: element.libelle,
+                    description: element.description,
+                    alias: element.reference.clone(),
+                    categorie: Categorie::Insertion,
+                    icone: Icone::Lien,
+                    raccourci: None,
+                    action: ItemAction::LienInterne {
+                        reference: element.reference,
+                    },
+                });
             }
-        }
+        } else {
+            if self.mode == ModePalette::Systeme {
+                for commande in COMMANDES.iter().filter(|commande| {
+                    commande_active(&state.reglages.fonctionnalites, commande.id)
+                }) {
+                    items.push(item_de_commande(commande));
+                }
+            }
 
-        for balise in BALISES
-            .iter()
-            .filter(|balise| balise_active(&state.reglages.fonctionnalites, balise.id))
-        {
-            items.push(item_de_balise(balise));
-        }
-        for snippet in SNIPPETS {
-            items.push(item_de_snippet(snippet));
-        }
+            for balise in BALISES
+                .iter()
+                .filter(|balise| balise_active(&state.reglages.fonctionnalites, balise.id))
+            {
+                items.push(item_de_balise(balise));
+            }
+            for snippet in SNIPPETS {
+                items.push(item_de_snippet(snippet));
+            }
 
-        // Les métadonnées du projet sont des balises comme les autres :
-        // `{{m auteur}}` est aussi naturel que `{{date:...}}`.
-        for (cle, valeur) in &self.metadonnees {
-            items.push(Item {
-                titre: format!("Métadonnée · {cle}"),
-                description: valeur.clone(),
-                alias: cle.clone(),
-                categorie: Categorie::Insertion,
-                icone: Icone::EtiquetteMeta,
-                raccourci: None,
-                action: ItemAction::Meta(cle.clone()),
-            });
+            // Les métadonnées du projet sont des balises comme les autres :
+            // `{{m auteur}}` est aussi naturel que `{{date:...}}`.
+            for (cle, valeur) in &self.metadonnees {
+                items.push(Item {
+                    titre: format!("Métadonnée · {cle}"),
+                    description: valeur.clone(),
+                    alias: cle.clone(),
+                    categorie: Categorie::Insertion,
+                    icone: Icone::EtiquetteMeta,
+                    raccourci: None,
+                    action: ItemAction::Meta(cle.clone()),
+                });
+            }
         }
 
         let requete = normaliser(&self.requete);
@@ -831,7 +850,9 @@ pub fn ouvrir_si_declencheur(state: &mut State) -> Task<Message> {
     let contenu = state.editor.content();
     let curseur = state.editor.cursor_offset();
 
-    let mode = if declencheur(&contenu, curseur, ModePalette::Systeme).is_some() {
+    let mode = if declencheur(&contenu, curseur, ModePalette::Liens).is_some() {
+        ModePalette::Liens
+    } else if declencheur(&contenu, curseur, ModePalette::Systeme).is_some() {
         ModePalette::Systeme
     } else if declencheur(&contenu, curseur, ModePalette::Balises).is_some() {
         ModePalette::Balises
@@ -847,6 +868,16 @@ pub fn declencheur(contenu: &str, curseur: usize, mode: ModePalette) -> Option<(
     let curseur = offset_sur_caractere(contenu, curseur.min(contenu.len()));
 
     match mode {
+        ModePalette::Liens => {
+            let debut = offset_sur_caractere(contenu, curseur.saturating_sub(2));
+            if &contenu[debut..curseur] != "[[" {
+                return None;
+            }
+            if !frontiere(contenu, debut) {
+                return None;
+            }
+            Some((debut, curseur))
+        }
         ModePalette::Balises => {
             let debut = offset_sur_caractere(contenu, curseur.saturating_sub(2));
             if &contenu[debut..curseur] != ".." {
@@ -1098,6 +1129,9 @@ fn executer_item(state: &mut State, item: &Item, configurer: bool) -> Task<Messa
         }
         ItemAction::Snippet(snippet) => inserer_snippet(state, *snippet),
         ItemAction::Meta(cle) => inserer_texte(state, &format!("{{{{m {cle}}}}}"), 0),
+        ItemAction::LienInterne { reference, .. } => {
+            inserer_texte(state, &format!("[[{reference}|]]"), 2)
+        }
     }
 }
 

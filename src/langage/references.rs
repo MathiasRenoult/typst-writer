@@ -14,30 +14,58 @@ pub enum Traduction {
     #[default]
     Lsg,
     Darby,
+    /// Une version ajoutée par l'auteur, désignée par son rang dans le
+    /// registre local. Le registre est trié par identifiant ; le code écrit
+    /// dans une citation reste la source de vérité.
+    Externe(u16),
 }
 
 impl Traduction {
     /// Le nom complet de la traduction.
-    pub fn nom(&self) -> &'static str {
+    pub fn nom(&self) -> String {
         match self {
-            Traduction::Lsg => "Louis Segond 1910",
-            Traduction::Darby => "J.N. Darby",
+            Traduction::Lsg => "Louis Segond 1910".to_string(),
+            Traduction::Darby => "J.N. Darby".to_string(),
+            Traduction::Externe(index) => crate::langage::versions::nom(*index)
+                .unwrap_or_else(|| format!("Version biblique {index}")),
+        }
+    }
+
+    /// Le libellé d'un choix de traduction : les versions ajoutées portent
+    /// leur code entre parenthèses, pour que deux homonymes restent
+    /// distinguables.
+    pub fn libelle(&self) -> String {
+        match self {
+            Traduction::Externe(index) => {
+                format!(
+                    "{} ({})",
+                    self.nom(),
+                    crate::langage::versions::code(*index).unwrap_or_else(|| index.to_string())
+                )
+            }
+            _ => self.nom(),
         }
     }
 
     /// La forme courte affichée dans une citation : `LSG`, `DARBY`.
-    pub fn abreviation(&self) -> &'static str {
+    pub fn abreviation(&self) -> String {
         match self {
-            Traduction::Lsg => "LSG",
-            Traduction::Darby => "DARBY",
+            Traduction::Lsg => "LSG".to_string(),
+            Traduction::Darby => "DARBY".to_string(),
+            Traduction::Externe(index) => crate::langage::versions::code(*index)
+                .map(|code| code.to_uppercase())
+                .unwrap_or_else(|| format!("VERSION {index}")),
         }
     }
 
     /// Le code accepté dans la source après la barre verticale.
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> String {
         match self {
-            Traduction::Lsg => "lsg",
-            Traduction::Darby => "darby",
+            Traduction::Lsg => "lsg".to_string(),
+            Traduction::Darby => "darby".to_string(),
+            Traduction::Externe(index) => {
+                crate::langage::versions::code(*index).unwrap_or_else(|| index.to_string())
+            }
         }
     }
 
@@ -46,8 +74,19 @@ impl Traduction {
         match mot.trim().to_lowercase().as_str() {
             "lsg" | "segond" | "louis_segond_1910" => Some(Traduction::Lsg),
             "darby" | "jnd" | "j.n. darby" => Some(Traduction::Darby),
-            _ => None,
+            code => crate::langage::versions::index_de_code(code).map(Traduction::Externe),
         }
+    }
+
+    /// Toutes les traductions disponibles : les deux embarquées, puis les
+    /// versions ajoutées par l'auteur, dans l'ordre stable de leur registre.
+    pub fn toutes() -> Vec<Self> {
+        let mut toutes = vec![Traduction::Lsg, Traduction::Darby];
+        toutes.extend(
+            (0..crate::langage::versions::nombre())
+                .filter_map(|index| u16::try_from(index).ok().map(Traduction::Externe)),
+        );
+        toutes
     }
 }
 
@@ -997,6 +1036,13 @@ pub fn nombre(n: u32, chiffres: Chiffres) -> String {
 /// référence, même si la table ne la connaît pas.
 pub fn nom_du_livre(livre: &str, forme: FormeLivre) -> String {
     let Some(l) = LIVRES_FR.iter().find(|l| l.osis == livre) else {
+        if let Some(l) = crate::langage::versions::livre_pour_osis(livre) {
+            return match forme {
+                FormeLivre::FrancaiseLongue | FormeLivre::Tob => l.nom,
+                FormeLivre::FrancaiseCourte | FormeLivre::SansPoint => l.abreviation,
+                FormeLivre::Osis => l.osis,
+            };
+        }
         return livre.to_string();
     };
     match forme {
@@ -1781,7 +1827,7 @@ fn ecrire_reference_source(
     let mut source = afficher_sans_mention(reference, normes);
     if let Some(traduction) = reference.traduction {
         source.push('|');
-        source.push_str(traduction.code());
+        source.push_str(&traduction.code());
     }
     source
 }
@@ -1859,7 +1905,7 @@ pub fn code_du_livre(nom: &str) -> Option<String> {
             return Some(l.osis.to_string());
         }
     }
-    None
+    crate::langage::versions::code_pour_nom(nom)
 }
 
 #[cfg(test)]

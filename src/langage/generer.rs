@@ -61,8 +61,9 @@ pub fn generer_avec(
         out.push_str("#import \"@local/showybox:2.0.4\": showybox\n\n");
     }
 
+    let mut compteur_liens = crate::langage::liens::CompteurLiens::default();
     for bloc in &document.blocs {
-        generer_bloc(bloc, &mut out, regles, decor, &index);
+        generer_bloc(bloc, &mut out, regles, decor, &index, &mut compteur_liens);
     }
 
     out
@@ -111,6 +112,7 @@ fn premier_texte(inline: &[Inline]) -> Option<char> {
             | Inline::Couleur { contenu, .. } => premier_texte(contenu),
             Inline::Canonique(interne) => premier_texte(std::slice::from_ref(interne.as_ref())),
             Inline::Lien { texte, .. } => premier_texte(texte),
+            Inline::LienInterne { texte, .. } => premier_texte(texte),
             _ => None,
         };
 
@@ -157,6 +159,7 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. } => premier_caractere(contenu),
             Inline::Lien { texte, .. } => premier_caractere(texte),
+            Inline::LienInterne { texte, .. } => premier_caractere(texte),
             Inline::Citation(_) => Some('\u{2039}'),
             // Une date vaut un mot : ce qui la suit mérite l'espace d'un.
             Inline::Date(_) => Some('1'),
@@ -181,6 +184,7 @@ fn generer_bloc(
     regles: &Regles,
     decor: &crate::mise_en_page::modele::Decor,
     index: &crate::langage::index_citations::IndexBiblique,
+    compteur_liens: &mut crate::langage::liens::CompteurLiens,
 ) {
     // La typographie court sur **tout le bloc** : le niveau des guillemets
     // et les espaces traversent les éléments, jamais isolés.
@@ -190,6 +194,8 @@ fn generer_bloc(
             out.push_str(&"=".repeat(*niveau as usize));
             out.push(' ');
             generer_inline(contenu, out, false, regles, &mut contexte);
+            let ancre = compteur_liens.titre(&crate::langage::schema::inline_texte_nu(contenu));
+            out.push_str(&format!(" <{ancre}>"));
             out.push_str("\n\n");
         }
         Bloc::Paragraphe(contenu) => {
@@ -293,7 +299,10 @@ fn generer_bloc(
         }
         Bloc::Image { légende, cible } => {
             // Une légende fait une figure numérotée ; sans elle, l'image
-            // seule — pas de vide à composer.
+            // seule — pas de vide à composer. Dans les deux cas, l'élément
+            // reçoit l'ancre qui le rend linkable.
+            let ancre = compteur_liens.figure(&crate::langage::liens::texte_figure(légende, cible));
+
             if légende.is_empty() {
                 out.push_str("#image(\"");
             } else {
@@ -303,7 +312,7 @@ fn generer_bloc(
             echapper_chaine(cible, out);
 
             if légende.is_empty() {
-                out.push_str("\")\n\n");
+                out.push_str(&format!("\") <{ancre}>\n\n"));
             } else {
                 out.push_str("\"), caption: [");
                 generer_inline(légende, out, false, regles, &mut contexte);
@@ -314,7 +323,7 @@ fn generer_bloc(
                     out.push_str(&regles.numerotation_figures);
                     out.push('"');
                 }
-                out.push_str(")\n\n");
+                out.push_str(&format!(") <{ancre}>\n\n"));
             }
         }
         Bloc::Décor { proprietes, bloc } => {
@@ -322,7 +331,7 @@ fn generer_bloc(
             // reçoit le corps déjà généré, typographie comprise.
             if crate::langage::callout::est_callout(proprietes) {
                 let mut interieur = String::new();
-                generer_bloc(bloc, &mut interieur, regles, decor, index);
+                generer_bloc(bloc, &mut interieur, regles, decor, index, compteur_liens);
                 out.push_str(&crate::langage::callout::rendre_avec(
                     crate::langage::callout::type_de(proprietes),
                     crate::langage::callout::titre_de(proprietes),
@@ -341,7 +350,7 @@ fn generer_bloc(
             out.push_str(")[\n");
 
             let mut interieur = String::new();
-            generer_bloc(bloc, &mut interieur, regles, decor, index);
+            generer_bloc(bloc, &mut interieur, regles, decor, index, compteur_liens);
             out.push_str(interieur.trim_end());
 
             out.push_str("\n]\n\n");
@@ -406,7 +415,7 @@ fn generer_bloc(
             }
         }
         Bloc::Canonique(interne) => {
-            generer_bloc(interne, out, regles, decor, index);
+            generer_bloc(interne, out, regles, decor, index, compteur_liens);
         }
     }
 }
@@ -606,9 +615,15 @@ fn generer_inline_dans(
                 out.push(']');
                 en_tete = false;
             }
+            Inline::LienInterne { texte, reference } => {
+                out.push_str("#link(<");
+                out.push_str(reference);
+                out.push_str(">)[");
+                generer_inline_dans(texte, out, false, regles, contexte, dans_note);
+                out.push(']');
+                en_tete = false;
+            }
             Inline::Canonique(interne) => {
-                // L'enveloppe n'ajoute rien au rendu : elle ne porte que la
-                // forme d'écriture. On génère exactement l'élément intérieur.
                 generer_inline_dans(
                     std::slice::from_ref(interne.as_ref()),
                     out,
@@ -1152,7 +1167,7 @@ mod tests {
 
         let typst = generer(&document);
 
-        assert!(typst.contains("= Titre\n\n"), "{typst}");
+        assert!(typst.contains("= Titre <titre-titre>\n\n"), "{typst}");
         assert!(typst.contains("*gras*"), "{typst}");
         assert!(typst.contains("_italique_"), "{typst}");
         assert!(
@@ -1682,6 +1697,19 @@ mod tests_dates_generees {
             sortie.contains("#smallcaps[XIX]#super[e]"),
             "la période courte : {sortie}"
         );
+    }
+
+    #[test]
+    fn les_dates_dynamiques_traversent_la_generation() {
+        let document =
+            crate::langage::parse("Le {{d aujourd'hui}}, à {{d maintenant \"HH:mm\"}}.\n");
+        let sortie = generer_avec(
+            &document,
+            &Regles::aucune(),
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        assert!(!sortie.contains("aujourd'hui"), "{sortie}");
+        assert!(sortie.contains(':'), "l'heure est composée : {sortie}");
     }
 }
 

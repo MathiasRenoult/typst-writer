@@ -135,10 +135,13 @@ fn corps_biblique<'a>(
         crate::mise_en_page::modele::Chiffres::Arabes => "Arabes",
         crate::mise_en_page::modele::Chiffres::Romains => "Romains",
     };
-    let traduction = match reglages.parametres_plugins.biblique.traduction.as_str() {
-        "darby" => "J.N. Darby",
-        _ => "Louis Segond 1910",
-    };
+    let traductions = crate::langage::references::Traduction::toutes();
+    let libelles: Vec<String> = traductions.iter().map(|t| t.libelle()).collect();
+    let traduction = traductions
+        .iter()
+        .find(|t| t.code() == reglages.parametres_plugins.biblique.traduction)
+        .map(|t| t.libelle())
+        .unwrap_or_else(|| "Louis Segond 1910".to_string());
     let tri = match reglages.parametres_plugins.biblique.tri.as_str() {
         "canonique" => "Ordre canonique",
         _ => "Ordre d'apparition",
@@ -154,22 +157,18 @@ fn corps_biblique<'a>(
                 .label("Traduction consultée")
                 .size(theme::jetons::DETAIL)
                 .width(Length::Fill),
-            iced::widget::pick_list(
-                vec!["Louis Segond 1910", "J.N. Darby"],
-                Some(traduction),
-                |choisi| {
-                    Message::MiseEnPageChamp(
-                        crate::mise_en_page::modele::Champ::BibliqueTraduction,
-                        if choisi == "J.N. Darby" {
-                            "darby"
-                        } else {
-                            "lsg"
-                        }
-                        .to_string(),
-                    )
-                },
-            )
-            .width(Length::Fixed(190.0)),
+            iced::widget::pick_list(libelles, Some(traduction), move |choisi: String| {
+                let code = traductions
+                    .iter()
+                    .find(|traduction| traduction.libelle() == choisi)
+                    .map(|traduction| traduction.code())
+                    .unwrap_or_else(|| "lsg".to_string());
+                Message::MiseEnPageChamp(
+                    crate::mise_en_page::modele::Champ::BibliqueTraduction,
+                    code,
+                )
+            })
+            .width(Length::Fixed(220.0)),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -313,7 +312,8 @@ fn corps_biblique<'a>(
         palette
             .label(
                 "Une traduction se précise dans la citation : {{Jn 3.16|lsg}} ou \
-                 {{Jn 3.16|darby}}. Sans précision, aucune mention n'est ajoutée.",
+                 {{Jn 3.16|darby}}, ou par le code d'une version ajoutée. Sans \
+                 précision, aucune mention n'est ajoutée.",
             )
             .size(theme::jetons::DETAIL)
             .color(palette.text_muted),
@@ -345,6 +345,49 @@ fn corps_biblique<'a>(
                 )
             })
             .size(theme::jetons::CORPS),
+    );
+    corps = corps.push(
+        row![
+            palette
+                .label("Canon de l'index")
+                .size(theme::jetons::DETAIL)
+                .width(Length::Fill),
+            iced::widget::pick_list(
+                vec![
+                    "Protestant",
+                    "Catholique",
+                    "Orthodoxe",
+                    "Téwahedo",
+                    "Tout le corpus",
+                ],
+                Some(reglages.index.canon.libelle()),
+                |choisi| {
+                    Message::MiseEnPageChamp(
+                        crate::mise_en_page::modele::Champ::IndexCanon,
+                        match choisi {
+                            "Protestant" => "protestant",
+                            "Catholique" => "catholique",
+                            "Orthodoxe" => "orthodoxe",
+                            "Téwahedo" => "tewahedo",
+                            _ => "tout",
+                        }
+                        .to_string(),
+                    )
+                },
+            )
+            .width(Length::Fixed(220.0)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+    corps = corps.push(
+        palette
+            .label(
+                "Les références hors du canon choisi sont rangées sous « Livres non \
+                 canoniques ». « Tout le corpus » garde une seule liste.",
+            )
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
     );
     let forme_index = match reglages.index.forme {
         None => "Héritée des références",

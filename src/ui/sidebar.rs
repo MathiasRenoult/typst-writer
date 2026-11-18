@@ -218,6 +218,53 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
     }
 
+    // Un titre renommé déplace son ancre : les liens internes qui la visaient
+    // ne doivent pas mourir en silence. Le diagnostic est calculé sur l'AST
+    // déjà tenu par l'éditeur ; un gros document en cours de frappe le
+    // rafraîchira à sa prochaine lecture, sans relancer un parse par image.
+    if let Some(document) = state.editor.document.as_ref() {
+        let absents = crate::langage::liens::cibles_absentes(document);
+        if !absents.is_empty() {
+            content = content.push(separation(palette));
+            content = content.push(Space::new().height(8));
+            content = content.push(
+                palette
+                    .label(format!("{} lien(s) interne(s) à vérifier", absents.len()))
+                    .size(theme::jetons::CORPS)
+                    .color(palette.warning),
+            );
+            for lien in absents.iter().take(6) {
+                let texte = lien.texte.trim();
+                let libelle = if texte.is_empty() {
+                    format!("[[{}]]", lien.reference)
+                } else {
+                    format!("[[{}]] — {texte}", lien.reference)
+                };
+                content = content.push(
+                    button(
+                        palette
+                            .label(libelle)
+                            .size(theme::jetons::DETAIL)
+                            .color(palette.text_muted),
+                    )
+                    .on_press(Message::LienInterneAller(lien.reference.clone()))
+                    .padding([1, 0])
+                    .width(Length::Fill)
+                    .style(button::text),
+                );
+            }
+            if absents.len() > 6 {
+                content = content.push(
+                    palette
+                        .label(format!("… et {} autre(s)", absents.len() - 6))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                );
+            }
+            content = content.push(Space::new().height(8));
+        }
+    }
+
     // LEFT-04-02 : la section « Document » est supprimée — le nom du
     // document est en en-tête, le compte de mots dans la barre d'état.
     if let Some(document) = project.document.as_ref() {
@@ -346,7 +393,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 palette,
                 state.plugins.bible.tri == crate::plugins::bible::TriReferences::Canonique,
             ));
+            gestes = gestes.push(stat_icon(
+                lucide_icons::iced::icon_plus::<Theme>(),
+                "Ajouter une version biblique…",
+                Message::BibleVersionImporter,
+                palette,
+                false,
+            ));
             content = content.push(gestes);
+            content = content.push(
+                palette
+                    .label("N'ajoutez qu'une version dont vous détenez les droits.")
+                    .size(theme::jetons::DETAIL)
+                    .color(palette.text_muted),
+            );
             if state.plugins.bible.recherche_active {
                 content = content.push(
                     text_input("Chercher une référence", &state.plugins.bible.recherche)
@@ -1148,20 +1208,23 @@ fn reference_cliquee_section<'a>(
         }
     }
 
+    let traductions = crate::plugins::bible::Traduction::toutes();
+    let libelles: Vec<String> = traductions
+        .iter()
+        .map(crate::plugins::bible::Traduction::libelle)
+        .collect();
+    let traduction_courante = state.plugins.bible.traduction.libelle();
     let corps = column![
         palette.label("La référence cliquée").size(13),
         liste,
-        pick_list(
-            vec!["Louis Segond 1910", "J.N. Darby"],
-            Some(state.plugins.bible.traduction.nom()),
-            |choix| {
-                Message::BibleTraduction(if choix == "J.N. Darby" {
-                    crate::plugins::bible::Traduction::Darby
-                } else {
-                    crate::plugins::bible::Traduction::Lsg
-                })
-            },
-        )
+        pick_list(libelles, Some(traduction_courante), move |choix: String| {
+            let traduction = traductions
+                .iter()
+                .copied()
+                .find(|traduction| traduction.libelle() == choix)
+                .unwrap_or_default();
+            Message::BibleTraduction(traduction)
+        })
         .width(Length::Fill),
     ]
     .spacing(6);
