@@ -36,7 +36,8 @@ jobs:
 
       - name: Batterie applicative
         run: >
-          bin="$(find target/release/deps -maxdepth 1 -type f -executable -name 'typst_writer-*' | head -1)";
+          bin="$(find target/release -type f -executable -name 'typst_writer-*'
+          -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)";
           test -n "$bin";
           python3 scripts/batterie-epreuves.py
           --prefix app::espace_runtime::epreuves::
