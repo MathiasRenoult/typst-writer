@@ -40,6 +40,8 @@ pub enum PreviewZoomMode {
 pub struct TableauDialogue {
     pub rangs: String,
     pub colonnes: String,
+    /// Le titre du tableau, vide pour un tableau sans légende.
+    pub titre: String,
 }
 
 /// Le mode d'une fenêtre d'éditeur : ce qu'elle montre.
@@ -58,6 +60,32 @@ pub enum ModeVue {
     Rendu,
     /// Le Typst généré.
     Typst,
+}
+
+/// Les panneaux de la page Paramètres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParametresPanneau {
+    /// Les boutons de la barre supérieure.
+    #[default]
+    Barre,
+    /// Les préférences de l'éditeur.
+    Editeur,
+    /// Les thèmes et l'apparence de l'application.
+    Apparence,
+    /// Les dossiers locaux de l'application.
+    Donnees,
+}
+
+impl ParametresPanneau {
+    /// Le libellé de l'entrée dans le rail.
+    pub fn libelle(self) -> &'static str {
+        match self {
+            Self::Barre => "Barre d'outils",
+            Self::Editeur => "Éditeur",
+            Self::Apparence => "Apparence",
+            Self::Donnees => "Données",
+        }
+    }
 }
 
 /// Le dialogue de projet : créer, ou renommer celui qu'on nomme.
@@ -360,6 +388,14 @@ pub struct Importation {
 /// L'identifiant du champ de la note : le panneau s'ouvre dessus.
 pub const ID_NOTE_CHAMP: &str = "note-champ";
 
+/// Le petit menu du clic droit, quand le clic ne vise ni une balise ni une
+/// en-tête de tableau.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MenuContextuel {
+    /// Le point du clic, dans la vue de rédaction.
+    pub position: iced::Point,
+}
+
 /// L'état de l'application.
 ///
 /// Pas de `Default` : un état utilisable suppose un projet ouvert, ce que seule
@@ -371,10 +407,17 @@ pub struct State {
     pub palette: Option<crate::app::palette::Palette>,
     /// Le formulaire d'une balise simple, quand il est ouvert.
     pub balise_dialogue: Option<crate::app::palette::BaliseDialogue>,
+    /// Le menu du clic droit ordinaire, quand il est ouvert.
+    pub menu_contextuel: Option<MenuContextuel>,
     /// Les normes appliquées du projet : l'interface y lit les
     /// fonctionnalités branchées pour montrer ou cacher leurs gestes
     /// (demande de l'auteur).
     pub reglages: crate::mise_en_page::modele::MiseEnPage,
+    /// Le nom de la norme de la bibliothèque qui correspond exactement aux
+    /// réglages appliqués — vide pour une norme personnalisée. Il ne se
+    /// relit pas à chaque image : il est recalculé aux moments où le
+    /// document change de normes.
+    pub norme_document: String,
     /// Les rendus partagés par empreinte de texte : un seul PDF par
     /// fichier, quelle que soit la fenêtre qui le montre (bug-report-10).
     pub rendus_partages: std::collections::HashMap<String, RenduPartage>,
@@ -493,9 +536,6 @@ pub struct State {
     pub survol_sommaire: Option<usize>,
     /// Le sommaire du panneau, replié par l'auteur.
     pub sommaire_replie: bool,
-    /// La section « Chapitres » — document courant ou projet ancien —
-    /// repliée par l'auteur.
-    pub chapitres_replie: bool,
     /// La section « Projets » du panneau, repliée par l'auteur.
     pub projets_section_replie: bool,
     /// L'étagère choisie à la liste des projets — « Mon étagère »,
@@ -535,6 +575,21 @@ pub struct State {
 
     /// La vue des projets est-elle ouverte ?
     pub projets_vue: bool,
+
+    /// La page des paramètres de l'application est-elle ouverte ?
+    pub parametres_vue: bool,
+
+    /// Le panneau choisi dans cette page.
+    pub parametres_panneau: ParametresPanneau,
+
+    /// Les boutons de mise en forme sont-ils dans la barre ?
+    ///
+    /// Préférence d'application, retenue dans la session : un lecteur de
+    /// markdown peut écrire sans la rangée de boutons.
+    pub outils_mise_en_page: bool,
+
+    /// Le menu d'insertion est-il dans la barre ?
+    pub outils_insertion: bool,
 
     /// L'outil de tableau : ses rangs et ses colonnes, en attente.
     pub tableau: Option<TableauDialogue>,
@@ -695,6 +750,10 @@ pub struct DialogueMiseEnPage {
     /// Le panneau ouvert : 0 la mise en page, 1 la typographie.
     pub panneau: usize,
 
+    /// L'onglet ouvert dans les paramètres des plugins — séparé du panneau
+    /// des normes pour que chaque vue retrouve le sien après une bascule.
+    pub panneau_plugins: usize,
+
     /// Le préréglage de callout sélectionné dans l'onglet Callouts.
     pub callout_preset: usize,
 
@@ -802,11 +861,11 @@ pub struct LayoutState {
     /// L'aperçu est-il affiché ?
     pub preview_visible: bool,
 
-    /// L'aperçu suit-il le chapitre qu'on écrit ?
+    /// L'aperçu suit-il le curseur d'écriture ?
     ///
-    /// Le suivi est ce qui évite de croire qu'un chapitre n'est pas rendu ; il
-    /// est aussi ce qui arrache l'aperçu sous les yeux quand on écrit ailleurs.
-    /// Les deux usages sont légitimes : c'est donc un réglage, et non un choix.
+    /// Le suivi évite de croire qu'une ligne n'est pas rendue ; il est aussi
+    /// ce qui arrache l'aperçu sous les yeux quand on écrit ailleurs. Les deux
+    /// usages sont légitimes : c'est donc un réglage, et non un choix.
     pub follow_preview: bool,
 
     /// Largeur de la bibliothèque.
@@ -1118,16 +1177,6 @@ pub struct RenderState {
     /// l'aperçu s'y lit pour savoir quelle page porte la ligne qu'on lit.
     pub outline: Vec<crate::typst::render::OutlineEntry>,
 
-    /// Les chapitres du document, têtes de niveau 1 du sommaire.
-    ///
-    /// La liste est complète même quand la vue ne montre qu'un chapitre :
-    /// c'est elle qui alimente le sélecteur, tandis que `outline` peut être
-    /// filtré par la tranche active.
-    pub chapitres: Vec<crate::app::chapitres::Chapitre>,
-
-    /// Le chapitre dont le rendu est montré, `None` pour le document entier.
-    pub chapitre: Option<crate::app::chapitres::Chapitre>,
-
     /// Dernière page suivie par le suivi de l'aperçu.
     ///
     /// Sans elle, chaque défilement renverrait la même opération de défilement
@@ -1255,6 +1304,12 @@ pub struct RenderState {
     /// `None` : le texte a changé depuis le dernier tic.
     pub words: Option<usize>,
 
+    /// Le volume du document : corps hors notes, notes et citations de bloc.
+    ///
+    /// Mesuré avec `words`, pour que la barre d'état et le panneau lisent la
+    /// même photographie du texte.
+    pub volume: Option<crate::langage::volume::Volume>,
+
     /// Un recomptage est dû.
     ///
     /// C'est un drapeau, et non un `None` dans `words` : effacer la valeur
@@ -1289,21 +1344,6 @@ pub struct RenderState {
     /// travail d'une fenêtre qu'on a déjà quittée. Les tâches en attente
     /// s'arrêtent avant de lire une page devenue inutile.
     pub vue_generation: Arc<AtomicU64>,
-
-    /// Page où commence le chapitre en cours, telle que la dernière
-    /// compilation l'a rapportée.
-    ///
-    /// Rappelée à chaque compilation par l'introspection du document, à travers
-    /// le repère que la compilation insère devant l'`#include` du chapitre.
-    pub chapter_page: Option<usize>,
-
-    /// Chapitre vers lequel l'aperçu a déjà été amené.
-    ///
-    /// On retient le **chapitre**, pas la page : la page d'un chapitre se
-    /// décale à chaque frappe, et s'y accrocher ferait sauter l'aperçu sous les
-    /// yeux du rédacteur. L'aperçu n'est amené qu'une fois — quand on change de
-    /// chapitre.
-    pub followed_chapter: Option<PathBuf>,
 
     /// Empreinte observée au tick précédent.
     ///
@@ -1355,8 +1395,11 @@ impl State {
         self.render.mots_a_recalculer();
     }
 
-    /// Nombre de mots visibles du contenu ouvert, selon son format.
-    pub fn content_word_count(&self, content: &str) -> usize {
+    /// Le volume du contenu ouvert, selon son format.
+    ///
+    /// Le `.tw` passe par l'AST pour que les notes et les citations de bloc
+    /// soient distinguées ; un fichier brut se contente de ses mots.
+    pub fn content_volume(&self, content: &str) -> crate::langage::volume::Volume {
         let is_intermediate = self
             .editor
             .path
@@ -1365,10 +1408,34 @@ impl State {
             .is_some_and(|extension| extension == "tw");
 
         if is_intermediate {
-            crate::project::count_words(&crate::langage::parse(content).texte_nu())
+            crate::langage::volume::mesurer(&crate::langage::parse(content))
         } else {
-            crate::project::count_words(content)
+            crate::langage::volume::Volume {
+                mots: crate::project::count_words(content),
+                ..Default::default()
+            }
         }
+    }
+
+    /// Met à jour d'un seul geste le compte et le volume affichés.
+    pub fn actualiser_le_volume(&mut self, content: &str) {
+        let volume = self.content_volume(content);
+        self.render.words = Some(volume.mots);
+        self.render.volume = Some(volume);
+    }
+
+    /// Le volume du document affiché, ou des zéros avant la première mesure.
+    pub fn volume(&self) -> crate::langage::volume::Volume {
+        self.render.volume.unwrap_or_default()
+    }
+
+    /// Le nombre de mots d'une sélection, notes exclues.
+    pub fn selection_word_count(&self) -> Option<usize> {
+        let texte = self.editor.editor.selected_text()?;
+        if texte.trim().is_empty() {
+            return None;
+        }
+        Some(crate::langage::volume::mesurer_texte(&texte).mots)
     }
 
     /// Le nombre de mots à afficher pour la séance en cours.
@@ -1437,8 +1504,7 @@ impl RenderState {
                 .document
                 .as_deref()
                 .map_or(0, crate::typst::render::page_count);
-            let plage = crate::app::chapitres::plage_pages(self.chapitre.as_ref(), total);
-            (plage.start, plage.end.saturating_sub(1))
+            (0, total.saturating_sub(1))
         });
 
         first.saturating_sub(Self::CACHE_MARGIN)..=last.saturating_add(Self::CACHE_MARGIN)
@@ -1577,23 +1643,6 @@ impl RenderState {
         false
     }
 
-    /// Faut-il amener l'aperçu sur le chapitre ouvert ?
-    ///
-    /// La réponse est oui **une fois par chapitre**, et non à chaque
-    /// compilation : la page d'un chapitre se décale à chaque frappe, et s'y
-    /// accrocher arracherait l'aperçu sous les yeux du rédacteur au milieu
-    /// d'une phrase.
-    ///
-    /// Sans page connue, il n'y a rien à viser : mieux vaut ne pas bouger que
-    /// défiler au hasard.
-    pub fn should_follow_chapter(&self, open: Option<&std::path::Path>) -> bool {
-        let Some(open) = open else {
-            return false;
-        };
-
-        self.chapter_page.is_some() && self.followed_chapter.as_deref() != Some(open)
-    }
-
     /// La couche texte correspond-elle déjà à cette compilation ?
     pub fn texte_est_pret(&self, empreinte: &str) -> bool {
         self.texte_empreinte.as_deref() == Some(empreinte)
@@ -1690,24 +1739,17 @@ impl RenderState {
         self.visible = None;
         self.visible_exact = None;
         self.fenetre = None;
-        // La place du panneau appartient à la disposition, pas au document :
-        // elle survit à un changement de chapitre.
+        // La place du panneau appartient à la disposition, pas au document.
         self.requested = 0;
-        self.chapter_page = None;
-        self.chapitres.clear();
-        self.chapitre = None;
         self.reprise_page = None;
         self.reprise_apres_compilation = false;
         self.reprise_apercu = false;
         // Le compte de mots est un fait du document qu'on quitte : la valeur
-        // s'efface, et un recomptage est dû. Le chiffre affiché pendant ce temps
-        // vient du projet, comme pour tout chapitre non ouvert.
+        // s'efface, et un recomptage est dû.
         self.words = None;
+        self.volume = None;
         self.words_pending = true;
         self.words_depuis = None;
-        // Un document qu'on ouvre doit être amené à l'écran : oublier le
-        // chapitre déjà suivi évite d'hériter du précédent.
-        self.followed_chapter = None;
         self.save_pending = false;
         self.revision += 1;
         self.generation.store(self.revision, Ordering::Relaxed);
@@ -2280,42 +2322,6 @@ mod tests {
 
         assert!(deeper > start, "descendre agrandit l'aperçu : {deeper}");
         assert!(shallower < start, "monter le réduit : {shallower}");
-    }
-
-    /// L'aperçu ne doit être amené qu'une fois par chapitre.
-    ///
-    /// C'est la règle qui protège la lecture : suivre le numéro de page ferait
-    /// sauter l'aperçu à chaque phrase écrite dans un chapitre qui déborde sur
-    /// la page suivante.
-    #[test]
-    fn the_preview_follows_a_chapter_only_once() {
-        let first = std::path::Path::new("/projet/chapitres/01-un.typ");
-        let second = std::path::Path::new("/projet/chapitres/02-deux.typ");
-
-        let mut render = RenderState {
-            chapter_page: Some(3),
-            ..Default::default()
-        };
-
-        // Chapitre jamais suivi : on y amène l'aperçu.
-        assert!(render.should_follow_chapter(Some(first)));
-
-        render.followed_chapter = Some(first.to_path_buf());
-
-        // Même chapitre : on n'y touche plus, malgré les compilations
-        // qui continuent à chaque frappe.
-        assert!(!render.should_follow_chapter(Some(first)));
-
-        // Chapitre suivant : on y va.
-        assert!(render.should_follow_chapter(Some(second)));
-
-        // Aucun chapitre ouvert, ou aucune page connue : rien à viser.
-        render.followed_chapter = None;
-        assert!(render.should_follow_chapter(Some(first)));
-        assert!(!render.should_follow_chapter(None));
-
-        render.chapter_page = None;
-        assert!(!render.should_follow_chapter(Some(first)));
     }
 
     /// La position du curseur est retenue même hors glissement : c'est ce qui

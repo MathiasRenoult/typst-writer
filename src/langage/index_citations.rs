@@ -162,6 +162,13 @@ impl IndexBiblique {
             return out;
         }
 
+        // Le titre « Livres canoniques » n'est utile que lorsque l'index
+        // contient aussi des livres hors canon : un index entièrement
+        // canonique le rend implicite. Un index uniquement non canonique
+        // garde, lui, son titre — c'est une information, pas un contraste.
+        let titres_de_section =
+            self.canon != Canon::Tout && self.groupes.iter().any(|groupe| !groupe.canonique);
+
         let mut corps = String::new();
         if self.afficher_pages {
             corps.push_str("#context {\n");
@@ -178,7 +185,7 @@ impl IndexBiblique {
 
             let mut section = None;
             for groupe in &self.groupes {
-                if self.canon != Canon::Tout && section != Some(groupe.canonique) {
+                if titres_de_section && section != Some(groupe.canonique) {
                     let titre = if groupe.canonique {
                         "Livres canoniques"
                     } else {
@@ -211,7 +218,7 @@ impl IndexBiblique {
         } else {
             let mut section = None;
             for groupe in &self.groupes {
-                if self.canon != Canon::Tout && section != Some(groupe.canonique) {
+                if titres_de_section && section != Some(groupe.canonique) {
                     let titre = if groupe.canonique {
                         "Livres canoniques"
                     } else {
@@ -391,6 +398,48 @@ mod tests {
         let index = IndexBiblique::construire(&doc, &References::default(), &config);
         let typst = index.rendre_typst();
         assert!(!typst.contains("Livres canoniques"), "{typst}");
+    }
+
+    #[test]
+    fn un_index_entièrement_canonique_ne_nomme_pas_les_livres_canoniques() {
+        let doc = document("{{Jn 3.16}}\n");
+        let config = IndexCitations {
+            canon: crate::mise_en_page::modele::Canon::Protestant,
+            regrouper_par_livre: true,
+            forme: Some(crate::mise_en_page::modele::SystemeAbreviation::FrancaiseLongue),
+            ..Default::default()
+        };
+        let index = IndexBiblique::construire(&doc, &References::default(), &config);
+        let typst = index.rendre_typst();
+
+        assert!(!typst.contains("Livres canoniques"), "{typst}");
+        assert!(!typst.contains("Livres non canoniques"), "{typst}");
+        assert!(typst.contains("Jean :"), "{typst}");
+
+        // Sans titre de corpus, les pages restent dans l'index paginé.
+        let config = IndexCitations {
+            afficher_pages: true,
+            ..config
+        };
+        let index = IndexBiblique::construire(&doc, &References::default(), &config);
+        let typst = index.rendre_typst();
+        assert!(!typst.contains("Livres canoniques"), "{typst}");
+        assert!(typst.contains("#context {"), "{typst}");
+    }
+
+    #[test]
+    fn un_index_entièrement_non_canonique_garde_son_titre() {
+        let doc = document("{{Tob 1.1}}\n");
+        let config = IndexCitations {
+            canon: crate::mise_en_page::modele::Canon::Protestant,
+            regrouper_par_livre: true,
+            ..Default::default()
+        };
+        let index = IndexBiblique::construire(&doc, &References::default(), &config);
+        let typst = index.rendre_typst();
+
+        assert!(!typst.contains("Livres canoniques"), "{typst}");
+        assert!(typst.contains("Livres non canoniques"), "{typst}");
     }
 
     #[test]

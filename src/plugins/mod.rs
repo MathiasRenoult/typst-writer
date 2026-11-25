@@ -4,10 +4,12 @@
 pub mod bible;
 pub mod bibliographie;
 pub mod glossaire;
+pub mod personnes;
 
 pub use bible::BibleEtat;
 pub use bibliographie::BibliographieEtat;
 pub use glossaire::GlossaireEtat;
+pub use personnes::PersonnesEtat;
 
 /// L'état des plugins d'une vue.
 #[derive(Debug, Clone, Default)]
@@ -18,6 +20,8 @@ pub struct Plugins {
     pub bibliographie: BibliographieEtat,
     /// Le plugin glossaire : la fiche ouverte.
     pub glossaire: GlossaireEtat,
+    /// Le plugin des personnes citées : son registre et sa fiche.
+    pub personnes: PersonnesEtat,
 }
 
 impl Plugins {
@@ -40,15 +44,16 @@ impl Plugins {
         plugins
     }
 
-    /// Échange l'état des trois plugins entre une vue et l'état actif.
+    /// Échange l'état des plugins entre une vue et l'état actif.
     ///
     /// C'est un `std::mem::swap` par plugin, pas une copie : après l'appel,
-    /// `autre` porte l'ancien état de `self`. Les trois états voyagent
-    /// ensemble, comme le reste du contexte de `Vue::echanger`.
+    /// `autre` porte l'ancien état de `self`. Les états voyagent ensemble,
+    /// comme le reste du contexte de `Vue::echanger`.
     pub fn echanger(&mut self, autre: &mut Plugins) {
         std::mem::swap(&mut self.bible, &mut autre.bible);
         std::mem::swap(&mut self.bibliographie, &mut autre.bibliographie);
         std::mem::swap(&mut self.glossaire, &mut autre.glossaire);
+        std::mem::swap(&mut self.personnes, &mut autre.personnes);
     }
 }
 

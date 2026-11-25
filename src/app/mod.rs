@@ -1,4 +1,3 @@
-pub mod chapitres;
 pub mod composeur;
 pub mod corbeille;
 pub mod epreuves;
@@ -176,6 +175,10 @@ impl State {
             maj_tenu: false,
             tableau: None,
             projets_vue: false,
+            parametres_vue: false,
+            parametres_panneau: crate::app::state::ParametresPanneau::default(),
+            outils_mise_en_page: session.outils_mise_en_page,
+            outils_insertion: session.outils_insertion,
             mode: crate::app::state::ModeVue::default(),
             vignettes: Vec::new(),
             vignettes_generation: Arc::new(AtomicU64::new(0)),
@@ -193,7 +196,6 @@ impl State {
             projets_recherche_visible: false,
             survol_sommaire: None,
             sommaire_replie: false,
-            chapitres_replie: false,
             projets_section_replie: false,
             projets_etage: "Mon étagère".to_string(),
             note_dialogue: None,
@@ -234,8 +236,10 @@ impl State {
             completion: None,
             palette: None,
             balise_dialogue: None,
+            menu_contextuel: None,
             rendus_partages: Default::default(),
             reglages: Default::default(),
+            norme_document: String::new(),
             render: Default::default(),
             layout: Default::default(),
             system_theme: None,
@@ -273,32 +277,14 @@ impl State {
             state.note = note_au_demarrage;
         }
 
-        // Le chapitre de la session, s'il appartient encore au projet ; sinon
-        // le premier chapitre, sinon rien — le panneau proposera d'en créer un.
-        //
-        // L'appartenance doit être vérifiée, et non supposée : un document
-        // retenu avant d'être un chapitre — ou dont le fichier a été déplacé
-        // dans un autre projet — s'ouvrirait sinon dans l'éditeur sans jamais
-        // être rendu, exactement le défaut que l'import répare.
-        // Le document, ou un chapitre : tout ce qui appartient au projet.
-        // N'accepter que `document.tw` laissait un chapitre ouvert se perdre
-        // au redémarrage — exactement ce que la session promet de garder.
+        // Le document unique, et lui seul : la session peut désigner un
+        // ancien fichier, mais le projet n'a qu'une source d'écriture.
         let wanted = session.last_document.filter(|path| {
-            path.is_file()
-                && (state.project.document.as_deref() == Some(path.as_path())
-                    || state.project.chapters.iter().any(|c| c.path == *path))
+            path.is_file() && state.project.document.as_deref() == Some(path.as_path())
         });
-
         let document = wanted.or_else(|| state.project.document.clone());
-        let chapter = document.or_else(|| {
-            state
-                .project
-                .chapters
-                .first()
-                .map(|chapter| chapter.path.clone())
-        });
 
-        if let Some(path) = chapter
+        if let Some(path) = document
             && let Ok(content) = std::fs::read_to_string(&path)
         {
             state.editor = crate::editor::EditorState::new_file(path, content);
@@ -346,6 +332,8 @@ impl State {
         // Les normes appartiennent au projet affiché : activer un add-on se
         // règle dans les siennes, et le panneau latéral les lit.
         self.reglages = crate::mise_en_page::charger(&self.project.dir);
+        self.norme_document =
+            crate::project::norme_qui_correspond(&self.reglages).unwrap_or_default();
 
         self.bibliography = self
             .project
@@ -356,49 +344,13 @@ impl State {
 
         self.plugins.glossaire.entrees =
             crate::plugins::glossaire::Glossaire::charger(&self.project.dir).entrees;
+        self.plugins.personnes.entrees =
+            crate::project::personnes::Personnes::charger(&self.project.dir).entrees;
 
         // Le fichier de normes porte aussi le paramétrage des plugins :
         // l'interface, l'éditeur et les plugins suivent le document ouvert.
         self.configurer_les_plugins_selon_les_normes();
         self.rafraichir_statistiques_bibliques();
-        self.rafraichir_chapitres();
-    }
-
-    /// Recalcule la liste des chapitres à partir du texte et, si un rendu
-    /// existe, des pages réelles du sommaire composé.
-    ///
-    /// La source reste la vérité pour les titres et les lignes ; le sommaire
-    /// n'apporte que la page. Un chapitre actif est retrouvé par son titre et
-    /// sa ligne : une insertion avant lui ne doit pas le remplacer par le
-    /// chapitre voisin.
-    pub(crate) fn rafraichir_chapitres(&mut self) {
-        let Some(document) = self.editor.document_pour_lecture() else {
-            self.render.chapitres.clear();
-            self.render.chapitre = None;
-            return;
-        };
-
-        let source = self.editor.content();
-        let total = self
-            .render
-            .document
-            .as_deref()
-            .map_or(0, crate::typst::render::page_count);
-
-        self.render.chapitres = if self.render.outline.is_empty() {
-            crate::app::chapitres::depuis_source(&source, &document)
-        } else {
-            crate::app::chapitres::depuis_outline(&self.render.outline, total)
-        };
-
-        if let Some(actif) = self.render.chapitre.as_ref() {
-            self.render.chapitre = self
-                .render
-                .chapitres
-                .iter()
-                .find(|chapitre| chapitre.ligne == actif.ligne && chapitre.titre == actif.titre)
-                .cloned();
-        }
     }
 
     /// Configure les plugins de la vue active d'après les normes du projet.
@@ -445,6 +397,10 @@ impl State {
             self.plugins.bibliographie.survol = None;
             self.plugins.glossaire.edition = None;
             self.plugins.glossaire.survol = None;
+            self.plugins.personnes.fenetre = false;
+            self.plugins.personnes.edition = None;
+            self.plugins.personnes.panneau = None;
+            self.plugins.personnes.filtre.clear();
         }
 
         let activation = &self.reglages.fonctionnalites;
@@ -461,6 +417,11 @@ impl State {
         if !activation.actif(crate::base::valeurs::CLE_GLOSSAIRE) {
             self.plugins.glossaire.fenetre = false;
             self.plugins.glossaire.edition = None;
+        }
+        if !activation.actif(crate::base::valeurs::CLE_PERSONNES) {
+            self.plugins.personnes.fenetre = false;
+            self.plugins.personnes.edition = None;
+            self.plugins.personnes.panneau = None;
         }
 
         self.plugins_pour = Some((projet, parametres, fonctionnalites));
@@ -513,7 +474,7 @@ impl State {
                 .insert(cle, crate::project::empreinte_contenu(content.as_bytes()));
         }
         self.render.reset();
-        self.render.words = Some(self.content_word_count(&self.editor.content()));
+        self.actualiser_le_volume(&self.editor.content());
         self.editor
             .set_diagnostics(&[], self.resolved.palette.danger);
         self.refresh_context();
@@ -560,7 +521,7 @@ impl State {
         // Le compte de mots du document qu'on ouvre, tout de suite : la barre
         // d'état et le panneau le lisent, et attendre le prochain tic
         // afficherait un zéro entre-temps.
-        self.render.words = Some(self.content_word_count(&self.editor.content()));
+        self.actualiser_le_volume(&self.editor.content());
         self.refresh_context();
         self.save_session();
     }
@@ -591,6 +552,8 @@ impl State {
             theme_mode: self.theme,
             themes: self.chosen.clone(),
             line_numbers: self.numeros_de_ligne,
+            outils_mise_en_page: self.outils_mise_en_page,
+            outils_insertion: self.outils_insertion,
         });
     }
 
@@ -662,7 +625,7 @@ impl State {
         if let Some(document) = writing_document {
             let entry = crate::project::assembly_without_chapters(&self.project, &entry);
 
-            return crate::langage::pipeline::compilation_unit_document_avec_diagnostics(
+            return crate::langage::pipeline::compilation_unit_document_avec_diagnostics_explicite(
                 &self.project.dir,
                 &entry,
                 &document,
@@ -672,7 +635,7 @@ impl State {
         if is_intermediate {
             let entry = crate::project::assembly_without_chapters(&self.project, &entry);
 
-            return crate::langage::pipeline::compilation_unit_avec_diagnostics(
+            return crate::langage::pipeline::compilation_unit_avec_diagnostics_explicite(
                 &self.project.dir,
                 &entry,
                 &buffer,
@@ -925,6 +888,12 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::EditionReferenceEnregistrer
         | Message::GlossaireSupprimer(_)
         | Message::EditionGlossaireEnregistrer
+        | Message::PersonnesSupprimer(_)
+        | Message::PersonnesInserer(_)
+        | Message::PersonnesIndexInserer
+        | Message::PersonnePanneauEnregistrer
+        | Message::PersonnePanneauInserer
+        | Message::EditionPersonneEnregistrer
         | Message::ImageChoisie(Some(_))
         | Message::StyleCslChoisi(_)
         | Message::StyleZoteroChoisi(_)
@@ -956,6 +925,16 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::GlossaireSectionInserer
         | Message::GlossaireInserer(_)
         | Message::TableauInserer
+        | Message::TableauNaviguer(_)
+        | Message::TableauInsererColonne
+        | Message::TableauInsererLigne
+        | Message::TableauSupprimerLigne
+        | Message::TableauSupprimerColonne
+        | Message::TableauDeplacer(_)
+        | Message::TableauAlignerEntete
+        | Message::MenuContextuelExecuter(_)
+        | Message::MenuContextuelFermer
+        | Message::BeautifierTableaux
         | Message::ChartInserer
         | Message::CalloutInserer
         | Message::BlocMonter
@@ -967,6 +946,11 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::ComposeurTerminer
         | Message::SauvegardeForcee(_)
         | Message::ImportAppliquer => true,
+        Message::Editor(
+            iced_code_editor::Message::Tab
+            | iced_code_editor::Message::FocusNavigationShiftTab
+            | iced_code_editor::Message::Enter,
+        ) => true,
         Message::Editor(message) => crate::editor::EditorState::message_may_change_content(message),
         Message::FileOpened(Some((chemin, _))) => {
             !crate::project::same_file(chemin, &state.project.main)
@@ -1007,6 +991,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Some(crate::base::valeurs::CLE_GLOSSAIRE) => {
             return routeur::glossaire::traiter(state, message);
         }
+        Some(crate::base::valeurs::CLE_PERSONNES) => {
+            return routeur::personnes::traiter(state, message);
+        }
         Some(crate::base::valeurs::CLE_REFERENCES_BIBLIQUES) => {
             return routeur::bible::traiter(state, message);
         }
@@ -1044,10 +1031,19 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
     if matches!(
         message,
         Message::TableauOuvrir
+            | Message::TableauTitre(_)
             | Message::TableauRangs(_)
             | Message::TableauColonnes(_)
             | Message::TableauAnnuler
             | Message::TableauInserer
+            | Message::TableauNaviguer(_)
+            | Message::TableauInsererColonne
+            | Message::TableauInsererLigne
+            | Message::TableauSupprimerLigne
+            | Message::TableauSupprimerColonne
+            | Message::TableauDeplacer(_)
+            | Message::TableauAlignerEntete
+            | Message::BeautifierTableaux
     ) {
         return routeur::tableaux::traiter(state, message);
     }
@@ -1189,6 +1185,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         message,
         Message::ToggleSidebar
             | Message::WindowResized(_)
+            | Message::EditeurViewport(_)
             | Message::WindowOpened(_)
             | Message::ToggleFocusMode
     ) {
@@ -1202,7 +1199,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             | Message::TitrePrecedent
             | Message::GotoHeading(_)
             | Message::GotoError(_, _)
-            | Message::ChapitreChoisir(_)
     ) {
         return routeur::edition::traiter(state, message);
     }
@@ -1237,6 +1233,8 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         Message::TexteApercuPret(..)
             | Message::SelectionApercuAppuyer { .. }
             | Message::SelectionApercuGlisser { .. }
+            | Message::SelectionApercuGlisserDepuis { .. }
+            | Message::SelectionApercuClic
             | Message::SelectionApercuRelacher
             | Message::SelectionApercuCopier
             | Message::LienApercuActiver(..)
@@ -1305,11 +1303,6 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
-        Message::ChapitresReplier => {
-            state.chapitres_replie = !state.chapitres_replie;
-            Task::none()
-        }
-
         Message::ProjetsSectionReplier => {
             state.projets_section_replie = !state.projets_section_replie;
             Task::none()
@@ -1333,9 +1326,21 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         // Un clic avalé par un voile de fenêtre.
         Message::Rien => Task::none(),
 
+        // La page des paramètres de l'application a son module : elle ne
+        // partage rien avec les normes du document.
+        Message::ParametresOuvrir
+        | Message::ParametresFermer
+        | Message::ParametresPanneau(_)
+        | Message::ParametresBasculeOutilsMiseEnPage
+        | Message::ParametresBasculeOutilsInsertion
+        | Message::ParametresModeTheme(_) => {
+            crate::app::routeur::parametres::traiter(state, message)
+        }
+
         // Les réglages de la mise en page et les métadonnées ont leur module.
         Message::MiseEnPageOuvrir
         | Message::PluginsOuvrir
+        | Message::ReglagesBasculerPlugins(_)
         | Message::MiseEnPageFermer
         | Message::MetaChamp(_, _, _)
         | Message::MetaAjouter
@@ -1349,6 +1354,7 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::MiseEnPageMolette(_, _)
         | Message::MiseEnPageBascule(_)
         | Message::MiseEnPagePanneau(_)
+        | Message::MiseEnPagePanneauPlugins(_)
         | Message::MiseEnPageTypographieDefaut(_)
         | Message::MiseEnPageAccrocher(_)
         | Message::MiseEnPageAppliquer
@@ -1510,7 +1516,9 @@ fn update_interne(state: &mut State, message: Message) -> Task<Message> {
         | Message::CompletionPick(..)
         | Message::CompletionDismiss
         | Message::BlocMonter
-        | Message::BlocDescendre => crate::app::saisie::update(state, message),
+        | Message::BlocDescendre
+        | Message::MenuContextuelExecuter(_)
+        | Message::MenuContextuelFermer => crate::app::saisie::update(state, message),
 
         Message::RawKey(key, modifiers) => handle_shortcut(state, key, modifiers),
 
@@ -2118,6 +2126,8 @@ struct Situation {
     tableau: bool,
     /// La vue des projets est ouverte — `Échap` la ferme.
     projets: bool,
+    /// La page des paramètres est ouverte — `Échap` la ferme.
+    parametres: bool,
     /// La fenêtre de normes en lot est ouverte — `Échap` la ferme.
     normes_lot: bool,
     /// L'éditeur de thème est ouvert — `Échap` le ferme.
@@ -2143,6 +2153,12 @@ struct Situation {
     glossaire: bool,
     /// La fiche d'un terme du glossaire est ouverte — `Échap` la ferme.
     glossaire_fiche: bool,
+    /// La fenêtre des personnes citées est ouverte.
+    personnes: bool,
+    /// La fiche d'une personne est ouverte.
+    personnes_fiche: bool,
+    /// Le panneau d'insertion d'une personne est ouvert.
+    personne_panneau: bool,
     /// Ce qui est au-dessus de la pile des fenêtres.
     aide: bool,
     recherche: bool,
@@ -2178,6 +2194,7 @@ impl Situation {
         Situation {
             tableau: state.tableau.is_some(),
             projets: state.projets_vue,
+            parametres: state.parametres_vue,
             normes_lot: state.normes_lot.is_some(),
             theme: state.editeur_theme.is_some(),
             projet: state.projet_dialogue.is_some(),
@@ -2190,6 +2207,9 @@ impl Situation {
             fiche: state.plugins.bibliographie.edition.is_some(),
             glossaire: state.plugins.glossaire.fenetre,
             glossaire_fiche: state.plugins.glossaire.edition.is_some(),
+            personnes: state.plugins.personnes.fenetre,
+            personnes_fiche: state.plugins.personnes.edition.is_some(),
+            personne_panneau: state.plugins.personnes.panneau.is_some(),
             aide: state.aide,
             recherche: state.recherche.is_some(),
             restauration: state.restauration.is_some(),
@@ -2513,8 +2533,15 @@ fn plan_touche(
         "k" => Action::Message(Message::PaletteOuvrir(
             crate::app::palette::ModePalette::Systeme,
         )),
+        // Le raccourci des préférences, là où on le cherche dans toute
+        // application de bureau.
+        // Les raccourcis d'écriture : la sélection, ou le mot sous le
+        // curseur, reçoit la marque correspondante.
+        "b" => Action::Message(Message::Format(crate::app::message::FormatAction::Gras)),
+        "i" => Action::Message(Message::Format(crate::app::message::FormatAction::Italique)),
+        "u" => Action::Message(Message::Format(crate::app::message::FormatAction::Souligne)),
+        "," => Action::Message(Message::ParametresOuvrir),
         "s" => Action::Enregistrer,
-        "i" => Action::Message(Message::ShowHover),
         "n" => Action::Message(Message::NewFile),
         "o" => Action::Message(Message::OpenFile),
         "c" if etat.apercu => Action::Message(Message::SelectionApercuCopier),
@@ -2591,6 +2618,10 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
         return Message::NormesLotFermer;
     }
 
+    if etat.parametres {
+        return Message::ParametresFermer;
+    }
+
     if etat.projets {
         return Message::ProjetsVue;
     }
@@ -2631,6 +2662,15 @@ fn fermeture_du_dessus(etat: Situation) -> Message {
     if etat.glossaire {
         return Message::GlossaireFenetreFermer;
     }
+    if etat.personnes_fiche {
+        return Message::EditionPersonneFermer;
+    }
+    if etat.personne_panneau {
+        return Message::PersonnePanneauFermer;
+    }
+    if etat.personnes {
+        return Message::PersonnesFenetreFermer;
+    }
     Message::MiseEnPageFermer
 }
 
@@ -2642,6 +2682,7 @@ pub(crate) fn fenetre_ouverte(state: &State) -> bool {
         || state.callout.is_some()
         || state.extension.is_some()
         || state.projets_vue
+        || state.parametres_vue
         || state.normes_lot.is_some()
         || state.editeur_theme.is_some()
         || state.projet_dialogue.is_some()
@@ -2654,6 +2695,9 @@ pub(crate) fn fenetre_ouverte(state: &State) -> bool {
         || state.plugins.bibliographie.edition.is_some()
         || state.plugins.glossaire.fenetre
         || state.plugins.glossaire.edition.is_some()
+        || state.plugins.personnes.fenetre
+        || state.plugins.personnes.edition.is_some()
+        || state.plugins.personnes.panneau.is_some()
         || state.plugins.bible.panneau.is_some()
         || state.plugins.bible.edition.is_some()
         || state.mise_en_page.is_some()
@@ -2669,6 +2713,53 @@ pub(crate) fn pointeur_bloque(state: &State) -> bool {
     fenetre_ouverte(state) || state.picker_couleur.is_some()
 }
 
+/// Les commandes de tableau qui passent par la table générale du clavier.
+///
+/// `Ctrl+Tab` insère une colonne, et `Ctrl+Maj+flèches` déplace la rangée ou
+/// la colonne courante. Le widget laisse ces combinaisons au raccourci
+/// global ; hors d'un tableau, elles gardent leur sens habituel.
+fn commande_tableau(
+    state: &State,
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Message> {
+    use crate::langage::tableau::{SensDeplacement, dans_un_tableau};
+    use iced::keyboard::{Key, key::Named};
+
+    if !state.editor.is_intermediate()
+        || !modifiers.control()
+        || fenetre_ouverte(state)
+        || state.palette.is_some()
+        || state.balise_dialogue.is_some()
+        || state.composeur.is_some()
+        || state.picker_couleur.is_some()
+    {
+        return None;
+    }
+
+    let contenu = state.editor.content();
+    if !dans_un_tableau(&contenu, state.editor.cursor_offset()) {
+        return None;
+    }
+
+    match key {
+        Key::Named(Named::Tab) if !modifiers.shift() => Some(Message::TableauInsererColonne),
+        Key::Named(Named::ArrowUp) if modifiers.shift() => {
+            Some(Message::TableauDeplacer(SensDeplacement::Haut))
+        }
+        Key::Named(Named::ArrowDown) if modifiers.shift() => {
+            Some(Message::TableauDeplacer(SensDeplacement::Bas))
+        }
+        Key::Named(Named::ArrowLeft) if modifiers.shift() => {
+            Some(Message::TableauDeplacer(SensDeplacement::Gauche))
+        }
+        Key::Named(Named::ArrowRight) if modifiers.shift() => {
+            Some(Message::TableauDeplacer(SensDeplacement::Droite))
+        }
+        _ => None,
+    }
+}
+
 fn handle_shortcut(
     state: &mut State,
     key: iced::keyboard::Key,
@@ -2682,6 +2773,12 @@ fn handle_shortcut(
     // La liste de complétion prend les siennes, quand elle est ouverte.
     if let Some(task) = completion_shortcut(state, &key, modifiers) {
         return task;
+    }
+
+    // Les gestes de tableau que le widget laisse au raccourci global :
+    // nouvelle colonne et déplacement d'une rangée ou d'une colonne.
+    if let Some(message) = commande_tableau(state, &key, modifiers) {
+        return update(state, message);
     }
 
     match plan_touche(Situation::de(state), &key, modifiers) {
@@ -3003,40 +3100,6 @@ pub(crate) fn restaurer_l_apercu(state: &State) -> Task<Message> {
         state,
         crate::ui::preview::offset_absolu(state.render.scroll.1),
     )
-}
-
-/// Amène l'aperçu sur le chapitre en cours d'écriture, une fois par chapitre.
-///
-/// Sans cela l'aperçu resterait en tête de l'assemblage : écrire le chapitre 7
-/// revenait à regarder le chapitre 1, et l'on pouvait croire que les chapitres
-/// suivants n'étaient pas rendus.
-///
-/// Le déclenchement a lieu à l'ouverture d'un chapitre, jamais à chaque
-/// compilation : la page d'un chapitre se décale à chaque frappe, et s'accrocher
-/// au numéro arracherait l'aperçu sous les yeux du rédacteur au milieu d'une
-/// phrase.
-fn follow_chapter(state: &mut State) -> Task<Message> {
-    // Le suivi est un réglage, et non une fatalité : suivre le chapitre évite
-    // de croire qu'il n'est pas rendu, mais arrache l'aperçu sous les yeux dès
-    // qu'on écrit ailleurs dans l'assemblage. La barre d'outils porte
-    // l'interrupteur ; ici, on l'écoute.
-    if !state.layout.follow_preview
-        || !state
-            .render
-            .should_follow_chapter(state.editor.path.as_deref())
-    {
-        return Task::none();
-    }
-
-    let Some(page) = state.render.chapter_page else {
-        return Task::none();
-    };
-
-    // Le chapitre est marqué comme suivi **avant** de calculer le défilement :
-    // si le calcul échouait, on ne redéfilerait pas indéfiniment.
-    state.render.followed_chapter = state.editor.path.clone();
-
-    scroll_preview_to_page(state, page)
 }
 
 /// Applique un mode de zoom et invalide les images rasterisées à l'ancienne
@@ -3716,6 +3779,35 @@ mod tests {
         ));
     }
 
+    /// `Ctrl+,` ouvre la page des paramètres ; `Échap` la referme quand elle
+    /// est la page du dessus.
+    #[test]
+    fn ctrl_virgule_ouvre_les_parametres_et_echap_les_ferme() {
+        assert!(matches!(
+            plan_touche(
+                Situation::default(),
+                &touche(","),
+                iced::keyboard::Modifiers::CTRL
+            ),
+            Action::Message(Message::ParametresOuvrir)
+        ));
+
+        let page = Situation {
+            fenetre: true,
+            parametres: true,
+            ..Situation::default()
+        };
+
+        assert!(matches!(
+            plan_touche(
+                page,
+                &nomme(iced::keyboard::key::Named::Escape),
+                iced::keyboard::Modifiers::empty()
+            ),
+            Action::Message(Message::ParametresFermer)
+        ));
+    }
+
     /// `Échap` ferme la fenêtre du dessus, pas une autre.
     #[test]
     fn echap_ferme_celle_du_dessus() {
@@ -3916,6 +4008,26 @@ mod tests_plan_touche {
 
     fn touche(caractere: &str) -> Key {
         Key::Character(caractere.into())
+    }
+
+    /// `Ctrl+B`, `Ctrl+I` et `Ctrl+U` sont les gestes d'écriture.
+    #[test]
+    fn ctrl_b_i_u_demandent_la_mise_en_forme() {
+        let etat = Situation::default();
+        let ctrl = Modifiers::CTRL;
+
+        assert!(matches!(
+            plan_touche(etat, &touche("b"), ctrl),
+            Action::Message(Message::Format(crate::app::message::FormatAction::Gras))
+        ));
+        assert!(matches!(
+            plan_touche(etat, &touche("i"), ctrl),
+            Action::Message(Message::Format(crate::app::message::FormatAction::Italique))
+        ));
+        assert!(matches!(
+            plan_touche(etat, &touche("u"), ctrl),
+            Action::Message(Message::Format(crate::app::message::FormatAction::Souligne))
+        ));
     }
 
     /// Une frappe de texte ne lance **aucun** raccourci : les raccourcis

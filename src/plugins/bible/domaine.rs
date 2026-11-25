@@ -256,7 +256,13 @@ impl Statistiques {
         while let Some(ouverture) = texte[curseur..].find("{{") {
             let debut = curseur + ouverture;
             let Some((_, fin, references)) = reference_au(texte, debut) else {
-                break;
+                // Une ligne canonique comme `{{t}}` ouvre une accolade qui
+                // n'est pas une référence biblique. Avancer d'une balise
+                // plutôt que s'arrêter : une référence plus loin dans le
+                // document — dans une cellule de tableau, par exemple —
+                // reste comptée.
+                curseur = debut + 2;
+                continue;
             };
             for reference in references {
                 let livre = nom_du_livre_dans(
@@ -642,7 +648,10 @@ pub fn releve(texte: &str) -> std::collections::BTreeMap<String, usize> {
     while let Some(ouverture) = texte[curseur..].find("{{") {
         let debut = curseur + ouverture;
         let Some((_, fin, references)) = reference_au(texte, debut) else {
-            break;
+            // Même règle que dans les statistiques : une ouverture
+            // canonique non biblique ne doit pas arrêter le relevé.
+            curseur = debut + 2;
+            continue;
         };
         for reference in references {
             *compte
@@ -661,6 +670,26 @@ pub fn releve(texte: &str) -> std::collections::BTreeMap<String, usize> {
 mod tests {
     use super::*;
     use crate::langage::references::afficher_groupe;
+
+    /// Une référence biblique dans une cellule de tableau est comptée,
+    /// même quand l'ouverture canonique `{{t}}` la précède.
+    #[test]
+    fn une_reference_dans_un_tableau_est_comptee() {
+        let source = "{{t \"Taux\"}}\n| Livre | Verset |\n| --- | --- |\n| Jean | {{Jn 3.16}} |\n";
+        let mut stats = Statistiques::default();
+        stats.ajouter(source);
+
+        assert_eq!(stats.total, 1, "la référence du tableau est comptée");
+        assert_eq!(stats.par_reference.get("Jn 3.16"), Some(&1));
+        assert_eq!(stats.par_livre.get("Jn"), Some(&1));
+
+        let releve = releve(source);
+        assert_eq!(
+            releve.get("Jn 3.16"),
+            Some(&1),
+            "le relevé la retient aussi"
+        );
+    }
 
     /// La syntaxe choisie fait la référence (la fonctionnalité
     /// biblique) : l'abréviation du livre, la ponctuation.

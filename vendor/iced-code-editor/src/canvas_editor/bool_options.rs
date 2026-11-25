@@ -142,6 +142,12 @@ bool_options! {
         default: "Shown by default.", ""
         builder: "Sets built-in context-menu visibility using the builder pattern.",
         "Whether to show the built-in actions";
+    host_context_menu_enabled, set_host_context_menu_enabled, with_host_context_menu_enabled,
+        "Returns whether the host draws its own context menu.",
+        "`true` if the host owns right-click menus, `false` otherwise",
+        default: "Off by default: the widget owns its menu.", "!"
+        builder: "Sets host-owned context menus using the builder pattern.",
+        "Whether the host owns right-click menus";
     folding_enabled, set_folding_enabled, with_folding_enabled,
         "Returns whether code folding is enabled.",
         "`true` if code folding is enabled, `false` otherwise",

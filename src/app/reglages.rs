@@ -35,6 +35,15 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
     match message {
         Message::MiseEnPageOuvrir => ouvrir_panneau(state, false),
         Message::PluginsOuvrir => ouvrir_panneau(state, true),
+        // On garde la copie de travail : une bascule n'est pas une
+        // nouvelle ouverture, et rien de ce qui vient d'être saisi ne se
+        // perd en passant d'un panneau à l'autre.
+        Message::ReglagesBasculerPlugins(plugins) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.plugins = plugins;
+            }
+            Task::none()
+        }
 
         Message::MiseEnPageFermer => {
             state.mise_en_page = None;
@@ -306,6 +315,14 @@ pub(super) fn update(state: &mut State, message: Message) -> Option<Task<Message
             Task::none()
         }
 
+        Message::MiseEnPagePanneauPlugins(panneau) => {
+            if let Some(dialogue) = state.mise_en_page.as_mut() {
+                dialogue.panneau_plugins = panneau;
+            }
+
+            Task::none()
+        }
+
         Message::MiseEnPageTypographieDefaut(defaut) => {
             if let Some(dialogue) = state.mise_en_page.as_mut() {
                 dialogue.reglages.typographie.charger_le_defaut(&defaut);
@@ -474,6 +491,7 @@ fn ouvrir_panneau(state: &mut State, plugins: bool) -> Task<Message> {
         reglages,
         plugins,
         panneau: 0,
+        panneau_plugins: 0,
         callout_preset: 0,
         accrocher: accroche_manquante,
         accroche_manquante,
@@ -512,6 +530,8 @@ fn appliquer(state: &mut State) -> Task<Message> {
     // montrer ou cacher les fonctionnalités du projet, et celles qui
     // configurent les plugins à l'ouverture.
     state.reglages = reglages.clone();
+    state.norme_document =
+        crate::project::norme_qui_correspond(&state.reglages).unwrap_or_default();
     state.configurer_les_plugins_selon_les_normes();
     state.render.pending = true;
     state.rafraichir_statistiques_bibliques();

@@ -785,8 +785,13 @@ impl PreviewWorld {
     /// l'assemblage nomme ses includes en relatif, l'application connaît ses
     /// fichiers en absolu, et les deux doivent désigner le même fichier.
     fn override_for(&self, path: &Path) -> Option<&str> {
+        // La dernière version gagne : les corrections d'assemblage peuvent
+        // enrichir un même fichier en plusieurs passes — le gabarit reçoit
+        // d'abord sa page de titre corrigée, puis son appel de garde. Lire la
+        // première laisserait le fichier dans un état intermédiaire.
         self.overrides
             .iter()
+            .rev()
             .find(|(candidate, _)| same_path(candidate, path))
             .map(|(_, content)| content.as_str())
     }
@@ -1749,6 +1754,42 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// La dernière version en mémoire d'un même fichier gagne sur les
+    /// précédentes : un assemblage peut corriger le gabarit en plusieurs
+    /// passes (page de titre, puis pages de garde).
+    #[test]
+    fn la_derniere_version_d_un_override_gagne() {
+        let dir = std::env::temp_dir().join(format!(
+            "typst-writer-override-derniere-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("racine");
+        let chapitre = dir.join("chapitre.typ");
+        let overrides = vec![
+            (chapitre.clone(), "Version première.\n".to_string()),
+            (chapitre, "Version seconde.\n".to_string()),
+        ];
+
+        let outcome = compile(&dir, "#include \"chapitre.typ\"\n", &overrides);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        let document = outcome.document.expect("document");
+        let pdf = pdf_du_document(&document).expect("PDF");
+        std::fs::write(dir.join("sortie.pdf"), &pdf).expect("PDF sur disque");
+        let Ok(sortie) = std::process::Command::new("pdftotext")
+            .arg(dir.join("sortie.pdf"))
+            .arg("-")
+            .output()
+        else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let texte = String::from_utf8_lossy(&sortie.stdout);
+        assert!(texte.contains("Version seconde."), "{texte}");
+        assert!(!texte.contains("Version première."), "{texte}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Un diagnostic dans un chapitre inclus indique ce chapitre, et la bonne

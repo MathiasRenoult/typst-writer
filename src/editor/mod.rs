@@ -439,6 +439,14 @@ impl EditorState {
         self.editor.is_modified()
     }
 
+    /// Le décalage du texte sous un point de la zone de texte.
+    ///
+    /// Le clic droit arrive avec une position en pixels ; le widget seul sait
+    /// la traduire en octets (lignes visuelles repliées comprises).
+    pub fn offset_at_point(&self, point: iced::Point) -> Option<usize> {
+        self.editor.offset_at_point(point)
+    }
+
     /// Insère du texte à la position du curseur.
     ///
     /// Le mécanisme est le message `Paste` de l'éditeur — c'est son insertion
@@ -531,6 +539,63 @@ impl EditorState {
         }
     }
 
+    /// Déplace le curseur d'un mot entier.
+    ///
+    /// `vers_la_droite` choisit le mot suivant ; `etendre` conserve l'ancre
+    /// de sélection et étend la plage jusqu'à la nouvelle position. Sans
+    /// sélection, l'ancre est le curseur courant.
+    pub fn deplacer_le_curseur_par_mot(
+        &mut self,
+        vers_la_droite: bool,
+        etendre: bool,
+    ) -> Task<EditorMessage> {
+        let contenu = self.content();
+        let curseur = self.cursor_offset();
+        let cible = if vers_la_droite {
+            mots::fin_mot_suivant(&contenu, curseur)
+        } else {
+            mots::debut_mot_precedent(&contenu, curseur)
+        };
+
+        if !etendre {
+            return self.set_cursor_offset(cible);
+        }
+
+        let ancre = self
+            .selection_en_octets()
+            .map(|(debut, fin)| {
+                if curseur >= fin {
+                    debut
+                } else if curseur <= debut {
+                    fin
+                } else {
+                    curseur
+                }
+            })
+            .unwrap_or(curseur);
+
+        self.selectionner_plage(ancre, cible)
+    }
+
+    /// Supprime un mot entier, ou la sélection courante si elle existe.
+    ///
+    /// `vers_la_gauche` distingue `Ctrl+Retour arrière` de `Ctrl+Suppr`.
+    /// La suppression passe par une sélection puis un retour arrière : une
+    /// seule action d'historique, et le curseur reste au bon endroit.
+    pub fn supprimer_le_mot(&mut self, vers_la_gauche: bool) -> Task<EditorMessage> {
+        if let Some((debut, fin)) = self.selection_en_octets() {
+            return self.replace_span(debut, fin, "");
+        }
+
+        let contenu = self.content();
+        let curseur = self.cursor_offset();
+        let plage = mots::plage_mot(&contenu, curseur, vers_la_gauche);
+        if plage.is_empty() {
+            return Task::none();
+        }
+        self.replace_span(plage.start, plage.end, "")
+    }
+
     /// La position (ligne, colonne) d'un décalage en octets du document.
     fn position_de_offset(&self, offset: usize) -> (usize, usize) {
         let content = self.content();
@@ -561,9 +626,18 @@ impl EditorState {
     /// le rendu Typst.
     pub fn apply_format(&mut self, action: FormatAction) -> Task<EditorMessage> {
         let task = match action {
-            FormatAction::Gras => self.wrap_selection("**", "**"),
-            FormatAction::Italique => self.wrap_selection("*", "*"),
-            FormatAction::Souligne => self.wrap_selection("__", "__"),
+            FormatAction::Gras => {
+                self.selectionner_le_mot_si_aucune_selection();
+                self.wrap_selection("**", "**")
+            }
+            FormatAction::Italique => {
+                self.selectionner_le_mot_si_aucune_selection();
+                self.wrap_selection("*", "*")
+            }
+            FormatAction::Souligne => {
+                self.selectionner_le_mot_si_aucune_selection();
+                self.wrap_selection("__", "__")
+            }
             FormatAction::Barre => self.wrap_selection("~~", "~~"),
             FormatAction::GrasItalique => self.wrap_selection("***", "***"),
             FormatAction::Code => self.wrap_selection("`", "`"),
@@ -575,9 +649,9 @@ impl EditorState {
             FormatAction::Titre(niveau) => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Titre(niveau.clamp(1, 6)))
             }
-            FormatAction::ListePuce => self.formater_le_bloc(crate::langage::blocs::Genre::Puce),
+            FormatAction::ListePuce => self.formater_la_liste(crate::langage::blocs::Genre::Puce),
             FormatAction::ListeNumero => {
-                self.formater_le_bloc(crate::langage::blocs::Genre::Numero)
+                self.formater_la_liste(crate::langage::blocs::Genre::Numero)
             }
             FormatAction::CitationBloc => {
                 self.formater_le_bloc(crate::langage::blocs::Genre::Citation)
@@ -597,6 +671,85 @@ impl EditorState {
             return Task::none();
         }
         self.insert_at_cursor(marque)
+    }
+
+    /// Sélectionne le mot sous le curseur quand aucune sélection n'existe.
+    ///
+    /// Les raccourcis de mise en forme travaillent sur ce que l'auteur voit :
+    /// avec une sélection explicite, elle reste la cible ; sans elle, le mot
+    /// est pris sous le curseur, puis avant ou après lui.
+    fn selectionner_le_mot_si_aucune_selection(&mut self) {
+        if self
+            .editor
+            .selected_text()
+            .is_some_and(|texte| !texte.is_empty())
+        {
+            return;
+        }
+
+        let contenu = self.content();
+        let Some(plage) = mots::mot_autour(&contenu, self.cursor_offset()) else {
+            return;
+        };
+        let debut = self.position_de_offset(plage.start);
+        let fin = self.position_de_offset(plage.end);
+        self.editor.selectionner(debut, fin);
+    }
+
+    /// Encadre une sélection explicite par une paire de délimiteurs.
+    ///
+    /// Sans sélection, le caractère tapé garde son sens habituel : cette
+    /// méthode ne prend jamais le mot sous le curseur à la place de la
+    /// frappe.
+    pub fn envelopper_selection(
+        &mut self,
+        ouvrant: char,
+        fermant: char,
+    ) -> Option<Task<EditorMessage>> {
+        let (debut, fin) = self.selection_en_octets()?;
+        let contenu = self.content();
+        let texte = contenu.get(debut..fin)?;
+        if texte.is_empty() {
+            return None;
+        }
+
+        let remplacement = format!("{ouvrant}{texte}{fermant}");
+        let tache = self.replace_span(debut, fin, &remplacement);
+        self.refresh_document();
+        Some(tache)
+    }
+
+    /// Les bornes en octets de la sélection, quand elle n'est pas vide.
+    fn selection_en_octets(&self) -> Option<(usize, usize)> {
+        let ((ligne_debut, colonne_debut), (ligne_fin, colonne_fin)) =
+            self.editor.selected_range()?;
+        let debut = self.offset_de_position(ligne_debut, colonne_debut);
+        let fin = self.offset_de_position(ligne_fin, colonne_fin);
+        (debut < fin).then_some((debut, fin))
+    }
+
+    /// Le décalage en octets d'une position (ligne, colonne) du widget.
+    fn offset_de_position(&self, ligne: usize, colonne: usize) -> usize {
+        let contenu = self.content();
+        let mut debut = 0;
+
+        for (index, texte_ligne) in contenu.split_inclusive('\n').enumerate() {
+            let sans_saut = texte_ligne
+                .strip_suffix('\n')
+                .unwrap_or(texte_ligne)
+                .strip_suffix('\r')
+                .unwrap_or(texte_ligne.strip_suffix('\n').unwrap_or(texte_ligne));
+            if index == ligne {
+                return debut
+                    + sans_saut
+                        .char_indices()
+                        .nth(colonne)
+                        .map_or(sans_saut.len(), |(offset, _)| offset);
+            }
+            debut += texte_ligne.len();
+        }
+
+        contenu.len()
     }
 
     /// Entoure la sélection ; sans sélection, insère deux marqueurs et place le
@@ -632,6 +785,29 @@ impl EditorState {
         let cursor = self.editor.set_cursor(line + 2, 0);
 
         Task::batch([paste, cursor])
+    }
+
+    /// Transforme la ligne du curseur — ou toutes les lignes non vides de
+    /// la sélection — en liste du genre demandé.
+    ///
+    /// C'est volontairement plus étroit qu'une transformation de bloc : une
+    /// puce ne doit pas emporter les lignes voisines d'un paragraphe. Une
+    /// ligne déjà marquée est retirée quand toutes les lignes visées le sont
+    /// déjà ; sinon toutes reçoivent la marque.
+    fn formater_la_liste(&mut self, genre: crate::langage::blocs::Genre) -> Task<EditorMessage> {
+        let contenu = self.editor.content();
+        let selection = self.editor.selected_range();
+        let curseur = self.editor.cursor_position();
+
+        let Some(formatage) = listes::formater_lignes(&contenu, selection, curseur, genre) else {
+            return Task::none();
+        };
+
+        let ligne = self.position_de_offset(formatage.plage.start).0 + formatage.ligne_curseur;
+        let colonne = formatage.colonne_curseur;
+        let tache = self.replace_span(formatage.plage.start, formatage.plage.end, &formatage.texte);
+
+        Task::batch([tache, self.editor.set_cursor(ligne, colonne)])
     }
 
     /// Transforme le bloc du curseur, **entier** — c'est l'unité de
@@ -760,6 +936,15 @@ impl EditorState {
         self.editor.set_cursor(line, column)
     }
 
+    /// Ramène la vue sur le curseur, sans lui faire changer de ligne.
+    ///
+    /// C'est le geste des bords : quand une frappe ou un déplacement place
+    /// le curseur près du haut ou du bas, la vue le suit au lieu de le
+    /// laisser collé au bord de la fenêtre.
+    pub fn defiler_vers_curseur(&self) -> Task<EditorMessage> {
+        self.editor.defiler_vers_curseur()
+    }
+
     /// Retient la position verticale de la vue avant de la quitter.
     ///
     /// Le widget de défilement est reconstruit quand on revient en édition ;
@@ -844,6 +1029,10 @@ impl EditorState {
         // il couvre aussi les parenthèses et les crochets — mais en prose le
         // jeu n'en vaut pas la chandelle : on désactive l'ensemble.
         editor.set_auto_close_brackets(false);
+        // L'application ouvre elle-même le panneau de la balise ou l'action
+        // de colonne sous le clic droit : le menu intégré du widget ne doit
+        // pas se superposer à ce panneau.
+        editor.set_host_context_menu_enabled(true);
 
         // Repères de code : inutiles dans un texte, et visuellement bruyants.
         editor.set_line_numbers_enabled(false);
@@ -1181,6 +1370,100 @@ mod tests {
     /// Les formats qui n'ont pas de bouton dédié restent des actions de
     /// texte : ils enveloppent la sélection avec leur marque exacte.
     #[test]
+    fn le_gras_sans_selection_prend_le_mot_sous_le_curseur() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "Une Église vivante".to_string(),
+        );
+        let _ = editor.editor.set_cursor(0, 7);
+
+        let _ = editor.apply_format(FormatAction::Gras);
+
+        assert_eq!(editor.content(), "Une **Église** vivante");
+    }
+
+    #[test]
+    fn le_gras_prend_le_mot_avant_ou_apres_le_curseur() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        let _ = editor.editor.set_cursor(0, 6);
+
+        let _ = editor.apply_format(FormatAction::Italique);
+        assert_eq!(editor.content(), "Un *mot* ici");
+
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        let _ = editor.editor.set_cursor(0, 2);
+        let _ = editor.apply_format(FormatAction::Souligne);
+        assert_eq!(editor.content(), "__Un__ mot ici");
+
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), " mot".to_string());
+        let _ = editor.editor.set_cursor(0, 0);
+        let _ = editor.apply_format(FormatAction::Souligne);
+        assert_eq!(editor.content(), " __mot__");
+    }
+
+    #[test]
+    fn une_selection_explicite_reste_la_cible_du_format() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        editor.editor.selectionner((0, 3), (0, 6));
+
+        let _ = editor.apply_format(FormatAction::Gras);
+
+        assert_eq!(editor.content(), "Un **mot** ici");
+    }
+
+    #[test]
+    fn replace_span_ne_touche_qu_a_sa_plage() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "Avant {{c red|un mot}} après".to_string(),
+        );
+        let start = editor.content().find("{{c").unwrap();
+        let end = editor.content().find("}}").unwrap() + 2;
+        let _ = editor.replace_span(start, end, "MILIEU");
+        assert_eq!(editor.content(), "Avant MILIEU après");
+    }
+
+    #[test]
+    fn un_ouvrant_tape_encadre_une_selection() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        editor.editor.selectionner((0, 3), (0, 6));
+
+        let _ = editor
+            .envelopper_selection('(', ')')
+            .expect("une sélection est encadrée");
+        assert_eq!(editor.content(), "Un (mot) ici");
+    }
+
+    #[test]
+    fn les_quatre_ouvrants_encadrent_la_selection() {
+        for (ouvrant, fermant, attendu) in [
+            ('"', '"', "Un \"mot\" ici"),
+            ('(', ')', "Un (mot) ici"),
+            ('[', ']', "Un [mot] ici"),
+            ('{', '}', "Un {mot} ici"),
+        ] {
+            let mut editor =
+                EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+            editor.editor.selectionner((0, 3), (0, 6));
+            let _ = editor
+                .envelopper_selection(ouvrant, fermant)
+                .expect("une sélection est encadrée");
+            assert_eq!(editor.content(), attendu, "ouvrant {ouvrant:?}");
+        }
+    }
+
+    #[test]
+    fn sans_selection_un_ouvrant_ne_se_propage_pas() {
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), "Un mot".to_string());
+        assert!(editor.envelopper_selection('(', ')').is_none());
+        assert_eq!(editor.content(), "Un mot");
+    }
+
+    #[test]
     fn les_formats_de_texte_supplementaires_enveloppent_la_selection() {
         for (action, attendu) in [
             (FormatAction::Souligne, "__mot__"),
@@ -1426,10 +1709,27 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// Une transformation de bloc touche le bloc entier — pas la ligne du
-    /// curseur — et le curseur reste au sien.
+    /// Un curseur au bord haut ou bas demande un défilement.
     #[test]
-    fn une_transformation_touche_le_bloc_entier() {
+    fn le_curseur_au_bord_demande_un_defilement() {
+        let contenu = "une ligne\n".repeat(40);
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), contenu);
+        editor.editor = editor.editor.with_viewport_height(100.0);
+
+        let _ = editor.editor.set_cursor(20, 0);
+        let bas = editor.defiler_vers_curseur();
+        assert!(bas.units() > 0, "le bas de la fenêtre fait défiler");
+
+        let _ = editor.editor.defiler_vers_offset(200.0);
+        let _ = editor.editor.set_cursor(6, 0);
+        let haut = editor.defiler_vers_curseur();
+        assert!(haut.units() > 0, "le haut de la fenêtre fait défiler");
+    }
+
+    /// Une puce ne touche que la ligne du curseur, jamais les lignes
+    /// voisines du même paragraphe.
+    #[test]
+    fn une_puce_ne_touche_que_la_ligne_du_curseur() {
         let mut editor = EditorState::new_file(
             PathBuf::from("document.tw"),
             "une phrase\ndeux phrases.\n\nLa suite.".to_string(),
@@ -1438,13 +1738,38 @@ mod tests {
 
         let _ = editor.apply_format(FormatAction::ListePuce);
 
-        assert_eq!(
-            editor.content(),
-            "- une phrase\n- deux phrases.\n\nLa suite."
-        );
+        assert_eq!(editor.content(), "une phrase\n- deux phrases.\n\nLa suite.");
 
         // Le curseur est sur sa ligne, colonne ajustée de la puce.
         assert_eq!(editor.editor.cursor_position(), (1, 5));
+    }
+
+    /// Une sélection transforme toutes ses lignes non vides, et elles seules.
+    #[test]
+    fn une_puce_s_applique_aux_lignes_non_vides_de_la_selection() {
+        let source = "une phrase\n\ndeux phrases.\n\nLa suite.";
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), source.to_string());
+        editor.editor.selectionner((0, 0), (3, 0));
+
+        let _ = editor.apply_format(FormatAction::ListePuce);
+
+        assert_eq!(
+            editor.content(),
+            "- une phrase\n\n- deux phrases.\n\nLa suite."
+        );
+    }
+
+    /// Une sélection déjà en puces se défait sur ses lignes, sans toucher
+    /// les puces qui sont hors de la sélection.
+    #[test]
+    fn une_selection_de_puces_se_defait_sur_ses_lignes() {
+        let source = "- une\n- deux\n\n- trois";
+        let mut editor = EditorState::new_file(PathBuf::from("document.tw"), source.to_string());
+        editor.editor.selectionner((0, 0), (2, 0));
+
+        let _ = editor.apply_format(FormatAction::ListePuce);
+
+        assert_eq!(editor.content(), "une\ndeux\n\n- trois");
     }
 
     /// Un bloc se déplace d'un bloc, et le curseur le suit.
@@ -1515,13 +1840,53 @@ mod tests {
         assert!(!editor.is_search_open());
     }
 
+    /// La taille réelle du widget arrive par le `Sensor` de l'interface,
+    /// pas seulement par un événement de défilement.
+    #[test]
+    fn la_taille_reelle_de_la_vue_est_retenue() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "Une ligne de texte.\nDeuxième ligne.\n".repeat(80),
+        );
+
+        editor.editor.set_viewport_size(420.0, 180.0);
+
+        assert!((editor.editor.viewport_width() - 420.0).abs() < 0.5);
+        assert!((editor.editor.viewport_height() - 180.0).abs() < 0.5);
+    }
+
+    /// Un décalage demandé ne doit jamais dépasser le contenu : un ancien
+    /// défilement restauré après un changement de mode ou de géométrie
+    /// laisserait sinon le bas de la vue blanc, sous les dernières lignes.
+    #[test]
+    fn un_decallage_de_vue_ne_depasse_pas_le_contenu() {
+        let mut editor = EditorState::new_file(
+            PathBuf::from("document.tw"),
+            "Une
+Deux
+Trois
+"
+            .to_string(),
+        );
+
+        let _ = editor.editor.defiler_vers_offset(10_000.0);
+
+        assert!(
+            editor.editor.viewport_scroll() < 1.0,
+            "un petit document ne peut pas être défilé à 10 000 px : {}",
+            editor.editor.viewport_scroll()
+        );
+    }
+
     /// L'ancre d'édition est un décalage de vue, pas une ligne de curseur :
     /// elle doit revenir au pixel près, sans déplacer le curseur.
     #[test]
     fn l_ancre_d_edition_est_un_decalage_de_vue() {
+        // Le document doit être plus haut que la fenêtre : un défilement
+        // demandé sur trois lignes n'a aucune raison de rester à 120 px.
         let mut editor = EditorState::new_file(
             PathBuf::from("document.tw"),
-            "Une\nDeux\nTrois\n".to_string(),
+            "Une ligne de texte.\nDeuxième ligne.\n".repeat(80),
         );
 
         let _ = editor.editor.defiler_vers_offset(120.0);
@@ -1534,8 +1899,57 @@ mod tests {
         assert!((editor.editor.viewport_scroll() - 120.0).abs() < 0.5);
         assert_eq!(editor.editor.cursor_position(), avant);
     }
+
+    #[test]
+    fn ctrl_fleche_deplace_le_curseur_d_un_mot_entier() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        let _ = editor.editor.set_cursor(0, 2);
+
+        let _ = editor.deplacer_le_curseur_par_mot(true, false);
+        assert_eq!(editor.editor.cursor_position(), (0, 6));
+
+        let _ = editor.deplacer_le_curseur_par_mot(false, false);
+        assert_eq!(editor.editor.cursor_position(), (0, 3));
+    }
+
+    #[test]
+    fn ctrl_maj_fleche_etend_la_selection_par_mot() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        let _ = editor.editor.set_cursor(0, 2);
+
+        let _ = editor.deplacer_le_curseur_par_mot(true, true);
+
+        assert_eq!(editor.editor.cursor_position(), (0, 6));
+        assert_eq!(editor.editor.selected_text().as_deref(), Some(" mot"));
+    }
+
+    #[test]
+    fn ctrl_retour_arriere_supprime_le_mot_precedent() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        let _ = editor.editor.set_cursor(0, 6);
+
+        let _ = editor.supprimer_le_mot(true);
+
+        assert_eq!(editor.content(), "Un  ici");
+    }
+
+    #[test]
+    fn ctrl_suppr_supprime_le_mot_suivant() {
+        let mut editor =
+            EditorState::new_file(PathBuf::from("document.tw"), "Un mot ici".to_string());
+        let _ = editor.editor.set_cursor(0, 3);
+
+        let _ = editor.supprimer_le_mot(false);
+
+        assert_eq!(editor.content(), "Un  ici");
+    }
 }
 
 /// La complétion locale : contexte, filtre, insertion — ses fonctions
 /// pures vivent ici, hors du monde LSP retiré.
 pub mod completion;
+mod listes;
+pub(crate) mod mots;

@@ -73,6 +73,9 @@ pub enum Bloc {
         lignes: Vec<Vec<Vec<Inline>>>,
         /// L'alignement de chaque colonne, dans l'ordre.
         alignements: Vec<Alignement>,
+        /// Le titre du tableau, vide s'il n'en a pas. Un tableau titré est
+        /// une figure numérotée et linkable, comme une image légendée.
+        titre: String,
     },
     /// Une image : `![légende](chemin)`.
     Image {
@@ -119,6 +122,10 @@ pub enum Bloc {
     /// L'index des citations bibliques : `{{index}}`. Il est recalculé au
     /// rendu, comme la table des matières — jamais une liste figée.
     IndexBiblique,
+
+    /// L'index des personnes citées : `{{index-personnes}}`. Il est
+    /// recalculé au rendu à partir des balises `{{p clé}}`.
+    IndexPersonnes,
 }
 
 /// Un graphique primaviz : son type, ses paramètres et son CSV.
@@ -243,6 +250,34 @@ pub struct Proprietes {
 }
 
 impl Proprietes {
+    /// Le mot est-il une position de page qui peut s'écrire seule ?
+    ///
+    /// `{centre}` est la forme courte de `{position=centre}` : la mise en
+    /// page d'un morceau ne doit pas coûter une clé et un signe égal.
+    pub fn position_compacte(valeur: &str) -> bool {
+        matches!(
+            valeur.trim(),
+            "haut"
+                | "top"
+                | "centre"
+                | "center"
+                | "bas"
+                | "bottom"
+                | "gauche"
+                | "left"
+                | "droite"
+                | "right"
+                | "haut-gauche"
+                | "top-left"
+                | "haut-droite"
+                | "top-right"
+                | "bas-gauche"
+                | "bottom-left"
+                | "bas-droite"
+                | "bottom-right"
+        )
+    }
+
     /// Sans aucune propriété.
     pub fn vide() -> Self {
         Self::default()
@@ -370,13 +405,17 @@ pub enum Inline {
     Note(Vec<Inline>),
     /// Un lien : `[texte](https://…)`.
     Lien { texte: Vec<Inline>, cible: String },
-    /// Un lien interne : `[[référence|texte]]`, vers un titre, une figure
-    /// ou une image du même document.
+    /// Un lien interne : `[[référence|texte]]`, vers un titre, une figure,
+    /// une image ou un tableau titré du même document.
     LienInterne {
         /// L'ancre de l'élément visé, telle que `liens::collecter` la donne.
         reference: String,
         /// Le texte affiché du lien.
         texte: Vec<Inline>,
+        /// `show-title=true` : afficher le titre de la table visée à la
+        /// place du texte fourni. Sans titre, le texte fourni reste le
+        /// repli : le lien ne devient jamais vide.
+        afficher_titre: bool,
     },
     /// Une balise écrite dans la forme canonique unifiée : `{{couleur red|…}}`,
     /// `{{date …}}`, `{{glossaire …}}`, `{{bible …}}`.
@@ -400,6 +439,13 @@ pub enum Inline {
         elements: Vec<crate::langage::references::ElementCitation>,
         forme: crate::langage::references::FormeLivre,
     },
+
+    /// Une personne citée : `{{p clé}}`, ou `{{p clé|forme affichée}}`.
+    ///
+    /// Le contenu est vide quand le nom vient du registre `personnes.toml`.
+    /// Une forme explicite est conservée telle quelle : elle peut différer
+    /// du nom canonique (prénom seul, surnom, forme d'auteur).
+    Personne { cle: String, contenu: Vec<Inline> },
 }
 
 /// Une référence bibliographique dans un appel de citation.
@@ -486,6 +532,7 @@ impl Document {
     /// C'est la base du compteur de mots : titres, citations et listes comptent,
     /// tandis que le balisage et les caractères Typst d'un bloc brut ne comptent
     /// pas comme des mots visibles.
+    #[allow(dead_code)] // API de contrat : éprouvée par les tests du schéma.
     pub fn texte_nu(&self) -> String {
         self.blocs
             .iter()
@@ -527,6 +574,7 @@ impl Bloc {
                 entete,
                 lignes,
                 alignements,
+                ..
             } => {
                 // Une en-tête, jamais vide ; autant d'alignements que de
                 // colonnes ; chaque ligne a le même compte de cellules —
@@ -551,6 +599,7 @@ impl Bloc {
             Bloc::Sommaire => true,
             Bloc::Bibliographie => true,
             Bloc::IndexBiblique => true,
+            Bloc::IndexPersonnes => true,
             Bloc::Décor { proprietes, bloc } => {
                 // Un seul manteau, jamais deux : un décor dans un décor se
                 // rassemble à l'écriture.
@@ -620,10 +669,18 @@ impl Inline {
             // La clé est un identifiant — c'est ce qui rend l'écriture
             // `{glo:clé majuscule pluriel}` univoque.
             Inline::Glo { cle, .. } => crate::project::glossaire::EntreeGlossaire::cle_valide(cle),
+            // La clé d'une personne est un identifiant, comme celle du
+            // glossaire ; sa forme affichée est du texte inline ordinaire.
+            Inline::Personne { cle, contenu } => {
+                crate::project::personnes::EntreePersonne::cle_valide(cle)
+                    && inline_canonique(contenu)
+            }
             Inline::Lien { texte, cible } => {
                 inline_canonique(texte) && !cible.contains('\n') && !contient_lien(texte)
             }
-            Inline::LienInterne { reference, texte } => {
+            Inline::LienInterne {
+                reference, texte, ..
+            } => {
                 !reference.trim().is_empty()
                     && reference
                         .chars()
@@ -684,6 +741,8 @@ pub fn ouvre_un_bloc(texte: &str) -> bool {
         || crate::langage::parse::lire_proprietes_ligne(debut).is_some()
         || debut.starts_with('|')
         || debut.starts_with("$$")
+        || debut.starts_with("{{t")
+        || debut.starts_with("{{tableau")
     {
         return true;
     }
@@ -812,7 +871,8 @@ fn contient_emphase(inline: &[Inline]) -> bool {
         | Inline::Souligne(contenu)
         | Inline::Barre(contenu)
         | Inline::Note(contenu)
-        | Inline::Couleur { contenu, .. } => contient_emphase(contenu) || element.est_emphase(),
+        | Inline::Couleur { contenu, .. }
+        | Inline::Personne { contenu, .. } => contient_emphase(contenu) || element.est_emphase(),
         Inline::Canonique(interne) => {
             contient_emphase(std::slice::from_ref(interne.as_ref())) || element.est_emphase()
         }
@@ -836,7 +896,8 @@ fn contient_lien(inline: &[Inline]) -> bool {
         | Inline::Souligne(contenu)
         | Inline::Barre(contenu)
         | Inline::Note(contenu)
-        | Inline::Couleur { contenu, .. } => contient_lien(contenu),
+        | Inline::Couleur { contenu, .. }
+        | Inline::Personne { contenu, .. } => contient_lien(contenu),
         Inline::Canonique(interne) => contient_lien(std::slice::from_ref(interne.as_ref())),
         _ => false,
     })
@@ -871,17 +932,30 @@ impl Bloc {
     /// Le balisage est retiré : seul le texte visible compte. C'est la même
     /// règle que le compteur de mots actuel, appliquée à l'AST plutôt qu'au
     /// source.
+    #[allow(dead_code)] // API de contrat : éprouvée par les tests du schéma.
     pub fn texte_nu(&self) -> String {
         match self {
             // Un décor n'ajoute pas de texte : il habille celui qui parle.
             Bloc::Décor { bloc, .. } => bloc.texte_nu(),
             // Les cellules se lisent, comme tout texte.
-            Bloc::Tableau { entete, lignes, .. } => entete
-                .iter()
-                .chain(lignes.iter().flatten())
-                .map(|cellule| inline_texte_nu(cellule))
-                .collect::<Vec<_>>()
-                .join(" "),
+            Bloc::Tableau {
+                entete,
+                lignes,
+                titre,
+                ..
+            } => {
+                let cellules = entete
+                    .iter()
+                    .chain(lignes.iter().flatten())
+                    .map(|cellule| inline_texte_nu(cellule))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if titre.trim().is_empty() {
+                    cellules
+                } else {
+                    format!("{titre} {cellules}")
+                }
+            }
             // La légende est du texte visible — elle se lit.
             Bloc::Image { légende, .. } => inline_texte_nu(légende),
             Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
@@ -905,6 +979,7 @@ impl Bloc {
             | Bloc::Glossaire { .. }
             | Bloc::Bibliographie
             | Bloc::IndexBiblique
+            | Bloc::IndexPersonnes
             | Bloc::Sommaire => String::new(),
             Bloc::Formule(texte) => texte.clone(),
             Bloc::Canonique(interne) => interne.texte_nu(),
@@ -964,6 +1039,13 @@ pub fn inline_texte_nu(inline: &[Inline]) -> String {
                 out.push_str(&inline_texte_nu(std::slice::from_ref(interne.as_ref())))
             }
             Inline::Glo { cle, .. } => out.push_str(cle),
+            Inline::Personne { cle, contenu } => {
+                if contenu.is_empty() {
+                    out.push_str(cle);
+                } else {
+                    out.push_str(&inline_texte_nu(contenu));
+                }
+            }
             Inline::Citation(references) => {
                 for (index, reference) in references.iter().enumerate() {
                     if index > 0 {

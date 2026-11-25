@@ -1,6 +1,7 @@
 //! Les éléments notables d'un document, et leurs ancres.
 //!
-//! Un titre, une figure ou une image reçoit une référence stable : c'est elle
+//! Un titre, une figure, une image ou un tableau titré reçoit une référence
+//! stable : c'est elle
 //! que l'on écrit dans un lien interne `[[référence|texte]]`. La même
 //! traversée sert à la recherche de la palette et à la génération Typst, pour
 //! que la suggestion et l'ancre ne divergent jamais.
@@ -16,6 +17,8 @@ pub enum NatureLien {
     Titre(u8),
     /// Une figure ou une image.
     Figure,
+    /// Un tableau titré.
+    Tableau,
 }
 
 /// Ce qu'un lien interne affiche quand son texte est un mot-clé entre
@@ -27,6 +30,8 @@ pub enum AffichageLien {
     Chapitre,
     /// Le numéro composé de la figure visée — « Figure 4 ».
     Figure,
+    /// Le numéro composé du tableau visé — « Tableau 2 ».
+    Tableau,
     /// La page composée où se trouve la cible — « page 7 ».
     Page,
 }
@@ -54,6 +59,7 @@ pub fn affichage_du_lien(texte: &[Inline]) -> Option<AffichageLien> {
     match interieur.trim().to_lowercase().as_str() {
         "chapitre" | "section" | "titre" => Some(AffichageLien::Chapitre),
         "figure" | "image" => Some(AffichageLien::Figure),
+        "tableau" | "table" => Some(AffichageLien::Tableau),
         "page" => Some(AffichageLien::Page),
         _ => None,
     }
@@ -79,6 +85,9 @@ pub struct ElementLien {
 #[derive(Debug, Default)]
 pub struct CompteurLiens {
     vus: HashMap<String, usize>,
+    /// Nombre de tableaux rencontrés : un tableau sans titre reçoit
+    /// `tableau-1`, `tableau-2`… et reste ainsi référençable.
+    tableaux: usize,
 }
 
 impl CompteurLiens {
@@ -90,6 +99,17 @@ impl CompteurLiens {
     /// L'ancre d'une figure ou d'une image.
     pub fn figure(&mut self, texte: &str) -> String {
         self.prochain("figure", &slug(texte))
+    }
+
+    /// L'ancre d'un tableau — son titre, ou son rang quand il n'en a pas.
+    pub fn tableau(&mut self, texte: &str) -> String {
+        self.tableaux += 1;
+        let base = if texte.trim().is_empty() {
+            self.tableaux.to_string()
+        } else {
+            slug(texte)
+        };
+        self.prochain("tableau", &base)
     }
 
     fn prochain(&mut self, prefixe: &str, base: &str) -> String {
@@ -148,6 +168,7 @@ fn cibles_resolues(document: &Document) -> HashMap<String, String> {
         if let Some(courte) = complete
             .strip_prefix("titre-")
             .or_else(|| complete.strip_prefix("figure-"))
+            .or_else(|| complete.strip_prefix("tableau-"))
         {
             courtes
                 .entry(courte.to_string())
@@ -167,28 +188,115 @@ fn cibles_resolues(document: &Document) -> HashMap<String, String> {
     cibles
 }
 
+/// Les tableaux qui portent un titre, indexés par leur ancre.
+///
+/// Le compteur suit exactement l'ordre de `collecter` et du générateur : même
+/// les tableaux sans titre avancent le rang, afin que `tableau-1` désigne
+/// toujours le même tableau.
+pub fn titres_des_tableaux(document: &Document) -> HashMap<String, String> {
+    let mut compteur = CompteurLiens::default();
+    let mut titres = HashMap::new();
+    for bloc in &document.blocs {
+        parcourir_titres_des_tableaux(bloc, &mut compteur, &mut titres);
+    }
+    titres
+}
+
+fn parcourir_titres_des_tableaux(
+    bloc: &Bloc,
+    compteur: &mut CompteurLiens,
+    titres: &mut HashMap<String, String>,
+) {
+    match bloc {
+        Bloc::Tableau { titre, .. } => {
+            let texte = titre.trim();
+            let reference = compteur.tableau(texte);
+            if !texte.is_empty() {
+                titres.insert(reference, texte.to_string());
+            }
+        }
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => {
+            parcourir_titres_des_tableaux(bloc, compteur, titres);
+        }
+        _ => {}
+    }
+}
+
+/// Les ancres de tous les tableaux, titrés ou non.
+fn tableaux_references(document: &Document) -> HashSet<String> {
+    collecter(document)
+        .into_iter()
+        .filter(|element| element.nature == NatureLien::Tableau)
+        .map(|element| element.reference)
+        .collect()
+}
+
 /// Réécrit les liens courts vers leur ancre complète, pour la génération
 /// Typst uniquement : le fichier `.tw` garde la forme écrite par l'auteur.
 ///
 /// Le document n'est copié que si un lien a réellement besoin d'être résolu :
-/// la génération d'un document sans ancre courte reste sans allocation.
+/// la génération d'un document sans ancre courte ni `show-title` reste sans
+/// allocation.
 pub fn resoudre(document: &Document) -> std::borrow::Cow<'_, Document> {
     let cibles = cibles_resolues(document);
+    let titres = titres_des_tableaux(document);
+    let tableaux = tableaux_references(document);
 
     if !document
         .blocs
         .iter()
-        .any(|bloc| contient_lien_court(bloc, &cibles))
+        .any(|bloc| contient_lien_court(bloc, &cibles) || contient_lien_titre(bloc))
     {
         return std::borrow::Cow::Borrowed(document);
     }
 
     let mut copie = document.clone();
     for bloc in &mut copie.blocs {
-        resoudre_bloc(bloc, &cibles);
+        resoudre_bloc(bloc, &cibles, &titres, &tableaux);
     }
 
     std::borrow::Cow::Owned(copie)
+}
+
+fn contient_lien_titre(bloc: &Bloc) -> bool {
+    match bloc {
+        Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
+            contient_lien_titre_inline(contenu)
+        }
+        Bloc::ListePuce(items) | Bloc::ListeNumero(items) => items
+            .iter()
+            .any(|item| contient_lien_titre_inline(&item.contenu)),
+        Bloc::Tableau { entete, lignes, .. } => entete
+            .iter()
+            .chain(lignes.iter().flatten())
+            .any(|cellule| contient_lien_titre_inline(cellule)),
+        Bloc::Image { légende, .. } => contient_lien_titre_inline(légende),
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_lien_titre(bloc),
+        Bloc::Garde(contenu) => contenu.iter().any(contient_lien_titre),
+        _ => false,
+    }
+}
+
+fn contient_lien_titre_inline(inline: &[Inline]) -> bool {
+    inline.iter().any(|element| match element {
+        Inline::LienInterne {
+            texte,
+            afficher_titre,
+            ..
+        } => *afficher_titre || contient_lien_titre_inline(texte),
+        Inline::Gras(contenu)
+        | Inline::Italique(contenu)
+        | Inline::GrasItalique(contenu)
+        | Inline::Souligne(contenu)
+        | Inline::Barre(contenu)
+        | Inline::Note(contenu)
+        | Inline::Couleur { contenu, .. }
+        | Inline::Lien { texte: contenu, .. } => contient_lien_titre_inline(contenu),
+        Inline::Canonique(contenu) => {
+            contient_lien_titre_inline(std::slice::from_ref(contenu.as_ref()))
+        }
+        _ => false,
+    })
 }
 
 fn contient_lien_court(bloc: &Bloc, cibles: &HashMap<String, String>) -> bool {
@@ -212,7 +320,9 @@ fn contient_lien_court(bloc: &Bloc, cibles: &HashMap<String, String>) -> bool {
 
 fn contient_lien_court_inline(inline: &[Inline], cibles: &HashMap<String, String>) -> bool {
     inline.iter().any(|element| match element {
-        Inline::LienInterne { reference, texte } => {
+        Inline::LienInterne {
+            reference, texte, ..
+        } => {
             cibles
                 .get(reference)
                 .is_some_and(|complete| complete != reference)
@@ -233,40 +343,69 @@ fn contient_lien_court_inline(inline: &[Inline], cibles: &HashMap<String, String
     })
 }
 
-fn resoudre_bloc(bloc: &mut Bloc, cibles: &HashMap<String, String>) {
+fn resoudre_bloc(
+    bloc: &mut Bloc,
+    cibles: &HashMap<String, String>,
+    titres: &HashMap<String, String>,
+    tableaux: &HashSet<String>,
+) {
     match bloc {
         Bloc::Titre { contenu, .. } | Bloc::Paragraphe(contenu) | Bloc::Citation(contenu) => {
-            resoudre_inline(contenu, cibles)
+            resoudre_inline(contenu, cibles, titres, tableaux)
         }
         Bloc::ListePuce(items) | Bloc::ListeNumero(items) => {
             for item in items {
-                resoudre_inline(&mut item.contenu, cibles);
+                resoudre_inline(&mut item.contenu, cibles, titres, tableaux);
             }
         }
         Bloc::Tableau { entete, lignes, .. } => {
             for cellule in entete.iter_mut().chain(lignes.iter_mut().flatten()) {
-                resoudre_inline(cellule, cibles);
+                resoudre_inline(cellule, cibles, titres, tableaux);
             }
         }
-        Bloc::Image { légende, .. } => resoudre_inline(légende, cibles),
-        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => resoudre_bloc(bloc, cibles),
+        Bloc::Image { légende, .. } => resoudre_inline(légende, cibles, titres, tableaux),
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => {
+            resoudre_bloc(bloc, cibles, titres, tableaux)
+        }
         Bloc::Garde(contenu) => {
             for bloc in contenu {
-                resoudre_bloc(bloc, cibles);
+                resoudre_bloc(bloc, cibles, titres, tableaux);
             }
         }
         _ => {}
     }
 }
 
-fn resoudre_inline(inline: &mut [Inline], cibles: &HashMap<String, String>) {
+fn resoudre_inline(
+    inline: &mut [Inline],
+    cibles: &HashMap<String, String>,
+    titres: &HashMap<String, String>,
+    tableaux: &HashSet<String>,
+) {
     for element in inline {
         match element {
-            Inline::LienInterne { reference, texte } => {
+            Inline::LienInterne {
+                reference,
+                texte,
+                afficher_titre,
+            } => {
                 if let Some(complete) = cibles.get(reference) {
                     *reference = complete.clone();
                 }
-                resoudre_inline(texte, cibles);
+                if *afficher_titre {
+                    if let Some(titre) = titres.get(reference) {
+                        *texte = vec![Inline::Texte(titre.clone())];
+                    }
+                } else if tableaux.contains(reference)
+                    && titres.get(reference).is_none()
+                    && affichage_du_lien(texte) == Some(AffichageLien::Tableau)
+                {
+                    // Un tableau sans titre n'est pas une figure : demander
+                    // « Tableau 0 » serait faux. Le mot-clé reste lisible,
+                    // sans numéro, et le lien continue de fonctionner.
+                    *texte = vec![Inline::Texte("Tableau".to_string())];
+                }
+                resoudre_inline(texte, cibles, titres, tableaux);
             }
             Inline::Gras(contenu)
             | Inline::Italique(contenu)
@@ -275,10 +414,15 @@ fn resoudre_inline(inline: &mut [Inline], cibles: &HashMap<String, String>) {
             | Inline::Barre(contenu)
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. }
-            | Inline::Lien { texte: contenu, .. } => resoudre_inline(contenu, cibles),
-            Inline::Canonique(contenu) => {
-                resoudre_inline(std::slice::from_mut(contenu.as_mut()), cibles)
+            | Inline::Lien { texte: contenu, .. } => {
+                resoudre_inline(contenu, cibles, titres, tableaux)
             }
+            Inline::Canonique(contenu) => resoudre_inline(
+                std::slice::from_mut(contenu.as_mut()),
+                cibles,
+                titres,
+                tableaux,
+            ),
             _ => {}
         }
     }
@@ -317,6 +461,20 @@ fn parcourir(bloc: &Bloc, compteur: &mut CompteurLiens, elements: &mut Vec<Eleme
                     "Figure".to_string()
                 },
                 nature: NatureLien::Figure,
+            });
+        }
+        Bloc::Tableau { titre, .. } => {
+            let texte = titre.trim();
+            let reference = compteur.tableau(texte);
+            elements.push(ElementLien {
+                reference,
+                libelle: if texte.is_empty() {
+                    "Tableau sans titre".to_string()
+                } else {
+                    texte.to_string()
+                },
+                description: "Tableau".to_string(),
+                nature: NatureLien::Tableau,
             });
         }
         Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => {
@@ -382,7 +540,9 @@ fn parcourir_les_liens(bloc: &Bloc, cibles: &HashSet<String>, sortie: &mut Vec<L
 fn parcourir_inline(inline: &[Inline], cibles: &HashSet<String>, sortie: &mut Vec<LienCasse>) {
     for element in inline {
         match element {
-            Inline::LienInterne { reference, texte } => {
+            Inline::LienInterne {
+                reference, texte, ..
+            } => {
                 if !cibles.contains(reference) {
                     sortie.push(LienCasse {
                         reference: reference.clone(),
@@ -398,6 +558,7 @@ fn parcourir_inline(inline: &[Inline], cibles: &HashSet<String>, sortie: &mut Ve
             | Inline::Barre(contenu)
             | Inline::Note(contenu)
             | Inline::Couleur { contenu, .. }
+            | Inline::Personne { contenu, .. }
             | Inline::Lien { texte: contenu, .. } => parcourir_inline(contenu, cibles, sortie),
             Inline::Canonique(interne) => {
                 parcourir_inline(std::slice::from_ref(interne.as_ref()), cibles, sortie);
@@ -466,6 +627,69 @@ mod tests {
         assert_eq!(elements[1].reference, "figure-une-carte");
         assert_eq!(elements[2].reference, "titre-introduction-2");
         assert_eq!(elements[0].nature, NatureLien::Titre(1));
+    }
+
+    #[test]
+    fn un_tableau_titre_est_linkable() {
+        let document = super::super::parse::parse(
+            "{{t \"Taux\"}}\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nVoir [[taux|\"tableau\"]].\n",
+        );
+        let elements = collecter(&document);
+        assert_eq!(
+            elements
+                .iter()
+                .map(|element| element.reference.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tableau-taux"]
+        );
+        assert_eq!(elements[0].nature, NatureLien::Tableau);
+        assert_eq!(elements[0].libelle, "Taux");
+
+        let typst = super::super::generer::generer(&document);
+        assert!(typst.contains("<tableau-taux>"), "{typst}");
+        assert!(
+            typst.contains(
+                "#link(<tableau-taux>)[Tableau #context counter(figure.where(kind: \"table\")).display(at: <tableau-taux>)]"
+            ),
+            "{typst}"
+        );
+        assert!(
+            super::cibles_absentes(&document).is_empty(),
+            "l'ancre du tableau est reconnue"
+        );
+    }
+
+    #[test]
+    fn un_tableau_sans_titre_reste_referenceable() {
+        let document = super::super::parse::parse(
+            "{{t}}\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nVoir [[1|le tableau]] et [[1|\"tableau\"]].\n",
+        );
+        let elements = collecter(&document);
+        assert_eq!(elements.len(), 1, "{elements:?}");
+        assert_eq!(elements[0].reference, "tableau-1");
+        assert_eq!(elements[0].libelle, "Tableau sans titre");
+
+        let typst = super::super::generer::generer(&document);
+        assert!(typst.contains("<tableau-1>"), "{typst}");
+        assert!(typst.contains("#link(<tableau-1>)[le tableau]"), "{typst}");
+        assert!(
+            typst.contains("#link(<tableau-1>)[Tableau]"),
+            "un tableau sans titre ne prétend pas avoir un numéro : {typst}"
+        );
+        assert!(super::cibles_absentes(&document).is_empty());
+    }
+
+    #[test]
+    fn show_title_affiche_le_titre_et_retombe_sur_le_texte() {
+        let document = super::super::parse::parse(
+            "{{t \"Taux\"}}\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n{{t}}\n| C | D |\n| --- | --- |\n| 3 | 4 |\n\nVoir [[taux show-title=true|le tableau]] et [[2 show-title=true|sans titre]].\n",
+        );
+        let typst = super::super::generer::generer(&document);
+        assert!(typst.contains("#link(<tableau-taux>)[Taux]"), "{typst}");
+        assert!(
+            typst.contains("#link(<tableau-2>)[sans titre]"),
+            "un tableau sans titre garde son texte de repli : {typst}"
+        );
     }
 
     #[test]
@@ -592,7 +816,9 @@ mod tests {
                 texte: vec![Inline::LienInterne {
                     reference: "titre-interieur".to_string(),
                     texte: vec![Inline::Texte("dedans".to_string())],
+                    afficher_titre: false,
                 }],
+                afficher_titre: false,
             }])],
         };
 

@@ -139,11 +139,37 @@ pub fn panneau<'a>(state: &'a State, panneau: &'a Panneau, focus: bool) -> Eleme
 
         barre = barre.push(onglet);
     }
-    let bare = scrollable(barre)
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::default(),
-        ))
-        .width(Length::Fill);
+
+    // Le « + » reste à la suite du dernier onglet : il ouvre une nouvelle
+    // vue sur le document courant, sans détourner le geste de fermeture.
+    let plus = button(text("+").size(16).color(palette.text_muted))
+        .on_press(Message::VueDupliquer)
+        .padding(iced::Padding::new(6.0).right(8.0).left(8.0))
+        .style(move |_, statut| button::Style {
+            background: Some(match statut {
+                button::Status::Hovered => palette.surface_hover.into(),
+                _ => palette.surface.into(),
+            }),
+            text_color: palette.text_muted,
+            border: iced::Border {
+                color: palette.border,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        });
+
+    let bare = row![
+        scrollable(barre)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .width(Length::Fill),
+        plus,
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
     // Le liseré du panneau actif vit sous sa barre d'onglets — pas autour
     // de tout le panneau. Un trait fin, au-dessus du contenu.
     let liseré: Element<'a, Message> = if focus {

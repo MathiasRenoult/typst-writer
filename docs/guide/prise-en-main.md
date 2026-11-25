@@ -16,7 +16,7 @@ dernières frappes : gardez une copie de vos travaux importants.
 1. **Écrire** dans le panneau central. Le texte est du `document.tw` —
    la syntaxe est dans [Écrire](ecrire.md).
 2. **Voir** à droite : la page se compose dès que l'écriture s'arrête,
-   et l'aperçu suit le chapitre sous le curseur. `Ctrl+=`, `Ctrl+-` et
+   et l'aperçu suit le curseur. `Ctrl+=`, `Ctrl+-` et
    `Ctrl+0` en gouvernent la taille.
 3. **Exporter** en PDF — `Ctrl+E` — quand le document est prêt.
 
@@ -61,6 +61,10 @@ garde avec le projet ; elle remplace alors la première page.
 
 ## Ce qui se voit tout de suite
 
+- la **barre supérieure**, en haut : à gauche le projet et le document, au
+  centre les gestes d'écriture, à droite les normes, les paramètres et
+  l'apparence — les contrôles de la barre se règlent dans **Paramètres**
+  (`Ctrl+,`) ;
 - la **barre d'état**, en bas : le compte de mots, les diagnostics du
   compilateur, et ce que l'application a à dire (une erreur, une
   confirmation) — jamais de silence ;
@@ -72,22 +76,20 @@ garde avec le projet ; elle remplace alors la première page.
   s'affiche dans une boîte au-dessus du curseur, sans touche à maintenir ;
 - **cliquer sur une balise biblique** ouvre « La référence cliquée » dans le
   panneau gauche : chaque citation y est séparée avec son livre et son
-  chapitre, chacune porte son extrait, et le crayon de sa ligne ouvre une
+  citation, chacune porte son extrait, et le crayon de sa ligne ouvre une
   fenêtre flottante pour la corriger ;
 - les **touches** se découvrent d'elles-mêmes : `F1` ouvre la carte des
   raccourcis, et les infobulles de la barre d'outils portent leurs
   combinaisons.
 
-## Ouvrir le document, ou un chapitre
+## Ouvrir le document
 
 `Ctrl+N` ouvre le document d'écriture du projet. `Ctrl+O` charge un
-fichier `.typ` existant dans le projet — pour une migration, ou pour un
-chapitre hérité. Voir [Les fichiers](fichiers.md).
+fichier `.typ` existant dans le projet — pour une migration ou pour un
+fragment hérité. Voir [Les fichiers](fichiers.md).
 
-Dans le panneau gauche, **Chapitres** propose le document entier ou une tête
-de niveau 1 ; la vue par chapitre ne montre que ses pages, et le sommaire se
-réduit à ses têtes. Le document reste entier dans l'éditeur : la vue de
-chapitre ne réécrit jamais `document.tw`.
+Le projet n'a qu'un document d'écriture, `document.tw` ; le panneau gauche
+montre son **Sommaire** complet et ne propose pas de vue par chapitre.
 
 ## En cas de doute
 

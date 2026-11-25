@@ -741,7 +741,7 @@ impl CodeEditor {
         line: usize,
         rows_above: usize,
     ) -> Task<Message> {
-        let visual_lines = self.visual_lines_cached(self.viewport_width);
+        let visual_lines = self.visual_lines_cached(self.largeur_vue_effective());
 
         let Some(visual_index) =
             WrappingCalculator::logical_to_visual(&visual_lines, line, 0)
@@ -754,11 +754,14 @@ impl CodeEditor {
         // not a thing.
         let first_visible = visual_index.saturating_sub(rows_above);
 
+        let maximum = (visual_lines.len() as f32 * self.line_height
+            - self.hauteur_vue_effective())
+        .max(0.0);
         scroll_to(
             self.scrollable_id.clone(),
             scrollable::AbsoluteOffset {
                 x: 0.0,
-                y: first_visible as f32 * self.line_height,
+                y: (first_visible as f32 * self.line_height).clamp(0.0, maximum),
             },
         )
     }
@@ -780,23 +783,25 @@ impl CodeEditor {
             pos.0 as f32 * self.line_height
         };
 
+        let hauteur_vue = self.hauteur_vue_effective();
         let viewport_top = self.viewport_scroll;
-        let viewport_bottom = self.viewport_scroll + self.viewport_height;
+        let viewport_bottom = self.viewport_scroll + hauteur_vue;
 
         // Add margins to avoid cursor being exactly at edge
         let top_margin = self.line_height * 2.0;
         let bottom_margin = self.line_height * 2.0;
 
         // Calculate new vertical scroll position if cursor is outside visible area
+        let maximum = (visual_lines.len() as f32 * self.line_height - hauteur_vue).max(0.0);
         let new_v_scroll = if cursor_y < viewport_top + top_margin {
             // Cursor is above viewport - scroll up
-            Some((cursor_y - top_margin).max(0.0))
+            Some((cursor_y - top_margin).clamp(0.0, maximum))
         } else if cursor_y + self.line_height > viewport_bottom - bottom_margin
         {
             // Cursor is below viewport - scroll down
             Some(
-                cursor_y + self.line_height + bottom_margin
-                    - self.viewport_height,
+                (cursor_y + self.line_height + bottom_margin - hauteur_vue)
+                    .clamp(0.0, maximum),
             )
         } else {
             None

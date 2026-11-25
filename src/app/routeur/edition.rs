@@ -21,44 +21,6 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
         Message::TitreSuivant => sauter_titre(state, 1),
         Message::TitrePrecedent => sauter_titre(state, -1),
 
-        Message::ChapitreChoisir(index) => {
-            let chapitre = index.and_then(|index| state.render.chapitres.get(index).cloned());
-
-            if state.render.chapitre == chapitre {
-                return Task::none();
-            }
-
-            let chapitre_pour_curseur = chapitre.clone();
-            state.render.chapitre = chapitre;
-            state.render.visible = None;
-            state.render.visible_exact = None;
-            state.render.scroll = (0.0, 0.0);
-            state.render.scroll_direction = 0;
-            state.render.followed_page = None;
-            state.render.followed_chapter = None;
-            state
-                .render
-                .vue_generation
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            state.render.bound_page_cache();
-
-            // Le chapitre choisi est aussi un lieu du texte : le curseur
-            // rejoint sa tête, sans que l'éditeur cesse de montrer le document
-            // entier. La vue de rendu, elle, reste instantanée — elle ne
-            // recompile pas.
-            chapitre_pour_curseur
-                .zip(state.editor.path.clone())
-                .map(|(chapitre, chemin)| {
-                    crate::app::composeur::jump_to(
-                        state,
-                        &chemin,
-                        chapitre.ligne.saturating_sub(1),
-                        0,
-                    )
-                })
-                .unwrap_or_else(Task::none)
-        }
-
         Message::GotoHeading(index) => {
             let Some(entry) = state.render.outline.get(index).cloned() else {
                 return Task::none();

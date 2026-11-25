@@ -104,6 +104,12 @@ pub struct Regles {
     /// La configuration de l'index des citations.
     pub index: crate::mise_en_page::modele::IndexCitations,
 
+    /// Les personnes du registre, pour que `{{p clé}}` affiche son nom.
+    pub personnes: crate::project::personnes::Personnes,
+
+    /// La configuration de l'index des personnes.
+    pub index_personnes: crate::mise_en_page::modele::IndexPersonnes,
+
     /// La forme de la numérotation des figures : "1", "A", "a", "I", "i", "1.1".
     /// Vide = les défauts de Typst.
     pub numerotation_figures: String,
@@ -137,6 +143,8 @@ impl Regles {
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
+            personnes: crate::project::personnes::Personnes::default(),
+            index_personnes: crate::mise_en_page::modele::IndexPersonnes::default(),
         }
     }
 
@@ -157,6 +165,8 @@ impl Regles {
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
+            personnes: crate::project::personnes::Personnes::default(),
+            index_personnes: crate::mise_en_page::modele::IndexPersonnes::default(),
         }
     }
 
@@ -176,6 +186,8 @@ impl Regles {
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
+            personnes: crate::project::personnes::Personnes::default(),
+            index_personnes: crate::mise_en_page::modele::IndexPersonnes::default(),
         }
     }
 
@@ -196,6 +208,8 @@ impl Regles {
             dates: crate::langage::dates::Regles::default(),
             references: crate::mise_en_page::modele::References::default(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
+            personnes: crate::project::personnes::Personnes::default(),
+            index_personnes: crate::mise_en_page::modele::IndexPersonnes::default(),
         }
     }
 
@@ -316,6 +330,14 @@ pub fn appliquer_dans(texte: &str, regles: &Regles, contexte: &mut Contexte) -> 
                 };
 
                 if prochain.is_whitespace() {
+                    continue;
+                }
+
+                // Les points de suspension ne sont jamais suivis d'une
+                // espace : ils appartiennent au mot qu'ils suspendent. La
+                // règle vaut pour le caractère Unicode et pour la suite de
+                // trois points écrite au clavier.
+                if sortie.ends_with('…') || sortie.ends_with("...") {
                     continue;
                 }
 
@@ -607,6 +629,16 @@ mod tests {
         assert_eq!(appliquer("oui !", &regles), format!("oui{INSECABLE}!"));
         assert_eq!(appliquer("non ?", &regles), format!("non{INSECABLE}?"));
         assert_eq!(appliquer("12 : 30", &regles), format!("12{INSECABLE}: 30"));
+    }
+
+    /// Les points de suspension ne reçoivent pas d'espace après eux.
+    #[test]
+    fn les_points_de_suspension_ne_suivent_pas_d_espace() {
+        let regles = Regles::francaise();
+
+        assert_eq!(appliquer("mot… suite", &regles), "mot…suite");
+        assert_eq!(appliquer("mot... suite", &regles), "mot...suite");
+        assert_eq!(appliquer("mot…  suite", &regles), "mot…suite");
     }
 
     /// La virgule et le point, hors nombres, reçoivent **systématiquement**

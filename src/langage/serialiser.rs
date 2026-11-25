@@ -77,35 +77,16 @@ pub fn serialiser(document: &Document) -> String {
                 entete,
                 lignes,
                 alignements,
+                titre,
             } => {
-                out.push_str("| ");
-                for (rang, cellule) in entete.iter().enumerate() {
-                    if rang > 0 {
-                        out.push_str(" | ");
-                    }
-                    ecrire_inline(cellule, &mut out);
+                // Un tableau titré se relit par sa forme canonique ; sans
+                // titre, la grille markdown suffit.
+                if !titre.trim().is_empty() {
+                    out.push_str("{{t \"");
+                    echapper_chaine_param(titre.trim(), &mut out);
+                    out.push_str("\"}}\n");
                 }
-                out.push_str(" |\n");
-
-                // La ligne de séparation dit l'alignement, colonne par colonne.
-                out.push('|');
-                for alignement in alignements {
-                    out.push(' ');
-                    out.push_str(alignement.trait_());
-                    out.push_str(" |");
-                }
-                out.push('\n');
-
-                for ligne in lignes {
-                    out.push_str("| ");
-                    for (rang, cellule) in ligne.iter().enumerate() {
-                        if rang > 0 {
-                            out.push_str(" | ");
-                        }
-                        ecrire_inline(cellule, &mut out);
-                    }
-                    out.push_str(" |\n");
-                }
+                ecrire_tableau(entete, lignes, alignements, &mut out);
             }
             Bloc::Formule(texte) => {
                 out.push_str("$$\n");
@@ -174,6 +155,9 @@ pub fn serialiser(document: &Document) -> String {
             Bloc::IndexBiblique => {
                 out.push_str("{{index}}\n");
             }
+            Bloc::IndexPersonnes => {
+                out.push_str("{{index-personnes}}\n");
+            }
             Bloc::Sommaire => {
                 out.push_str("[[TOC]]\n");
             }
@@ -232,6 +216,7 @@ fn ecrire_bloc_canonique(interne: &Bloc, out: &mut String) {
         Bloc::Sommaire => out.push_str("{{s}}\n"),
         Bloc::Bibliographie => out.push_str("{{bib}}\n"),
         Bloc::IndexBiblique => out.push_str("{{idx}}\n"),
+        Bloc::IndexPersonnes => out.push_str("{{index-personnes}}\n"),
         Bloc::Glossaire { tout } => {
             out.push_str("{{gs");
             if *tout {
@@ -277,12 +262,20 @@ fn ecrire_bloc_canonique(interne: &Bloc, out: &mut String) {
             }
             out.push('\n');
         }
-        Bloc::Tableau { .. } => {
-            out.push_str("{{t}}\n");
-            let document = Document {
-                blocs: vec![interne.clone()],
-            };
-            out.push_str(&serialiser(&document));
+        Bloc::Tableau {
+            entete,
+            lignes,
+            alignements,
+            titre,
+        } => {
+            out.push_str("{{t");
+            if !titre.trim().is_empty() {
+                out.push_str(" \"");
+                echapper_chaine_param(titre.trim(), out);
+                out.push('\"');
+            }
+            out.push_str("}}\n");
+            ecrire_tableau(entete, lignes, alignements, out);
         }
         Bloc::Canonique(interne) => ecrire_bloc_canonique(interne, out),
         autre => {
@@ -294,6 +287,43 @@ fn ecrire_bloc_canonique(interne: &Bloc, out: &mut String) {
             };
             out.push_str(&serialiser(&document));
         }
+    }
+}
+
+/// Écrit la grille markdown d'un tableau — en-tête, séparateur, lignes.
+fn ecrire_tableau(
+    entete: &[Vec<Inline>],
+    lignes: &[Vec<Vec<Inline>>],
+    alignements: &[crate::langage::schema::Alignement],
+    out: &mut String,
+) {
+    out.push_str("| ");
+    for (rang, cellule) in entete.iter().enumerate() {
+        if rang > 0 {
+            out.push_str(" | ");
+        }
+        ecrire_inline(cellule, out);
+    }
+    out.push_str(" |\n");
+
+    // La ligne de séparation dit l'alignement, colonne par colonne.
+    out.push('|');
+    for alignement in alignements {
+        out.push(' ');
+        out.push_str(alignement.trait_());
+        out.push_str(" |");
+    }
+    out.push('\n');
+
+    for ligne in lignes {
+        out.push_str("| ");
+        for (rang, cellule) in ligne.iter().enumerate() {
+            if rang > 0 {
+                out.push_str(" | ");
+            }
+            ecrire_inline(cellule, out);
+        }
+        out.push_str(" |\n");
     }
 }
 
@@ -346,20 +376,36 @@ fn ecrire_proprietes(proprietes: &crate::langage::schema::Proprietes, out: &mut 
     }
 
     // Les noms d'abord — l'intention lit la première — puis les mesures.
-    for (position, nom) in proprietes.noms.iter().enumerate() {
-        if position > 0 {
+    let mut ecrit = false;
+    for nom in &proprietes.noms {
+        if ecrit {
             out.push(' ');
         }
-
         out.push_str(nom);
+        ecrit = true;
     }
 
-    if !proprietes.noms.is_empty() && !proprietes.paires.is_empty() {
-        out.push(' ');
+    // La position seule s'écrit `{centre}`, sa forme la plus courte.
+    let position_compacte = proprietes
+        .paires
+        .iter()
+        .find(|(cle, valeur)| {
+            cle == "position" && crate::langage::schema::Proprietes::position_compacte(valeur)
+        })
+        .map(|(_, valeur)| valeur.as_str());
+    if let Some(position) = position_compacte {
+        if ecrit {
+            out.push(' ');
+        }
+        out.push_str(position);
+        ecrit = true;
     }
 
-    for (position, (cle, valeur)) in proprietes.paires.iter().enumerate() {
-        if position > 0 {
+    for (cle, valeur) in &proprietes.paires {
+        if cle == "position" && position_compacte.is_some() {
+            continue;
+        }
+        if ecrit {
             out.push(' ');
         }
 
@@ -373,6 +419,7 @@ fn ecrire_proprietes(proprietes: &crate::langage::schema::Proprietes, out: &mut 
         } else {
             out.push_str(valeur);
         }
+        ecrit = true;
     }
 }
 
@@ -532,16 +579,37 @@ fn ecrire_inline(inline: &[Inline], out: &mut String) {
                 echapper_cible(cible, out);
                 out.push(')');
             }
-            Inline::LienInterne { reference, texte } => {
+            Inline::LienInterne {
+                reference,
+                texte,
+                afficher_titre,
+            } => {
                 out.push_str("[[");
                 out.push_str(reference);
+                if *afficher_titre {
+                    out.push_str(" show-title=true");
+                }
                 out.push('|');
                 ecrire_inline(texte, out);
                 out.push_str("]]");
             }
+            Inline::Personne { cle, contenu } => {
+                ecrire_personne(cle, contenu, out);
+            }
             Inline::Canonique(interne) => ecrire_canonique(interne, out),
         }
     }
+}
+
+/// Écrit une personne citée : `{{p clé}}` ou `{{p clé|forme}}`.
+fn ecrire_personne(cle: &str, contenu: &[Inline], out: &mut String) {
+    out.push_str("{{p ");
+    out.push_str(cle);
+    if !contenu.is_empty() {
+        out.push('|');
+        ecrire_inline(contenu, out);
+    }
+    out.push_str("}}");
 }
 
 /// Écrit la forme canonique d'une balise, sans perdre son enveloppe.
@@ -592,6 +660,9 @@ fn ecrire_canonique(interne: &Inline, out: &mut String) {
             out.push('|');
             out.push_str(suffixe);
             out.push_str("}}");
+        }
+        Inline::Personne { cle, contenu } => {
+            ecrire_personne(cle, contenu, out);
         }
         Inline::Meta(cle) => {
             out.push_str("{{m ");
@@ -851,6 +922,21 @@ mod tests {
         assert_eq!(super::super::parse(&super::serialiser(&document)), document);
     }
 
+    /// L'option `show-title` reste dans la source, avant le texte du lien.
+    #[test]
+    fn un_lien_avec_titre_se_relit() {
+        let source = "Voir [[t show-title=true|titre]].\n";
+        let document = super::super::parse(source);
+        assert_eq!(super::super::serialiser(&document), source);
+        assert!(matches!(
+            &document.blocs[..],
+            [Bloc::Paragraphe(contenu)] if matches!(
+                &contenu[1],
+                Inline::LienInterne { afficher_titre: true, .. }
+            )
+        ));
+    }
+
     /// Une formule en ligne se lit et se relit — opaque, comme le code.
     #[test]
     fn une_formule_en_ligne_se_lit() {
@@ -910,6 +996,39 @@ mod tests {
         );
         assert!(document.est_canonique());
         assert_eq!(super::super::parse(&super::serialiser(&document)), document);
+    }
+
+    /// Un tableau titré garde son titre, son ancre et sa forme canonique.
+    #[test]
+    fn un_tableau_titre_se_relit() {
+        let source = "{{t \"Tableau des taux\"}}\n| A | B |\n| --- | --- |\n| 1 | 2 |\n";
+        let document = super::super::parse(source);
+
+        let Bloc::Canonique(inner) = &document.blocs[0] else {
+            panic!("un tableau canonique attendu : {:?}", document.blocs);
+        };
+        let Bloc::Tableau { titre, .. } = inner.as_ref() else {
+            panic!("un tableau attendu : {inner:?}");
+        };
+        assert_eq!(titre, "Tableau des taux");
+
+        let relu = super::serialiser(&document);
+        assert!(relu.contains("{{t \"Tableau des taux\"}}"), "{relu}");
+        assert_eq!(super::super::parse(&relu), document);
+    }
+
+    /// Un tableau titré devient une figure de type table, avec son ancre.
+    #[test]
+    fn un_tableau_titre_compose_une_figure() {
+        let document = super::super::parse(
+            "{{t \"Tableau des taux\"}}\n| A | B |\n| --- | --- |\n| 1 | 2 |\n",
+        );
+        let typst = crate::langage::generer::generer(&document);
+
+        assert!(typst.contains("#figure("), "{typst}");
+        assert!(typst.contains("caption: [Tableau des taux]"), "{typst}");
+        assert!(typst.contains("kind: \"table\""), "{typst}");
+        assert!(typst.contains("<tableau-tableau-des-taux>"), "{typst}");
     }
 
     /// Une barre dans une cellule s'échappe, et reste du contenu.
@@ -1506,6 +1625,7 @@ mod tests {
             8 => Inline::LienInterne {
                 reference: "titre-introduction".to_string(),
                 texte: inlines_au_hasard(hasard, dans_emphase),
+                afficher_titre: false,
             },
             _ => emphase_au_hasard(hasard),
         }
@@ -1636,6 +1756,7 @@ mod tests {
             entete,
             lignes,
             alignements,
+            titre: String::new(),
         }
     }
 
@@ -1797,6 +1918,26 @@ mod tests_glossaire {
         assert!(!typs.contains("Glo"), "{typs}");
     }
 
+    /// Une position de page de garde traverse le parseur et le sérialiseur.
+    #[test]
+    fn une_position_compacte_se_lit_et_s_ecrit_courte() {
+        let source = "{{garde}}\n{centre}\nLe centre.\n{{/garde}}\n";
+        let document = crate::langage::parse(source);
+        let relu = super::serialiser(&document);
+        assert!(relu.contains("{centre}"), "{relu}");
+        assert!(!relu.contains("position="), "{relu}");
+    }
+
+    #[test]
+    fn une_position_de_page_de_garde_se_relit() {
+        let source = "{{garde}}\n{position=haut}\n# Titre\n\n{position=bas}\nLe pied.\n{{/garde}}\n\n# Introduction\n";
+        let document = parse(source);
+        let relu = serialiser(&document);
+        assert!(relu.contains("{haut}"), "{relu}");
+        assert!(relu.contains("{bas}"), "{relu}");
+        assert_eq!(parse(&relu), document, "le round-trip de la position tient");
+    }
+
     /// Les mots-clés se lisent pour ce qu'ils sont.
     #[test]
     fn les_mots_cles_se_lisent() {
@@ -1821,6 +1962,78 @@ mod tests_glossaire {
         assert!(
             matches!(document.blocs[0], Bloc::Glossaire { tout: true }),
             "{:?}",
+            document.blocs
+        );
+    }
+}
+
+/// Les personnes citées : une balise canonique, une forme affichée libre.
+#[cfg(test)]
+mod tests_personnes {
+    use super::super::parse;
+    use super::serialiser;
+
+    #[test]
+    fn une_personne_se_lit_et_se_relit() {
+        for source in [
+            "{{p augustin}}\n",
+            "{{p augustin|Augustin}}\n",
+            "{{personne aquin|Thomas **d'Aquin**}}\n",
+        ] {
+            let document = parse(source);
+            let relu = serialiser(&document);
+            assert_eq!(
+                parse(&relu),
+                document,
+                "round-trip de {source:?} : {relu:?}"
+            );
+            assert!(relu.contains("{{p "), "forme canonique attendue : {relu:?}");
+        }
+    }
+
+    #[test]
+    fn une_personne_sans_forme_garde_un_round_trip_canonique() {
+        let document = parse("{{p augustin|}}\n");
+        assert_eq!(serialiser(&document), "{{p augustin}}\n");
+        assert_eq!(parse(&serialiser(&document)), document);
+    }
+
+    #[test]
+    fn une_expression_de_champs_se_relit_sans_perdre_sa_forme() {
+        for source in [
+            "{{p augustin|complet}}\n",
+            "{{p augustin|nom_complet+dates}}\n",
+            "{{p augustin|nom_simple+naissance+mort}}\n",
+            "{{p augustin|auto}}\n",
+        ] {
+            let document = parse(source);
+            let relu = serialiser(&document);
+            // Le sérialiseur échappe les marqueurs Typst, dont `_` ; la
+            // relecture doit rester stable et conserver la clé.
+            assert_eq!(
+                serialiser(&parse(&relu)),
+                relu,
+                "relecture stable de {source:?} : {relu:?}"
+            );
+            assert!(relu.contains("{{p augustin"), "{relu:?}");
+        }
+    }
+
+    #[test]
+    fn un_index_de_personnes_se_relit() {
+        for source in ["{{index-personnes}}\n", "{{ip}}\n", "{{index-nom}}\n"] {
+            let document = parse(source);
+            assert_eq!(serialiser(&document), "{{index-personnes}}\n");
+            assert_eq!(parse(&serialiser(&document)), document);
+        }
+    }
+
+    #[test]
+    fn une_cle_de_personne_ne_prend_pas_de_mot_supplementaire() {
+        let document = parse("{{p saint augustin}}\n");
+        assert!(
+            !format!("{:?}", document.blocs).contains("Personne"),
+            "une clé avec espace n'est pas une personne : {:?}",
             document.blocs
         );
     }

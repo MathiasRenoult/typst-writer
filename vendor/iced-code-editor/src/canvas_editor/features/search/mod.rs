@@ -768,7 +768,14 @@ impl CodeEditor {
     /// avant de quitter la vue : le widget de défilement est reconstruit avec
     /// la vue, mais le modèle de l'éditeur, lui, survit.
     pub fn defiler_vers_offset(&mut self, offset: f32) -> iced::Task<Message> {
-        let offset = offset.max(0.0);
+        // Un décalage restauré peut venir d'une vue plus haute ou d'un
+        // document plus long. Le borner ici évite de peindre une zone vide
+        // sous la dernière ligne quand le contenu a rétréci.
+        let hauteur_contenu = self.visual_lines_cached(self.largeur_vue_effective()).len()
+            as f32
+            * self.line_height;
+        let maximum = (hauteur_contenu - self.hauteur_vue_effective()).max(0.0);
+        let offset = offset.clamp(0.0, maximum);
         self.viewport_scroll = offset;
         iced::advanced::widget::operate(
             iced::advanced::widget::operation::scrollable::scroll_to::<Message>(

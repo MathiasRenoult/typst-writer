@@ -19,6 +19,14 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::EditeurViewport(size) => {
+            state
+                .editor
+                .editor
+                .set_viewport_size(size.width, size.height);
+            Task::none()
+        }
+
         Message::WindowOpened(id) => {
             state.window = Some(id);
 

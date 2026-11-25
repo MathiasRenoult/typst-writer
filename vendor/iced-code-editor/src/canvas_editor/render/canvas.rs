@@ -35,22 +35,19 @@ impl canvas::Program<Message> for CodeEditor {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        // Track the real, live canvas width every frame, independent of the
-        // vertical-scroll-driven `viewport_width` (which never gets corrected
-        // for content that doesn't overflow vertically — see issue #26).
+        // Track the real, live canvas bounds every frame, independent of the
+        // scroll-notification-driven viewport fields (which never get
+        // corrected for a layout change that doesn't scroll — see issue #26).
         self.last_canvas_width.set(bounds.width);
+        self.last_canvas_height.set(bounds.height);
 
         let visual_lines: Rc<Vec<VisualLine>> =
             self.visual_lines_cached(bounds.width);
 
-        // Prefer the tracked viewport height when available, but fall back to
-        // the current bounds during initial layout when viewport metrics have
-        // not been populated yet.
-        let effective_viewport_height = if self.viewport_height > 0.0 {
-            self.viewport_height
-        } else {
-            bounds.height
-        };
+        // Paint against the bounds of this frame, not a stale scroll event:
+        // otherwise the last lines (text and gutter) are never drawn after a
+        // resize or a pane split.
+        let effective_viewport_height = bounds.height.max(1.0);
         let first_visible_line =
             (self.viewport_scroll / self.line_height).floor() as usize;
         let visible_lines_count =

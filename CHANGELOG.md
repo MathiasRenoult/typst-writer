@@ -4,8 +4,85 @@ Les versions sont classées de la plus récente à la plus ancienne. Chaque
 entrée décrit les fonctionnalités et les corrections livrées avec la version
 correspondante.
 
+## 0.6.3 — les personnes citées, une garde nette et des gestes d'édition (2026-11-25)
+
+- Le plugin **Personnes citées** tient un registre `personnes.toml` par
+  projet. Le panneau d'insertion filtre les entrées au fil de la frappe,
+  remplit tous les champs de la fiche et n'écrit que la clé dans la balise.
+  La syntaxe `{{p clé}}` suit les formes de première mention et de reprise
+  des normes ; `|simple`, `|complet`, `|alias`, `|auto` et les listes de
+  champs (`nom+dates`, `simple+naissance+mort`, etc.) permettent de choisir
+  exactement ce qui s'affiche. Un clic droit sur une balise la rouvre déjà
+  remplie et la remplace au lieu d'en ajouter une seconde.
+- Une balise de personne sans expression applique de nouveau les règles de
+  première mention ; la compilation de `grand-oral` avec plusieurs mentions
+  de Beale est couverte par une épreuve de non-régression.
+- La page blanche qui précédait `{{garde}}` est supprimée : la bibliographie
+  cachée ne réserve plus une page, et le branchement de la garde dans le
+  gabarit est idempotent même si une ancienne version y a laissé ses lignes.
+- `Ctrl+flèche` déplace le curseur d'un mot, `Ctrl+Maj+flèche` étend la
+  sélection par mot, et `Ctrl+Retour arrière` / `Ctrl+Suppr` suppriment le
+  mot précédent ou suivant. Les accents et les frontières UTF-8 sont
+  respectés.
+- Le menu du clic droit ordinaire s'ouvre au point exact du clic, dans la
+  vue de rédaction, au lieu d'être décalé par la barre ou le panneau.
+- Les menus de la barre du haut ont une largeur bornée et des lignes
+  neutres : les cartes « Projet », « Insérer » et « Titres » ne prennent plus
+  la couleur d'accent ni toute la largeur disponible.
+- Un bouton `+` fixe après les onglets ouvre une nouvelle vue sur le
+  document courant sans devoir faire défiler la barre d'onglets.
+- Le rail des onglets des normes et des plugins défile au lieu d'écraser son
+  dernier élément quand la fenêtre est courte.
+
 ## 0.6.2 — gérer les versions bibliques (2026-11-18)
 
+- Les tableaux se naviguent et se construisent au clavier : `Tab` / `Maj+Tab`
+  passent d'une cellule à l'autre, `Entrée` / `Maj+Entrée` à la même colonne
+  d'une autre ligne. `Ctrl+Tab` insère une colonne vide à droite, `Ctrl+Entrée`
+  une ligne vide en dessous, et `Ctrl+Maj+flèches` déplace la rangée ou la
+  colonne. Le clic droit sur un en-tête fait tourner son alignement. Chaque
+  déplacement réaligne le tableau courant, sans toucher aux autres tableaux
+  ni au reste du document.
+- `Ctrl+Suppr` supprime la ligne de données courante d'un tableau et
+  `Maj+Suppr` sa colonne, sans toucher à l'en-tête ni à la dernière colonne.
+- `Ctrl+B`, `Ctrl+I` et `Ctrl+U` mettent en forme la sélection, ou à défaut
+  le mot sous, avant ou après le curseur. Taper `"`, `(`, `[` ou `{` sur une
+  sélection explicite l'encadre avec la paire correspondante.
+- Un clic droit sur une balise couleur, date, glossaire ou métadonnée ouvre
+  son formulaire prérempli ; valider la remplace sans en créer une seconde.
+- `{centre}`, `{haut}`, `{bas}`, `{gauche}`, `{droite}` et les positions de
+  coin sont les formes courtes de `{position=…}` ; la source relue les
+  préfère.
+- Une garde suivie de trois lignes vides ne laisse plus de page blanche :
+  le saut de page initial du corps est retiré quand la garde en pose déjà un.
+- Les dernières lignes de l'éditeur ne restent plus invisibles après un
+  redimensionnement, un changement de mode ou une ancienne position de
+  défilement restaurée : le rendu utilise les mesures réelles de la vue et
+  borne le défilement au contenu.
+- Le plugin **Personnes citées** tient un registre par projet
+  (`personnes.toml`), écrit `{{p clé}}` et compose `{{index-personnes}}`
+  avec les pages, les initiales, les dates et la qualité. Aucun nom n'est
+  deviné dans la prose ; le registre se gère dans sa fenêtre et son onglet
+  de plugins. Les normes distinguent la forme de la première mention, des
+  mentions suivantes et de l'index (nom complet, simple ou alias), et la
+  forme des dates (naissance et mort, naissance, mort ou texte libre).
+  Le panneau d'insertion filtre le registre au fil de la frappe, remplit
+  tous les champs de la fiche et n'écrit que la clé dans la balise. Sans
+  expression, les formes des normes s'appliquent (nom simple par défaut ; le
+  nom complet et les dates à la première mention se règlent dans le plugin).
+- Le rail des onglets des normes et des plugins défile au lieu d'écraser
+  son dernier élément quand la fenêtre est courte ; les noms longs peuvent
+  passer à la ligne.
+- Le curseur ne reste plus collé au bord haut ou bas de la fenêtre : un
+  déplacement, un clic ou une frappe qui l'y amène déclenche le défilement
+  pour le replacer dans la zone de lecture.
+- La commande **Liste à puces** ne transforme plus le paragraphe entier :
+  elle agit sur la ligne du curseur, ou sur toutes les lignes non vides de
+  la sélection, et sur elles seules. La liste numérotée suit la même règle.
+- Un triple clic sur une balise de tableau ne fait plus tomber
+  l'application : le compteur de mots analysait la sélection comme un
+  document complet et supposait une grille après la balise. Le parseur
+  accepte désormais une balise seule.
 - Les versions ajoutées apparaissent dans le panneau gauche avec leur nombre
   de livres, de chapitres et leur provenance : un clic choisit la version,
   **Dossier** ouvre le dossier local, la flèche copie le JSON pour le
@@ -75,6 +152,24 @@ correspondante.
   expose les imports et exports de fichiers, les thèmes, les normes de la
   bibliothèque (appliquer ou exporter), les bascules de plugins et les
   déplacements de blocs, titres et listes.
+- Le projet n'a plus de vue par chapitre ni de fichiers de chapitres à gérer :
+  `document.tw` est le seul document d'écriture, et le panneau gauche ne garde
+  que le **Sommaire**.
+- Le compte de mots exclut désormais les notes de bas de page ; une sélection
+  affiche son propre compte dans la barre d'état. Le panneau donne aussi la
+  part des citations de bloc (`>`), en mots et en pourcentage.
+- Deux réglages de police prioritaire par script, « Hébreu » et « Grec »,
+  permettent de composer l'hébreu avec Ezra SIL SR et le grec avec Galatia SIL
+  sans changer la police du texte latin. Les deux champs sont vides par défaut.
+- Les points de suspension ne sont plus suivis d'une espace dans le rendu.
+- Les blocs de citation (`>`) ont leur apparence dans les normes : police,
+  taille, couleur, retrait à gauche et italique ; vide = défaut de Typst.
+- Dans le PDF, un clic simple ne sélectionne plus rien : la sélection ne
+  commence qu'au clic suivi d'un mouvement ; double et triple clic gardent
+  leur sens.
+- Les icônes d'édition et de suppression d'une notice bibliographique ne
+  paraissent qu'au survol de l'entrée, avec leur place réservée pour que la
+  ligne ne se réorganise pas sous le pointeur.
 - Les liens internes peuvent afficher la numérotation réelle du document :
   `[[titre-adoption-coutume|"chapitre"]]` donne « chapitre 2.3 »,
   `[[figure-planche|"figure"]]` donne « Figure 4 » et
@@ -85,14 +180,65 @@ correspondante.
 - Les **pages de garde** s'écrivent entre `{{garde}}` et `{{/garde}}` : elles
   précèdent le sommaire, ne portent aucun numéro et n'entrent pas dans la
   table des matières, même quand elles contiennent des titres. Plusieurs blocs
-  donnent plusieurs pages ; le menu `..` les insère et la page de titre des
+  donnent plusieurs pages ; le menu `,,` les insère et la page de titre des
   normes reste elle aussi sans numéro.
+- La propriété `{position=…}` place un élément d'une page de garde : `haut`,
+  `centre`, `bas`, `gauche`, `droite` et leurs coins. Une page de titre sans
+  métadonnée n'est plus composée : plus de page blanche avant la première
+  garde.
 - Les citations collées au mot (`famille@grudem…`) et celles qui terminent un
   paragraphe sont reconnues comme citations Typst ; la typographie ne mange
   plus les espaces du paragraphe, et un guillemet fermant après une citation
   retrouve son insécable. Une adresse électronique reste du texte.
-- Vérification : 755 tests réussis, 0 échec, 210 ignorés ; batterie applicative
-  178/178 ; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+- La barre supérieure est réorganisée en trois domaines : à gauche le projet
+  et le document, au centre les gestes d'écriture, à droite les normes, les
+  plugins, les paramètres et l'apparence. Plus aucun bouton ne partage une
+  icône avec une action différente.
+- Les insertions se rangent dans un menu **Insérer** (sommaire, notes,
+  citations, image, tableau, graphique, sections, bible, glossaire,
+  extensions), au lieu d'une icône par outil. Le menu Projet ne porte plus
+  que les gestes de fichier et d'archive.
+- Une page **Paramètres** (`Ctrl+,`) règle l'application elle-même : elle peut
+  masquer les boutons de mise en page pour qui écrit le markdown, masquer le
+  menu d'insertion, afficher les numéros de ligne et choisir les thèmes. Ces
+  réglages sont retenus dans la session, pas dans les normes du document.
+- Les contrôles de thème et le bouton des numéros de ligne quittent la barre
+  supérieure pour cette page ; la barre garde son rôle de navigation.
+- Les tableaux peuvent recevoir un **titre** : `{{t "Taux"}}` au-dessus de la
+  grille. Le titre devient une légende numérotée « Tableau 1 » avec son propre
+  compteur, et le tableau est référençable par `[[tableau-taux]]` ou
+  `[[tableau-taux|"tableau"]]` ; le panneau d'insertion demande le titre.
+- Les références bibliques placées dans les cellules d'un tableau sont
+  désormais comptées dans les statistiques et le relevé : une ouverture
+  canonique comme `{{t}}` ne coupe plus le balayage des références suivantes.
+- Un tableau sans titre reste référençable : il reçoit l'ancre de rang
+  `tableau-1`, `tableau-2`… et n'affiche aucune légende. L'option
+  `show-title=true` d'un lien (`[[taux show-title=true|le tableau]]`) affiche
+  le titre de la table quand elle en a un ; sinon le texte après la barre
+  reste le repli.
+- La commande **Aligner les tableaux** égalise les colonnes sans toucher au
+  titre ni au reste du texte. Dans une cellule, `Tab`/`Maj+Tab` passent d'une
+  cellule à l'autre, `Entrée`/`Maj+Entrée` à la même colonne d'une autre
+  ligne, et `Ctrl+Tab`/`Ctrl+Maj+Tab` restent des alias ; le tableau courant
+  est réaligné à chaque déplacement.
+- La section bibliographique n'est **jamais** ajoutée automatiquement : elle
+  n'existe que si `{{bib}}` (ou `{{bibliographie}}`) figure dans le texte.
+  Une ancienne directive `#bibliography(…)` restée dans `main.typ` est
+  retirée de la composition, sans réserver de place : elle charge les notices
+  pour les citations, n'affiche aucune section et ne modifie pas le fichier.
+  Les chemins de bibliographie morts sont remplacés par les bibliothèques
+  vivantes du projet.
+- La barre d'état nomme le fichier de normes du document
+  (`mise-en-page.toml`) et, quand les réglages correspondent exactement à
+  une norme de la bibliothèque, son nom. Les panneaux **Normes** et
+  **Plugins** se basculent sans perdre la copie de travail, et le panneau des
+  plugins propose **Écraser « … »** après une modification.
+- L'index des citations bibliques n'affiche plus « Livres canoniques »
+  lorsque tous les livres cités sont canoniques : le titre est implicite.
+  Un index uniquement non canonique garde « Livres non canoniques » pour le
+  signaler ; les deux titres n'apparaissent qu'en présence des deux corpus.
+- Vérification : 801 tests réussis, 0 échec, 214 ignorés ; batterie applicative
+  182/182 ; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo build --release` et `git diff --check` verts.
 
 ## 0.6.1 — les balises bibliques de bout en bout (2026-11-18)
@@ -135,7 +281,7 @@ applicative 167/167 ; `cargo fmt --check`, `cargo build --release`,
 ### Une seule porte pour les gestes
 
 - **La palette de commandes** réunit les actions, les éléments à insérer et
-  les extraits de texte. `Ctrl+K` ou `/` ouvre les commandes, `..` ouvre les
+  les extraits de texte. `Ctrl+K` ou `/` ouvre les commandes, `,,` ouvre les
   balises et les modèles de passage.
 - Les commandes et les balises d'un module désactivé disparaissent de la
   palette : l'interface ne propose que ce que le document peut réellement

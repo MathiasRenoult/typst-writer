@@ -17,29 +17,42 @@ syntaxe.
 | ```` ```typst ```` … ```` ``` ```` | un bloc Typst brut, inséré tel quel |
 | trois lignes vides consécutives | un saut de page |
 | `// texte` | un commentaire — conservé dans le `.tw`, ignoré au rendu |
-| `{{bib}}` ou `{{bibliographie}}` | la bibliographie du projet, à cet endroit |
+| `{{bib}}` ou `{{bibliographie}}` | la bibliographie du projet, à cet endroit — et seulement si la balise est écrite |
 | `{{idx}}` ou `{{index-biblique}}` | l'index des citations bibliques, recalculé au rendu |
 | `{{s}}` ou `{{sommaire}}` | la table des matières, à cet endroit |
 | `{{garde}}` … `{{/garde}}` | une page de garde, avant le sommaire |
 
+Les commandes **Liste à puces** et **Liste numérotée** ne touchent que la
+ligne du curseur. Avec une sélection, elles s'appliquent à toutes les lignes
+non vides qu'elle couvre, sans toucher aux lignes vides ni aux lignes
+voisines : un paragraphe de plusieurs lignes n'est pas transformé en entier.
+
 Une **ligne vide** sépare les blocs. Ce qui n'est pas reconnu reste du
 texte — un fichier abîmé ne bloque jamais l'ouverture.
 
-## Les chapitres
+## Le document unique
 
-Une **tête de niveau 1** (`# Titre`) ouvre un chapitre : elle emporte tout
-ce qui la suit jusqu'à la tête de niveau 1 suivante. Les têtes de niveau 2
-et au-delà restent des sections du chapitre.
+Un projet tient dans un seul fichier d'écriture, `document.tw`. Les titres
+de niveau 1 et suivants structurent ce document et alimentent le
+**Sommaire** ; il n'y a ni fichiers de chapitres ni vue par chapitre à
+choisir. Le panneau de gauche montre le sommaire complet, et l'éditeur
+comme le rendu restent sur le document entier.
 
-Le panneau de gauche porte une section **Chapitres**. **Document entier**
-montre tout le rendu ; un chapitre choisi ne montre que ses pages, et le
-**Sommaire** se réduit à ses têtes. Le retour au document entier se fait
-par la même ligne. La source, elle, reste entière dans l'éditeur : choisir
-un chapitre ne réécrit ni ne tronque jamais `document.tw`.
+Pour travailler sur un passage, sélectionnez-le : la barre d'état affiche
+alors les mots de la sélection, sans les notes de bas de page.
 
-Les chapitres viennent du sommaire composé : leurs pages sont celles du
-PDF réel, pas une estimation. Si le document n'a aucune tête de niveau 1,
-la section n'apparaît pas — tout le document reste alors la seule vue.
+Le panneau de gauche distingue le **volume du corps** et les **notes** :
+les notes sont mesurées à part et n'entrent pas dans le total. Il montre
+aussi la part des **citations de bloc** (`>`), en mots et en pourcentage,
+pour repérer un travail qui emprunte trop à ses sources.
+
+La section bibliographique n'est jamais ajoutée par l'application : elle
+n'apparaît que si `{{bib}}` (ou `{{bibliographie}}`) est écrit dans le texte.
+Une ancienne directive `#bibliography(…)` restée dans l'assemblage
+`main.typ` est **masquée** à la composition : elle charge les notices pour
+que les citations `@clé` se résolvent, mais n'affiche aucune section. Le
+fichier sur disque n'est pas modifié. Le bouton **Insérer → Section
+bibliographie** ne fait qu'écrire la balise au curseur.
 
 Les balises de fin ont une forme canonique courte : `{{s}}`, `{{bib}}`,
 `{{gs}}`, `{{idx}}`. Les noms longs (`{{sommaire}}`, `{{bibliographie}}`,
@@ -64,18 +77,61 @@ et il n'entre pas dans la table des matières — même si la page contient des
 titres. Placez les blocs en tête par convention, même si leur contenu est
 toujours composé avant le sommaire. On peut répéter le bloc pour plusieurs
 pages : chacune commence sur sa propre page.
-Le menu `..`, sous « Page de garde », écrit le bloc et place le curseur à
+Le menu `,,`, sous « Page de garde », écrit le bloc et place le curseur à
 l'intérieur.
+
+### Placer les éléments d'une page de garde
+
+Une page de garde peut distribuer ses blocs sur la page avec une **position
+courte**, écrite sur sa propre ligne **avant** le bloc à placer :
+
+```
+{{garde}}
+{haut}
+# Titre du travail
+
+{centre}
+{{m auteur}}
+
+{bas}
+2026
+{{/garde}}
+```
+
+Les positions sont `haut`, `centre`, `bas`, `gauche`, `droite`,
+`haut-gauche`, `haut-droite`, `bas-gauche` et `bas-droite`. Les variantes
+anglaises (`top`, `bottom`, `left`, `right`, `top-left`…) sont aussi lues.
+L'ancienne écriture `{position=haut}` reste acceptée ; la source relue
+préfère la forme courte.
+Un bloc placé ne participe plus au flux de la page : c'est ce qui permet de
+mettre le titre en haut, l'auteur au centre et la date en bas. Les autres
+propriétés de décor (`bordure=…`, `marge=…`) restent disponibles sur le même
+bloc.
+
+La position s'écrit comme une intention, pas comme une mesure. Les
+métadonnées (`{{m titre}}`, `{{m auteur}}`…) et les blocs ordinaires
+(titres, paragraphes, images, tableaux) acceptent cette propriété.
 
 La page de titre des normes suit la même règle : elle est composée sans
 numéro et n'ajoute aucune entrée au sommaire. Si les normes en composent
 déjà une, elle précède les pages de garde ; désactivez-la pour la remplacer.
+Une page de titre sans aucune métadonnée n'est pas composée : elle ne laisse
+plus de page blanche avant la première garde.
 
 ## Les métadonnées
 
 Une métadonnée du projet s'appelle par `{{m clé}}` : `{{m auteur}}` affiche
 la valeur d'`auteur` réglée dans les normes. Les métadonnées existantes sont
-aussi proposées dans le menu `..` sous « Métadonnée · clé ».
+aussi proposées dans le menu `,,` sous « Métadonnée · clé ».
+
+Un **clic droit sur une balise** ouvre son panneau prérempli : couleur, date,
+terme du glossaire et métadonnée se modifient dans les mêmes champs que leur
+insertion, et le bouton **Remplacer** réécrit la balise au lieu d'en ajouter
+une seconde. Une référence biblique rouvre de même son panneau, avec ses
+références déjà présentes ; le titre d'un tableau se modifie sans recréer la
+grille. Pour les autres balises, le panneau montre la source complète déjà
+écrite, prête à être remplacée — les panneaux spécialisés restent accessibles
+par le menu d'insertion.
 
 ## Les blocs canoniques
 
@@ -84,7 +140,7 @@ aussi proposées dans le menu `..` sous « Métadonnée · clé ».
 | `{{e type=note titre="À retenir"\|texte}}` | un encadré et son contenu, sur une ligne |
 | `{{gr type=barre titre="Ventes"}}` puis `Nord \| 30` | un graphique simple et ses données |
 | `{{ch type=pie titre="Répartition"}}` puis le CSV | un graphique primaviz |
-| `{{t}}` puis la grille Markdown | un tableau explicite |
+| `{{t}}` ou `{{t "Taux"}}` puis la grille Markdown | un tableau explicite, titré ou non |
 
 Les paramètres gardent leurs noms longs (`type`, `titre`, `couleur`) ; seule
 la balise est courte. Les panneaux de graphique et d'encadré restent
@@ -107,6 +163,7 @@ disponibles pour les réglages fins.
 | `{{d aujourd'hui}}` | la date du jour, au moment de la composition |
 | `{{d maintenant}}` | la date et l'heure de la composition |
 | `{{g clé}}` | un terme du glossaire |
+| `{{p clé}}` | une personne citée du registre |
 | `{{m auteur}}` | une métadonnée du projet |
 
 Toutes ces mises en forme sont aussi des commandes de la palette
@@ -141,7 +198,11 @@ déplace, on le sélectionne et on le corrige caractère par caractère, et
 `@dupont2023` reste lisible dans le document. La numérotation et la note
 sont produites au rendu, pas dans le fichier.
 
-Le bouton citation de la barre supérieure ouvre le composeur à l'endroit du
+Les blocs de citation (`>`), distincts des appels `@clé`, ont leur
+apparence dans les normes : police, taille, couleur, retrait à gauche et
+italique. Un champ vide conserve le réglage par défaut de Typst.
+
+Le menu **Insérer** de la barre supérieure ouvre le composeur à l'endroit du
 curseur. Il sert aussi à réécrire une citation existante lorsque le curseur
 s'y trouve. Tant que l'on n'a pas validé, le document n'est pas modifié ;
 `Échap` ne laisse rien. Taper `@` ouvre le même composeur : un `@` isolé
@@ -165,8 +226,8 @@ aussi être nommé en entier ou en code OSIS, et les livres numérotés
 acceptent `1Jn` comme `1 Jean`. Les formes historiques `Jn 3:16` et
 `Jn 3,16` restent lues.
 
-Le bouton **Référence biblique** de la barre supérieure ouvre le panneau
-d'insertion : on y choisit un livre, un chapitre et des versets (`16`,
+Le menu **Insérer** de la barre supérieure, puis **Référence biblique…**,
+ouvre le panneau d'insertion : on y choisit un livre, un chapitre et des versets (`16`,
 `16-18`, `16, 17`), on ajoute autant de références que nécessaire, puis on
 insère **une seule** balise qui les porte toutes. Le champ chapitre accepte
 une suite de chapitres entiers, `1-11`. Un champ **texte libre** ajoute une
@@ -248,8 +309,8 @@ séparateurs se combinent avec ce gabarit.
 
 ### L'index des citations
 
-L'index s'insère avec `{{index}}` ou l'icône de la barre supérieure. Dans
-l'onglet **Biblique**, on peut :
+L'index s'insère avec `{{index}}` ou par **Insérer → Index des citations
+bibliques**. Dans l'onglet **Biblique**, on peut :
 
 - **montrer les pages** où chaque référence apparaît, avec la liste des
   pages séparées par des virgules ;
@@ -266,8 +327,12 @@ Avec le regroupement, l'index ressemble à :
 
 Les indications de corpus — **Livres canoniques** et **Livres non
 canoniques** — sont des titres de niveau 2, suivis d'un retour à la ligne.
-Un titre de livre ne reste jamais seul en bas d'une colonne : il est
-solidaire de sa première référence, qui le suit dans la même colonne.
+Lorsque l'index ne contient que des livres canoniques, le titre **Livres
+canoniques** est omis : il est implicite. Le titre n'apparaît que si
+l'index mêle les deux corpus ; un index uniquement non canonique garde
+**Livres non canoniques** pour le signaler. Un titre de livre ne reste
+jamais seul en bas d'une colonne : il est solidaire de sa première
+référence, qui le suit dans la même colonne.
 
 Les pages sont demandées à Typst au moment de la composition : ce sont
 les pages réelles du document, pas une estimation de l'éditeur. Une
@@ -298,6 +363,23 @@ finale se pose d'une ligne `{{gs}}`, ou `{{gs tout}}` pour y montrer aussi
 les termes jamais cités ; `{glossaire}` et `{glossaire: tout}` restent lus.
 
 Voir [Le glossaire](glossaire.md).
+
+## Les personnes citées
+
+`{{p clé}}` nomme une personne déclarée dans `personnes.toml` et pose une
+mention dans l'index nominum. Sans expression, les règles de première mention
+et de reprise des normes s'appliquent ; leurs valeurs par défaut sont le nom
+simple, et une norme peut demander le nom complet à la première mention.
+`{{p clé|simple}}` force le nom simple ; `{{p clé|complet}}` ou
+`{{p clé|alias}}` choisit une forme nommée ; `{{p clé|nom+dates}}` choisit les
+champs à afficher (`Augustin d'Hippone (354-430)`) ; `{{p clé|auto}}` écrit la
+règle des normes explicitement. Le panneau d'insertion filtre la liste du
+registre et remplit la fiche depuis le panneau.
+`{{index-personnes}}` (ou `{{ip}}`) pose l'index, recalculé au rendu avec les
+pages.
+
+Aucun nom n'est reconnu automatiquement dans la prose : le registre et les
+mentions restent explicites. Voir [Les personnes citées](personnes.md).
 
 ## Les images
 
@@ -338,15 +420,17 @@ au rendu par la numérotation réelle du document :
 
     [[titre-adoption-coutume|"chapitre"]]   → chapitre 2.3
     [[figure-planche|"figure"]]             → Figure 4
+    [[tableau-taux-de-croissance|"tableau"]] → Tableau 2
     [[titre-adoption-coutume|"page"]]       → page 7
 
 `"figure"` s'applique à une figure numérotée, c'est-à-dire une image avec
 légende ; pour une image sans légende, `"page"` reste disponible.
 
 `"section"` et `"titre"` sont des synonymes de `"chapitre"` ; `"image"` est
-un synonyme de `"figure"`. Le numéro du chapitre suit la numérotation des
-titres des normes, le préfixe de la figure suit le libellé des légendes, et
-la page suit la numérotation des pages. Le texte entre guillemets est
+un synonyme de `"figure"` et `"table"` de `"tableau"`. Le numéro du chapitre
+suit la numérotation des titres des normes, le préfixe de la figure suit le
+libellé des légendes, le tableau a son propre compteur, et la page suit la
+numérotation des pages. Le texte entre guillemets est
 volontairement une convention : un lien ordinaire vers un mot « page » reste
 possible sans guillemets.
 
@@ -387,13 +471,69 @@ portent du texte ordinaire — emphase, code, citations ; une barre dedans
 s'échappe : `\|`. Sans la ligne de séparation, ce n'est pas un tableau :
 la ligne reste du texte.
 
+Un tableau peut recevoir un **titre**, comme une figure :
+
+    {{t "Taux de croissance"}}
+    | Année | Taux |
+    | --- | --- |
+    | 2024 | 3 % |
+
+Le titre devient la légende du tableau (il est numéroté « Tableau 1 ») et
+lui donne une ancre stable, `tableau-taux-de-croissance`. On peut alors le
+citer dans le texte avec `[[tableau-taux-de-croissance]]` ou afficher son
+numéro avec `[[tableau-taux-de-croissance|"tableau"]]`. La forme courte
+`taux-de-croissance` suffit quand elle est unique.
+
+Un tableau **sans titre** n'a pas de légende visible, mais il reçoit quand
+même une ancre de rang : `tableau-1`, `tableau-2`… Il reste donc
+référençable. Pour afficher le titre d'une table au lieu du texte du lien,
+ajoutez l'option `show-title=true` **avant** la barre :
+
+    [[taux-de-croissance show-title=true|voir le tableau]]
+
+L'option accepte l'ancre complète ou sa forme courte. Si l'ancre courte
+d'un tableau est `t`, la forme est exactement `[[t show-title=true|titre]]`.
+Si la table n'a pas de titre, le texte après la barre reste affiché : le
+lien ne devient jamais vide. `show-title=false`, ou l'absence d'option,
+garde le texte écrit.
+
+Le panneau **Insérer → Tableau…** demande le titre en même temps que le
+nombre de rangs et de colonnes. La commande **Aligner les tableaux**
+(menu **Insérer**, ou palette `Ctrl+K`) égalise les colonnes sans toucher au
+titre ni au reste du document ; `---`, `:-:` et `---:` conservent leur
+alignement.
+
+Dans une cellule :
+
+- `Tab` / `Maj+Tab` passent à la cellule suivante / précédente ;
+- `Entrée` / `Maj+Entrée` passent à la même colonne de la ligne suivante /
+  précédente ;
+- `Ctrl+Tab` insère une colonne vide à droite de la colonne courante ;
+- `Ctrl+Entrée` insère une ligne vide sous la ligne courante ;
+- `Ctrl+Suppr` supprime la ligne de données courante ;
+- `Maj+Suppr` supprime la colonne courante ;
+- `Ctrl+Maj+flèches` déplacent la rangée ou la colonne dans la direction
+  demandée ;
+- un **clic droit sur l'en-tête d'une colonne** fait tourner son alignement
+  entre droite, centre et gauche.
+
+Dès que le curseur entre dans une autre cellule ou qu'une de ces commandes
+réussit, le tableau courant est aligné automatiquement : les colonnes prennent
+la largeur de leur contenu, les pipes restent à la même place et les
+alignements `---`, `:-:` et `---:` sont conservés. L'en-tête, la ligne de
+séparation et la dernière colonne ne sont jamais supprimés : le tableau reste
+une grille Markdown valide. La commande **Aligner les
+tableaux** reste disponible pour aligner tous les tableaux d'un coup. Hors
+d'un tableau, ces touches gardent leur sens habituel.
+
 Une ligne qui porte plus de cellules que l'en-tête **élargit le tableau**
 au lieu de perdre la fin de la ligne ; les cellules Unicode se relisent
 telles quelles. Vérifiez tout de même le rendu d'un tableau irrégulier
 dans le PDF avant de le remettre.
 
 Le décor l'habille comme tout bloc — `{encadré}` prend sa tenue dans les
-normes.
+normes. Le panneau **Insérer → Tableau…** demande le titre en même temps
+que le nombre de rangs et de colonnes.
 
 ## Les graphiques
 
@@ -425,7 +565,7 @@ générateur les traduit vers primaviz, sans changer leur source.
 
 Une ligne d'en-tête est reconnue et sautée. La virgule et le point-virgule
 sont acceptés comme séparateurs, et les valeurs entre guillemets gardent
-leurs virgules. Le bouton **Insérer un graphique** de la barre d'outils
+leurs virgules. Le menu **Insérer → Graphique…** de la barre supérieure
 ouvre le panneau complet : type, titre, taille, placement, légende, valeurs
 et un vrai champ CSV où coller plusieurs lignes ou importer un fichier. Il
 n'y a pas d'aperçu séparé : le document composé est la prévisualisation.
@@ -474,9 +614,9 @@ pour qu'un défilement rapide ne montre pas de page blanche. Les erreurs de
 compilation occupent toute la largeur du panneau, au-dessus du document, et
 aucun message de compilation ne s'affiche dans la page.
 
-Le texte peut y être sélectionné au glisser, au double-clic pour un mot et au
-triple-clic pour une ligne ; `Ctrl+C` copie la sélection. `Maj+clic` étend la
-sélection à partir de son point de départ.
+Un simple clic ne sélectionne rien : la sélection naît du **clic suivi d'un
+mouvement**. Un double-clic sélectionne le mot, un triple-clic la ligne ;
+`Ctrl+C` copie la sélection, et `Maj+clic` l'étend depuis son point de départ.
 
 Dans une vue de rendu, `Ctrl+F` cherche dans le **document composé** — titres,
 notes et bibliographie compris — et non dans la source. La barre compte les
@@ -498,9 +638,9 @@ l'éditeur, pas seulement dans la mémoire du curseur. En vue de rendu,
 `Ctrl+F` ouvre la recherche du PDF ; en vue d'édition, celle du document —
 jamais les deux à la fois.
 
-Le bouton des **numéros de ligne** de la barre d'outils les affiche ou les
-masque dans l'éditeur. C'est une préférence de lecture, conservée d'une
-session à l'autre : elle ne change rien au document composé.
+La page **Paramètres → Éditeur** affiche ou masque les **numéros de ligne**
+dans l'éditeur. C'est une préférence de lecture, conservée d'une session à
+l'autre : elle ne change rien au document composé.
 
 ## Revenir au même endroit
 

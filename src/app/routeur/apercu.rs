@@ -82,6 +82,40 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
 
+        Message::SelectionApercuGlisserDepuis {
+            page,
+            ancre,
+            point,
+            etendue,
+        } => {
+            let Some(texte) = state.render.texte_affiche() else {
+                return Task::none();
+            };
+            let Some(ancre) = texte.position_au_point(
+                page,
+                Point::new(Abs::pt(ancre.0 as f64), Abs::pt(ancre.1 as f64)),
+            ) else {
+                return Task::none();
+            };
+            let Some(focus) = texte.position_au_point(
+                page,
+                Point::new(Abs::pt(point.0 as f64), Abs::pt(point.1 as f64)),
+            ) else {
+                return Task::none();
+            };
+            let ancre = if etendue {
+                state
+                    .render
+                    .selection
+                    .map_or(ancre, |selection| selection.ancre)
+            } else {
+                ancre
+            };
+
+            state.render.selection = Some(crate::typst::texte::SelectionApercu { ancre, focus });
+            Task::none()
+        }
+
         Message::SelectionApercuGlisser { page, point } => {
             let Some(texte) = state.render.texte_affiche() else {
                 return Task::none();
@@ -97,6 +131,11 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
                 selection.focus = focus;
             }
 
+            Task::none()
+        }
+
+        Message::SelectionApercuClic => {
+            state.render.selection = None;
             Task::none()
         }
 

@@ -1,6 +1,5 @@
-use crate::app::state::ChapterRename;
 use crate::app::{Message, State};
-use crate::project::{BibliographyEntry, Chapter};
+use crate::project::BibliographyEntry;
 use crate::ui::theme::{self, Palette};
 use iced::widget::canvas;
 use iced::widget::{
@@ -17,13 +16,6 @@ const ENTRY_HEIGHT: f32 = 32.0;
 /// d'un fil de commentaires.
 const PAS_HIERARCHIE: f32 = 16.0;
 
-/// Largeur de la colonne des comptes de mots.
-///
-/// Fixe, et alignée à droite : c'est ce qui fait qu'on parcourt la colonne des
-/// chiffres d'un seul regard, sans que les nombres dansent d'une ligne à
-/// l'autre.
-const COUNT_WIDTH: f32 = 58.0;
-
 /// L'identifiant du champ de recherche biblique : le panneau lui donne le
 /// clavier dès qu'il s'ouvre, au lieu de laisser la frappe à l'éditeur.
 pub(crate) fn id_recherche_biblique() -> iced::widget::Id {
@@ -33,13 +25,13 @@ pub(crate) fn id_recherche_biblique() -> iced::widget::Id {
 /// Le panneau de travail : où en est le projet.
 ///
 /// Il répond à une seule question — « où j'en suis ? » — et l'ordonne du plus
-/// général au plus précis : le projet et son volume, ses chapitres, sa
-/// bibliographie, les autres projets. Chaque chapitre porte son compte de mots,
-/// qui est le repère de progression.
+/// général au plus précis : le projet et son volume, son sommaire, sa
+/// bibliographie, les autres projets.
 pub fn view(state: &State) -> Element<'_, Message> {
     let palette = state.resolved.palette;
 
     let project = &state.project;
+    let volume = state.volume();
 
     let mut content = column![].spacing(2).padding([14, 12]);
 
@@ -52,7 +44,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
                 palette.label(&project.name).size(theme::jetons::SAILLANT),
                 row![
                     palette
-                        .label(format!("{} mots", format_count(project.words())))
+                        .label(format!("{} mots", format_count(state.word_count())))
                         .size(theme::jetons::DETAIL)
                         .color(palette.text_muted),
                     Space::new().width(Length::Fill),
@@ -77,6 +69,37 @@ pub fn view(state: &State) -> Element<'_, Message> {
                         .color(palette.text_muted),
                 ]
                 .align_y(Alignment::Center),
+                row![
+                    palette
+                        .label("Citations de bloc (>)")
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                    Space::new().width(Length::Fill),
+                    palette
+                        .label(
+                            format!(
+                                "{} mots · {:.1} %",
+                                format_count(volume.mots_citations),
+                                volume.part_des_citations() * 100.0
+                            )
+                            .replace('.', ","),
+                        )
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .align_y(Alignment::Center),
+                row![
+                    palette
+                        .label("Notes (hors compte)")
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                    Space::new().width(Length::Fill),
+                    palette
+                        .label(format!("{} mots", format_count(volume.mots_notes)))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted),
+                ]
+                .align_y(Alignment::Center),
             ]
             .spacing(3),
         )
@@ -97,55 +120,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // pas dans le panneau. Le sommaire commence directement.
     content = content.push(Space::new().height(2));
 
-    // Les chapitres du document : la tête de niveau 1 est la frontière.
-    // La liste reste complète même quand la vue n'en montre qu'un ; c'est
-    // elle qui règle la tranche, et le sommaire qui la suit.
-    if state.project.document.is_some() && !state.render.chapitres.is_empty() {
-        content = content.push(section_header(
-            "Chapitres",
-            state.chapitres_replie,
-            Message::ChapitresReplier,
-            palette,
-        ));
-
-        if !state.chapitres_replie {
-            content = content.push(chapitre_ligne(
-                None,
-                "Document entier",
-                None,
-                None,
-                state.render.chapitre.is_none(),
-                palette,
-            ));
-
-            for chapitre in &state.render.chapitres {
-                content = content.push(chapitre_ligne(
-                    Some(chapitre.index),
-                    &chapitre.titre,
-                    Some(chapitre.index + 1),
-                    chapitre.pages_connues.then(|| chapitre.pages()),
-                    state
-                        .render
-                        .chapitre
-                        .as_ref()
-                        .is_some_and(|actif| actif.index == chapitre.index),
-                    palette,
-                ));
-            }
-
-            content = content.push(Space::new().height(10));
-        }
-    }
-
     // SIDEBAR-06-02 : le sommaire est le premier élément du panneau.
     if !state.render.outline.is_empty() {
-        let titre_sommaire = if state.render.chapitre.is_some() {
-            "Sommaire du chapitre"
-        } else {
-            "Sommaire"
-        };
         content = content.push(section_header(
-            titre_sommaire,
+            "Sommaire",
             state.sommaire_replie,
             Message::SommaireReplier,
             palette,
@@ -157,13 +135,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         } else {
             let mut sommaire = column![].spacing(0);
 
-            // En vue de chapitre, le sommaire ne garde que ses têtes ; les
-            // index restent ceux du sommaire complet pour que le clic vise
-            // toujours la bonne destination.
-            let visibles = crate::app::chapitres::filtrer_outline(
-                &state.render.outline,
-                state.render.chapitre.as_ref(),
-            );
+            let visibles: Vec<_> = state.render.outline.iter().enumerate().collect();
             let niveaux: Vec<usize> = visibles
                 .iter()
                 .map(|(_, entree)| entree.level.saturating_sub(1))
@@ -369,90 +341,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
             );
         }
         content = content.push(Space::new().height(8));
-    }
-
-    // LEFT-04-02 : la section « Document » est supprimée — le nom du
-    // document est en en-tête, le compte de mots dans la barre d'état.
-    if let Some(document) = project.document.as_ref() {
-        let _ = document;
-        let orphan_count = project.orphan_chapters().count();
-        if orphan_count > 0 {
-            content = content.push(
-                palette
-                    .label(format!(
-                        "{orphan_count} archive(s) hors assemblage — importez-les via Ouvrir"
-                    ))
-                    .size(theme::jetons::CHAPEAU)
-                    .color(palette.warning),
-            );
-        }
-    } else {
-        // Projet ancien en cours de migration : il reste navigable tant que le
-        // document unique n'a pas pu être créé.
-        content = content.push(section_header(
-            "Chapitres",
-            state.chapitres_replie,
-            Message::ChapitresReplier,
-            palette,
-        ));
-
-        if !state.chapitres_replie {
-            if project.chapters.is_empty() {
-                content = content.push(
-                    palette
-                        .label("Aucun chapitre.")
-                        .size(theme::jetons::CORPS)
-                        .color(palette.text_muted),
-                );
-            }
-
-            let active = state.editor.path.clone();
-
-            for (rang, chapter) in project.chapters.iter().enumerate() {
-                if rang > 0 {
-                    content = content.push(separation(palette));
-                }
-
-                content = content.push(chapter_row(
-                    chapter,
-                    state.renaming.as_ref(),
-                    active.as_deref() == Some(chapter.path.as_path()),
-                    palette,
-                ));
-            }
-
-            let orphans = project.orphan_chapters().count();
-
-            if orphans > 0 {
-                content = content.push(Space::new().height(8));
-                content = content.push(
-                    palette
-                        .label(format!(
-                            "{orphans} chapitre(s) hors assemblage — absent(s) du PDF"
-                        ))
-                        .size(theme::jetons::DETAIL)
-                        .color(palette.warning),
-                );
-            }
-
-            content = content.push(Space::new().height(8));
-            content = content.push(
-                button(
-                    row![
-                        theme::icon(lucide_icons::iced::icon_plus::<Theme>(), 15.0, palette.text),
-                        palette
-                            .label("Nouveau chapitre")
-                            .size(theme::jetons::SAILLANT),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .on_press(Message::NewChapter)
-                .width(Fill)
-                .padding([7, 10])
-                .style(move |t, status| primary_style(t, status, palette)),
-            );
-        }
     }
 
     if let Some(cliquee) = &state.plugins.bible.reference_cliquee {
@@ -1033,6 +921,62 @@ pub fn view(state: &State) -> Element<'_, Message> {
         }
     }
 
+    // ---- Les personnes citées ----
+    //
+    // Le registre vit dans un fichier du projet ; le panneau en montre le
+    // compte et ouvre la fenêtre qui le gère. Aucun nom n'est reconnu dans
+    // la prose : la mention reste explicite.
+    if state
+        .reglages
+        .fonctionnalites
+        .actif(crate::base::valeurs::CLE_PERSONNES)
+    {
+        content = content.push(separation(palette));
+        content = content.push(Space::new().height(12));
+        content = content.push(
+            row![
+                palette
+                    .label("Personnes citées")
+                    .size(theme::jetons::SAILLANT),
+                Space::new().width(Length::Fill),
+                button(
+                    palette
+                        .label(format!("{}", state.plugins.personnes.entrees.len()))
+                        .size(theme::jetons::DETAIL)
+                        .color(palette.text_muted)
+                )
+                .on_press(Message::PersonnesFenetreOuvrir)
+                .padding([2, 5])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        );
+        content = content.push(
+            palette
+                .label("Registre et index nominum")
+                .size(theme::jetons::DETAIL)
+                .color(palette.text_muted),
+        );
+        content = content.push(
+            row![
+                button(
+                    palette
+                        .label("Insérer une personne")
+                        .size(theme::jetons::DETAIL),
+                )
+                .on_press(Message::PersonnePanneauOuvrir)
+                .padding([4, 8])
+                .style(move |t, status| entry_style(t, status, palette, false)),
+                button(palette.label("Registre").size(theme::jetons::DETAIL),)
+                    .on_press(Message::PersonnesFenetreOuvrir)
+                    .padding([4, 8])
+                    .style(move |t, status| entry_style(t, status, palette, false)),
+            ]
+            .spacing(6),
+        );
+    }
+
     // ---- Les projets ----
 
     content = content.push(Space::new().height(18));
@@ -1207,202 +1151,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
     sortie
 }
 
-/// Une ligne du sélecteur de chapitre : le document entier, ou une tête
-/// de niveau 1. La ligne active porte la bordure d'accent, comme une entrée
-/// de liste sélectionnée.
-fn chapitre_ligne<'a>(
-    index: Option<usize>,
-    titre: &'a str,
-    numero: Option<usize>,
-    pages: Option<usize>,
-    actif: bool,
-    palette: Palette,
-) -> Element<'a, Message> {
-    let icone = if index.is_some() {
-        lucide_icons::iced::icon_file_text::<Theme>()
-    } else {
-        lucide_icons::iced::icon_book_open::<Theme>()
-    };
-
-    let mut ligne = row![].spacing(6).align_y(Alignment::Center);
-
-    if let Some(numero) = numero {
-        ligne = ligne.push(
-            palette
-                .label(format!("{numero:02}"))
-                .size(theme::jetons::CHAPEAU)
-                .color(if actif {
-                    palette.accent
-                } else {
-                    palette.text_muted
-                }),
-        );
-    }
-
-    ligne = ligne
-        .push(theme::icon(
-            icone,
-            13.0,
-            if actif {
-                palette.accent
-            } else {
-                palette.text_muted
-            },
-        ))
-        .push(
-            palette
-                .label(tronquer(titre, 42))
-                .size(theme::jetons::CORPS)
-                .color(if actif { palette.accent } else { palette.text }),
-        );
-
-    if let Some(pages) = pages {
-        ligne = ligne.push(Space::new().width(Fill)).push(
-            palette
-                .label(format!("{pages} p."))
-                .size(theme::jetons::CHAPEAU)
-                .color(palette.text_muted),
-        );
-    }
-
-    button(ligne)
-        .on_press(Message::ChapitreChoisir(index))
-        .width(Fill)
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .padding([4, 8])
-        .style(move |t, status| entry_style(t, status, palette, actif))
-        .into()
-}
-
-/// Une ligne de chapitre : son numéro, son titre, son compte de mots, et de
-/// quoi le renommer ou le supprimer.
-///
-/// Quand ce chapitre est celui qu'on renomme, la ligne devient un champ de
-/// saisie : l'édition se fait là où on lit, sans boîte de dialogue.
-fn chapter_row<'a>(
-    chapter: &'a Chapter,
-    renaming: Option<&'a ChapterRename>,
-    is_active: bool,
-    palette: Palette,
-) -> Element<'a, Message> {
-    let being_renamed = renaming
-        .filter(|renaming| renaming.path == chapter.path)
-        .map(|renaming| renaming.buffer.clone());
-
-    if let Some(buffer) = being_renamed {
-        return renaming_row(chapter, buffer, palette);
-    }
-
-    let mut label = row![].spacing(8).align_y(Alignment::Center);
-
-    if is_active {
-        // Le repère d'activité est un point, pas une flèche en texte : même
-        // information, aucun bruit typographique.
-        label = label.push(theme::icon(
-            lucide_icons::iced::icon_dot::<Theme>(),
-            9.0,
-            palette.accent,
-        ));
-    }
-
-    // Le numéro passe en avertissement quand le chapitre n'est pas assemblé :
-    // la couleur suffit à repérer l'oubli dans la liste.
-    label = label.push(
-        palette
-            .label(format!("{:02}", chapter.order))
-            .size(theme::jetons::DETAIL)
-            .color(if chapter.included {
-                palette.text_muted
-            } else {
-                palette.warning
-            }),
-    );
-
-    label = label.push(
-        palette
-            .label(chapter.title.clone())
-            .size(theme::jetons::SAILLANT)
-            .color(palette.text),
-    );
-
-    // Du texte cliquable, pas un bouton : les boutons s'espacent et la
-    // liste part en escalier (bug-report 2026-11-03).
-    let title = mouse_area(label.width(Fill).height(Length::Fixed(ENTRY_HEIGHT)))
-        .on_press(Message::OpenChapter(chapter.path.clone()))
-        .interaction(iced::mouse::Interaction::Pointer);
-
-    row![
-        tooltip(
-            title,
-            chapter_details(chapter, palette),
-            tooltip::Position::Right
-        )
-        .gap(6),
-        container(
-            palette
-                .label(format_count(chapter.words))
-                .size(theme::jetons::CORPS)
-                .color(palette.text_muted)
-        )
-        .width(Length::Fixed(COUNT_WIDTH))
-        .height(Length::Fixed(ENTRY_HEIGHT))
-        .align_x(Alignment::End)
-        .center_y(ENTRY_HEIGHT),
-        icon_action(
-            lucide_icons::iced::icon_pencil::<Theme>(),
-            "Renommer le chapitre",
-            Message::StartRename(chapter.path.clone()),
-            palette,
-        ),
-        icon_action(
-            lucide_icons::iced::icon_trash_2::<Theme>(),
-            "Supprimer le chapitre",
-            Message::DeleteChapter(chapter.path.clone()),
-            palette,
-        ),
-    ]
-    .spacing(2)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-/// La ligne d'un chapitre en cours de renommage : un champ de saisie, et de
-/// quoi valider ou abandonner.
-fn renaming_row<'a>(
-    chapter: &'a Chapter,
-    buffer: String,
-    palette: Palette,
-) -> Element<'a, Message> {
-    row![
-        palette
-            .label(format!("{:02}", chapter.order))
-            .size(theme::jetons::DETAIL)
-            .color(palette.text_muted),
-        text_input::TextInput::new("Titre du chapitre", &buffer)
-            .on_input(Message::RenameChanged)
-            .on_submit(Message::RenameCommit)
-            .size(theme::jetons::SAILLANT)
-            .padding([4, 8])
-            .width(Fill),
-        icon_action(
-            lucide_icons::iced::icon_check::<Theme>(),
-            "Valider",
-            Message::RenameCommit,
-            palette,
-        ),
-        icon_action(
-            lucide_icons::iced::icon_x::<Theme>(),
-            "Abandonner",
-            Message::RenameCancel,
-            palette,
-        ),
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center)
-    .height(Length::Fixed(ENTRY_HEIGHT))
-    .into()
-}
-
 /// Une commande de statistiques réduite à une icône : recherche ou tri.
 fn stat_icon<'a>(
     glyph: iced::widget::Text<'a, Theme>,
@@ -1572,38 +1320,6 @@ fn icon_action<'a>(
         tooltip::Position::Right,
     )
     .gap(6)
-    .into()
-}
-
-/// L'infobulle d'un chapitre : son état d'assemblage et son chemin.
-fn chapter_details<'a>(chapter: &'a Chapter, palette: Palette) -> Element<'a, Message> {
-    let (status, color) = if chapter.included {
-        ("Inclus dans main.typ".to_string(), palette.text_muted)
-    } else {
-        (
-            "Hors assemblage : n'apparaîtra pas dans le PDF".to_string(),
-            palette.warning,
-        )
-    };
-
-    container(
-        column![
-            palette
-                .label(chapter.title.clone())
-                .size(theme::jetons::CORPS),
-            palette
-                .label(status)
-                .size(theme::jetons::DETAIL)
-                .color(color),
-            palette
-                .label(format_path(&chapter.path))
-                .size(theme::jetons::CHAPEAU)
-                .color(palette.text_muted),
-        ]
-        .spacing(2),
-    )
-    .padding([6, 10])
-    .style(move |_| tooltip_style(palette))
     .into()
 }
 
@@ -1792,47 +1508,50 @@ fn citation_row<'a>(
         );
     }
 
-    // Les gestes restent visibles : une rangée d'actions qui apparaît sous
-    // le pointeur change la mise en page sous le curseur, et l'entrée se
-    // referme aussitôt (le survol était perdu avant le clic). Une couleur
-    // discrète les laisse au second plan sans les faire disparaître.
-    let couleur_action = if survolee {
-        palette.text
+    // Les gestes ne paraissent qu'au survol, mais leur place est réservée
+    // même au repos : sans cette largeur fixe, la rangée se réordonnerait
+    // sous le pointeur et le survol serait perdu avant le clic. Deux cases
+    // de 24 px, la largeur exacte des boutons d'action.
+    let actions: Element<'a, Message> = if survolee {
+        row![
+            button(theme::icon(
+                lucide_icons::iced::icon_pencil::<Theme>(),
+                12.0,
+                palette.text,
+            ))
+            .on_press(Message::ModifierReference(entry.key.clone()))
+            .padding(6)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+            button(theme::icon(
+                lucide_icons::iced::icon_trash_2::<Theme>(),
+                12.0,
+                palette.danger,
+            ))
+            .on_press(Message::ReferenceSupprimer(entry.key.clone()))
+            .padding(6)
+            .style(move |t, status| entry_style(t, status, palette, false)),
+        ]
+        .spacing(2)
+        .into()
     } else {
-        palette.text_muted
+        row![
+            Space::new().width(24.0).height(ENTRY_HEIGHT),
+            Space::new().width(24.0).height(ENTRY_HEIGHT),
+        ]
+        .spacing(2)
+        .into()
     };
 
-    let mut ligne = row![
+    let ligne = row![
         button(registres)
             .on_press(Message::InsertCitation(entry.key.clone()))
             .width(Fill)
             .padding([7, 8])
             .style(move |t, status| entry_style(t, status, palette, false)),
+        actions,
     ]
     .spacing(2)
     .align_y(Alignment::Center);
-
-    ligne = ligne.push(
-        button(theme::icon(
-            lucide_icons::iced::icon_pencil::<Theme>(),
-            12.0,
-            couleur_action,
-        ))
-        .on_press(Message::ModifierReference(entry.key.clone()))
-        .padding(6)
-        .style(move |t, status| entry_style(t, status, palette, false)),
-    );
-
-    ligne = ligne.push(
-        button(theme::icon(
-            lucide_icons::iced::icon_trash_2::<Theme>(),
-            12.0,
-            palette.danger,
-        ))
-        .on_press(Message::ReferenceSupprimer(entry.key.clone()))
-        .padding(6)
-        .style(move |t, status| entry_style(t, status, palette, false)),
-    );
 
     let ligne = mouse_area(ligne)
         .on_enter(Message::SurvolReference(Some(entry.key.clone())))
@@ -1860,7 +1579,7 @@ fn tronquer(texte: &str, largeur: usize) -> String {
 
 /// Le titre d'une section, avec son chevron et son geste de repli.
 ///
-/// Sommaire, Chapitres, Bibliographie, Glossaire et Projets partagent
+/// Sommaire, Bibliographie, Glossaire et Projets partagent
 /// exactement la même typographie, le même espacement et le même indicateur
 /// d'état : c'est ce qui fait du panneau un ensemble, pas cinq interfaces.
 fn section_header<'a>(
@@ -1908,42 +1627,6 @@ fn format_count(words: usize) -> String {
     }
 
     grouped.chars().rev().collect()
-}
-
-/// Chemin réduit à ses deux derniers éléments.
-///
-/// Le préfixe `~/.typst-writer/projets/<nom>/` est le même pour tout le monde :
-/// l'afficher dans une infobulle n'apprend rien.
-fn format_path(path: &std::path::Path) -> String {
-    let parts: Vec<String> = path
-        .components()
-        .rev()
-        .take(2)
-        .map(|part| part.as_os_str().to_string_lossy().to_string())
-        .collect();
-
-    parts.into_iter().rev().collect::<Vec<_>>().join("/")
-}
-
-/// Bouton principal : plein, pour qu'il se détache du reste.
-fn primary_style(_t: &Theme, status: button::Status, palette: Palette) -> button::Style {
-    let background = match status {
-        button::Status::Active | button::Status::Hovered => Some(palette.accent),
-        button::Status::Pressed => Some(palette.surface_active),
-        button::Status::Disabled => Some(palette.border),
-    };
-
-    button::Style {
-        background: background.map(Into::into),
-        // Le texte doit rester lisible sur le fond réel : un thème écrit son
-        // propre accent, celui d'iced n'est pas le bon — on mesure.
-        text_color: theme::lisible_sur(background.unwrap_or(palette.surface)),
-        border: iced::Border {
-            radius: crate::ui::theme::jetons::RAYON.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
 }
 
 /// Entrée de liste : rien au repos, une brume au survol, et la sélection
@@ -2240,16 +1923,6 @@ mod tests {
         assert_eq!(format_count(1_000), "1\u{202f}000");
         assert_eq!(format_count(12_345), "12\u{202f}345");
         assert_eq!(format_count(1_234_567), "1\u{202f}234\u{202f}567");
-    }
-
-    /// Un chemin affiché se réduit à ses deux derniers éléments.
-    #[test]
-    fn displayed_paths_keep_only_the_last_components() {
-        let path = std::path::Path::new(
-            "/home/quelqu-un/.typst-writer/projets/mon-travail/chapitres/01-intro.typ",
-        );
-
-        assert_eq!(format_path(path), "chapitres/01-intro.typ");
     }
 }
 

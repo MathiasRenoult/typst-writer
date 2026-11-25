@@ -51,6 +51,15 @@ pub fn generer_avec(
     } else {
         crate::langage::index_citations::IndexBiblique::default()
     };
+    let index_personnes = if document.blocs.iter().any(contient_index_personnes) {
+        crate::langage::index_personnes::IndexPersonnes::construire(
+            document,
+            &regles.personnes,
+            &regles.index_personnes,
+        )
+    } else {
+        crate::langage::index_personnes::IndexPersonnes::default()
+    };
 
     // primaviz, pour les balises `{chart}` et les anciens `{graphique}` —
     // le paquet est vendu avec l'application et installé avant le rendu.
@@ -64,8 +73,18 @@ pub fn generer_avec(
     }
 
     let mut compteur_liens = crate::langage::liens::CompteurLiens::default();
+    let mut personnes_vues = std::collections::HashSet::new();
     for bloc in &document.blocs {
-        generer_bloc(bloc, &mut out, regles, decor, &index, &mut compteur_liens);
+        generer_bloc(
+            bloc,
+            &mut out,
+            regles,
+            decor,
+            &index,
+            &index_personnes,
+            &mut personnes_vues,
+            &mut compteur_liens,
+        );
     }
 
     out
@@ -134,14 +153,33 @@ pub fn generer_front_matter(
     } else {
         crate::langage::index_citations::IndexBiblique::default()
     };
+    let index_personnes = if document.blocs.iter().any(contient_index_personnes) {
+        crate::langage::index_personnes::IndexPersonnes::construire(
+            document,
+            &regles.personnes,
+            &regles.index_personnes,
+        )
+    } else {
+        crate::langage::index_personnes::IndexPersonnes::default()
+    };
 
     let mut compteur_liens = crate::langage::liens::CompteurLiens::default();
+    let mut personnes_vues = std::collections::HashSet::new();
     for (rang, contenu) in pages.iter().enumerate() {
         if rang > 0 {
             out.push_str("#pagebreak()\n\n");
         }
         for bloc in *contenu {
-            generer_bloc(bloc, &mut out, regles, decor, &index, &mut compteur_liens);
+            generer_bloc(
+                bloc,
+                &mut out,
+                regles,
+                decor,
+                &index,
+                &index_personnes,
+                &mut personnes_vues,
+                &mut compteur_liens,
+            );
         }
     }
 
@@ -149,7 +187,8 @@ pub fn generer_front_matter(
     // avec celles du corps : deux titres identiques y sont légitimes.
     out = out
         .replace("<titre-", "<garde-titre-")
-        .replace("<figure-", "<garde-figure-");
+        .replace("<figure-", "<garde-figure-")
+        .replace("<tableau-", "<garde-tableau-");
     out
 }
 
@@ -159,6 +198,16 @@ fn contient_index(bloc: &Bloc) -> bool {
         Bloc::IndexBiblique => true,
         Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_index(bloc),
         Bloc::Garde(contenu) => contenu.iter().any(contient_index),
+        _ => false,
+    }
+}
+
+/// Le document contient-il un index des personnes, même sous un décor ?
+fn contient_index_personnes(bloc: &Bloc) -> bool {
+    match bloc {
+        Bloc::IndexPersonnes => true,
+        Bloc::Décor { bloc, .. } | Bloc::Canonique(bloc) => contient_index_personnes(bloc),
+        Bloc::Garde(contenu) => contenu.iter().any(contient_index_personnes),
         _ => false,
     }
 }
@@ -196,7 +245,8 @@ fn premier_texte(inline: &[Inline]) -> Option<char> {
             | Inline::Italique(contenu)
             | Inline::GrasItalique(contenu)
             | Inline::Note(contenu)
-            | Inline::Couleur { contenu, .. } => premier_texte(contenu),
+            | Inline::Couleur { contenu, .. }
+            | Inline::Personne { contenu, .. } => premier_texte(contenu),
             Inline::Canonique(interne) => premier_texte(std::slice::from_ref(interne.as_ref())),
             Inline::Lien { texte, .. } => premier_texte(texte),
             Inline::LienInterne { texte, .. } => premier_texte(texte),
@@ -257,6 +307,8 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
             Inline::Meta(_) => Some('m'),
             // Un terme du glossaire rend un mot — sa forme courte.
             Inline::Glo { .. } => Some('t'),
+            // Une personne rend son nom ou sa forme explicite : un mot.
+            Inline::Personne { contenu, .. } => premier_caractere(contenu).or(Some('p')),
             Inline::Canonique(interne) => premier_caractere(std::slice::from_ref(interne.as_ref())),
         };
 
@@ -268,12 +320,19 @@ fn premier_caractere(inline: &[Inline]) -> Option<char> {
     None
 }
 
+// Le générateur porte déjà les règles, le décor et les deux index ; les
+// personnes vues s'ajoutent à cette chaîne de rendu, pas à l'état du
+// document. Un regroupement en structure déplacerait le problème sans le
+// résoudre, et rendrait les appels récursifs moins lisibles.
+#[allow(clippy::too_many_arguments)]
 fn generer_bloc(
     bloc: &Bloc,
     out: &mut String,
     regles: &Regles,
     decor: &crate::mise_en_page::modele::Decor,
     index: &crate::langage::index_citations::IndexBiblique,
+    index_personnes: &crate::langage::index_personnes::IndexPersonnes,
+    personnes_vues: &mut std::collections::HashSet<String>,
     compteur_liens: &mut crate::langage::liens::CompteurLiens,
 ) {
     // La typographie court sur **tout le bloc** : le niveau des guillemets
@@ -283,25 +342,32 @@ fn generer_bloc(
         Bloc::Titre { niveau, contenu } => {
             out.push_str(&"=".repeat(*niveau as usize));
             out.push(' ');
-            generer_inline(contenu, out, false, regles, &mut contexte);
+            generer_inline(contenu, out, false, regles, &mut contexte, personnes_vues);
             let ancre = compteur_liens.titre(&crate::langage::schema::inline_texte_nu(contenu));
             out.push_str(&format!(" <{ancre}>"));
             out.push_str("\n\n");
         }
         Bloc::Paragraphe(contenu) => {
-            generer_inline(contenu, out, true, regles, &mut contexte);
+            generer_inline(contenu, out, true, regles, &mut contexte, personnes_vues);
             out.push_str("\n\n");
         }
         Bloc::Citation(contenu) => {
             out.push_str("#quote(block: true)[");
-            generer_inline(contenu, out, false, regles, &mut contexte);
+            generer_inline(contenu, out, false, regles, &mut contexte, personnes_vues);
             out.push_str("]\n\n");
         }
         Bloc::ListePuce(items) => {
             for item in items {
                 out.push_str(&"  ".repeat(item.niveau));
                 out.push_str("- ");
-                generer_inline(&item.contenu, out, false, regles, &mut contexte);
+                generer_inline(
+                    &item.contenu,
+                    out,
+                    false,
+                    regles,
+                    &mut contexte,
+                    personnes_vues,
+                );
                 out.push('\n');
             }
 
@@ -313,7 +379,14 @@ fn generer_bloc(
             for item in items {
                 out.push_str(&"  ".repeat(item.niveau));
                 out.push_str("+ ");
-                generer_inline(&item.contenu, out, false, regles, &mut contexte);
+                generer_inline(
+                    &item.contenu,
+                    out,
+                    false,
+                    regles,
+                    &mut contexte,
+                    personnes_vues,
+                );
                 out.push('\n');
             }
 
@@ -327,48 +400,90 @@ fn generer_bloc(
             entete,
             lignes,
             alignements,
+            titre,
         } => {
             // Le tableau Typst : ses colonnes, ses alignements, son
-            // en-tête, puis les lignes — cellule à cellule.
-            out.push_str("#table(columns: ");
-            out.push_str(&entete.len().to_string());
-            out.push_str(", align: (");
+            // en-tête, puis les lignes — cellule à cellule. Il est construit
+            // dans une chaîne locale pour pouvoir être le corps d'une figure
+            // quand un titre lui donne une légende numérotée.
+            let mut tableau = String::new();
+            tableau.push_str("table(columns: ");
+            tableau.push_str(&entete.len().to_string());
+            tableau.push_str(", align: (");
 
             for (rang, alignement) in alignements.iter().enumerate() {
                 if rang > 0 {
-                    out.push_str(", ");
+                    tableau.push_str(", ");
                 }
 
-                out.push_str(match alignement {
+                tableau.push_str(match alignement {
                     crate::langage::schema::Alignement::Gauche => "left",
                     crate::langage::schema::Alignement::Centre => "center",
                     crate::langage::schema::Alignement::Droite => "right",
                 });
             }
 
-            out.push_str("), table.header(");
+            tableau.push_str("), table.header(");
 
             for (rang, cellule) in entete.iter().enumerate() {
                 if rang > 0 {
-                    out.push_str(", ");
+                    tableau.push_str(", ");
                 }
 
-                out.push('[');
-                generer_inline(cellule, out, false, regles, &mut contexte);
-                out.push(']');
+                tableau.push('[');
+                generer_inline(
+                    cellule,
+                    &mut tableau,
+                    false,
+                    regles,
+                    &mut contexte,
+                    personnes_vues,
+                );
+                tableau.push(']');
             }
 
-            out.push(')');
+            tableau.push(')');
 
             for ligne in lignes {
                 for cellule in ligne {
-                    out.push_str(", [");
-                    generer_inline(cellule, out, false, regles, &mut contexte);
-                    out.push(']');
+                    tableau.push_str(", [");
+                    generer_inline(
+                        cellule,
+                        &mut tableau,
+                        false,
+                        regles,
+                        &mut contexte,
+                        personnes_vues,
+                    );
+                    tableau.push(']');
                 }
             }
 
-            out.push_str(")\n\n");
+            tableau.push(')');
+
+            let ancre = compteur_liens.tableau(titre.trim());
+
+            if titre.trim().is_empty() {
+                // Sans titre : un tableau nu, mais avec une ancre de rang
+                // pour rester référençable.
+                out.push('#');
+                out.push_str(&tableau);
+                out.push_str(&format!(" <{ancre}>\n\n"));
+            } else {
+                // Avec titre : une figure de type « table », avec son propre
+                // compteur et son ancre, exactement comme une image légendée.
+                out.push_str("#figure(\n  ");
+                out.push_str(&tableau);
+                out.push_str(",\n  caption: [");
+                echapper_texte(titre.trim(), out, false);
+                out.push_str("],\n  kind: \"table\",\n  supplement: [Tableau]");
+                if !regles.numerotation_figures.is_empty() {
+                    out.push_str(",\n  numbering: \"");
+                    out.push_str(&regles.numerotation_figures);
+                    out.push('"');
+                }
+                out.push_str(&format!(",\n) <{ancre}>\n\n"));
+            }
         }
         Bloc::Formule(texte) => {
             // La formule est une équation à part : ses dollars la bornent,
@@ -409,7 +524,7 @@ fn generer_bloc(
                 out.push_str(&format!("\") <{ancre}>\n\n"));
             } else {
                 out.push_str("\"), caption: [");
-                generer_inline(légende, out, false, regles, &mut contexte);
+                generer_inline(légende, out, false, regles, &mut contexte, personnes_vues);
                 out.push(']');
                 // La forme de la numérotation, si les normes la choisissent.
                 if !regles.numerotation_figures.is_empty() {
@@ -425,15 +540,43 @@ fn generer_bloc(
             // reçoit le corps déjà généré, typographie comprise.
             if crate::langage::callout::est_callout(proprietes) {
                 let mut interieur = String::new();
-                generer_bloc(bloc, &mut interieur, regles, decor, index, compteur_liens);
-                out.push_str(&crate::langage::callout::rendre_avec(
+                generer_bloc(
+                    bloc,
+                    &mut interieur,
+                    regles,
+                    decor,
+                    index,
+                    index_personnes,
+                    personnes_vues,
+                    compteur_liens,
+                );
+                let rendu = crate::langage::callout::rendre_avec(
                     crate::langage::callout::type_de(proprietes),
                     crate::langage::callout::titre_de(proprietes),
                     interieur.trim_end(),
                     &regles.callouts.presets,
                     proprietes,
-                ));
+                );
+                if let Some(placement) = placement_de(proprietes) {
+                    out.push_str("#place(");
+                    out.push_str(placement);
+                    out.push_str(")[\n");
+                    out.push_str(rendu.trim_end());
+                    out.push_str("\n]\n\n");
+                } else {
+                    out.push_str(&rendu);
+                }
                 return;
+            }
+
+            // Le placement d'abord : `{position=haut}` pose le bloc sur la
+            // page au lieu de le laisser dans le flux. C'est ce qui permet de
+            // distribuer les éléments d'une page de garde.
+            let placement = placement_de(proprietes);
+            if let Some(placement) = placement {
+                out.push_str("#place(");
+                out.push_str(placement);
+                out.push_str(")[\n");
             }
 
             // Le manteau : `#block(...)` autour de ce que le bloc génère.
@@ -444,10 +587,23 @@ fn generer_bloc(
             out.push_str(")[\n");
 
             let mut interieur = String::new();
-            generer_bloc(bloc, &mut interieur, regles, decor, index, compteur_liens);
+            generer_bloc(
+                bloc,
+                &mut interieur,
+                regles,
+                decor,
+                index,
+                index_personnes,
+                personnes_vues,
+                compteur_liens,
+            );
             out.push_str(interieur.trim_end());
 
-            out.push_str("\n]\n\n");
+            out.push_str("\n]");
+            if placement.is_some() {
+                out.push_str("\n]");
+            }
+            out.push_str("\n\n");
         }
         Bloc::Glossaire { tout } => {
             // La liste finale : glossarium ne montre que les termes
@@ -473,6 +629,9 @@ fn generer_bloc(
         }
         Bloc::IndexBiblique => {
             out.push_str(&index.rendre_typst());
+        }
+        Bloc::IndexPersonnes => {
+            out.push_str(&index_personnes.rendre_typst());
         }
         Bloc::Chart(chart) => match crate::langage::chart::rendre(chart) {
             Ok(code) => out.push_str(&code),
@@ -509,7 +668,16 @@ fn generer_bloc(
             }
         }
         Bloc::Canonique(interne) => {
-            generer_bloc(interne, out, regles, decor, index, compteur_liens);
+            generer_bloc(
+                interne,
+                out,
+                regles,
+                decor,
+                index,
+                index_personnes,
+                personnes_vues,
+                compteur_liens,
+            );
         }
     }
 }
@@ -525,8 +693,17 @@ fn generer_inline(
     debut_de_ligne: bool,
     regles: &Regles,
     contexte: &mut crate::langage::typographie::Contexte,
+    personnes_vues: &mut std::collections::HashSet<String>,
 ) {
-    generer_inline_dans(inline, out, debut_de_ligne, regles, contexte, false);
+    generer_inline_dans(
+        inline,
+        out,
+        debut_de_ligne,
+        regles,
+        contexte,
+        false,
+        personnes_vues,
+    );
 }
 
 /// Le même générateur, avec le savoir « suis-je dans une note ? ». Les
@@ -539,6 +716,7 @@ fn generer_inline_dans(
     regles: &Regles,
     contexte: &mut crate::langage::typographie::Contexte,
     dans_note: bool,
+    personnes_vues: &mut std::collections::HashSet<String>,
 ) {
     let mut en_tete = debut_de_ligne;
 
@@ -602,31 +780,71 @@ fn generer_inline_dans(
             }
             Inline::Gras(contenu) => {
                 out.push('*');
-                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    contenu,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push('*');
                 en_tete = false;
             }
             Inline::Italique(contenu) => {
                 out.push('_');
-                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    contenu,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push('_');
                 en_tete = false;
             }
             Inline::GrasItalique(contenu) => {
                 out.push_str("*_");
-                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    contenu,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push_str("_*");
                 en_tete = false;
             }
             Inline::Souligne(contenu) => {
                 out.push_str("#underline[");
-                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    contenu,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push(']');
                 en_tete = false;
             }
             Inline::Barre(contenu) => {
                 out.push_str("#strike[");
-                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    contenu,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push(']');
                 en_tete = false;
             }
@@ -679,11 +897,101 @@ fn generer_inline_dans(
                 contexte.precedent = None;
                 contexte.venant_du_guillemet = false;
             }
+            Inline::Personne { cle, contenu } => {
+                // Le corps de la balise est une petite expression de rendu :
+                // vide ou `auto` = règles de première mention et de reprise,
+                // mot réservé = forme nommée, jetons séparés par `+` = champs
+                // choisis. Le suivi de première mention est propre à cette
+                // génération, jamais au document.
+                use crate::langage::index_personnes::ExpressionPersonne;
+
+                let expression = crate::langage::index_personnes::expression_personne(contenu);
+                let auto = matches!(expression, ExpressionPersonne::Auto);
+                let premiere = personnes_vues.insert(cle.clone());
+                let entree = regles.personnes.entree(cle);
+
+                let expression = match expression {
+                    ExpressionPersonne::Auto => {
+                        let forme = if premiere {
+                            regles.index_personnes.forme_premiere
+                        } else {
+                            regles.index_personnes.forme_suivantes
+                        };
+                        ExpressionPersonne::Forme(forme)
+                    }
+                    autre => autre,
+                };
+
+                match expression {
+                    ExpressionPersonne::Simple => {
+                        let nom = entree
+                            .map(|entree| entree.nom_simple_affiche())
+                            .unwrap_or(cle);
+                        echapper_texte(nom, out, false);
+                    }
+                    ExpressionPersonne::Forme(forme) => {
+                        let nom = entree.map(|entree| entree.nom_pour(forme)).unwrap_or(cle);
+                        echapper_texte(nom, out, false);
+                    }
+                    ExpressionPersonne::Champs(champs) => {
+                        if let Some(entree) = entree {
+                            let texte = crate::langage::index_personnes::rendre_champs(
+                                &champs,
+                                entree,
+                                &regles.index_personnes,
+                            );
+                            echapper_texte(&texte, out, false);
+                        } else {
+                            echapper_texte(cle, out, false);
+                        }
+                    }
+                    ExpressionPersonne::Texte => {
+                        generer_inline_dans(
+                            contenu,
+                            out,
+                            false,
+                            regles,
+                            contexte,
+                            dans_note,
+                            personnes_vues,
+                        );
+                    }
+                    ExpressionPersonne::Auto => unreachable!("auto est résolu avant"),
+                }
+
+                // Les dates ne s'ajoutent automatiquement qu'avec la règle
+                // `auto` ; `nom+dates` les demande explicitement.
+                if auto
+                    && regles.index_personnes.afficher_dates
+                    && (premiere || !regles.index_personnes.dates_premiere_seulement)
+                    && let Some(entree) = entree
+                    && let Some(dates) = entree.dates_pour(regles.index_personnes.dates_forme)
+                {
+                    out.push_str(" (");
+                    echapper_texte(&dates, out, false);
+                    out.push(')');
+                }
+
+                out.push_str(&crate::langage::index_personnes::reperes_typst(
+                    cle, dans_note,
+                ));
+                en_tete = false;
+                contexte.precedent = Some('p');
+                contexte.venant_du_guillemet = false;
+            }
             Inline::Couleur { couleur, contenu } => {
                 out.push_str("#text(fill: ");
                 out.push_str(&expression_couleur(couleur));
                 out.push_str(")[");
-                generer_inline_dans(contenu, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    contenu,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push(']');
                 en_tete = false;
             }
@@ -699,7 +1007,7 @@ fn generer_inline_dans(
             }
             Inline::Note(contenu) => {
                 out.push_str("#footnote[");
-                generer_inline_dans(contenu, out, false, regles, contexte, true);
+                generer_inline_dans(contenu, out, false, regles, contexte, true, personnes_vues);
                 out.push(']');
                 en_tete = false;
             }
@@ -712,11 +1020,21 @@ fn generer_inline_dans(
                 out.push_str("#link(\"");
                 echapper_chaine(cible, out);
                 out.push_str("\")[");
-                generer_inline_dans(texte, out, false, regles, contexte, dans_note);
+                generer_inline_dans(
+                    texte,
+                    out,
+                    false,
+                    regles,
+                    contexte,
+                    dans_note,
+                    personnes_vues,
+                );
                 out.push(']');
                 en_tete = false;
             }
-            Inline::LienInterne { texte, reference } => {
+            Inline::LienInterne {
+                texte, reference, ..
+            } => {
                 out.push_str("#link(<");
                 out.push_str(reference);
                 out.push_str(">)[");
@@ -732,7 +1050,10 @@ fn generer_inline_dans(
                             } else {
                                 prefixe
                             });
-                            out.push_str(" #context counter(figure)");
+                            out.push_str(" #context counter(figure.where(kind: \"image\"))");
+                        }
+                        super::liens::AffichageLien::Tableau => {
+                            out.push_str("Tableau #context counter(figure.where(kind: \"table\"))");
                         }
                         super::liens::AffichageLien::Page => {
                             out.push_str("page #context counter(page)");
@@ -740,7 +1061,15 @@ fn generer_inline_dans(
                     }
                     out.push_str(&format!(".display(at: <{reference}>)"));
                 } else {
-                    generer_inline_dans(texte, out, false, regles, contexte, dans_note);
+                    generer_inline_dans(
+                        texte,
+                        out,
+                        false,
+                        regles,
+                        contexte,
+                        dans_note,
+                        personnes_vues,
+                    );
                 }
                 out.push(']');
                 en_tete = false;
@@ -753,6 +1082,7 @@ fn generer_inline_dans(
                     regles,
                     contexte,
                     dans_note,
+                    personnes_vues,
                 );
                 en_tete = false;
             }
@@ -843,6 +1173,27 @@ pub(crate) fn echapper_texte(texte: &str, out: &mut String, debut_de_ligne: bool
 ///
 /// Une clé que la table ne connaît pas passe telle quelle : le Typst reste
 /// le maître du rendu, et c'est lui qui dira s'il la comprend.
+/// La position d'un bloc sur la page, telle que la propriété `position`.
+///
+/// Les valeurs sont volontairement peu nombreuses et **sémantiques** : le
+/// placement se choisit dans la source, les mesures restent aux normes. Une
+/// valeur inconnue ne produit aucun `#place` : elle reste dans le `.tw` sans
+/// empêcher la composition.
+fn placement_de(proprietes: &crate::langage::schema::Proprietes) -> Option<&'static str> {
+    match proprietes.obtenir("position")?.trim() {
+        "haut" | "top" => Some("top + center"),
+        "centre" | "center" => Some("horizon + center"),
+        "bas" | "bottom" => Some("bottom + center"),
+        "gauche" | "left" => Some("horizon + left"),
+        "droite" | "right" => Some("horizon + right"),
+        "haut-gauche" | "top-left" => Some("top + left"),
+        "haut-droite" | "top-right" => Some("top + right"),
+        "bas-gauche" | "bottom-left" => Some("bottom + left"),
+        "bas-droite" | "bottom-right" => Some("bottom + right"),
+        _ => None,
+    }
+}
+
 fn ecrire_proprietes_typst(
     proprietes: &crate::langage::schema::Proprietes,
     decor: &crate::mise_en_page::modele::Decor,
@@ -876,6 +1227,11 @@ fn ecrire_proprietes_typst(
     // Les paires libres : la valeur d'une couleur se compose, le reste
     // est du Typst et ne bouge pas.
     for (cle, valeur) in &proprietes.paires {
+        // `position` est une propriété de page, pas un argument de `#block`.
+        if cle == "position" {
+            continue;
+        }
+
         let argument = match cle.as_str() {
             "largeur" => "width",
             "hauteur" => "height",
@@ -959,7 +1315,14 @@ mod tests {
     ) -> String {
         let mut out = String::new();
         let mut contexte = crate::langage::typographie::Contexte::neuf();
-        super::generer_inline(bloc, &mut out, false, regles, &mut contexte);
+        super::generer_inline(
+            bloc,
+            &mut out,
+            false,
+            regles,
+            &mut contexte,
+            &mut std::collections::HashSet::new(),
+        );
         out
     }
 
@@ -2101,5 +2464,306 @@ mod tests_des_callouts {
 
         assert!(typst.contains("border-color: rgb(\"#3b6ea5\")"), "{typst}");
         assert!(typst.contains("title: \"\""), "{typst}");
+    }
+}
+
+/// L'index des personnes : le nom vient du registre, les repères Typst
+/// portent la clé stable, et le tout compile.
+#[cfg(test)]
+mod tests_personnes {
+    use super::*;
+    use crate::mise_en_page::modele::IndexPersonnes as Configuration;
+    use crate::project::personnes::{EntreePersonne, Personnes};
+
+    fn registre() -> Personnes {
+        let mut personnes = Personnes::default();
+        personnes.definir(EntreePersonne {
+            cle: "augustin".into(),
+            nom: "Augustin d'Hippone".into(),
+            nom_simple: Some("Augustin".into()),
+            alias: Some("Saint Augustin".into()),
+            tri: Some("Augustin".into()),
+            dates: Some("354-430".into()),
+            naissance: Some("354".into()),
+            mort: Some("430".into()),
+            qualite: Some("évêque d'Hippone".into()),
+            ..Default::default()
+        });
+        personnes
+    }
+
+    #[test]
+    fn une_personne_affiche_son_nom_et_son_repere() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        let document = crate::langage::parse::parse("{{p augustin}} a écrit.\n");
+
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin"), "{typst}");
+        assert!(!typst.contains("Augustin d'Hippone"), "{typst}");
+        assert!(
+            typst.contains("#metadata(\"augustin\") <tw-personne>"),
+            "{typst}"
+        );
+        assert!(
+            super::tests::compiler(&typst).errors.is_empty(),
+            "compilation : {:?}",
+            super::tests::compiler(&typst).errors
+        );
+    }
+
+    #[test]
+    fn l_index_des_personnes_compile_avec_ses_pages() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes = Configuration::default();
+        let document =
+            crate::langage::parse::parse("{{p augustin}} a écrit.\n\n{{index-personnes}}\n");
+
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        let outcome = super::tests::compiler(&typst);
+
+        assert!(
+            outcome.errors.is_empty(),
+            "sortie :\n{typst}\nerreurs : {:?}",
+            outcome.errors
+        );
+        assert!(typst.contains("Index des personnes"), "{typst}");
+        assert!(typst.contains("query(<tw-personne>)"), "{typst}");
+    }
+
+    #[test]
+    fn un_index_de_personnes_a_deux_colonnes_compile() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes = Configuration {
+            colonnes: 2,
+            ..Default::default()
+        };
+        let document =
+            crate::langage::parse::parse("{{p augustin}} et {{p aquin}}.\n\n{{index-personnes}}\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+        let outcome = super::tests::compiler(&typst);
+
+        assert!(outcome.errors.is_empty(), "{typst}\n{:?}", outcome.errors);
+        assert!(typst.contains("#columns(2)["), "{typst}");
+    }
+
+    #[test]
+    fn plusieurs_mentions_nues_compilent_sans_boucle() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes.forme_premiere = crate::mise_en_page::modele::FormePersonne::Complet;
+        regles.index_personnes.afficher_dates = false;
+        let document = crate::langage::parse::parse(
+            "{{p augustin}} écrit, puis {{p augustin}} encore, et {{p augustin}}.\n",
+        );
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert_eq!(typst.matches("Augustin d'Hippone").count(), 1, "{typst}");
+        assert_eq!(typst.matches("Augustin#metadata").count(), 2, "{typst}");
+        assert!(
+            super::tests::compiler(&typst).errors.is_empty(),
+            "{:?}",
+            super::tests::compiler(&typst).errors
+        );
+    }
+
+    #[test]
+    fn une_forme_simple_explicite_ne_suit_pas_la_premiere_mention() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes.forme_premiere = crate::mise_en_page::modele::FormePersonne::Complet;
+        let document = crate::langage::parse::parse("{{p augustin|simple}}.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin#metadata"), "{typst}");
+        assert!(!typst.contains("d'Hippone"), "{typst}");
+        assert!(!typst.contains("(354-430)"), "{typst}");
+    }
+
+    #[test]
+    fn une_balise_nue_suit_la_forme_parametree() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes.forme_premiere = crate::mise_en_page::modele::FormePersonne::Complet;
+        regles.index_personnes.afficher_dates = false;
+        let document = crate::langage::parse::parse("{{p augustin}} a écrit.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin d'Hippone"), "{typst}");
+        assert!(!typst.contains("Augustin#metadata"), "{typst}");
+    }
+
+    #[test]
+    fn la_premiere_mention_donne_le_nom_complet_et_les_dates() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes.forme_premiere = crate::mise_en_page::modele::FormePersonne::Complet;
+        let document =
+            crate::langage::parse::parse("{{p augustin}} a écrit, puis {{p augustin}} encore.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin d'Hippone (354-430)"), "{typst}");
+        assert!(typst.contains("puis Augustin"), "{typst}");
+        assert!(!typst.contains("puis Augustin d'Hippone"), "{typst}");
+        assert_eq!(typst.matches("(354-430)").count(), 1, "{typst}");
+    }
+
+    #[test]
+    fn les_reprises_peuvent_prendre_l_alias_et_les_dates_peuvent_suivre() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        regles.index_personnes.forme_premiere = crate::mise_en_page::modele::FormePersonne::Complet;
+        regles.index_personnes.forme_suivantes = crate::mise_en_page::modele::FormePersonne::Alias;
+        regles.index_personnes.dates_premiere_seulement = false;
+        regles.index_personnes.dates_forme = crate::mise_en_page::modele::FormeDatesPersonne::Mort;
+        let document = crate::langage::parse::parse("{{p augustin}} puis {{p augustin}}.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin d'Hippone (430)"), "{typst}");
+        assert!(typst.contains("puis Saint Augustin (430)"), "{typst}");
+    }
+
+    #[test]
+    fn une_forme_explicite_ne_perd_pas_les_dates_de_la_premiere_mention() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        let document = crate::langage::parse::parse("{{p augustin|nom_complet+dates}}.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin d'Hippone (354-430)"), "{typst}");
+    }
+
+    #[test]
+    fn une_personne_dans_une_note_porte_le_repere_de_note() {
+        let regles = crate::langage::typographie::Regles::francaise();
+        let document =
+            crate::langage::parse::parse("Texte^[Voir {{p augustin}}.]\n\n{{index-personnes}}\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("<tw-personne-note>"), "{typst}");
+        assert!(super::tests::compiler(&typst).errors.is_empty(), "{typst}");
+    }
+
+    #[test]
+    fn une_forme_nommee_est_courte_et_un_texte_libre_reste_libre() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        let document = crate::langage::parse::parse(
+            "{{p augustin|complet}} {{p augustin|complet}} {{p augustin|alias}}\n",
+        );
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin d'Hippone"), "{typst}");
+        assert!(!typst.contains("(354-430)"), "{typst}");
+        assert!(typst.contains("Saint Augustin"), "{typst}");
+    }
+
+    #[test]
+    fn une_liste_de_champs_choisit_exactement_ce_qui_est_affiche() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        let document = crate::langage::parse::parse("{{p augustin|nom_simple+naissance+mort}}.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin 354 430"), "{typst}");
+        assert!(!typst.contains("d'Hippone"), "{typst}");
+    }
+
+    #[test]
+    fn nom_plus_dates_est_la_forme_courte_des_champs() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        let document = crate::langage::parse::parse("{{p augustin|nom+dates}}.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin d'Hippone (354-430)"), "{typst}");
+    }
+
+    #[test]
+    fn une_expression_reecrite_reste_un_choix_de_champs() {
+        let mut regles = crate::langage::typographie::Regles::francaise();
+        regles.personnes = registre();
+        let document = crate::langage::parse::parse("{{p augustin|nom_simple+dates}}\n");
+        let relu = crate::langage::parse::parse(&crate::langage::serialiser::serialiser(&document));
+        let typst = generer_avec(
+            &relu,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin (354-430)"), "{typst}");
+    }
+
+    #[test]
+    fn une_forme_explicite_est_conservee_sans_registre() {
+        let regles = crate::langage::typographie::Regles::francaise();
+        let document = crate::langage::parse::parse("{{p augustin|Augustin}}.\n");
+        let typst = generer_avec(
+            &document,
+            &regles,
+            &crate::mise_en_page::modele::Decor::default(),
+        );
+
+        assert!(typst.contains("Augustin"), "{typst}");
+        assert!(
+            typst.contains("#metadata(\"augustin\") <tw-personne>"),
+            "{typst}"
+        );
+        assert!(!typst.contains("Ad Augustin"));
     }
 }

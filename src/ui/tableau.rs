@@ -25,6 +25,11 @@ pub fn view(state: &crate::app::State) -> Element<'_, Message> {
         palette
             .label("Insérer un tableau")
             .size(theme::jetons::CORPS),
+        text_input("Titre du tableau (facultatif)", &tableau.titre)
+            .on_input(Message::TableauTitre)
+            .on_submit(Message::TableauInserer)
+            .padding(5)
+            .width(Length::Fill),
         row![
             palette.label("Rangs").size(theme::jetons::DETAIL),
             text_input("3", &tableau.rangs)

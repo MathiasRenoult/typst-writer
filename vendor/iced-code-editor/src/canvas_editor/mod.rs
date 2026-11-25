@@ -183,6 +183,14 @@ pub struct CodeEditor {
     /// notifications (which never fire for content that doesn't overflow
     /// vertically — see issue #26).
     pub(crate) last_canvas_width: Cell<f32>,
+    /// Real canvas height last observed in `draw()`.
+    ///
+    /// `viewport_height` is also refreshed by scroll notifications, but a
+    /// layout change (window resize, focus mode, split pane) can alter the
+    /// height without producing a scroll event. Keeping the last painted
+    /// height lets the renderer cover the actual lower edge instead of using
+    /// a stale viewport and leaving the last lines unpainted.
+    pub(crate) last_canvas_height: Cell<f32>,
     /// Command history for undo/redo
     pub(crate) history: CommandHistory,
     /// Whether we're currently grouping commands (for smart undo)
@@ -238,6 +246,13 @@ pub struct CodeEditor {
     custom_context_menu_entries: Vec<ContextMenuEntry>,
     /// Whether the built-in editing actions are shown in the context menu.
     default_context_menu_enabled: bool,
+    /// Whether the host draws its own context menu.
+    ///
+    /// When set, the widget leaves the right-click to the host instead of
+    /// placing the `iced_aw` menu over the canvas: the host can then open a
+    /// tag panel or a table action exactly where the click landed. The
+    /// canvas still publishes [`Message::ContextMenuRequested`].
+    host_context_menu_enabled: bool,
     /// Whether the built-in reveal-in-file-manager action is shown.
     reveal_in_file_manager_enabled: bool,
     /// Go-to-line dialog state
@@ -720,6 +735,7 @@ impl CodeEditor {
             viewport_height: 600.0, // Default, will be updated
             viewport_width: 800.0,  // Default, will be updated
             last_canvas_width: Cell::new(800.0),
+            last_canvas_height: Cell::new(0.0),
             history: CommandHistory::new(100),
             is_grouping: false,
             wrap_enabled: true,
@@ -740,6 +756,7 @@ impl CodeEditor {
             search_highlights_enabled: false,
             custom_context_menu_entries: Vec::new(),
             default_context_menu_enabled: true,
+            host_context_menu_enabled: false,
             reveal_in_file_manager_enabled: false,
             goto_line_state: goto_line::GotoLineState::new(),
             command_palette_state: command_palette::CommandPaletteState::new(),

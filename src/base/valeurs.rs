@@ -17,6 +17,8 @@ pub const CLE_GRAPHIQUES: &str = "graphiques";
 pub const CLE_REFERENCES_BIBLIQUES: &str = "references_bibliques";
 /// Clé de l'add-on des callouts.
 pub const CLE_CALLOUTS: &str = "callouts";
+/// Clé de l'add-on des personnes citées.
+pub const CLE_PERSONNES: &str = "personnes";
 
 /// Les fonctionnalités du projet : chacune se débranche, et son interface
 /// disparaît avec elle — ses boutons, ses sections de panneau.
@@ -40,6 +42,10 @@ pub struct AddOns {
     /// Les callouts : les citations encadrées et leurs tons.
     #[serde(default = "actif_par_defaut")]
     pub callouts: bool,
+
+    /// Les personnes citées : la balise `{{p …}}` et son index.
+    #[serde(default = "actif_par_defaut")]
+    pub personnes: bool,
 }
 
 /// Un add-on nouveau est actif dans les documents qui ne le connaissent pas.
@@ -55,6 +61,7 @@ impl Default for AddOns {
             graphiques: true,
             references_bibliques: true,
             callouts: true,
+            personnes: true,
         }
     }
 }
@@ -69,6 +76,7 @@ impl AddOns {
             CLE_GRAPHIQUES => self.graphiques = actif,
             CLE_REFERENCES_BIBLIQUES => self.references_bibliques = actif,
             CLE_CALLOUTS => self.callouts = actif,
+            CLE_PERSONNES => self.personnes = actif,
             _ => {}
         }
     }
@@ -82,6 +90,7 @@ impl AddOns {
             CLE_GRAPHIQUES => self.graphiques,
             CLE_REFERENCES_BIBLIQUES => self.references_bibliques,
             CLE_CALLOUTS => self.callouts,
+            CLE_PERSONNES => self.personnes,
             _ => true,
         }
     }
@@ -126,6 +135,11 @@ pub const PLUGINS: &[PluginDesc] = &[
         CLE_REFERENCES_BIBLIQUES,
         "Références bibliques",
         "L'insertion, le survol et la trace des citations.",
+    ),
+    PluginDesc::new(
+        CLE_PERSONNES,
+        "Personnes citées",
+        "Le registre des personnes et leur index nominum.",
     ),
 ];
 

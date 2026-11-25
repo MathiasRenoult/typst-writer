@@ -94,8 +94,10 @@ impl Vue {
                 crate::zotero::Source::Locale
             },
         };
-        let plugins =
+        let mut plugins =
             crate::plugins::Plugins::depuis_les_normes(&crate::mise_en_page::charger(&projet.dir));
+        plugins.personnes.entrees =
+            crate::project::personnes::Personnes::charger(&projet.dir).entrees;
         Self {
             editor,
             render: RenderState::default(),

@@ -13,11 +13,16 @@ pub mod extension;
 pub mod glossaire;
 pub mod glossaire_fenetre;
 pub mod layout;
+pub mod menu_contextuel;
 pub mod normes_fichiers;
 pub mod normes_lot;
 pub mod note;
 pub mod onglets;
 pub mod palette;
+pub mod parametres;
+pub mod personne_panneau;
+pub mod personnes;
+pub mod personnes_fenetre;
 pub mod picker_couleur;
 pub mod plugins;
 pub mod preview;
@@ -68,7 +73,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // elles n'ont plus d'objet, les panneaux étant masqués et les commandes
     // de fichier n'étant pas ce qu'on vient chercher en écrivant. On en sort
     // par F11 ou Échap.
-    if state.layout.focus_mode && !state.projets_vue {
+    if state.layout.focus_mode && !state.projets_vue && !state.parametres_vue {
         return stack![
             iced::widget::container(layout::view(state))
                 .width(Length::Fill)
@@ -76,6 +81,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
             palette::view(state),
             balise::view(state),
             completion::view(state),
+            personnes_fenetre::view(state),
+            personnes::view(state),
+            personne_panneau::view(state),
             recherche::view(state),
         ]
         .width(Length::Fill)
@@ -99,6 +107,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         balise::view(state),
         completion::view(state),
         projets::view(state),
+        parametres::view(state),
         normes_lot::view(state),
         reference::view(state),
         bible_edition::view(state),
@@ -109,6 +118,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
         restauration::view(state),
         corbeille::view(state),
         reglages::view(state),
+        personnes_fenetre::view(state),
+        personnes::view(state),
+        personne_panneau::view(state),
         aide::view(state),
         picker_couleur::view(state, state.resolved.palette),
         confirmation::view(state),

@@ -7,6 +7,17 @@ use std::sync::Arc;
 /// de l'application ne fait que le porter.
 pub use crate::editor::FormatAction;
 
+/// Une action du menu de texte du clic droit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuContextuelAction {
+    Copier,
+    Couper,
+    Coller,
+    ToutSelectionner,
+    Annuler,
+    Retablir,
+}
+
 /// Le format d'un export demandé depuis la bibliothèque.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatExport {
@@ -191,6 +202,16 @@ pub enum Message {
         page: usize,
         point: (f32, f32),
     },
+    /// Premier mouvement réel après un clic : l'ancre et le point courant
+    /// arrivent ensemble, pour que la sélection naisse du glisser.
+    SelectionApercuGlisserDepuis {
+        page: usize,
+        ancre: (f32, f32),
+        point: (f32, f32),
+        etendue: bool,
+    },
+    /// Un clic simple, sans mouvement : il ne doit rien sélectionner.
+    SelectionApercuClic,
     SelectionApercuRelacher,
     SelectionApercuCopier,
 
@@ -290,10 +311,27 @@ pub enum Message {
     NormesFichierImporte(Option<std::path::PathBuf>),
 
     TableauOuvrir,
+    TableauTitre(String),
     TableauRangs(String),
     TableauColonnes(String),
     TableauInserer,
     TableauAnnuler,
+    /// Naviguer dans une cellule du tableau courant, puis l'aligner.
+    TableauNaviguer(crate::langage::tableau::SensNavigation),
+    /// Insérer une colonne vide à droite de la cellule courante.
+    TableauInsererColonne,
+    /// Insérer une ligne vide sous la ligne courante.
+    TableauInsererLigne,
+    /// Supprimer la rangée de données courante.
+    TableauSupprimerLigne,
+    /// Supprimer la colonne courante.
+    TableauSupprimerColonne,
+    /// Déplacer la rangée ou la colonne courante.
+    TableauDeplacer(crate::langage::tableau::SensDeplacement),
+    /// Faire tourner l'alignement de la colonne d'en-tête.
+    TableauAlignerEntete,
+    /// Aligner les colonnes de tous les tableaux du document.
+    BeautifierTableaux,
 
     ReferencesReplier,
     /// Replier une entrée de bibliographie (bug-report-10, 2.2).
@@ -375,6 +413,29 @@ pub enum Message {
     EditionGlossaireEnregistrer,
     EditionGlossaireFermer,
 
+    /// Le registre des personnes citées : sa liste et sa fiche.
+    PersonnesFenetreOuvrir,
+    PersonnesFenetreFermer,
+    PersonnePanneauOuvrir,
+    PersonnePanneauFermer,
+    PersonnePanneauRecherche(String),
+    PersonnePanneauValiderRecherche,
+    PersonnePanneauChoisir(String),
+    PersonnePanneauNouvelle,
+    PersonnePanneauChamp(String, String),
+    PersonnePanneauExpression(String),
+    PersonnePanneauEnregistrer,
+    PersonnePanneauInserer,
+    PersonnesCreer,
+    PersonnesModifier(String),
+    PersonnesSupprimer(String),
+    PersonnesFiltrer(String),
+    PersonnesInserer(String),
+    PersonnesIndexInserer,
+    EditionPersonneChamp(String, String),
+    EditionPersonneEnregistrer,
+    EditionPersonneFermer,
+
     ImageInserer,
     ImageChoisie(Option<std::path::PathBuf>),
 
@@ -431,6 +492,20 @@ pub enum Message {
     ZoteroRecherche(String),
 
     ProjetsVue,
+
+    /// Ouvre la page des paramètres de l'application.
+    ParametresOuvrir,
+    /// Ferme cette page et revient à l'écriture.
+    ParametresFermer,
+    /// Choisit le panneau de la page Paramètres.
+    ParametresPanneau(crate::app::state::ParametresPanneau),
+    /// Affiche ou masque les boutons de mise en forme de la barre.
+    ParametresBasculeOutilsMiseEnPage,
+    /// Affiche ou masque le menu d'insertion de la barre.
+    ParametresBasculeOutilsInsertion,
+    /// Choisit explicitement le mode d'apparence.
+    ParametresModeTheme(crate::base::theme::ThemeMode),
+
     /// Un clic sur une carte de la bibliothèque : ouvrir, ou sélectionner
     /// selon les modificateurs tenus.
     ProjetCliquer(std::path::PathBuf),
@@ -455,12 +530,6 @@ pub enum Message {
     SommaireSurvol(Option<usize>),
     /// Le sommaire du panneau se replie ou se déplie.
     SommaireReplier,
-    /// La section « Chapitres » se replie ou se déplie.
-    ChapitresReplier,
-
-    /// Choisit la tranche affichée : `None` pour le document entier, sinon
-    /// l'index d'un chapitre dans `render.chapitres`.
-    ChapitreChoisir(Option<usize>),
     /// La section « Projets » du panneau se replie ou se déplie.
     ProjetsSectionReplier,
     /// La recherche des références se montre ou se cache.
@@ -696,6 +765,10 @@ pub enum Message {
     BaliseChamp(String, String),
     BaliseInserer,
     BaliseAnnuler,
+    /// Le menu du clic droit ordinaire exécute une action d'édition.
+    MenuContextuelExecuter(MenuContextuelAction),
+    /// Le menu du clic droit se referme sans agir.
+    MenuContextuelFermer,
 
     /// Le sélecteur de couleur s'ouvre sur la couleur courante.
     PickerCouleurOuvrir,
@@ -783,9 +856,16 @@ pub enum Message {
     /// Ouvrir les paramètres des plugins (bibliographie, biblique,
     /// glossaire, graphiques) séparément des normes.
     PluginsOuvrir,
+    /// Bascule entre les normes et les paramètres des plugins sans
+    /// recharger la copie de travail : `true` ouvre les plugins.
+    ReglagesBasculerPlugins(bool),
 
     /// La ferme sans rien appliquer.
     MiseEnPageFermer,
+
+    /// Un onglet du panneau des plugins est choisi — distinct du panneau
+    /// des normes pour que la bascule retrouve le dernier onglet de chacun.
+    MiseEnPagePanneauPlugins(usize),
 
     /// Un champ de la mise en page change.
     MiseEnPageChamp(crate::mise_en_page::modele::Champ, String),
@@ -822,6 +902,8 @@ pub enum Message {
 
     /// La fenêtre a changé de taille : (largeur, hauteur).
     WindowResized(iced::Size),
+    /// La taille réelle du widget d'édition, après une disposition.
+    EditeurViewport(iced::Size),
 
     /// Le facteur d'échelle de l'écran, demandé à l'ouverture de la fenêtre.
     ///
@@ -922,6 +1004,28 @@ impl Message {
             | Message::EditionGlossaireChamp(_, _)
             | Message::EditionGlossaireEnregistrer
             | Message::EditionGlossaireFermer => Some(crate::base::valeurs::CLE_GLOSSAIRE),
+
+            Message::PersonnesFenetreOuvrir
+            | Message::PersonnesFenetreFermer
+            | Message::PersonnePanneauOuvrir
+            | Message::PersonnePanneauFermer
+            | Message::PersonnePanneauRecherche(_)
+            | Message::PersonnePanneauValiderRecherche
+            | Message::PersonnePanneauChoisir(_)
+            | Message::PersonnePanneauNouvelle
+            | Message::PersonnePanneauChamp(_, _)
+            | Message::PersonnePanneauExpression(_)
+            | Message::PersonnePanneauEnregistrer
+            | Message::PersonnePanneauInserer
+            | Message::PersonnesCreer
+            | Message::PersonnesModifier(_)
+            | Message::PersonnesSupprimer(_)
+            | Message::PersonnesFiltrer(_)
+            | Message::PersonnesInserer(_)
+            | Message::PersonnesIndexInserer
+            | Message::EditionPersonneChamp(_, _)
+            | Message::EditionPersonneEnregistrer
+            | Message::EditionPersonneFermer => Some(crate::base::valeurs::CLE_PERSONNES),
 
             Message::ReferenceBibliqueInserer
             | Message::BiblePanneauRecherche(_)
@@ -1034,6 +1138,14 @@ mod epreuves_de_plugin {
         assert_eq!(
             Message::CalloutOuvrir.plugin(),
             Some(crate::base::valeurs::CLE_CALLOUTS)
+        );
+        assert_eq!(
+            Message::PersonnesFenetreOuvrir.plugin(),
+            Some(crate::base::valeurs::CLE_PERSONNES)
+        );
+        assert_eq!(
+            Message::EditionPersonneEnregistrer.plugin(),
+            Some(crate::base::valeurs::CLE_PERSONNES)
         );
         assert_eq!(Message::ProjetNom(String::new()).plugin(), None);
     }

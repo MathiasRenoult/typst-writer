@@ -45,29 +45,40 @@ pub fn generer(mise_en_page: &MiseEnPage) -> String {
 
     out.push_str(&page(mise_en_page));
     out.push_str(&texte(mise_en_page));
+    out.push_str(&citations(mise_en_page));
     out.push_str(&paragraphes(mise_en_page));
     out.push_str(&titres(mise_en_page));
     out.push_str(&figures(mise_en_page));
     out.push_str(&liens(mise_en_page));
+    out.push_str(&scripts(mise_en_page));
 
     // La page de titre : une norme, née des métadonnées du document —
     // jamais du Typst caché dans `main.typ` (bug-report-7, point 8).
     if mise_en_page.page_de_titre {
+        // Une page de titre sans aucune métadonnée ne doit pas laisser une
+        // page blanche : c'est le cas d'un projet neuf, et l'auteur voit
+        // alors la garde ou le sommaire comme première page utile.
         out.push_str(
             "  // La page de titre : les métadonnées du document.\n\
-  page(numbering: none, header: none, footer: none)[\n\
-    #v(1fr)\n\
-    #text(size: 1.5em, weight: \"bold\")[#sys.inputs.at(\"titre\", default: \"\")]\n\
-    #v(0.5cm)\n\
-    #text(size: 1.1em)[#sys.inputs.at(\"matiere\", default: \"\")]\n\
-    #v(2cm)\n\
-    #sys.inputs.at(\"auteur\", default: \"\")\n\
-    #linebreak()\n\
-    #sys.inputs.at(\"date\", default: \"\")\n\
-    #v(1fr)\n\
-  ]\n\
-  pagebreak()\n\
-  counter(page).update(1)\n",
+  let tw_titre = sys.inputs.at(\"titre\", default: \"\")\n\
+  let tw_matiere = sys.inputs.at(\"matiere\", default: \"\")\n\
+  let tw_auteur = sys.inputs.at(\"auteur\", default: \"\")\n\
+  let tw_date = sys.inputs.at(\"date\", default: \"\")\n\
+  if tw_titre != \"\" or tw_matiere != \"\" or tw_auteur != \"\" or tw_date != \"\" {\n\
+    page(numbering: none, header: none, footer: none)[\n\
+      #v(1fr)\n\
+      #text(size: 1.5em, weight: \"bold\")[#tw_titre]\n\
+      #v(0.5cm)\n\
+      #text(size: 1.1em)[#tw_matiere]\n\
+      #v(2cm)\n\
+      #tw_auteur\n\
+      #linebreak()\n\
+      #tw_date\n\
+      #v(1fr)\n\
+    ]\n\
+    pagebreak()\n\
+    counter(page).update(1)\n\
+  }\n",
         );
     }
 
@@ -240,6 +251,78 @@ fn paragraphes(mise_en_page: &MiseEnPage) -> String {
 
     lignes.push("  )\n".to_string());
     lignes.join("\n")
+}
+
+/// L'apparence des blocs de citation.
+///
+/// Typst les compose par défaut avec un retrait de `1em` et le texte courant.
+/// Une norme peut choisir la famille, la taille, la couleur, le retrait à
+/// gauche et l'italique ; chaque champ vide laisse le défaut intact.
+fn citations(mise_en_page: &MiseEnPage) -> String {
+    let citations = &mise_en_page.citations;
+    let mut out = String::new();
+    let mut proprietes = Vec::new();
+
+    if let Some(police) = police_typst(&citations.police) {
+        proprietes.push(format!("font: {police}"));
+    }
+    if super::modele::longueur_valide(&citations.taille) {
+        proprietes.push(format!("size: {}", citations.taille));
+    }
+    if super::modele::couleur_valide(&citations.couleur) {
+        proprietes.push(format!("fill: rgb(\"{}\")", citations.couleur));
+    }
+    if citations.italique {
+        proprietes.push("style: \"italic\"".to_string());
+    }
+
+    if !proprietes.is_empty() {
+        out.push_str(&format!(
+            "  show quote.where(block: true): set text({})\n",
+            proprietes.join(", ")
+        ));
+    }
+
+    if super::modele::longueur_valide(&citations.decalage) {
+        out.push_str(&format!(
+            "  show quote.where(block: true): set pad(left: {})\n",
+            citations.decalage
+        ));
+    }
+
+    out
+}
+
+/// Les polices prioritaires par script.
+///
+/// Typst choisit ses glyphes dans la liste de la police, mais une famille
+/// latine peut aussi porter quelques caractères grecs et l'hébreu tomber
+/// dans le mauvais visage. Deux règles de script rendent le choix explicite :
+/// elles ne touchent qu'aux caractères du script visé, et seulement quand une
+/// famille est nommée dans les normes.
+fn scripts(mise_en_page: &MiseEnPage) -> String {
+    let mut out = String::new();
+
+    for (nom, police, motif) in [
+        (
+            "hébreu",
+            mise_en_page.texte.police_hebreu.as_str(),
+            "[\\p{Hebrew}]",
+        ),
+        (
+            "grec",
+            mise_en_page.texte.police_grecque.as_str(),
+            "[\\p{Greek}]",
+        ),
+    ] {
+        if let Some(police) = police_typst(police) {
+            out.push_str(&format!(
+                "  // Police prioritaire pour le script {nom}.\n  show regex(\"{motif}\"): set text(font: {police})\n"
+            ));
+        }
+    }
+
+    out
 }
 
 /// Les figures : le libellé de la légende, sa numérotation, son style.
@@ -806,6 +889,108 @@ mod tests {
         }
 
         out
+    }
+
+    #[test]
+    fn les_polices_de_script_ne_touchent_qu_a_leur_script() {
+        let mise_en_page = MiseEnPage {
+            texte: super::super::modele::Texte {
+                police_hebreu: "Ezra SIL SR".to_string(),
+                police_grecque: "Galatia SIL".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let gabarit = generer(&mise_en_page);
+
+        assert!(
+            gabarit.contains("show regex(\"[\\p{Hebrew}]\"): set text(font: \"Ezra SIL SR\")"),
+            "l'hébreu reçoit Ezra SIL : {gabarit}"
+        );
+        assert!(
+            gabarit.contains("show regex(\"[\\p{Greek}]\"): set text(font: \"Galatia SIL\")"),
+            "le grec reçoit Galatia SIL : {gabarit}"
+        );
+    }
+
+    #[test]
+    fn les_citations_prennent_leur_apparence_des_normes() {
+        let mise_en_page = MiseEnPage {
+            citations: super::super::modele::Citations {
+                police: "Galatia SIL".to_string(),
+                taille: "10pt".to_string(),
+                couleur: "#336699".to_string(),
+                decalage: "2em".to_string(),
+                italique: true,
+            },
+            ..Default::default()
+        };
+
+        let gabarit = generer(&mise_en_page);
+
+        assert!(
+            gabarit.contains(
+                "show quote.where(block: true): set text(font: \"Galatia SIL\", size: 10pt, fill: rgb(\"#336699\"), style: \"italic\")"
+            ),
+            "la citation reçoit son apparence : {gabarit}"
+        );
+        assert!(
+            gabarit.contains("show quote.where(block: true): set pad(left: 2em)"),
+            "le décalage est appliqué : {gabarit}"
+        );
+    }
+
+    #[test]
+    fn les_polices_de_script_composent_les_glyphes() {
+        if !crate::typst::fonts::familles_systeme()
+            .iter()
+            .any(|famille| famille == "Ezra SIL SR")
+        {
+            eprintln!("Ezra SIL SR absente — épreuve de composition sautée");
+            return;
+        }
+        if !crate::typst::fonts::familles_systeme()
+            .iter()
+            .any(|famille| famille == "Galatia SIL")
+        {
+            eprintln!("Galatia SIL absente — épreuve de composition sautée");
+            return;
+        }
+
+        let mise_en_page = MiseEnPage {
+            texte: super::super::modele::Texte {
+                police_hebreu: "Ezra SIL SR".to_string(),
+                police_grecque: "Galatia SIL".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let document = documenter(&mise_en_page, "Latin. אבג αβγ\n");
+        let mut familles = Vec::new();
+        fn marcher(frame: &Frame, familles: &mut Vec<String>) {
+            for (_, item) in frame.items() {
+                match item {
+                    FrameItem::Text(text) => {
+                        familles.push(text.font.info().family.to_string());
+                    }
+                    FrameItem::Group(group) => marcher(&group.frame, familles),
+                    _ => {}
+                }
+            }
+        }
+        for page in document.pages() {
+            marcher(&page.frame, &mut familles);
+        }
+
+        assert!(
+            familles.iter().any(|famille| famille == "Ezra SIL SR"),
+            "l'hébreu est composé avec Ezra SIL : {familles:?}"
+        );
+        assert!(
+            familles.iter().any(|famille| famille == "Galatia SIL"),
+            "le grec est composé avec Galatia SIL : {familles:?}"
+        );
     }
 
     /// L'en-tête par défaut est un gabarit qui s'applique au document entier.

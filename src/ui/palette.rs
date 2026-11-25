@@ -1,6 +1,6 @@
 //! La palette de commandes : un seul panneau, deux modes.
 //!
-//! `..` y cherche les balises et snippets ; `/` ou `Ctrl+K` y cherche toutes
+//! `,,` y cherche les balises et snippets ; `/` ou `Ctrl+K` y cherche toutes
 //! les commandes. Le panneau n'est pas une fenêtre modale : il flotte au-dessus
 //! du texte, et Échap le referme sans toucher au déclencheur déjà écrit.
 
@@ -224,8 +224,8 @@ fn icone(icone: Icone) -> Element<'static, Message> {
         Icone::EtiquetteMeta => lucide_icons::iced::icon_tag::<Theme>().into(),
         Icone::Fragment => lucide_icons::iced::icon_file_text::<Theme>().into(),
         Icone::Reglages => lucide_icons::iced::icon_file_cog::<Theme>().into(),
+        Icone::Parametres => lucide_icons::iced::icon_settings::<Theme>().into(),
         Icone::Puzzle => lucide_icons::iced::icon_puzzle::<Theme>().into(),
-        Icone::Plus => lucide_icons::iced::icon_plus::<Theme>().into(),
         Icone::Panneau => lucide_icons::iced::icon_panel_left_open::<Theme>().into(),
         Icone::Texte => lucide_icons::iced::icon_type::<Theme>().into(),
         Icone::Gras => lucide_icons::iced::icon_bold::<Theme>().into(),

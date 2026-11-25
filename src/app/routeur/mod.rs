@@ -22,6 +22,8 @@ pub mod glossaire;
 pub mod modes;
 pub mod normes;
 pub mod onglets;
+pub mod parametres;
+pub mod personnes;
 pub mod projets;
 pub mod suppressions;
 pub mod tableaux;

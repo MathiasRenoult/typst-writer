@@ -10,12 +10,21 @@ fautives sont dites champ par champ avant que quoi que ce soit ne soit
 
 Les normes **activent ou désactivent** les add-ons. Les paramètres propres
 à un plugin — style bibliographique, références bibliques, glossaire,
-graphiques, callouts — se règlent dans le panneau des plugins, mais ils appartiennent
-au **même fichier de normes** que la mise en page : le fichier
+graphiques, callouts — se règlent dans le panneau des plugins, mais ils
+appartiennent au **même fichier de normes** que la mise en page :
 `mise-en-page.toml` les emporte avec lui. Quand un document est ouvert,
 l'interface, l'éditeur et les plugins prennent donc sa mise en page et son
-paramétrage de plugins. Le panneau des plugins est séparé pour la
-commodité ; ce n'est pas un réglage de l'application.
+paramétrage de plugins.
+
+Le nom de ce fichier est affiché dans la **barre d'état**, sous le nom du
+document : `Norme : mise-en-page.toml`. Quand les réglages appliqués
+correspondent exactement à une norme de la bibliothèque, son nom suit :
+`Norme : mise-en-page.toml · Thèse`. Une norme personnalisée n'affiche que
+le fichier ; une norme absente est dite `(absente)`.
+
+Les deux panneaux ont un bouton de bascule : **Plugins** dans les normes,
+**Normes** dans les plugins. La copie de travail reste la même pendant la
+bascule — une valeur saisie n'est pas rechargée depuis le disque.
 
 ## Fichiers de normes
 
@@ -44,12 +53,27 @@ Les champs numériques se règlent à la **molette** ou aux **flèches** ▲▼
 
 Le papier (format, orientation), les marges, les numéros de page, le
 texte courant (police, taille, interligne, retrait, justification,
-langue), les titres de chapitres (police, tailles, gras, casse,
-numérotation) et les couleurs.
+langue), les titres (police, tailles, gras, casse, numérotation) et les
+couleurs.
 
 Les choix finis sont des **listes déroulantes** ; chaque paramètre porte
 son **infobulle** — laisser la souris dit ce qu'il règle et sous quelle
 forme l'écrire. Toute mesure Typst est acceptée : `2cm`, `1in`, `24pt`.
+
+Deux champs donnent une **police prioritaire par script** : « Hébreu » et
+« Grec ». Ils ne s'appliquent qu'aux caractères de ce script — le latin
+garde la police du texte. Par exemple `Ezra SIL SR` pour l'hébreu et
+`Galatia SIL` pour le grec. Laisser un champ vide conserve la police de
+base et son repli habituel ; le document existant ne change donc pas tant
+que l'auteur n'a rien choisi.
+
+Les **blocs de citation** (`>`) ont leur propre section : police, taille,
+couleur, retrait à gauche et italique. Chaque champ vide laisse le défaut
+de Typst ; le décalage s'écrit comme une mesure (`1em`, `0.8cm`).
+
+Les tableaux titrés suivent le style des légendes de figures — gras ou
+italique — et ont leur propre numérotation, indépendante des figures. Le
+titre du tableau s'écrit `{{t "Titre"}}` au-dessus de la grille.
 
 ## Typographie
 
@@ -58,7 +82,8 @@ La composition du texte réglée **par langue** : un défaut — `française`,
 
 En français : une espace insécable devant `; : ! ?` et les guillemets,
 normale après ; en anglais : la ponctuation colle. En toute langue, la
-virgule et le point ne s'ouvrent jamais — `3.14` tient. Les guillemets se
+virgule et le point ne s'ouvrent jamais — `3.14` tient. Les points de
+suspension ne reçoivent jamais d'espace après eux : `mot…suite`. Les guillemets se
 choisissent par niveau d'imbrication : `«»`, `""`, `''`.
 
 Le code inline, les blocs bruts et les caractères échappés ne reçoivent
@@ -94,8 +119,11 @@ moteur Typst ; vérifiez tout de même leur place dans le PDF exporté.
 
 ## Les plugins
 
-Le panneau des plugins est une fenêtre séparée, mais ses valeurs font
-partie du **fichier de normes** du document. Il porte quatre onglets :
+Le panneau des plugins est une seconde vue de la même fenêtre, et ses
+valeurs font partie du **fichier de normes** du document. Il s'ouvre par
+le bouton **Plugins** du panneau des normes, ou par le bouton **Normes**
+pour revenir. Le rail des onglets défile et revient à la ligne : un onglet
+ajouté ne peut plus être rogné par le bas. Il porte six onglets :
 
 - **Bibliographie** — le style des citations et de la liste finale,
   l'import d'un fichier `.csl` et les styles installés dans Zotero ;
@@ -106,7 +134,8 @@ partie du **fichier de normes** du document. Il porte quatre onglets :
   séparateurs, le gabarit de citation, l'ordre canonique et l'index des
   citations (pages, regroupement, canon, forme, colonnes). Le canon choisi
   sépare les livres canoniques des livres non canoniques ; « Tout le corpus »
-  garde une seule liste ;
+  garde une seule liste. Un index entièrement canonique n'affiche pas le
+  titre « Livres canoniques », devenu implicite.
 - **Biblique — les livres hors canon** : Tobie, Judith, Sagesse, Siracide,
   Baruch, les Maccabées, les Esdras additionnels, Hénoch, les Jubilés, les
   Testaments des douze patriarches et les principales apocalypses sont
@@ -115,7 +144,20 @@ partie du **fichier de normes** du document. Il porte quatre onglets :
 - **Glossaire** — un renvoi vers le panneau du glossaire, où se gèrent les
   termes ;
 - **Graphiques** — un renvoi vers la fenêtre d'insertion, qui porte les
-  données.
+  données ;
+- **Personnes** — le registre des personnes citées, les formes du nom
+  (complet, simple, alias) utilisées par les balises sans expression et par
+  `auto`, à la première mention et aux suivantes, la forme de l'index, la forme des dates
+  (naissance et mort, naissance, mort ou texte libre), leur affichage à la
+  première mention seulement, les pages, les initiales, la qualité et les
+  colonnes. Le bouton ouvre la fenêtre du registre et le panneau d'insertion
+  est accessible par le raccourci de la balise.
+
+Quand un réglage de plugin a été modifié et que le document porte une
+norme de la bibliothèque, le pied du panneau propose **Écraser « … »** :
+la bibliothèque reçoit la nouvelle version, sans quitter les plugins.
+**Appliquer** reste le geste qui écrit `mise-en-page.toml` dans le
+document.
 
 Une balise biblique peut choisir sa propre forme avec `|long`, `|court`,
 `|osis` ou `|sanspoint` ; elle gagne sur le réglage du projet. Une

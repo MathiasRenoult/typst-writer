@@ -7,12 +7,12 @@ mémoire, un livre, un article — sans jamais perdre de vue la page finale.
 Le texte reste simple et lisible ; la mise en page est composée par Typst,
 le moteur qui produit aussi le PDF.
 
-Version 0.6.2 · Linux.
+Version 0.6.3 · Linux.
 
 ## L'idée
 
 Un document de recherche n'est pas une suite de paragraphes : c'est un
-assemblage de chapitres, de citations, de notes, de références bibliques,
+assemblage de sections, de citations, de notes, de références bibliques,
 d'index et de règles de présentation. Typst Writer réunit ces gestes dans
 un seul espace, sans imposer un format fermé.
 
@@ -39,7 +39,8 @@ citation, un titre ou un tableau.
 
 Le lecteur de PDF intégré permet aussi de sélectionner et copier le texte
 composé, de chercher une expression dans le document final et de suivre
-les liens internes et externes. Un lien interne peut afficher la
+les liens internes et externes. Un simple clic ne sélectionne rien : il
+faut glisser pour sélectionner un passage. Un lien interne peut afficher la
 numérotation réelle du document — `[[titre-adoption-coutume|"chapitre"]]`
 donne « chapitre 2.3 », `[[figure-planche|"figure"]]` donne « Figure 4 »,
 et `"page"` donne la page composée.
@@ -47,20 +48,19 @@ et `"page"` donne la page composée.
 ### Un vrai espace de travail pour un long document
 
 L'éditeur se divise en panneaux indépendants, avec des onglets. Le même
-chapitre peut être ouvert en écriture dans un panneau et en lecture dans
+document peut être ouvert en écriture dans un panneau et en lecture dans
 un autre ; la disposition est retrouvée au lancement. La bibliothèque de
 projets se parcourt comme une étagère, avec des couvertures et des
 vignettes de page.
 
-Les chapitres, le sommaire, les références et les projets se déplacent
-ensemble : on change de chapitre sans perdre le fil. Le panneau
-**Chapitres** propose le document entier ou une tête de niveau 1 ; la vue
-par chapitre ne montre que ses pages et le sommaire se réduit à ses têtes,
-sans jamais réécrire la source.
+Le document unique, son sommaire, ses références et les projets se
+déplacent ensemble : on garde le fil sans changer de fichier. Le panneau
+gauche montre le **Sommaire** complet ; les titres structurent le texte,
+ils ne créent pas de chapitres séparés.
 
 Une **page de garde** se délimite par `{{garde}}` … `{{/garde}}` : elle est
 composée avant le sommaire, sans numéro, et n'entre pas dans la table des
-matières. On peut en mettre plusieurs ; le menu `..` insère le bloc.
+matières. On peut en mettre plusieurs ; le menu `,,` insère le bloc.
 
 ### Les citations et les sources, sans friction
 
@@ -107,9 +107,22 @@ Les encadrés, les tableaux, les graphiques, les dates, les couleurs et les
 métadonnées sont insérés depuis une même palette, avec des formulaires
 simples qui montrent toujours le texte qui sera écrit.
 
+Les tableaux peuvent porter un **titre**, numéroté comme une figure et
+référençable par `[[tableau-…]]` ou `[[tableau-…|"tableau"]]`. Leur légende
+suit le style des figures, avec un compteur de tableaux indépendant. Sans
+titre, ils gardent une ancre de rang ; un lien peut demander le titre avec
+`show-title=true`. La section bibliographique n'apparaît que si `{{bib}}`
+est écrit dans le texte — jamais par une directive cachée de `main.typ`.
+
+Le panneau de travail sépare les mots du corps des notes de bas de page et
+affiche la part des citations de bloc. Les blocs de citation (`>`) ont leur
+police, leur taille, leur couleur et leur décalage dans les normes. Deux
+champs donnent aussi une police prioritaire au script hébreu ou grec — par
+exemple Ezra SIL SR et Galatia SIL — sans toucher au texte latin.
+
 ### Une interface qui parle la même langue que vous
 
-La palette de commandes s'ouvre avec `Ctrl+K` ou `/` ; `..` propose les
+La palette de commandes s'ouvre avec `Ctrl+K` ou `/` ; `,,` propose les
 éléments à insérer. Elle donne aussi accès aux formats du texte (gras,
 italique, souligné, barré, code, formules, titres), aux teintes orange et
 verte ou à la dernière couleur choisie, à tous les imports et exports, aux
@@ -117,6 +130,11 @@ thèmes, aux normes de la bibliothèque et aux bascules de plugins. Une
 recherche de livre biblique filtre la liste au fil de la frappe, les
 commandes inutiles disparaissent quand leur module est désactivé, et le
 curseur revient naturellement dans le document après une insertion.
+
+La page **Paramètres** (`Ctrl+,`) règle l'application elle-même : les boutons
+de mise en page peuvent disparaître pour qui écrit déjà le markdown, les
+numéros de ligne s'affichent à la demande, et les thèmes de l'interface s'y
+choisissent. Les normes du document restent indépendantes.
 
 Les raccourcis sont réunis dans une carte (`F1`), et l'aide indique aussi
 où vivent vos données et comment les sauvegarder.
@@ -130,23 +148,19 @@ soignée.
 
 ## Démarrer
 
-Le paquet Linux s'installe sans `sudo` :
+La version 0.6.3 est publiée **sans paquet binaire ni artefact de test**.
+Le code source est la référence ; une chaîne Rust à jour suffit :
 
 ```sh
-tar -xzf typst-writer-0.6.2-linux-x86_64.tar.gz
-cd typst-writer-0.6.2-linux-x86_64
-./install.sh
-```
-
-L'installateur vérifie chaque fichier par son empreinte. La désinstallation
-se fait avec `./desinstaller.sh` et ne touche jamais aux documents.
-
-Pour compiler l'application vous-même, une chaîne Rust à jour suffit :
-
-```sh
+git clone https://github.com/MathiasRenoult/typst-writer.git
+cd typst-writer
 cargo build --release
 ./target/release/typst-writer
 ```
+
+Les paquets Linux des versions précédentes restent disponibles dans leurs
+versions GitHub. L'application demande Linux avec Wayland ou X11 et un pilote
+graphique récent.
 
 L'application demande Linux avec Wayland ou X11 et un pilote graphique
 récent. L'assistance à la frappe est facultative : écrire, composer et
@@ -155,7 +169,7 @@ exporter fonctionnent sans elle.
 ## Premiers pas
 
 1. Créez un projet depuis la bibliothèque.
-2. Écrivez dans le chapitre ouvert.
+2. Écrivez dans le document.
 3. Ouvrez l'aperçu pour voir la page composée.
 4. Ajoutez vos sources depuis la bibliographie ou tapez `@` dans le texte.
 5. Exportez en PDF, en Markdown ou en DOCX quand le document est prêt.
@@ -167,7 +181,7 @@ La [prise en main](docs/guide/prise-en-main.md) détaille chaque geste.
 La source reste volontairement simple :
 
 ```text
-# Un chapitre
+# Un titre
 
 Un paragraphe avec du **gras**, une citation @dupont[p. 45] et une note.^[Une précision.]
 
@@ -177,7 +191,12 @@ Un paragraphe avec du **gras**, une citation @dupont[p. 45] et une note.^[Une pr
 ```
 
 Les références bibliques, les citations, les notes et les blocs de mise en
-page sont décrits dans le [guide d'écriture](docs/guide/ecrire.md).
+page sont décrits dans le [guide d'écriture](docs/guide/ecrire.md). Le
+plugin **Personnes citées** ajoute `{{p clé}}` et `{{index-personnes}}` :
+les personnes sont déclarées dans `personnes.toml`, jamais devinées dans la
+prose. La balise ouvre un panneau qui filtre le registre et remplit la fiche ;
+sans expression, elle suit les formes réglées dans les normes (nom simple par défaut). Voir
+[Les personnes citées](docs/guide/personnes.md).
 
 ## Ce que l'application sait produire
 
@@ -214,8 +233,8 @@ choisie sans perdre le texte courant.
 ## Documentation
 
 Le manuel d'usage est dans [`docs/guide/`](docs/guide/index.md) : prise en
-main, écriture, bibliographie, glossaire, normes, recherche, raccourcis,
-fichiers et installation. Les notes de version sont dans
+main, écriture, bibliographie, glossaire, personnes citées, normes,
+recherche, raccourcis, fichiers et installation. Les notes de version sont dans
 [`CHANGELOG.md`](CHANGELOG.md) et les temps forts de cette version dans
 [`RELEASE_NOTES.md`](RELEASE_NOTES.md). Les commandes de vérification et la
 classification des épreuves ignorées sont dans

@@ -68,9 +68,17 @@ pub fn view(state: &State) -> Element<'_, Message> {
             champs,
             apercu,
             row![
-                button(palette.label("Insérer").size(theme::jetons::DETAIL))
-                    .on_press(Message::BaliseInserer)
-                    .padding([5, 12]),
+                button(
+                    palette
+                        .label(if dialogue.remplacement.is_some() {
+                            "Remplacer"
+                        } else {
+                            "Insérer"
+                        })
+                        .size(theme::jetons::DETAIL),
+                )
+                .on_press(Message::BaliseInserer)
+                .padding([5, 12]),
                 button(palette.label("Annuler").size(theme::jetons::DETAIL))
                     .on_press(Message::BaliseAnnuler)
                     .padding([5, 12]),
@@ -99,6 +107,7 @@ fn titre(tag: TagId) -> &'static str {
         TagId::Glossaire => "Appeler un terme du glossaire",
         TagId::Meta => "Appeler une métadonnée",
         TagId::Lien => "Écrire un lien",
+        TagId::Brut => "Modifier la balise",
         _ => "Compléter la balise",
     }
 }

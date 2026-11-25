@@ -369,7 +369,9 @@ fn ouvre_un_bloc(ligne: &str) -> bool {
             || ligne.trim() == "{{/garde}}"
             // Une ligne d'attributs trouvée — mais elle flotte jusqu'à son
             // bloc, et le parseur sait le reste.
-            || crate::langage::parse::lire_proprietes_ligne(ligne).is_some())
+            || crate::langage::parse::lire_proprietes_ligne(ligne).is_some()
+            // Une ouverture de tableau canonique, titrée ou non.
+            || titre_de_tableau(debut).is_some())
 }
 
 /// Le niveau d'un titre, si la ligne en est un.
@@ -594,7 +596,11 @@ pub fn lire_proprietes_ligne(ligne: &str) -> Option<crate::langage::schema::Prop
                     return None;
                 }
 
-                proprietes.noms.push(nom.to_string());
+                if crate::langage::schema::Proprietes::position_compacte(nom) {
+                    proprietes.poser("position", nom.to_string());
+                } else {
+                    proprietes.noms.push(nom.to_string());
+                }
                 reste = reste[fin..].trim_start();
                 continue;
             }
@@ -665,13 +671,44 @@ fn lire_formule(lignes: &[&str], index: usize) -> (String, usize) {
     (contenu.join("\n"), suivant)
 }
 
+/// La ligne d'ouverture d'un tableau canonique : `{{t}}`, `{{tableau}}`, ou
+/// leur forme titrée `{{t "Tableau des taux"}}`.
+///
+/// `None` quand la ligne n'est pas une ouverture de tableau ; `Some("")`
+/// quand elle l'est sans titre. Le titre est du texte, entre guillemets,
+/// avec les échappements habituels du langage.
+fn titre_de_tableau(ligne: &str) -> Option<String> {
+    let corps = ligne.trim();
+    let corps = corps.strip_prefix("{{")?.strip_suffix("}}")?;
+    let (mot, reste) = mot_au_debut(corps)?;
+
+    if mot.cite || !matches!(mot.texte.as_str(), "t" | "tableau") {
+        return None;
+    }
+
+    let reste = reste.trim();
+    if reste.is_empty() {
+        return Some(String::new());
+    }
+
+    let (titre, apres) = mot_au_debut(reste)?;
+    if !titre.cite || !apres.trim().is_empty() {
+        return None;
+    }
+
+    Some(titre.texte)
+}
+
 /// Lit un tableau : en-tête, ligne de séparation, lignes.
 ///
 /// La forme est celle du markdown — `| A | B |`, `| --- | :-: |` — et
 /// sans la ligne de séparation, ce n'est rien : la ligne est du texte,
 /// comme tout ce qui ne se lit pas.
 fn lire_tableau(lignes: &[&str], index: usize) -> Option<(crate::langage::schema::Bloc, usize)> {
-    let entete = cellules(lignes[index])?;
+    // Une balise de tableau peut être seule dans la sélection : l'index peut
+    // désigner la fin du texte, et une sélection ne doit jamais faire tomber
+    // le parseur.
+    let entete = cellules(lignes.get(index)?)?;
 
     if entete.is_empty() {
         return None;
@@ -726,6 +763,7 @@ fn lire_tableau(lignes: &[&str], index: usize) -> Option<(crate::langage::schema
             entete,
             lignes,
             alignements,
+            titre: String::new(),
         },
         suivant,
     ))
@@ -1465,11 +1503,12 @@ fn parse_inline(texte: &str) -> Vec<Inline> {
 
         // Lien interne : `[[référence|texte]]`. Avant le lien externe, qui
         // verrait le premier crochet comme un texte de lien.
-        if let Some((reference, texte_lien, apres)) = lien_interne(reste) {
+        if let Some((reference, texte_lien, afficher_titre, apres)) = lien_interne(reste) {
             vider!();
             elements.push(Inline::LienInterne {
                 reference,
                 texte: parse_inline(&texte_lien),
+                afficher_titre,
             });
             reste = apres;
             continue;
@@ -1674,6 +1713,17 @@ fn balise_canonique(texte: &str) -> Option<Inline> {
                 }))),
                 None => Some(Inline::Canonique(Box::new(Inline::Bible(parties)))),
             }
+        }
+        "p" | "personne" | "personnes" => {
+            let (tete, contenu) = reste.split_once('|').unwrap_or((reste, ""));
+            let cle = tete.trim();
+            if !crate::project::personnes::EntreePersonne::cle_valide(cle) {
+                return None;
+            }
+            Some(Inline::Canonique(Box::new(Inline::Personne {
+                cle: cle.to_string(),
+                contenu: parse_inline(contenu),
+            })))
         }
         "m" | "meta" => {
             let cle = reste.trim();
@@ -1953,12 +2003,28 @@ fn lire_page(texte: &str) -> Option<(String, &str)> {
 /// il peut contenir une note ou un autre lien —, et la cible jusqu'à la
 /// parenthèse fermante, déséchappée.
 /// Un lien interne : `[[référence|texte]]`.
-fn lien_interne(texte: &str) -> Option<(String, String, &str)> {
+fn lien_interne(texte: &str) -> Option<(String, String, bool, &str)> {
     let apres_ouvert = texte.strip_prefix("[[")?;
     let fin = apres_ouvert.find("]]")?;
     let interieur = &apres_ouvert[..fin];
-    let (reference, texte_lien) = interieur.split_once('|').unwrap_or((interieur, interieur));
-    let reference = reference.trim();
+    let (partie_reference, texte_lien) =
+        interieur.split_once('|').unwrap_or((interieur, interieur));
+
+    let mut mots = partie_reference.split_whitespace();
+    let reference = mots.next()?;
+    let mut afficher_titre = false;
+
+    // L'option est écrite après la référence : `[[t show-title=true|titre]]`.
+    // Une option inconnue laisse la ligne du texte plutôt que de l'interpréter
+    // à moitié.
+    for option in mots {
+        match option.to_ascii_lowercase().as_str() {
+            "show-title=true" => afficher_titre = true,
+            "show-title=false" => afficher_titre = false,
+            _ => return None,
+        }
+    }
+
     if reference.is_empty()
         || reference.contains(['[', ']', '\n'])
         || !reference
@@ -1967,9 +2033,11 @@ fn lien_interne(texte: &str) -> Option<(String, String, &str)> {
     {
         return None;
     }
+
     Some((
         reference.to_string(),
         texte_lien.to_string(),
+        afficher_titre,
         &apres_ouvert[fin + 2..],
     ))
 }
@@ -2013,9 +2081,15 @@ fn lire_bloc_canonique(lignes: &[&str], index: usize) -> Option<(Bloc, usize)> {
         return Some((Bloc::Canonique(Box::new(Bloc::Chart(chart))), suivant));
     }
 
-    if matches!(ligne, "{{t}}" | "{{tableau}}")
-        && let Some((tableau, suivant)) = lire_tableau(lignes, index + 1)
+    if let Some(titre) = titre_de_tableau(ligne)
+        && let Some((mut tableau, suivant)) = lire_tableau(lignes, index + 1)
     {
+        if let Bloc::Tableau {
+            titre: champ_titre, ..
+        } = &mut tableau
+        {
+            *champ_titre = titre;
+        }
         return Some((Bloc::Canonique(Box::new(tableau)), suivant));
     }
 
@@ -2023,6 +2097,7 @@ fn lire_bloc_canonique(lignes: &[&str], index: usize) -> Option<(Bloc, usize)> {
         "{{s}}" | "{{sommaire}}" => Bloc::Sommaire,
         "{{bib}}" | "{{bibliographie}}" => Bloc::Bibliographie,
         "{{idx}}" | "{{index-biblique}}" => Bloc::IndexBiblique,
+        "{{ip}}" | "{{index-personnes}}" | "{{index-nom}}" => Bloc::IndexPersonnes,
         "{{gs}}" | "{{glossaire-section}}" => Bloc::Glossaire { tout: false },
         "{{gs tout}}" | "{{glossaire-section tout}}" => Bloc::Glossaire { tout: true },
         _ => return None,
@@ -2302,6 +2377,7 @@ mod tests {
             entete,
             lignes,
             alignements,
+            ..
         } = document.blocs.first().expect("tableau")
         else {
             panic!("ce devrait être un tableau");
@@ -3377,5 +3453,25 @@ mod tests_des_metadonnees {
             statistiques.ajouter(texte);
             assert!(!relu.is_empty() || texte.trim().is_empty());
         }
+    }
+}
+/// Une ligne de balise suffit à la sélection : le parseur ne doit pas
+/// confondre l'absence de grille avec un tableau à lire.
+#[cfg(test)]
+mod une_balise_de_tableau_seule {
+    use super::parse;
+    use crate::langage::schema::Bloc;
+
+    #[test]
+    fn une_balise_de_tableau_seule_ne_panique_pas() {
+        let document = parse("{{t \"Taux\"}}\n");
+        assert!(
+            !document.blocs.iter().any(|bloc| matches!(
+                bloc,
+                Bloc::Canonique(interne)
+                    if matches!(interne.as_ref(), Bloc::Tableau { .. })
+            )),
+            "aucun tableau sans grille : {document:?}"
+        );
     }
 }

@@ -825,7 +825,6 @@ fn une_creation_publiee_ne_laisse_qu_un_projet_complet() {
     let projets = crate::project::projects_dir();
     let dir = crate::project::create("neuf").expect("création");
     assert!(dir.is_dir());
-    assert!(dir.join("chapitres").is_dir(), "le squelette est prêt");
     for fichier in ["main.typ", "document.tw", "references.bib"] {
         assert!(
             dir.join(fichier).is_file(),
@@ -928,6 +927,56 @@ fn un_style_zotero_disparu_est_un_diagnostic() {
     assert_eq!(
         dialogue.reglages.bibliographie.style, None,
         "rien n'est choisi"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_directive_de_bibliographie_dans_main_ne_suffit_pas() {
+    let mut state = etat_isole();
+    let dir = state.project.dir.clone();
+    std::fs::write(
+        dir.join("references.bib"),
+        "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+    )
+    .expect("bibliographie");
+
+    // Une ancienne directive reste dans l'assemblage ; le texte `.tw`, lui,
+    // ne demande pas de section.
+    std::fs::write(
+        dir.join("main.typ"),
+        "#set page(margin: 2cm)\n#bibliography(\"references.bib\")\n",
+    )
+    .expect("assemblage");
+
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "Voir @dupont2023.\n".to_string(),
+        )),
+    );
+    let (entree, corrections, _) = state.compilation_unit_avec_diagnostics();
+
+    assert!(
+        !entree.contains("#hide["),
+        "aucune section visible ne vient de main.typ : {entree}"
+    );
+    assert!(
+        entree.contains("#show bibliography: it => none"),
+        "les notices restent chargées pour les citations : {entree}"
+    );
+    assert!(
+        !corrections
+            .iter()
+            .any(|(_, contenu)| contenu.contains("#bibliography")),
+        "le texte ne demande pas de bibliographie : {corrections:?}"
+    );
+
+    let rendu = crate::typst::render::compile(&state.project.dir, &entree, &corrections);
+    assert!(
+        rendu.errors.is_empty(),
+        "les citations se résolvent sans section : {:?}",
+        rendu.errors
     );
 }
 
@@ -1541,43 +1590,6 @@ fn un_projet_sans_verrou_refuse_la_frappe_au_lieu_de_la_perdre() {
     assert_eq!(seconde.editor.content(), avant);
     assert!(!seconde.editor.is_modified());
     assert!(seconde.note.as_ref().is_some_and(|note| note.erreur));
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn renommer_un_chapitre_dun_autre_projet_est_refuse() {
-    let premiere = etat_isole();
-    let a = premiere.project.dir.join("chapitres/01-ancien.typ");
-    std::fs::write(&a, "TEXTE A").expect("chapitre synthétique");
-    let mut seconde = etat_isole();
-    let _ = update(&mut seconde, Message::NewProject);
-    let main = seconde.project.main.clone();
-    let avant = std::fs::read(&main).expect("assemblage B");
-    seconde.renaming = Some(crate::app::ChapterRename {
-        path: a.clone(),
-        buffer: "nouveau".into(),
-    });
-    let _ = update(&mut seconde, Message::RenameCommit);
-    assert_eq!(std::fs::read_to_string(&a).unwrap(), "TEXTE A");
-    assert!(!a.with_file_name("00-nouveau.typ").exists());
-    assert_eq!(std::fs::read(main).unwrap(), avant);
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn confirmer_un_chapitre_dun_autre_projet_ne_le_supprime_pas() {
-    let premiere = etat_isole();
-    let a = premiere.project.dir.join("chapitres/01-ancien.typ");
-    std::fs::write(&a, "TEXTE A").expect("chapitre synthétique");
-    let mut seconde = etat_isole();
-    let _ = update(&mut seconde, Message::NewProject);
-    let main = seconde.project.main.clone();
-    let assemblage = b"#include \"chapitres/01-ancien.typ\"\n";
-    std::fs::write(&main, assemblage).expect("assemblage synthétique");
-    seconde.geste_confirme = true;
-    let _ = update(&mut seconde, Message::DeleteChapter(a.clone()));
-    assert_eq!(std::fs::read_to_string(a).unwrap(), "TEXTE A");
-    assert_eq!(std::fs::read(main).unwrap(), assemblage);
 }
 
 #[test]
@@ -5126,10 +5138,10 @@ fn la_palette_rend_le_curseur_a_l_editeur_apres_insertion() {
     let mut state = etat_isole();
     let _ = update(
         &mut state,
-        Message::Editor(iced_code_editor::Message::Paste("..".into())),
+        Message::Editor(iced_code_editor::Message::Paste(",,".into())),
     );
 
-    assert!(state.palette.is_some(), "`..` ouvre la palette");
+    assert!(state.palette.is_some(), "`,,` ouvre la palette");
     let _ = update(&mut state, Message::PaletteExecuter);
 
     assert!(state.palette.is_none(), "la palette se referme");
@@ -5374,11 +5386,141 @@ fn les_parametres_des_plugins_sont_un_panneau_distinct_des_normes() {
     let _ = update(&mut state, Message::PluginsOuvrir);
     let panneau = state.mise_en_page.as_ref().expect("le panneau est ouvert");
     assert!(panneau.plugins, "c est le panneau des plugins");
-    assert_eq!(panneau.panneau, 0, "il s ouvre sur la bibliographie");
+    assert_eq!(
+        panneau.panneau_plugins, 0,
+        "il s ouvre sur la bibliographie"
+    );
 
     let _ = update(&mut state, Message::MiseEnPageOuvrir);
     let panneau = state.mise_en_page.as_ref().expect("le panneau est ouvert");
     assert!(!panneau.plugins, "les normes ne sont pas les plugins");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn basculer_normes_et_plugins_garde_la_copie_de_travail() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::MiseEnPageOuvrir);
+    let _ = update(&mut state, Message::MiseEnPagePanneau(9));
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(
+            crate::mise_en_page::modele::Champ::BibliqueTri,
+            "canonique".to_string(),
+        ),
+    );
+
+    let _ = update(&mut state, Message::ReglagesBasculerPlugins(true));
+    let dialogue = state
+        .mise_en_page
+        .as_ref()
+        .expect("le panneau reste ouvert");
+    assert!(dialogue.plugins, "le panneau des plugins est montré");
+    assert!(
+        dialogue.modifie,
+        "la modification n'est pas perdue en basculant"
+    );
+    assert_eq!(dialogue.panneau, 9, "l'onglet des normes est retenu");
+    assert_eq!(
+        dialogue.panneau_plugins, 0,
+        "les plugins s'ouvrent sur leur premier onglet"
+    );
+    assert_eq!(
+        dialogue.reglages.parametres_plugins.biblique.tri, "canonique",
+        "la copie de travail survit à la bascule"
+    );
+
+    let _ = update(&mut state, Message::MiseEnPagePanneauPlugins(3));
+    let _ = update(&mut state, Message::ReglagesBasculerPlugins(false));
+    let dialogue = state
+        .mise_en_page
+        .as_ref()
+        .expect("le panneau reste ouvert");
+    assert!(!dialogue.plugins, "le panneau des normes est revenu");
+    assert_eq!(dialogue.panneau, 9, "le dernier onglet des normes revient");
+    assert_eq!(
+        dialogue.reglages.parametres_plugins.biblique.tri, "canonique",
+        "revenir aux normes ne recharge pas le fichier"
+    );
+
+    let _ = update(&mut state, Message::ReglagesBasculerPlugins(true));
+    let dialogue = state
+        .mise_en_page
+        .as_ref()
+        .expect("le panneau reste ouvert");
+    assert_eq!(
+        dialogue.panneau_plugins, 3,
+        "le dernier onglet des plugins revient aussi"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn ecraser_une_norme_depuis_les_plugins_met_la_bibliotheque_a_jour() {
+    let mut state = etat_isole();
+    let nom = "Norme des plugins à écraser";
+    let mut norme = crate::mise_en_page::modele::MiseEnPage::default();
+    norme.parametres_plugins.biblique.tri = "apparition".to_string();
+    crate::project::enregistrer_norme(nom, &norme).expect("norme dans la bibliothèque");
+    let _ = update(
+        &mut state,
+        Message::NormesAppliquerAuDocument(nom.to_string()),
+    );
+
+    let _ = update(&mut state, Message::PluginsOuvrir);
+    let dialogue = state.mise_en_page.as_ref().expect("panneau ouvert");
+    assert_eq!(dialogue.norme_originale, nom);
+    assert!(!dialogue.modifie);
+
+    let _ = update(
+        &mut state,
+        Message::MiseEnPageChamp(
+            crate::mise_en_page::modele::Champ::BibliqueTri,
+            "canonique".to_string(),
+        ),
+    );
+    let dialogue = state.mise_en_page.as_ref().expect("panneau ouvert");
+    assert!(dialogue.modifie, "le réglage de plugin marque la norme");
+
+    // Le pied des plugins propose ce geste ; le message est le même que
+    // celui du panneau des normes et écrit la bibliothèque.
+    let _ = update(&mut state, Message::NormesEcraser);
+    let relue = crate::project::norme(nom).expect("la norme existe toujours");
+    assert_eq!(
+        relue.parametres_plugins.biblique.tri, "canonique",
+        "le paramètre de plugin modifié est dans la norme écrasée"
+    );
+    assert!(
+        !state.mise_en_page.as_ref().expect("panneau ouvert").modifie,
+        "écraser retire la marque de modification"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn tab_circule_dans_les_cellules_du_tableau() {
+    let mut state = etat_isole();
+    let source = "{{t \"Taux\"}}\n| A | B |\n| --- | --- |\n| x | y |\n";
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(source.to_string())),
+    );
+
+    let a = state.editor.content().find("A").expect("la cellule A");
+    let _ = state.editor.set_cursor_offset(a);
+    let _ = crate::app::saisie::update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert_eq!(
+        state.editor.cursor_offset(),
+        state.editor.content().find("B").expect("la cellule B"),
+        "Tab passe à la cellule suivante sans quitter l'éditeur"
+    );
+    assert!(
+        state.editor.content().contains("| A    | B    |"),
+        "le tableau est aligné pendant la navigation : {}",
+        state.editor.content()
+    );
 }
 
 #[test]
@@ -5428,6 +5570,242 @@ fn tab_et_maj_tab_changent_le_niveau_dune_liste_dans_lediteur() {
         state.editor.cursor_offset(),
         offset,
         "le curseur revient à sa place"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn ctrl_entree_ajoute_une_ligne_et_ctrl_tab_une_colonne() {
+    let mut state = etat_isole();
+    let table = "| A | B |\n| --- | --- |\n| x | y |\n";
+    let _ = state.editor.remplacer_contenu(table);
+    let x = state.editor.content().find('x').unwrap();
+    let _ = state.editor.set_cursor_offset(x);
+    state.controle_tenu = true;
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Enter),
+    );
+    state.controle_tenu = false;
+    assert!(
+        state
+            .editor
+            .content()
+            .contains("| x    | y    |\n|      |      |\n"),
+        "Ctrl+Entrée ajoute une ligne sous x : {}",
+        state.editor.content()
+    );
+
+    let _ = state.editor.remplacer_contenu(table);
+    let a = state.editor.content().find('A').unwrap();
+    let _ = state.editor.set_cursor_offset(a);
+    assert!(state.editor.is_intermediate(), "l'éditeur est un .tw");
+    let commande = crate::app::commande_tableau(
+        &state,
+        &iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+        iced::keyboard::Modifiers::CTRL,
+    )
+    .expect("Ctrl+Tab insère une colonne");
+    assert!(matches!(commande, Message::TableauInsererColonne));
+    let _ = crate::app::routeur::tableaux::traiter(&mut state, commande);
+    assert!(
+        state.editor.content().contains("| A    |      | B    |"),
+        "Ctrl+Tab ajoute une colonne à droite : {}",
+        state.editor.content()
+    );
+
+    // Le widget envoie `ArrowKey` pour Ctrl+Maj+flèches ; l'application doit
+    // intercepter ce message pour déplacer la rangée au lieu de déplacer le
+    // curseur dans la cellule.
+    let table = "| A | B |\n| --- | --- |\n| x | y |\n| z | w |\n";
+    let _ = state.editor.remplacer_contenu(table);
+    let z = state.editor.content().find('z').unwrap();
+    let _ = state.editor.set_cursor_offset(z);
+    state.controle_tenu = true;
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::ArrowKey(
+            iced_code_editor::ArrowDirection::Up,
+            true,
+        )),
+    );
+    state.controle_tenu = false;
+    assert!(
+        state
+            .editor
+            .content()
+            .contains("| z    | w    |\n| x    | y    |"),
+        "Ctrl+Maj+Haut déplace la rangée z : {}",
+        state.editor.content()
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_ouvrant_tape_encadre_la_selection_dans_l_application() {
+    let mut state = etat_isole();
+    let _ = state.editor.remplacer_contenu("Un mot ici");
+    state.editor.editor.selectionner((0, 3), (0, 6));
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::CharacterInput('(')),
+    );
+    assert_eq!(state.editor.content(), "Un (mot) ici");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn ctrl_suppr_enleve_la_ligne_et_maj_suppr_la_colonne() {
+    let mut state = etat_isole();
+    let table = "| A | B |\n| --- | --- |\n| x | y |\n| z | w |\n";
+    let _ = state.editor.remplacer_contenu(table);
+    let x = state.editor.content().find('x').unwrap();
+    let _ = state.editor.set_cursor_offset(x);
+    state.controle_tenu = true;
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::DeleteWord),
+    );
+    state.controle_tenu = false;
+    assert!(
+        state.editor.content().contains("| z    | w    |"),
+        "Ctrl+Suppr enlève la ligne x : {}",
+        state.editor.content()
+    );
+    assert!(
+        !state.editor.content().contains("| x    | y    |"),
+        "la ligne x a disparu"
+    );
+
+    let _ = state.editor.remplacer_contenu(table);
+    let b = state.editor.content().find('B').unwrap();
+    let _ = state.editor.set_cursor_offset(b);
+    state.maj_tenu = true;
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::DeleteSelection),
+    );
+    state.maj_tenu = false;
+    assert!(
+        state
+            .editor
+            .content()
+            .contains("| A    |\n| :--- |\n| x    |\n| z    |"),
+        "Maj+Suppr enlève la colonne B : {}",
+        state.editor.content()
+    );
+    assert!(
+        !state.editor.content().contains("| B"),
+        "la colonne B a disparu"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_reference_biblique_ouverte_se_remplace_au_lieu_de_s_ajouter() {
+    let mut state = etat_isole();
+    let source = "Avant {{b Gen 1:1}} après";
+    let _ = state.editor.remplacer_contenu(source);
+    let offset = source.find("Gen").unwrap();
+    let (debut, fin, references) = crate::plugins::bible::reference_au(source, offset)
+        .expect("la référence est sous le curseur");
+    crate::app::routeur::bible::ouvrir_le_panneau_sur(&mut state, debut..fin, references);
+    assert_eq!(
+        state
+            .plugins
+            .bible
+            .panneau
+            .as_ref()
+            .and_then(|panneau| panneau.remplacement.clone()),
+        Some(debut..fin)
+    );
+
+    let _ = crate::app::routeur::bible::traiter(&mut state, Message::BiblePanneauInserer);
+
+    assert_eq!(
+        state.editor.content(),
+        "Avant {{Gn 1.1}} après",
+        "la référence biblique est remplacée, pas dupliquée"
+    );
+    assert!(state.plugins.bible.panneau.is_none());
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn une_balise_ouverte_se_remplace_au_lieu_de_s_ajouter() {
+    let mut state = etat_isole();
+    let source = "Avant {{c red|un mot}} après";
+    let _ = state.editor.remplacer_contenu(source);
+    let balise = crate::langage::balise::balise_au(source, source.find("mot").unwrap())
+        .expect("la balise est sous le curseur");
+    let dialogue = crate::app::palette::BaliseDialogue::depuis_balise(&balise)
+        .expect("le panneau de la balise");
+    state.balise_dialogue = Some(dialogue);
+
+    let _ = crate::app::palette::traiter(&mut state, &Message::BaliseInserer);
+
+    assert_eq!(
+        state.editor.content(),
+        "Avant {{c red|un mot}} après",
+        "la balise n'est pas dupliquée"
+    );
+    assert!(state.balise_dialogue.is_none());
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn tab_et_entree_naviguent_et_formattent_un_tableau() {
+    let mut state = etat_isole();
+    let table = "| A | B |\n| --- | --- |\n| x | y |\n\nAprès\n";
+    let _ = state.editor.remplacer_contenu(table);
+    let a = table.find('A').unwrap();
+    let _ = state.editor.set_cursor_offset(a);
+
+    let _ = crate::app::saisie::update(&mut state, Message::Editor(iced_code_editor::Message::Tab));
+
+    assert_eq!(
+        state.editor.content(),
+        "| A    | B    |\n| :--- | :--- |\n| x    | y    |\n\nAprès\n",
+        "Tab aligne le tableau et laisse la suite intacte"
+    );
+    assert!(
+        state.editor.content()[state.editor.cursor_offset()..].starts_with('B'),
+        "Tab avance vers la cellule B"
+    );
+
+    let _ = state.editor.remplacer_contenu(table);
+    let a = table.find('A').unwrap();
+    let _ = state.editor.set_cursor_offset(a);
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Enter),
+    );
+
+    assert_eq!(
+        state.editor.content(),
+        "| A    | B    |\n| :--- | :--- |\n| x    | y    |\n\nAprès\n",
+        "Entrée aligne le tableau"
+    );
+    assert!(
+        state.editor.content()[state.editor.cursor_offset()..].starts_with('x'),
+        "Entrée descend dans la même colonne"
+    );
+
+    // Maj+Entrée remonte dans la même colonne.
+    let _ = state
+        .editor
+        .remplacer_contenu("| A | B |\n| --- | --- |\n| x | y |\n");
+    let x = state.editor.content().find('x').unwrap();
+    let _ = state.editor.set_cursor_offset(x);
+    state.maj_tenu = true;
+    let _ = crate::app::saisie::update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Enter),
+    );
+    state.maj_tenu = false;
+    assert!(
+        state.editor.content()[state.editor.cursor_offset()..].starts_with('A'),
+        "Maj+Entrée remonte dans la même colonne"
     );
 }
 
@@ -5656,6 +6034,10 @@ fn appliquer_une_norme_de_la_bibliotheque_configure_les_plugins() {
         state.plugins.bible.tri,
         crate::plugins::bible::TriReferences::Canonique
     );
+    assert_eq!(
+        state.norme_document, "Norme plugins",
+        "la barre d'état sait quelle norme le document porte"
+    );
 }
 
 /// Retirer une norme demande son mot : la bibliothèque ne perd pas une
@@ -5834,44 +6216,6 @@ fn restaurer_une_version_recharge_le_document_ouvert() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
-fn choisir_un_chapitre_puis_revenir_au_document_entier() {
-    let mut state = etat_isole();
-    creer_un_projet(&mut state, "chapitres");
-
-    let chemin = state.project.document.clone().expect("document du projet");
-    let contenu = "# Ouverture\n\nLe début.\n\n## Section\n\n# Suite\n\nLa fin.\n";
-    std::fs::write(&chemin, contenu).expect("document synthétique");
-    let _ = state.recharger_document(chemin, contenu.to_string());
-    state.rafraichir_chapitres();
-
-    assert_eq!(state.render.chapitres.len(), 2, "deux têtes de niveau 1");
-    assert_eq!(state.render.chapitres[0].titre, "Ouverture");
-    assert_eq!(state.render.chapitres[1].titre, "Suite");
-    assert!(
-        state.render.chapitre.is_none(),
-        "la vue commence sur le document entier"
-    );
-
-    let _ = update(&mut state, Message::ChapitreChoisir(Some(1)));
-    assert_eq!(
-        state
-            .render
-            .chapitre
-            .as_ref()
-            .map(|chapitre| chapitre.titre.as_str()),
-        Some("Suite")
-    );
-    assert_eq!(state.render.scroll, (0.0, 0.0), "la tranche repart en haut");
-
-    let _ = update(&mut state, Message::ChapitreChoisir(None));
-    assert!(
-        state.render.chapitre.is_none(),
-        "le document entier revient"
-    );
-}
-
-#[test]
-#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn la_recherche_du_document_n_ouvre_pas_celle_de_l_editeur() {
     let mut state = etat_isole();
     creer_un_projet(&mut state, "recherche-un-seul-panneau");
@@ -5941,9 +6285,74 @@ fn les_numeros_de_ligne_se_basculent_et_se_conservent() {
 
 #[test]
 #[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_tableau_insere_porte_son_titre() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "tableau-titre");
+
+    let _ = update(&mut state, Message::TableauOuvrir);
+    let _ = update(&mut state, Message::TableauTitre("Taux".to_string()));
+    let _ = update(&mut state, Message::TableauRangs("2".to_string()));
+    let _ = update(&mut state, Message::TableauColonnes("2".to_string()));
+    let _ = update(&mut state, Message::TableauInserer);
+
+    let contenu = state.editor.content();
+    assert!(contenu.contains("{{t \"Taux\"}}"), "{contenu}");
+    let document = crate::langage::parse(&contenu);
+    let Some(crate::langage::schema::Bloc::Canonique(inner)) = document.blocs.first() else {
+        panic!("le tableau canonique est attendu : {contenu}");
+    };
+    assert!(
+        matches!(
+            inner.as_ref(),
+            crate::langage::schema::Bloc::Tableau { titre, .. } if titre == "Taux"
+        ),
+        "le titre entre dans l'AST : {inner:?}"
+    );
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn la_page_parametres_regle_les_outils_de_la_barre() {
+    let mut state = etat_isole();
+    creer_un_projet(&mut state, "parametres-barre");
+
+    let _ = update(&mut state, Message::ParametresOuvrir);
+    assert!(state.parametres_vue, "la page s'ouvre");
+    assert!(!state.projets_vue, "elle remplace la bibliothèque");
+
+    let _ = update(
+        &mut state,
+        Message::ParametresPanneau(crate::app::state::ParametresPanneau::Apparence),
+    );
+    assert_eq!(
+        state.parametres_panneau,
+        crate::app::state::ParametresPanneau::Apparence
+    );
+
+    let _ = update(&mut state, Message::ParametresBasculeOutilsMiseEnPage);
+    let _ = update(&mut state, Message::ParametresBasculeOutilsInsertion);
+    assert!(!state.outils_mise_en_page);
+    assert!(!state.outils_insertion);
+
+    let session = crate::project::load_session();
+    assert!(!session.outils_mise_en_page, "le masquage est retenu");
+    assert!(!session.outils_insertion, "le menu fermé est retenu");
+
+    let _ = update(&mut state, Message::ParametresFermer);
+    assert!(!state.parametres_vue, "la page se referme");
+}
+
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
 fn l_ancre_d_edition_revient_au_pixel_pres() {
     let mut state = etat_isole();
     creer_un_projet(&mut state, "ancre-edition");
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "Une ligne de texte.\nDeuxième ligne.\n".repeat(80),
+        )),
+    );
 
     let _ = state.editor.editor.defiler_vers_offset(240.0);
     state.editor.memoriser_defilement();
@@ -5978,6 +6387,12 @@ fn changer_de_mode_ferme_la_recherche_de_l_autre_mode() {
 fn l_aller_retour_de_mode_restaure_le_defilement_d_edition() {
     let mut state = etat_isole();
     creer_un_projet(&mut state, "ancre-aller-retour");
+    let _ = update(
+        &mut state,
+        Message::Editor(iced_code_editor::Message::Paste(
+            "Une ligne de texte.\nDeuxième ligne.\n".repeat(80),
+        )),
+    );
 
     let _ = state.editor.editor.defiler_vers_offset(240.0);
     let _ = update(&mut state, Message::ModeBasculer);
@@ -5987,7 +6402,8 @@ fn l_aller_retour_de_mode_restaure_le_defilement_d_edition() {
     assert_eq!(state.mode, crate::app::state::ModeVue::Edition);
     assert!(
         (state.editor.editor.viewport_scroll() - 240.0).abs() < 0.5,
-        "le retour en édition ne repart pas du début du document"
+        "le retour en édition ne repart pas du début du document : {}",
+        state.editor.editor.viewport_scroll()
     );
 }
 
@@ -6074,5 +6490,61 @@ fn la_palette_liste_les_themes_et_les_normes() {
             .iter()
             .any(|item| item.titre.starts_with("Norme ·")),
         "une norme de la bibliothèque est une commande"
+    );
+}
+
+/// Le plugin des personnes : créer une entrée, l'écrire, l'insérer et
+/// demander l'index. Le registre est un fichier du projet, jamais un état
+/// seulement en mémoire.
+#[test]
+#[ignore = "HOME jetable et TYPST_WRITER_TEST_ESPACE=1 exigés"]
+fn un_registre_de_personnes_s_ecrit_et_s_insere() {
+    let mut state = etat_isole();
+
+    let _ = update(&mut state, Message::PersonnesCreer);
+    assert!(
+        state.plugins.personnes.edition.is_some(),
+        "la fiche de création s'ouvre"
+    );
+
+    for (champ, valeur) in [
+        ("cle", "augustin"),
+        ("nom", "Augustin d'Hippone"),
+        ("tri", "Augustin"),
+        ("dates", "354-430"),
+        ("qualite", "évêque d'Hippone"),
+    ] {
+        let _ = update(
+            &mut state,
+            Message::EditionPersonneChamp(champ.to_string(), valeur.to_string()),
+        );
+    }
+
+    let _ = update(&mut state, Message::EditionPersonneEnregistrer);
+
+    assert!(
+        state.plugins.personnes.edition.is_none(),
+        "la fiche se referme après l'enregistrement"
+    );
+    let registre = crate::project::personnes::Personnes::charger(&state.project.dir);
+    assert_eq!(registre.entrees.len(), 1);
+    assert_eq!(registre.entrees[0].nom, "Augustin d'Hippone");
+    assert_eq!(registre.entrees[0].dates.as_deref(), Some("354-430"));
+
+    let _ = update(
+        &mut state,
+        Message::PersonnesInserer("augustin".to_string()),
+    );
+    assert!(
+        state.editor.content().contains("{{p augustin}}"),
+        "la balise est posée au curseur : {:?}",
+        state.editor.content()
+    );
+
+    let _ = update(&mut state, Message::PersonnesIndexInserer);
+    assert!(
+        state.editor.content().contains("{{index-personnes}}"),
+        "l'index est posé au curseur : {:?}",
+        state.editor.content()
     );
 }

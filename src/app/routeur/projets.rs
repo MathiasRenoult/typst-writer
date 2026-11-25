@@ -172,6 +172,11 @@ fn fusionner_vignettes(state: &mut State, vignettes: Vec<(String, Vec<u8>, u32, 
 pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::ProjetsVue => {
+            // La bibliothèque et les paramètres sont deux pages de même
+            // rang : ouvrir l'une referme l'autre.
+            if state.parametres_vue {
+                state.parametres_vue = false;
+            }
             state.projets_vue = !state.projets_vue;
 
             if state.projets_vue {
@@ -378,6 +383,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
                         appliquees += 1;
                         if *dir == state.project.dir {
                             state.reglages = reglages.clone();
+                            state.norme_document = lot.norme.clone();
                             state.render.pending = true;
                         }
                     }

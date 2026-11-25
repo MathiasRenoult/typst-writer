@@ -345,6 +345,20 @@ fn ouvrir_le_panneau(state: &mut State) -> Task<Message> {
     Task::none()
 }
 
+/// Ouvre le panneau sur une balise déjà écrite : ses références sont reprises
+/// et l'insertion remplace la plage au lieu d'ajouter une seconde balise.
+pub(crate) fn ouvrir_le_panneau_sur(
+    state: &mut State,
+    plage: std::ops::Range<usize>,
+    references: Vec<Reference>,
+) {
+    let mut panneau = BiblePanneau::avec_livres(&livres(state.plugins.bible.traduction));
+    panneau.references = references;
+    panneau.remplacement = Some(plage);
+    state.plugins.bible.panneau = Some(panneau);
+    state.editor.editor.lose_focus();
+}
+
 /// Prépare l'édition d'une référence de la consultation : le livre, le
 /// chapitre et les versets sont repris de la référence cliquée.
 fn preparer_edition(state: &mut State, index: usize) -> Task<Message> {
@@ -583,10 +597,17 @@ fn inserer_la_citation(state: &mut State) -> Task<Message> {
     }
 
     let texte = format!("{{{{{corps}}}}}");
-    let tache = state
-        .editor
-        .insert_avec_curseur(&texte, 2)
-        .map(Message::Editor);
+    let tache = if let Some(remplacement) = panneau.remplacement.clone() {
+        state
+            .editor
+            .replace_span(remplacement.start, remplacement.end, &texte)
+            .map(Message::Editor)
+    } else {
+        state
+            .editor
+            .insert_avec_curseur(&texte, 2)
+            .map(Message::Editor)
+    };
     state.editor.editor.request_focus();
     tache
 }

@@ -93,6 +93,13 @@ nom français a son argument :
 | `marge` | `inset` | `8pt`, `(x: 4pt, y: 8pt)` |
 | `marge_ext` | `outset` | `2pt` |
 | `espace` | `spacing` | `1em` |
+| `position` | `place(...)` | `haut`, `centre`, `bas`, `haut-gauche`… |
+
+`position` est la seule propriété de **placement** : elle ne décore pas le
+bloc, elle le pose sur la page. Les valeurs sont sémantiques et volontairement
+limitées (`haut`, `centre`, `bas`, leurs coins) ; une valeur inconnue ne
+produit aucun `#place`, et le bloc reste dans le flux. C'est ce qui permet
+de composer une page de garde sans écrire de Typst dans la source.
 
 Une clé que la table ne connaît pas passe **telle quelle** : le Typst
 reste le maître du rendu, et c'est lui qui dira s'il la comprend. C'est

@@ -6,6 +6,22 @@ use iced::{Element, Length};
 /// Hauteur de la barre.
 pub(crate) const BAR_HEIGHT: f32 = 26.0;
 
+/// Le nom du fichier de normes, et la norme de bibliothèque quand elle
+/// correspond exactement aux réglages appliqués.
+fn libelle_norme(fichier_present: bool, norme: &str) -> String {
+    let fichier = crate::mise_en_page::REGLAGES;
+
+    if !fichier_present {
+        return format!("Norme : {fichier} (absente)");
+    }
+
+    if norme.trim().is_empty() {
+        format!("Norme : {fichier}")
+    } else {
+        format!("Norme : {fichier} · {}", norme.trim())
+    }
+}
+
 /// La barre d'état : l'essentiel, une fois, sans ponctuation décorative.
 ///
 /// Les pastilles « ● » et les libellés en anglais ont disparu : un statut se
@@ -51,6 +67,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
             .color(palette.text_muted),
     );
 
+    // Le fichier de normes est une propriété du document, pas un réglage
+    // caché : son nom reste sous les yeux, avec la norme de la bibliothèque
+    // quand les réglages appliqués lui correspondent exactement.
+    let norme = libelle_norme(
+        state
+            .project
+            .dir
+            .join(crate::mise_en_page::REGLAGES)
+            .is_file(),
+        &state.norme_document,
+    );
+    bar = bar.push(palette.label(norme).size(12).color(palette.text_muted));
+
     // Le dernier mot de l'application : succès ou erreur. La barre d'état
     // est toujours là — c'est le seul endroit où un retour ne peut pas
     // disparaître avec le panneau qui l'a produit.
@@ -86,12 +115,19 @@ pub fn view(state: &State) -> Element<'_, Message> {
     bar = bar.push(space::horizontal().width(Length::Fill));
 
     // Le compte de mots est le seul renseignement de fond utile pendant la
-    // rédaction ; encodage et langage sont des constantes, on les omet.
+    // rédaction ; encodage et langage sont des constantes, on les omet. Une
+    // sélection prend la main : c'est ainsi qu'on mesure un passage sans
+    // quitter le document.
+    let total = state.word_count();
+    let libelle = match state.selection_word_count() {
+        Some(selection) => format!("{selection} mots sélectionnés · {total} mots"),
+        None => format!("{total} mots"),
+    };
     bar = bar.push(
         palette
             // Le compte est tenu à jour par les tics de rendu : le calculer
             // ici revenait à cloner le document entier à chaque image.
-            .label(format!("{} mots", state.word_count()))
+            .label(libelle)
             .size(12)
             .color(palette.text_muted),
     );
@@ -121,4 +157,22 @@ pub fn view(state: &State) -> Element<'_, Message> {
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::libelle_norme;
+
+    #[test]
+    fn le_fichier_de_normes_est_nomme_meme_sans_norme_de_bibliotheque() {
+        assert_eq!(libelle_norme(true, ""), "Norme : mise-en-page.toml");
+        assert_eq!(
+            libelle_norme(true, "Thèse"),
+            "Norme : mise-en-page.toml · Thèse"
+        );
+        assert_eq!(
+            libelle_norme(false, ""),
+            "Norme : mise-en-page.toml (absente)"
+        );
+    }
 }

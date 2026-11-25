@@ -157,16 +157,16 @@ fn page_sizes(render: &crate::app::state::RenderState) -> Vec<(f32, f32)> {
     }
 }
 
-/// Les pages que la vue montre réellement : toutes, ou la tranche d'un
-/// chapitre. Les index sont ceux du document compilé, jamais des positions
-/// dans la tranche — le cache de pages et la couche texte restent ainsi
-/// keyés sur les vraies pages.
+/// Les pages que la vue montre : tout le document compilé.
+///
+/// Les index restent ceux du PDF, jamais des positions dans une tranche : le
+/// cache de pages et la couche texte sont ainsi keyés sur les vraies pages.
 pub(crate) fn pages_de_la_vue(render: &crate::app::state::RenderState) -> Vec<usize> {
     let total = render
         .document
         .as_deref()
         .map_or(0, crate::typst::render::page_count);
-    crate::app::chapitres::plage_pages(render.chapitre.as_ref(), total).collect()
+    (0..total).collect()
 }
 
 /// Les dimensions des pages de la tranche affichée, dans l'ordre du document.
@@ -1022,7 +1022,7 @@ fn diagnostics_panel<'a>(
 /// Nom d'un fichier, pour nommer un diagnostic venu d'ailleurs.
 ///
 /// Le nom seul suffit : le chemin complet est le même préfixe pour tout le
-/// monde, et l'infobulle d'une ligne de chapitre le donne déjà.
+/// monde, et une infobulle de fichier le donne déjà.
 pub(crate) fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().to_string())

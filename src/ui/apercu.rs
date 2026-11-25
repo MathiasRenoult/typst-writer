@@ -25,8 +25,15 @@ pub struct CoucheApercu {
 #[derive(Debug, Default)]
 pub struct EtatCouche {
     tenu: bool,
+    /// Le point d'appui d'un clic simple, tant qu'aucun mouvement n'a
+    /// déclenché la sélection.
+    depart: Option<Point>,
     derniere_pression: Option<(std::time::Instant, Point, u8)>,
 }
+
+/// En deçà de ce déplacement, un appui reste un clic simple : il ne doit
+/// sélectionner aucun texte.
+const SEUIL_DE_GLISSER: f32 = 3.0;
 
 impl canvas::Program<Message> for CoucheApercu {
     type State = EtatCouche;
@@ -48,7 +55,15 @@ impl canvas::Program<Message> for CoucheApercu {
             ))
         ) {
             etat.tenu = false;
-            return Some(canvas::Action::publish(Message::SelectionApercuRelacher).and_capture());
+            let clic = etat.depart.take().is_some();
+            return Some(
+                canvas::Action::publish(if clic {
+                    Message::SelectionApercuClic
+                } else {
+                    Message::SelectionApercuRelacher
+                })
+                .and_capture(),
+            );
         }
 
         let position = curseur.position_in(limites)?;
@@ -80,23 +95,60 @@ impl canvas::Program<Message> for CoucheApercu {
                 etat.derniere_pression = Some((maintenant, position, clics));
                 etat.tenu = true;
 
+                if clics >= 2 {
+                    // Double et triple clic : le mot ou la ligne se
+                    // sélectionne immédiatement, comme dans tout lecteur.
+                    etat.depart = None;
+                    return Some(
+                        canvas::Action::publish(Message::SelectionApercuAppuyer {
+                            page: self.page,
+                            point: point_de_page(position, limites, self.taille_page),
+                            etendue: self.maj_tenu,
+                            clics,
+                        })
+                        .and_capture(),
+                    );
+                }
+
+                // Clic simple : on retient le point, sans rien sélectionner.
+                // La sélection ne naîtra qu'au premier mouvement réel ; la
+                // sélection précédente s'efface dès l'appui.
+                etat.depart = Some(position);
+                Some(canvas::Action::publish(Message::SelectionApercuClic).and_capture())
+            }
+            canvas::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) if etat.tenu => {
+                let point = point_de_page(position, limites, self.taille_page);
+
+                if let Some(depart) = etat.depart {
+                    let dx = depart.x - position.x;
+                    let dy = depart.y - position.y;
+                    if dx * dx + dy * dy < SEUIL_DE_GLISSER * SEUIL_DE_GLISSER {
+                        return Some(canvas::Action::capture());
+                    }
+
+                    etat.depart = None;
+                    // Un glisser n'est pas un clic : la pression suivante ne
+                    // doit pas être comptée comme un double-clic.
+                    etat.derniere_pression = None;
+                    return Some(
+                        canvas::Action::publish(Message::SelectionApercuGlisserDepuis {
+                            page: self.page,
+                            ancre: point_de_page(depart, limites, self.taille_page),
+                            point,
+                            etendue: self.maj_tenu,
+                        })
+                        .and_capture(),
+                    );
+                }
+
                 Some(
-                    canvas::Action::publish(Message::SelectionApercuAppuyer {
+                    canvas::Action::publish(Message::SelectionApercuGlisser {
                         page: self.page,
-                        point: point_de_page(position, limites, self.taille_page),
-                        etendue: self.maj_tenu,
-                        clics,
+                        point,
                     })
                     .and_capture(),
                 )
             }
-            canvas::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) if etat.tenu => Some(
-                canvas::Action::publish(Message::SelectionApercuGlisser {
-                    page: self.page,
-                    point: point_de_page(position, limites, self.taille_page),
-                })
-                .and_capture(),
-            ),
             _ => None,
         }
     }

@@ -69,6 +69,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
     let entete = row![
         palette.label("Normes du document").size(16),
         Space::new().width(Length::Fill),
+        button(palette.label("Plugins").size(theme::jetons::DETAIL))
+            .on_press(Message::ReglagesBasculerPlugins(true))
+            .padding([5, 12]),
         button(palette.label("Importer").size(theme::jetons::DETAIL))
             .on_press(Message::MiseEnPageImporter)
             .padding([5, 12]),
@@ -152,29 +155,21 @@ pub fn view(state: &State) -> Element<'_, Message> {
             )
         };
     }
-    let onglets = [
-        (picto!(icon_tag), "Métadonnées"),
-        (picto!(icon_file), "Page"),
-        (picto!(icon_type), "Texte"),
-        (picto!(icon_heading), "Titres"),
-        (picto!(icon_calendar), "Figures et dates"),
-        (picto!(icon_layout), "En-tête et pied"),
-        (picto!(icon_paintbrush), "Typographie"),
-        (picto!(icon_palette), "Couleurs et décor"),
-        (picto!(icon_puzzle), "Add-ons"),
-        (picto!(icon_folder_open), "Fichiers de normes"),
-    ];
-    let mut rail = column![].spacing(2);
-    for (indice, (picto, nom)) in onglets.into_iter().enumerate() {
-        rail = rail.push(onglet_vertical(
-            palette,
-            picto,
-            nom,
-            indice,
-            dialogue.panneau,
-        ));
-    }
-    let rail = container(rail).padding([4, 6]);
+    let onglets: Vec<(Element<'_, Message>, &str)> = [
+        (picto!(icon_tag).into(), "Métadonnées"),
+        (picto!(icon_file).into(), "Page"),
+        (picto!(icon_type).into(), "Texte"),
+        (picto!(icon_heading).into(), "Titres"),
+        (picto!(icon_calendar).into(), "Figures et dates"),
+        (picto!(icon_layout).into(), "En-tête et pied"),
+        (picto!(icon_paintbrush).into(), "Typographie"),
+        (picto!(icon_palette).into(), "Couleurs et décor"),
+        (picto!(icon_puzzle).into(), "Add-ons"),
+        (picto!(icon_folder_open).into(), "Fichiers"),
+    ]
+    .into_iter()
+    .collect();
+    let rail = rail_onglets(palette, onglets, dialogue.panneau, false);
 
     let corps = match dialogue.panneau {
         1 => corps_page(palette, reglages),
@@ -252,7 +247,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
     // Le corps : le rail des onglets à gauche — un sixième de la
     // largeur, pas davantage — et le panneau à droite.
     let vu = row![
-        rail.width(Length::FillPortion(1)),
+        container(rail)
+            .width(Length::FillPortion(1))
+            .height(Length::Fill),
         scrollable(container(corps).padding([2, 10]))
             .height(Length::Fill)
             .width(Length::FillPortion(5)),
@@ -673,6 +670,68 @@ fn corps_texte<'a>(
             ),
             ligne(
                 palette,
+                "Hébreu",
+                "La police prioritaire du script hébreu — par exemple Ezra SIL SR. Vide : la police de base.",
+                choix_police(
+                    &reglages.texte.police_hebreu,
+                    Champ::TextePoliceHebreu,
+                    combo
+                )
+            ),
+            ligne(
+                palette,
+                "Grec",
+                "La police prioritaire du script grec — par exemple Galatia SIL. Vide : la police de base.",
+                choix_police(
+                    &reglages.texte.police_grecque,
+                    Champ::TextePoliceGrecque,
+                    combo
+                )
+            ),
+            ligne(
+                palette,
+                "Citations — police",
+                "La police des blocs de citation (`>`) — vide : celle du texte.",
+                choix_police(&reglages.citations.police, Champ::CitationsPolice, combo)
+            ),
+            ligne(
+                palette,
+                "Citations — taille, décalage",
+                "La taille et le retrait à gauche des citations ; vide : les défauts de Typst.",
+                row![
+                    saisie_numerique(
+                        palette,
+                        &reglages.citations.taille,
+                        Champ::CitationsTaille,
+                        "vide"
+                    ),
+                    saisie_numerique(
+                        palette,
+                        &reglages.citations.decalage,
+                        Champ::CitationsDecalage,
+                        "1em"
+                    ),
+                ]
+                .spacing(8)
+            ),
+            ligne(
+                palette,
+                "Citations — couleur",
+                "La couleur des citations — vide : celle du texte.",
+                controle_couleur(
+                    palette,
+                    &reglages.citations.couleur,
+                    Champ::CitationsCouleur,
+                    "vide"
+                )
+            ),
+            row![case(
+                "Citations en italique",
+                reglages.citations.italique,
+                Champ::CitationsItalique
+            )],
+            ligne(
+                palette,
                 "Corps, langue",
                 "Le corps du texte (11pt) et la langue de césure (fr).",
                 row![
@@ -978,7 +1037,7 @@ fn corps_titres<'a>(
         column![
             ligne(
                 palette,
-                "Numérotation des chapitres",
+                "Numérotation des titres",
                 "1 = chiffre, a/A = lettre, i/I = romain ; le reste s'écrit \
                  tel quel — « 1.1 », « A.a », « 1) ». Un modèle ou votre \
                  propre format (bug-report-8, T2.3).",
@@ -1514,6 +1573,29 @@ fn corps_addons(
     contenu
 }
 
+/// Le rail des onglets, toujours défilant.
+///
+/// Les panneaux de normes et de plugins partagent cette forme : un onglet
+/// ajouté ne peut plus être rogné par le bas quand la fenêtre est courte.
+pub(crate) fn rail_onglets<'a>(
+    palette: Palette,
+    onglets: Vec<(Element<'a, Message>, &'a str)>,
+    courant: usize,
+    plugins: bool,
+) -> Element<'a, Message> {
+    let mut rail = column![].spacing(2);
+    for (indice, (picto, nom)) in onglets.into_iter().enumerate() {
+        rail = rail.push(onglet_vertical(
+            palette, picto, nom, indice, courant, plugins,
+        ));
+    }
+
+    scrollable(container(rail).padding([4, 6]))
+        .height(Length::Fill)
+        .width(Length::Fill)
+        .into()
+}
+
 /// Un onglet vertical : son pictogramme, son nom — et l'élu, marqué.
 pub(crate) fn onglet_vertical<'a>(
     palette: Palette,
@@ -1521,16 +1603,27 @@ pub(crate) fn onglet_vertical<'a>(
     nom: &'a str,
     index: usize,
     courant: usize,
+    plugins: bool,
 ) -> Element<'a, Message> {
     let actif = index == courant;
 
     button(
-        row![pictogramme.into(), text(nom).size(13)]
-            .spacing(9)
-            .align_y(iced::Alignment::Center),
+        row![
+            pictogramme.into(),
+            text(nom)
+                .size(12.5)
+                .width(Length::Fill)
+                .wrapping(iced::widget::text::Wrapping::Word)
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
     )
-    .on_press(Message::MiseEnPagePanneau(index))
-    .padding([8, 12])
+    .on_press(if plugins {
+        Message::MiseEnPagePanneauPlugins(index)
+    } else {
+        Message::MiseEnPagePanneau(index)
+    })
+    .padding([7, 10])
     .width(Length::Fill)
     .style(move |_, _| button::Style {
         background: if actif {

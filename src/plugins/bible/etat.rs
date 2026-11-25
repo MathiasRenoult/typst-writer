@@ -41,6 +41,9 @@ pub struct BiblePanneau {
     pub texte_libre: String,
     /// La forme choisie pour cette citation ; `None` hérite du document.
     pub forme: Option<FormeLivre>,
+    /// La balise existante à remplacer, quand le panneau vient d'un clic
+    /// droit sur une référence déjà écrite.
+    pub remplacement: Option<std::ops::Range<usize>>,
 }
 
 impl BiblePanneau {

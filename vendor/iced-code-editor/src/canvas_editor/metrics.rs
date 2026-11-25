@@ -443,6 +443,58 @@ impl CodeEditor {
         self.viewport_width
     }
 
+    /// The most recent real viewport width, falling back to the tracked
+    /// accessibility width before the first draw.
+    pub(crate) fn largeur_vue_effective(&self) -> f32 {
+        let derniere = self.last_canvas_width.get();
+        if derniere > 0.0 {
+            derniere
+        } else {
+            self.viewport_width
+        }
+    }
+
+    /// The most recent real viewport height, falling back to the tracked
+    /// value before the first draw.
+    pub(crate) fn hauteur_vue_effective(&self) -> f32 {
+        let derniere = self.last_canvas_height.get();
+        if derniere > 0.0 {
+            derniere
+        } else {
+            self.viewport_height
+        }
+    }
+
+    /// Updates the viewport from the real layout size.
+    ///
+    /// A scroll event is not emitted when the editor changes height without
+    /// scrolling (window resize, focus mode, pane split). Without this
+    /// explicit update the renderer keeps the old height and may stop
+    /// painting before the real bottom edge.
+    pub fn set_viewport_size(&mut self, width: f32, height: f32) {
+        let width = width.max(1.0);
+        let height = height.max(1.0);
+        let largeur_changee = (self.viewport_width - width).abs() > 1.0;
+        let hauteur_changee = (self.viewport_height - height).abs() > 1.0;
+        self.viewport_width = width;
+        self.viewport_height = height;
+        self.last_canvas_width.set(width);
+        self.last_canvas_height.set(height);
+
+        if largeur_changee {
+            *self.visual_lines_cache.borrow_mut() = None;
+        }
+        if largeur_changee || hauteur_changee {
+            self.content_cache.clear();
+            self.overlay_cache.clear();
+        }
+
+        let hauteur_contenu =
+            self.visual_lines_cached(width).len() as f32 * self.line_height;
+        let maximum = (hauteur_contenu - height).max(0.0);
+        self.viewport_scroll = self.viewport_scroll.clamp(0.0, maximum);
+    }
+
     /// Returns the last canvas width observed during drawing.
     ///
     /// Unlike `viewport_width`, this tracks the real bounds even when the

@@ -7,7 +7,7 @@ use iced::advanced::layout::{self, Limits};
 use iced::advanced::overlay;
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Layout, Shell, Widget};
-use iced::widget::{button, column, container, row};
+use iced::widget::{button, column, container, row, sensor};
 use iced::{Element, Event, Fill, Length, Padding, Rectangle, Size, Vector, alignment, mouse};
 
 /// Mesure de lecture : la largeur maximale du texte, en pixels.
@@ -68,11 +68,20 @@ const BOTTOM_MARGIN: f32 = 64.0;
 /// couvrirait le texte qu'on est en train d'écrire.
 const HOVER_LINES: usize = 12;
 
-/// Ce qui flotte au-dessus de l'éditeur : le composeur ou un survol.
+/// L'ancrage d'une bulle : près du curseur, ou exactement au point cliqué.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Placement {
+    AutourDuCurseur,
+    AuPoint,
+}
+
+/// Ce qui flotte au-dessus de l'éditeur : le composeur, un survol, ou le
+/// menu contextuel.
 struct Bulle<'a> {
     contenu: Element<'a, Message>,
     /// Coin haut-gauche, en coordonnées de la vue de l'éditeur.
     position: iced::Point,
+    placement: Placement,
 }
 
 /// L'éditeur, et ce qui flotte au-dessus de lui.
@@ -90,6 +99,8 @@ struct Bulle<'a> {
 struct EditorOverlay<'a> {
     editor: Element<'a, Message>,
     bulle: Option<Bulle<'a>>,
+    /// Le menu contextuel, au point exact du clic.
+    menu: Option<Bulle<'a>>,
     /// Une fenêtre est ouverte : l'éditeur ne reçoit plus le pointeur.
     bloquee: bool,
 }
@@ -109,6 +120,7 @@ fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
                 state.editor.is_intermediate(),
             ),
             position: state.editor.cursor_view_position(),
+            placement: Placement::AutourDuCurseur,
         });
     }
 
@@ -131,6 +143,7 @@ fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
         return Some(Bulle {
             contenu: boite.into(),
             position: *point,
+            placement: Placement::AutourDuCurseur,
         });
     }
     // ÉPREUVE : une bulle de forme connue, sans rien à proposer.
@@ -149,10 +162,22 @@ fn bulle(state: &State, palette: Palette) -> Option<Bulle<'_>> {
         return Some(Bulle {
             contenu: essai.into(),
             position: iced::Point::new(80.0, 80.0),
+            placement: Placement::AutourDuCurseur,
         });
     }
 
     None
+}
+
+/// Le menu contextuel, quand il est ouvert : sa position est celle du clic
+/// dans la vue de rédaction, pas une coordonnée approximative de fenêtre.
+fn menu(state: &State) -> Option<Bulle<'_>> {
+    let _menu = state.menu_contextuel?;
+    Some(Bulle {
+        contenu: crate::ui::menu_contextuel::carte(state)?,
+        position: state.menu_contextuel?.position,
+        placement: Placement::AuPoint,
+    })
 }
 
 impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
@@ -186,7 +211,12 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
             None => &vide,
         };
 
-        vec![Tree::new(&self.editor), Tree::new(bulle)]
+        let menu = match &self.menu {
+            Some(menu) => &menu.contenu,
+            None => &vide,
+        };
+
+        vec![Tree::new(&self.editor), Tree::new(bulle), Tree::new(menu)]
     }
 
     fn diff(&self, tree: &mut Tree) {
@@ -200,7 +230,12 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
             None => &vide,
         };
 
-        tree.diff_children(&[self.editor.as_widget(), bulle.as_widget()]);
+        let menu = match &self.menu {
+            Some(menu) => &menu.contenu,
+            None => &vide,
+        };
+
+        tree.diff_children(&[self.editor.as_widget(), bulle.as_widget(), menu.as_widget()]);
     }
 
     fn update(
@@ -299,6 +334,7 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
         let mut enfants = Vec::new();
 
         let (premier, reste) = tree.children.split_at_mut(1);
+        let (arbre_bulle, arbre_menu) = reste.split_at_mut(1);
 
         let editeur = self.editor.as_widget_mut().overlay(
             &mut premier[0],
@@ -313,10 +349,22 @@ impl<'a> Widget<Message, iced::Theme, iced::Renderer> for EditorOverlay<'a> {
         if let Some(bulle) = self.bulle.as_mut() {
             enfants.push(overlay::Element::new(Box::new(BulleRecouvrement {
                 contenu: &mut bulle.contenu,
-                arbre: &mut reste[0],
+                arbre: &mut arbre_bulle[0],
                 position: layout.position()
                     + translation
                     + Vector::new(bulle.position.x, bulle.position.y),
+                placement: bulle.placement,
+            })));
+        }
+
+        if let Some(menu) = self.menu.as_mut() {
+            enfants.push(overlay::Element::new(Box::new(BulleRecouvrement {
+                contenu: &mut menu.contenu,
+                arbre: &mut arbre_menu[0],
+                position: layout.position()
+                    + translation
+                    + Vector::new(menu.position.x, menu.position.y),
+                placement: menu.placement,
             })));
         }
 
@@ -365,12 +413,24 @@ fn position_bulle(position: iced::Point, size: Size, bounds: Size) -> iced::Poin
     )
 }
 
+/// Le point exact du clic, sans décalage ni centrage : le menu s'ouvre
+/// là où le curseur de la souris se trouve, puis reste dans la fenêtre.
+fn position_au_point(position: iced::Point, size: Size, bounds: Size) -> iced::Point {
+    iced::Point::new(
+        position.x.clamp(0.0, (bounds.width - size.width).max(0.0)),
+        position
+            .y
+            .clamp(0.0, (bounds.height - size.height).max(0.0)),
+    )
+}
+
 /// Le recouvrement lui-même : la bulle, dessinée à une place absolue.
 struct BulleRecouvrement<'a, 'b> {
     contenu: &'b mut Element<'a, Message>,
     arbre: &'b mut Tree,
     /// Coin haut-gauche, en coordonnées absolues de la fenêtre.
     position: iced::Point,
+    placement: Placement,
 }
 
 impl overlay::Overlay<Message, iced::Theme, iced::Renderer> for BulleRecouvrement<'_, '_> {
@@ -382,7 +442,10 @@ impl overlay::Overlay<Message, iced::Theme, iced::Renderer> for BulleRecouvremen
         );
 
         let size = contenu.bounds().size();
-        let position = position_bulle(self.position, size, bounds);
+        let position = match self.placement {
+            Placement::AutourDuCurseur => position_bulle(self.position, size, bounds),
+            Placement::AuPoint => position_au_point(self.position, size, bounds),
+        };
 
         layout::Node::with_children(size, vec![contenu])
             .translate(Vector::new(position.x, position.y))
@@ -474,9 +537,21 @@ pub fn vue<'a>(
 ) -> Element<'a, Message> {
     let palette = state.resolved.palette;
     let editor = source.editor.view().map(Message::Editor);
+    // La taille réelle du widget n'est pas connue du modèle : le `Sensor`
+    // la lui rend après la disposition. Sans elle, le rendu peut garder la
+    // hauteur ou la largeur d'avant un redimensionnement et laisser les
+    // dernières lignes invisibles.
+    let editor: Element<'_, Message> = sensor::Sensor::new(editor)
+        .on_resize(Message::EditeurViewport)
+        .into();
     let bloquee = crate::app::pointeur_bloque(state);
     let bulle = if active && !bloquee {
         bulle(state, palette)
+    } else {
+        None
+    };
+    let menu = if active && !bloquee {
+        menu(state)
     } else {
         None
     };
@@ -485,6 +560,7 @@ pub fn vue<'a>(
     let page = container(EditorOverlay {
         editor,
         bulle,
+        menu,
         bloquee,
     })
     .width(Fill)
@@ -697,6 +773,23 @@ mod tests {
         // Plus grande que la fenêtre : elle est ramenée à l'origine.
         let place = position_bulle(position, Size::new(900.0, 700.0), bounds);
         assert_eq!(place, iced::Point::ORIGIN);
+    }
+
+    /// Le menu contextuel s'ouvre au point exact du clic, puis reste dans la
+    /// fenêtre quand le clic touche un bord.
+    #[test]
+    fn le_menu_contextuel_s_ouvre_au_point_du_clic() {
+        let bounds = Size::new(800.0, 600.0);
+        let size = Size::new(232.0, 242.0);
+
+        assert_eq!(
+            position_au_point(iced::Point::new(120.0, 90.0), size, bounds),
+            iced::Point::new(120.0, 90.0)
+        );
+        assert_eq!(
+            position_au_point(iced::Point::new(790.0, 590.0), size, bounds),
+            iced::Point::new(568.0, 358.0)
+        );
     }
 
     /// Même sans résultat, la fenêtre annonce ce qu'elle attend.

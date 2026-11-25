@@ -111,6 +111,16 @@ impl CodeEditor {
         self.default_context_menu_enabled = enabled;
     }
 
+    /// Confie le menu contextuel à l'hôte.
+    ///
+    /// Le canvas continue de publier `Message::ContextMenuRequested(point)` et
+    /// de replacer le curseur ; il n'affiche plus le menu intégré, ce qui
+    /// laisse l'hôte ouvrir le panneau d'une balise ou l'action d'une colonne
+    /// au point exact du clic.
+    pub fn set_host_context_menu_enabled(&mut self, enabled: bool) {
+        self.host_context_menu_enabled = enabled;
+    }
+
     /// Replaces the custom command-palette entries.
     ///
     /// Custom commands are listed before the built-in editor commands; see

@@ -12,15 +12,17 @@ use iced::{Alignment, Element, Length};
 
 use crate::app::message::Message;
 use crate::app::state::State;
+use crate::mise_en_page::modele::{FormeDatesPersonne, FormePersonne};
 use crate::ui::theme::{self, Palette};
 
 /// Les onglets des plugins.
-const ONGLETS: [&str; 5] = [
+const ONGLETS: [&str; 6] = [
     "Bibliographie",
     "Biblique",
     "Glossaire",
     "Graphiques",
     "Callouts",
+    "Personnes",
 ];
 
 /// La fenêtre des paramètres d'un plugin.
@@ -32,30 +34,28 @@ pub fn view(state: &State) -> Element<'_, Message> {
         return Space::new().width(Length::Fill).height(Length::Fill).into();
     };
     let palette = state.resolved.palette;
-    let onglet = dialogue.panneau.min(ONGLETS.len() - 1);
+    let onglet = dialogue.panneau_plugins.min(ONGLETS.len() - 1);
 
-    let mut rail = column![].spacing(2);
-    for (indice, nom) in ONGLETS.iter().enumerate() {
-        let pictogramme = theme::icon(
-            match indice {
-                0 => lucide_icons::iced::icon_book_open::<iced::Theme>(),
-                1 => lucide_icons::iced::icon_book_marked::<iced::Theme>(),
-                2 => lucide_icons::iced::icon_book_a::<iced::Theme>(),
-                3 => lucide_icons::iced::icon_chart_line::<iced::Theme>(),
-                _ => lucide_icons::iced::icon_text_quote::<iced::Theme>(),
-            },
-            15.0,
-            palette.text,
-        );
-        rail = rail.push(crate::ui::reglages::onglet_vertical(
-            palette,
-            pictogramme,
-            nom,
-            indice,
-            onglet,
-        ));
-    }
-    let rail = container(rail).padding([4, 6]);
+    let onglets: Vec<(Element<'_, Message>, &str)> = ONGLETS
+        .iter()
+        .enumerate()
+        .map(|(indice, nom)| {
+            let pictogramme = theme::icon(
+                match indice {
+                    0 => lucide_icons::iced::icon_book_open::<iced::Theme>(),
+                    1 => lucide_icons::iced::icon_book_marked::<iced::Theme>(),
+                    2 => lucide_icons::iced::icon_book_a::<iced::Theme>(),
+                    3 => lucide_icons::iced::icon_chart_line::<iced::Theme>(),
+                    4 => lucide_icons::iced::icon_text_quote::<iced::Theme>(),
+                    _ => lucide_icons::iced::icon_book::<iced::Theme>(),
+                },
+                15.0,
+                palette.text,
+            );
+            (pictogramme.into(), *nom)
+        })
+        .collect();
+    let rail = crate::ui::reglages::rail_onglets(palette, onglets, onglet, true);
 
     let corps = match onglet {
         0 => crate::ui::reglages::corps_bibliographie(palette, dialogue),
@@ -65,11 +65,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
             "Le glossaire se gère dans son panneau : ses termes, leurs formes et leurs citations.",
         ),
         3 => corps_graphiques(palette),
-        _ => corps_callouts(palette, dialogue),
+        4 => corps_callouts(palette, dialogue),
+        _ => corps_personnes(palette, dialogue),
     };
 
     let entete = row![
         palette.label("Paramètres des plugins").size(16),
+        button(palette.label("Normes").size(theme::jetons::DETAIL))
+            .on_press(Message::ReglagesBasculerPlugins(false))
+            .padding([5, 12]),
         Space::new().width(Length::Fill),
         palette
             .label("Le fichier de normes règle aussi ces paramètres.")
@@ -79,23 +83,43 @@ pub fn view(state: &State) -> Element<'_, Message> {
     .spacing(8)
     .align_y(iced::Alignment::Center);
 
-    let pied = row![
+    let mut pied = row![
         button(text("Annuler").size(12))
             .on_press(Message::MiseEnPageFermer)
             .padding([8, 12]),
         Space::new().width(Length::Fill),
-        button(text("Appliquer").size(12))
-            .on_press(Message::MiseEnPageAppliquer)
-            .padding([8, 12]),
     ]
     .spacing(8)
     .align_y(iced::Alignment::Center);
+
+    // Les réglages de plugin voyagent avec la norme : une fois modifiés,
+    // l'auteur peut remplacer la norme chargée sans revenir au panneau des
+    // normes. « Appliquer » reste le geste qui écrit le document.
+    if dialogue.modifie && !dialogue.norme_originale.trim().is_empty() {
+        pied = pied.push(
+            button(
+                palette
+                    .label(format!("Écraser « {} »", dialogue.norme_originale))
+                    .size(12),
+            )
+            .on_press(Message::NormesEcraser)
+            .padding([8, 12]),
+        );
+    }
+
+    pied = pied.push(
+        button(text("Appliquer").size(12))
+            .on_press(Message::MiseEnPageAppliquer)
+            .padding([8, 12]),
+    );
 
     let largeur = 860.0_f32.min(state.window_size.width - 32.0).max(340.0);
     let hauteur = 660.0_f32.min(state.window_size.height - 32.0).max(340.0);
 
     let vu = row![
-        rail.width(Length::FillPortion(1)),
+        container(rail)
+            .width(Length::FillPortion(1))
+            .height(Length::Fill),
         scrollable(container(corps).padding([2, 10]))
             .height(Length::Fill)
             .width(Length::FillPortion(5)),
@@ -902,6 +926,254 @@ fn champ_separateur<'a>(
 }
 
 /// Un onglet sans réglage : il le dit, plutôt que de rester muet.
+/// Les réglages de l'index et des formes de personnes citées.
+fn corps_personnes<'a>(
+    palette: Palette,
+    dialogue: &'a crate::app::state::DialogueMiseEnPage,
+) -> iced::widget::Column<'a, Message> {
+    let index = &dialogue.reglages.index_personnes;
+    let mut corps = column![
+        palette
+            .label(
+                "Les personnes citées s'écrivent {{p clé}}, {{p clé|complet}}, \
+                 {{p clé|alias}} ou {{p clé|nom+dates}}.",
+            )
+            .size(theme::jetons::CORPS)
+            .color(palette.text_muted),
+        button(
+            palette
+                .label("Ouvrir le panneau d'insertion")
+                .size(theme::jetons::DETAIL),
+        )
+        .on_press(Message::PersonnePanneauOuvrir)
+        .padding([5, 10]),
+        palette
+            .label("Formes des noms des balises sans expression (et auto)")
+            .size(theme::jetons::SAILLANT),
+        palette
+            .label(
+                "Sans expression, ces formes s'appliquent : nom simple par \
+                 défaut, ou nom complet et dates à la première mention si \
+                 vous le demandez. auto est la même règle, écrite explicitement.",
+            )
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    ]
+    .spacing(8);
+
+    corps = corps.push(ligne_forme(
+        palette,
+        "Sans expression / auto — première mention",
+        index.forme_premiere,
+        crate::mise_en_page::modele::Champ::IndexPersonnesFormePremiere,
+    ));
+    corps = corps.push(ligne_forme(
+        palette,
+        "Sans expression / auto — reprises",
+        index.forme_suivantes,
+        crate::mise_en_page::modele::Champ::IndexPersonnesFormeSuivantes,
+    ));
+    corps = corps.push(ligne_forme(
+        palette,
+        "Dans l'index",
+        index.forme_index,
+        crate::mise_en_page::modele::Champ::IndexPersonnesFormeIndex,
+    ));
+
+    corps = corps.push(palette.label("Dates").size(theme::jetons::SAILLANT));
+    corps = corps.push(ligne_dates(palette, "Forme des dates", index.dates_forme));
+    corps = corps.push(
+        checkbox(index.dates_premiere_seulement)
+            .label("N'afficher les dates qu'à la première mention (sans expression / auto)")
+            .on_toggle(|actif| {
+                Message::MiseEnPageChamp(
+                    crate::mise_en_page::modele::Champ::IndexPersonnesDatesPremiereSeulement,
+                    actif.to_string(),
+                )
+            })
+            .size(theme::jetons::CORPS),
+    );
+    corps = corps.push(
+        checkbox(index.afficher_dates)
+            .label("Afficher les dates dans le texte (sans expression / auto) et dans l'index")
+            .on_toggle(|actif| {
+                Message::MiseEnPageChamp(
+                    crate::mise_en_page::modele::Champ::IndexPersonnesAfficherDates,
+                    actif.to_string(),
+                )
+            })
+            .size(theme::jetons::CORPS),
+    );
+
+    corps = corps.push(
+        palette
+            .label("Index des personnes")
+            .size(theme::jetons::SAILLANT),
+    );
+    corps = corps.push(
+        checkbox(index.afficher_pages)
+            .label("Montrer les pages où chaque personne apparaît")
+            .on_toggle(|actif| {
+                Message::MiseEnPageChamp(
+                    crate::mise_en_page::modele::Champ::IndexPersonnesAfficherPages,
+                    actif.to_string(),
+                )
+            })
+            .size(theme::jetons::CORPS),
+    );
+    corps = corps.push(
+        checkbox(index.grouper_par_initiale)
+            .label("Regrouper les entrées sous leur initiale")
+            .on_toggle(|actif| {
+                Message::MiseEnPageChamp(
+                    crate::mise_en_page::modele::Champ::IndexPersonnesGrouperParInitiale,
+                    actif.to_string(),
+                )
+            })
+            .size(theme::jetons::CORPS),
+    );
+    corps = corps.push(
+        checkbox(index.afficher_qualite)
+            .label("Afficher la qualité ou la fonction")
+            .on_toggle(|actif| {
+                Message::MiseEnPageChamp(
+                    crate::mise_en_page::modele::Champ::IndexPersonnesAfficherQualite,
+                    actif.to_string(),
+                )
+            })
+            .size(theme::jetons::CORPS),
+    );
+
+    let colonnes: Vec<String> = (1..=4)
+        .map(|nombre| format!("{nombre} colonne(s)"))
+        .collect();
+    corps = corps.push(
+        row![
+            palette
+                .label("Colonnes de l'index")
+                .size(theme::jetons::DETAIL)
+                .width(Length::Fill),
+            pick_list(
+                colonnes.clone(),
+                Some(format!("{} colonne(s)", index.colonnes)),
+                |choisi: String| {
+                    let nombre = choisi.chars().next().unwrap_or('1').to_string();
+                    Message::MiseEnPageChamp(
+                        crate::mise_en_page::modele::Champ::IndexPersonnesColonnes,
+                        nombre,
+                    )
+                },
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+
+    corps = corps.push(
+        button(
+            palette
+                .label("Ouvrir le registre des personnes")
+                .size(theme::jetons::CORPS),
+        )
+        .on_press(Message::PersonnesFenetreOuvrir)
+        .padding([7, 12]),
+    );
+    corps = corps.push(
+        palette
+            .label("Le registre vit dans personnes.toml, à la racine du projet.")
+            .size(theme::jetons::DETAIL)
+            .color(palette.text_muted),
+    );
+
+    corps
+}
+
+/// Une ligne de choix pour la forme d'un nom.
+fn ligne_forme(
+    palette: Palette,
+    libelle: &'static str,
+    forme: FormePersonne,
+    champ: crate::mise_en_page::modele::Champ,
+) -> Element<'static, Message> {
+    let options = [
+        FormePersonne::Complet,
+        FormePersonne::Simple,
+        FormePersonne::Alias,
+    ]
+    .iter()
+    .map(|forme| forme.libelle().to_string())
+    .collect::<Vec<_>>();
+
+    row![
+        palette
+            .label(libelle)
+            .size(theme::jetons::DETAIL)
+            .width(Length::Fill),
+        pick_list(
+            options,
+            Some(forme.libelle().to_string()),
+            move |choisi: String| Message::MiseEnPageChamp(champ, code_forme(&choisi).to_string()),
+        )
+        .width(Length::Fixed(220.0)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Une ligne de choix pour la forme des dates.
+fn ligne_dates(
+    palette: Palette,
+    libelle: &'static str,
+    forme: FormeDatesPersonne,
+) -> Element<'static, Message> {
+    let options = [
+        FormeDatesPersonne::NaissanceMort,
+        FormeDatesPersonne::Naissance,
+        FormeDatesPersonne::Mort,
+        FormeDatesPersonne::Libelle,
+    ]
+    .iter()
+    .map(|forme| forme.libelle().to_string())
+    .collect::<Vec<_>>();
+
+    row![
+        palette
+            .label(libelle)
+            .size(theme::jetons::DETAIL)
+            .width(Length::Fill),
+        pick_list(
+            options,
+            Some(forme.libelle().to_string()),
+            |choisi: String| Message::MiseEnPageChamp(
+                crate::mise_en_page::modele::Champ::IndexPersonnesDatesForme,
+                code_dates(&choisi).to_string(),
+            ),
+        )
+        .width(Length::Fixed(250.0)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn code_forme(libelle: &str) -> &'static str {
+    match libelle {
+        "Nom simple" => "simple",
+        "Alias / nom de plume" => "alias",
+        _ => "complet",
+    }
+}
+
+fn code_dates(libelle: &str) -> &'static str {
+    match libelle {
+        "Naissance seulement (354)" => "naissance",
+        "Mort seulement (430)" => "mort",
+        "Texte libre du registre" => "libelle",
+        _ => "naissance_mort",
+    }
+}
+
 fn explication<'a>(palette: Palette, texte: &'a str) -> iced::widget::Column<'a, Message> {
     column![
         palette

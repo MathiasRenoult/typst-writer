@@ -2,7 +2,7 @@
 //!
 //! Deux entrées, un seul moteur :
 //!
-//! - `..` dans le texte ouvre les **balises et snippets** insérables ;
+//! - `,,` dans le texte ouvre les **balises et snippets** insérables ;
 //! - `/`, `Ctrl+K` ouvre toutes les **commandes**.
 //!
 //! Un `Message` n'est pas une commande : c'est ce que la commande produit.
@@ -54,8 +54,8 @@ pub enum Icone {
     EtiquetteMeta,
     Fragment,
     Reglages,
+    Parametres,
     Puzzle,
-    Plus,
     Panneau,
     Numeros,
     Texte,
@@ -90,7 +90,6 @@ pub enum Categorie {
 pub enum CommandeId {
     Enregistrer,
     Ouvrir,
-    NouveauChapitre,
     NouveauProjet,
     ExporterPdf,
     BasculerRendu,
@@ -99,10 +98,12 @@ pub enum CommandeId {
     Bibliotheque,
     Normes,
     Plugins,
+    ParametresApplication,
     Recherche,
     Aide,
     Citation,
     GlossaireFenetre,
+    PersonnesFenetre,
     BasculerPanneau,
     ThemeSuivant,
     ModeTypst,
@@ -149,6 +150,8 @@ pub enum CommandeId {
     ListeDesindenter,
     ListeMonter,
     ListeDescendre,
+    /// Aligner les colonnes des tableaux du document.
+    BeautifierTableaux,
     // Import et export de fichiers.
     NouveauFichier,
     ImporterTw,
@@ -168,6 +171,7 @@ pub enum CommandeId {
     // Plugins.
     PluginBibliographie,
     PluginGlossaire,
+    PluginPersonnes,
     PluginGraphiques,
     PluginCallouts,
     PluginReferencesBibliques,
@@ -195,15 +199,20 @@ pub enum TagId {
     Bibliographie,
     GlossaireSection,
     IndexBiblique,
+    Personne,
+    IndexPersonnes,
     Garde,
     Meta,
+    /// Une balise dont le formulaire spécialisé n'est pas ouvert par le
+    /// clic droit : sa source complète est montrée telle quelle.
+    Brut,
 }
 
 /// Un fragment de texte prêt à poser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnippetId {
     These,
-    Chapitre,
+    Partie,
     Section,
     Citation,
     Tableau,
@@ -266,16 +275,6 @@ pub const COMMANDES: &[Commande] = &[
         icone: Icone::Dossier,
         raccourci: Some("Ctrl+O"),
         action: Action::Message(|| Message::OpenFile),
-    },
-    Commande {
-        id: CommandeId::NouveauChapitre,
-        titre: "Nouveau chapitre",
-        description: "Créer un chapitre dans le projet",
-        alias: &["chapitre", "chapter"],
-        categorie: Categorie::Projet,
-        icone: Icone::Plus,
-        raccourci: None,
-        action: Action::Message(|| Message::NewChapter),
     },
     Commande {
         id: CommandeId::NouveauProjet,
@@ -358,6 +357,16 @@ pub const COMMANDES: &[Commande] = &[
         action: Action::Message(|| Message::PluginsOuvrir),
     },
     Commande {
+        id: CommandeId::ParametresApplication,
+        titre: "Paramètres de l'application",
+        description: "Barre d'outils, éditeur et apparence",
+        alias: &["parametres", "préférences", "reglages", "settings"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Parametres,
+        raccourci: Some("Ctrl+,"),
+        action: Action::Message(|| Message::ParametresOuvrir),
+    },
+    Commande {
         id: CommandeId::Recherche,
         titre: "Rechercher dans le document",
         description: "Trouver un mot ou une expression",
@@ -396,6 +405,16 @@ pub const COMMANDES: &[Commande] = &[
         icone: Icone::Glossaire,
         raccourci: None,
         action: Action::Message(|| Message::GlossaireFenetreOuvrir),
+    },
+    Commande {
+        id: CommandeId::PersonnesFenetre,
+        titre: "Ouvrir les personnes citées",
+        description: "Gérer le registre et insérer une mention",
+        alias: &["personnes", "personnes citées", "index nominum", "auteurs"],
+        categorie: Categorie::Projet,
+        icone: Icone::Etiquette,
+        raccourci: None,
+        action: Action::Message(|| Message::PersonnesFenetreOuvrir),
     },
     Commande {
         id: CommandeId::BasculerPanneau,
@@ -560,8 +579,8 @@ pub const COMMANDES: &[Commande] = &[
     Commande {
         id: CommandeId::Titre1,
         titre: "Titre de niveau 1",
-        description: "Transformer le bloc en titre de chapitre",
-        alias: &["titre 1", "h1", "chapitre"],
+        description: "Transformer le bloc en titre de niveau 1",
+        alias: &["titre 1", "h1", "partie"],
         categorie: Categorie::Texte,
         icone: Icone::Titre,
         raccourci: None,
@@ -620,7 +639,7 @@ pub const COMMANDES: &[Commande] = &[
     Commande {
         id: CommandeId::ListePuce,
         titre: "Liste à puces",
-        description: "Basculer le bloc en liste à puces",
+        description: "Basculer la ligne ou les lignes sélectionnées en liste à puces",
         alias: &["puce", "liste", "bullet"],
         categorie: Categorie::Texte,
         icone: Icone::Texte,
@@ -630,7 +649,7 @@ pub const COMMANDES: &[Commande] = &[
     Commande {
         id: CommandeId::ListeNumero,
         titre: "Liste numérotée",
-        description: "Basculer le bloc en liste numérotée",
+        description: "Basculer la ligne ou les lignes sélectionnées en liste numérotée",
         alias: &["numérotée", "liste", "numbered", "ol"],
         categorie: Categorie::Texte,
         icone: Icone::Texte,
@@ -816,6 +835,22 @@ pub const COMMANDES: &[Commande] = &[
         icone: Icone::Texte,
         raccourci: None,
         action: Action::Message(|| Message::ListeDesindenter),
+    },
+    Commande {
+        id: CommandeId::BeautifierTableaux,
+        titre: "Aligner les tableaux",
+        description: "Égaliser les colonnes et conserver les alignements",
+        alias: &[
+            "beautifier",
+            "aligner",
+            "tableaux",
+            "tableau",
+            "mise en forme tableau",
+        ],
+        categorie: Categorie::Texte,
+        icone: Icone::Tableau,
+        raccourci: None,
+        action: Action::Message(|| Message::BeautifierTableaux),
     },
     Commande {
         id: CommandeId::ListeMonter,
@@ -1013,6 +1048,16 @@ pub const COMMANDES: &[Commande] = &[
         action: Action::Message(|| Message::BasculerFonctionnalite("glossaire".to_string())),
     },
     Commande {
+        id: CommandeId::PluginPersonnes,
+        titre: "Activer ou désactiver les personnes citées",
+        description: "Brancher ou débrancher le plugin des personnes",
+        alias: &["plugin personnes", "personnes", "index nominum"],
+        categorie: Categorie::Reglage,
+        icone: Icone::Plugin,
+        raccourci: None,
+        action: Action::Message(|| Message::BasculerFonctionnalite("personnes".to_string())),
+    },
+    Commande {
         id: CommandeId::PluginGraphiques,
         titre: "Activer ou désactiver les graphiques",
         description: "Brancher ou débrancher le plugin graphiques",
@@ -1188,6 +1233,20 @@ pub const BALISES: &[Balise] = &[
         alias: &["idx", "index", "bible", "citations"],
         icone: Icone::Bible,
     },
+    Balise {
+        id: TagId::Personne,
+        titre: "Personne citée",
+        description: "Nommer une personne du registre",
+        alias: &["p", "personne", "personnes", "auteur", "index nominum"],
+        icone: Icone::Etiquette,
+    },
+    Balise {
+        id: TagId::IndexPersonnes,
+        titre: "Index des personnes",
+        description: "Poser l'index des personnes citées",
+        alias: &["ip", "index-personnes", "index nominum"],
+        icone: Icone::Etiquette,
+    },
 ];
 
 /// Le catalogue des snippets.
@@ -1200,10 +1259,10 @@ pub const SNIPPETS: &[Snippet] = &[
         icone: Icone::Fragment,
     },
     Snippet {
-        id: SnippetId::Chapitre,
-        titre: "Nouveau chapitre",
+        id: SnippetId::Partie,
+        titre: "Nouvelle partie",
         description: "Titre de niveau 1 et espace de rédaction",
-        alias: &["chapitre", "chapter"],
+        alias: &["partie", "titre", "titre 1"],
         icone: Icone::Fichier,
     },
     Snippet {
@@ -1265,7 +1324,7 @@ pub struct Palette {
     pub mode: ModePalette,
     pub requete: String,
     pub selection: usize,
-    /// La plage du déclencheur (`..` ou `/`) à retirer à l'insertion.
+    /// La plage du déclencheur (`,,` ou `/`) à retirer à l'insertion.
     pub remplacement: Option<(usize, usize)>,
     /// Les métadonnées visibles au moment de l'ouverture : la palette ne
     /// relit pas `metadonnees.toml` à chaque image.
@@ -1289,6 +1348,8 @@ pub struct ChampBalise {
 pub struct BaliseDialogue {
     pub tag: TagId,
     pub champs: Vec<ChampBalise>,
+    /// La plage de la balise à modifier ; `None` pour une insertion neuve.
+    pub remplacement: Option<std::ops::Range<usize>>,
 }
 
 impl BaliseDialogue {
@@ -1306,10 +1367,111 @@ impl BaliseDialogue {
                 champ("texte", "Texte du lien", ""),
                 champ("cible", "Adresse (https://…)", ""),
             ],
+            // Le titre d'un tableau est une balise d'une ligne : il se
+            // recharge sans ouvrir le panneau de création de la grille.
+            TagId::Tableau => vec![champ("titre", "Titre du tableau (facultatif)", "")],
+            TagId::Personne => vec![
+                champ("cle", "Clé de la personne", ""),
+                champ("forme", "Forme affichée (facultatif)", ""),
+            ],
+            TagId::Brut => vec![champ("source", "Source de la balise", "")],
             _ => return None,
         };
 
-        Some(Self { tag, champs })
+        Some(Self {
+            tag,
+            champs,
+            remplacement: None,
+        })
+    }
+
+    /// Le formulaire d'une balise déjà écrite, rempli de ses valeurs.
+    ///
+    /// Le clic droit ne doit pas obliger l'auteur à connaître la syntaxe :
+    /// il retrouve les mêmes champs que le panneau d'insertion, et valider
+    /// remplace la balise au lieu d'en ajouter une seconde.
+    pub fn depuis_balise(balise: &crate::langage::balise::BaliseSous) -> Option<Self> {
+        let tag = match balise.nom.as_str() {
+            "c" | "couleur" => TagId::Couleur,
+            "d" | "date" => TagId::Date,
+            "g" | "glossaire" => TagId::Glossaire,
+            "m" | "meta" | "métadonnée" | "metadonnee" => TagId::Meta,
+            "t" | "tableau" => TagId::Tableau,
+            "p" | "personne" | "personnes" => TagId::Personne,
+            _ => TagId::Brut,
+        };
+        let mut dialogue = Self::depuis(tag)?;
+        if tag == TagId::Brut
+            && let Some(champ) = dialogue
+                .champs
+                .iter_mut()
+                .find(|champ| champ.cle == "source")
+        {
+            champ.valeur = format!("{{{{{}}}}}", balise.interieur);
+        }
+        let reste = balise
+            .interieur
+            .split_once(|c: char| c.is_whitespace() || c == '|' || c == '=')
+            .map(|(_, reste)| reste.trim())
+            .unwrap_or("");
+
+        match tag {
+            TagId::Couleur => {
+                let (couleur, contenu) = reste.split_once('|').unwrap_or((reste, ""));
+                if let Some(champ) = dialogue
+                    .champs
+                    .iter_mut()
+                    .find(|champ| champ.cle == "couleur")
+                {
+                    champ.valeur = couleur.trim().to_string();
+                }
+                if let Some(champ) = dialogue
+                    .champs
+                    .iter_mut()
+                    .find(|champ| champ.cle == "contenu")
+                {
+                    champ.valeur = contenu.to_string();
+                }
+            }
+            TagId::Date => {
+                if let Some(champ) = dialogue.champs.iter_mut().find(|champ| champ.cle == "spec") {
+                    champ.valeur = reste.to_string();
+                }
+            }
+            TagId::Glossaire | TagId::Meta => {
+                let cle = reste.split_once('|').map_or(reste, |(cle, _)| cle).trim();
+                if let Some(champ) = dialogue.champs.iter_mut().find(|champ| champ.cle == "cle") {
+                    champ.valeur = cle.to_string();
+                }
+            }
+            TagId::Personne => {
+                let (cle, forme) = reste.split_once('|').unwrap_or((reste, ""));
+                if let Some(champ) = dialogue.champs.iter_mut().find(|champ| champ.cle == "cle") {
+                    champ.valeur = cle.trim().to_string();
+                }
+                if let Some(champ) = dialogue
+                    .champs
+                    .iter_mut()
+                    .find(|champ| champ.cle == "forme")
+                {
+                    champ.valeur = forme.to_string();
+                }
+            }
+            TagId::Tableau => {
+                let titre = reste.trim().trim_matches('"');
+                if let Some(champ) = dialogue
+                    .champs
+                    .iter_mut()
+                    .find(|champ| champ.cle == "titre")
+                {
+                    champ.valeur = titre.to_string();
+                }
+            }
+            _ => {}
+        }
+
+        dialogue.remplacement = Some(balise.plage.clone());
+        Some(dialogue)
     }
 
     pub fn id_champ(index: usize) -> iced::widget::Id {
@@ -1348,6 +1510,18 @@ impl BaliseDialogue {
                 }
                 Ok(format!("{{{{g {cle}}}}}"))
             }
+            TagId::Personne => {
+                let cle = self.valeur("cle").trim();
+                if !crate::project::personnes::EntreePersonne::cle_valide(cle) {
+                    return Err("La clé d'une personne est un identifiant : lettres, chiffres, - _ . — sans espace.".to_string());
+                }
+                let forme = self.valeur("forme");
+                if forme.is_empty() {
+                    Ok(format!("{{{{p {cle}}}}}"))
+                } else {
+                    Ok(format!("{{{{p {cle}|{forme}}}}}"))
+                }
+            }
             TagId::Meta => {
                 let cle = self.valeur("cle").trim();
                 if cle.is_empty() {
@@ -1362,6 +1536,22 @@ impl BaliseDialogue {
                     return Err("L'adresse du lien ne peut pas être vide.".to_string());
                 }
                 Ok(format!("[{texte}]({cible})"))
+            }
+            TagId::Tableau => {
+                let titre = self.valeur("titre").trim();
+                if titre.is_empty() {
+                    Ok("{{t}}".to_string())
+                } else {
+                    Ok(format!("{{{{t \"{}\"}}}}", titre.replace('"', "\\\"")))
+                }
+            }
+            TagId::Brut => {
+                let source = self.valeur("source").trim();
+                if source.is_empty() {
+                    Err("La source de la balise ne peut pas être vide.".to_string())
+                } else {
+                    Ok(source.to_string())
+                }
             }
             _ => Err("Cette balise n'a pas de formulaire simple.".to_string()),
         }
@@ -1581,7 +1771,7 @@ pub fn declencheur(contenu: &str, curseur: usize, mode: ModePalette) -> Option<(
         }
         ModePalette::Balises => {
             let debut = offset_sur_caractere(contenu, curseur.saturating_sub(2));
-            if &contenu[debut..curseur] != ".." {
+            if &contenu[debut..curseur] != ",," {
                 return None;
             }
             if !frontiere(contenu, debut) {
@@ -1639,7 +1829,7 @@ fn commande_active(
     id: CommandeId,
 ) -> bool {
     use crate::base::valeurs::{
-        CLE_BIBLIOGRAPHIE, CLE_GLOSSAIRE, CLE_GRAPHIQUES, CLE_REFERENCES_BIBLIQUES,
+        CLE_BIBLIOGRAPHIE, CLE_GLOSSAIRE, CLE_GRAPHIQUES, CLE_PERSONNES, CLE_REFERENCES_BIBLIQUES,
     };
 
     match id {
@@ -1647,6 +1837,7 @@ fn commande_active(
             fonctionnalites.actif(CLE_BIBLIOGRAPHIE)
         }
         CommandeId::GlossaireFenetre => fonctionnalites.actif(CLE_GLOSSAIRE),
+        CommandeId::PersonnesFenetre => fonctionnalites.actif(CLE_PERSONNES),
         CommandeId::ImporterVersionBiblique => fonctionnalites.actif(CLE_REFERENCES_BIBLIQUES),
         CommandeId::ImporterGraphique => fonctionnalites.actif(CLE_GRAPHIQUES),
         _ => true,
@@ -1660,7 +1851,8 @@ fn balise_active(
     id: TagId,
 ) -> bool {
     use crate::base::valeurs::{
-        CLE_BIBLIOGRAPHIE, CLE_CALLOUTS, CLE_GLOSSAIRE, CLE_GRAPHIQUES, CLE_REFERENCES_BIBLIQUES,
+        CLE_BIBLIOGRAPHIE, CLE_CALLOUTS, CLE_GLOSSAIRE, CLE_GRAPHIQUES, CLE_PERSONNES,
+        CLE_REFERENCES_BIBLIQUES,
     };
 
     let plugin = match id {
@@ -1669,6 +1861,7 @@ fn balise_active(
         TagId::Bibliographie => Some(CLE_BIBLIOGRAPHIE),
         TagId::Graphique => Some(CLE_GRAPHIQUES),
         TagId::Encadre => Some(CLE_CALLOUTS),
+        TagId::Personne | TagId::IndexPersonnes => Some(CLE_PERSONNES),
         _ => None,
     };
 
@@ -1762,8 +1955,14 @@ pub fn traiter(state: &mut State, message: &Message) -> Option<Task<Message>> {
             };
             match dialogue.texte() {
                 Ok(texte) => {
-                    let insertion = state.editor.insert_at_cursor(&texte).map(Message::Editor);
-                    Some(Task::batch([insertion, redonner_le_clavier(state)]))
+                    let tache = match dialogue.remplacement.clone() {
+                        Some(plage) => state
+                            .editor
+                            .replace_span(plage.start, plage.end, &texte)
+                            .map(Message::Editor),
+                        None => state.editor.insert_at_cursor(&texte).map(Message::Editor),
+                    };
+                    Some(Task::batch([tache, redonner_le_clavier(state)]))
                 }
                 Err(motif) => {
                     state.balise_dialogue = Some(dialogue);
@@ -1851,6 +2050,7 @@ fn inserer_tag(state: &mut State, tag: TagId) -> Task<Message> {
         TagId::Couleur => inserer_texte(state, "{{c red|}}", 2),
         TagId::Date => inserer_texte(state, "{{d }}", 2),
         TagId::Glossaire => inserer_texte(state, "{{g }}", 2),
+        TagId::Personne => Task::done(Message::PersonnePanneauOuvrir),
         TagId::Bible => inserer_texte(state, "{{b }}", 2),
         TagId::Lien => inserer_texte(state, "[]()", 3),
         TagId::Meta => inserer_texte(state, "{{m }}", 2),
@@ -1867,14 +2067,26 @@ fn inserer_tag(state: &mut State, tag: TagId) -> Task<Message> {
         TagId::Bibliographie => Task::done(Message::BibliographieSectionInserer),
         TagId::GlossaireSection => Task::done(Message::GlossaireSectionInserer),
         TagId::IndexBiblique => Task::done(Message::BibleIndexInserer),
+        TagId::IndexPersonnes => Task::done(Message::PersonnesIndexInserer),
         TagId::Garde => inserer_texte(state, "{{garde}}\n\n{{/garde}}", 11),
+        TagId::Brut => Task::none(),
     }
 }
 
 /// La configuration d'une balise : son formulaire simple, ou son panneau
 /// quand elle a des champs plus riches.
 fn configurer_tag(state: &mut State, tag: TagId) -> Task<Message> {
-    if let Some(dialogue) = BaliseDialogue::depuis(tag) {
+    // La personne a un panneau de sélection : la clé seule et les formes
+    // d'affichage se choisissent dans une liste cherchable.
+    if tag == TagId::Personne {
+        return Task::done(Message::PersonnePanneauOuvrir);
+    }
+
+    // Le titre d'un tableau se recharge par le clic droit sur sa balise ;
+    // la commande d'insertion garde, elle, le panneau de création de la grille.
+    if tag != TagId::Tableau
+        && let Some(dialogue) = BaliseDialogue::depuis(tag)
+    {
         state.balise_dialogue = Some(dialogue);
         state.editor.editor.lose_focus();
         return iced::widget::operation::focus(BaliseDialogue::id_champ(0));
@@ -1899,7 +2111,7 @@ fn inserer_snippet(state: &mut State, snippet: SnippetId) -> Task<Message> {
             "# Titre de la thèse\n\n## Introduction\n\nLe propos s'ouvre ici.\n\n",
             0,
         ),
-        SnippetId::Chapitre => ("\n\n# Titre du chapitre\n\n", 0),
+        SnippetId::Partie => ("\n\n# Titre de la partie\n\n", 0),
         SnippetId::Section => ("\n\n## Titre de la section\n\n", 0),
         SnippetId::Citation => ("\n\n> ", 0),
         SnippetId::Tableau => ("\n\n{{t}}\n| A | B |\n| --- | --- |\n|  |  |\n\n", 0),
@@ -1918,7 +2130,7 @@ fn inserer_texte(state: &mut State, texte: &str, recul: usize) -> Task<Message> 
 /// Rend le clavier et le curseur à l'éditeur après une palette ou un
 /// formulaire. `request_focus` seul ne suffit pas : le widget garde son
 /// drapeau de focus interne, et le curseur restait invisible.
-fn redonner_le_clavier(state: &mut State) -> Task<Message> {
+pub(crate) fn redonner_le_clavier(state: &mut State) -> Task<Message> {
     state.editor.editor.request_focus();
     state
         .editor
@@ -1933,9 +2145,9 @@ mod tests_de_la_palette {
     #[test]
     fn les_declencheurs_ne_prennent_que_leurs_frontieres() {
         assert_eq!(
-            declencheur("Un texte ..", 11, ModePalette::Balises),
+            declencheur("Un texte ,,", 11, ModePalette::Balises),
             Some((9, 11)),
-            "deux points après un blanc ouvrent les balises"
+            "deux virgules après un blanc ouvrent les balises"
         );
         assert_eq!(
             declencheur("/", 1, ModePalette::Systeme),
@@ -1958,9 +2170,9 @@ mod tests_de_la_palette {
             "une URL ne déclenche pas la palette"
         );
         assert_eq!(
-            declencheur("phrase ..", 9, ModePalette::Balises),
+            declencheur("phrase ,,", 9, ModePalette::Balises),
             Some((7, 9)),
-            "les points après un blanc ouvrent les balises"
+            "les virgules après un blanc ouvrent les balises"
         );
         assert_eq!(
             declencheur("phrase...", 9, ModePalette::Balises),
@@ -1980,10 +2192,38 @@ mod tests_de_la_palette {
             "un décalage dans É ne panique pas et n'ouvre rien"
         );
         assert_eq!(
-            declencheur("É ..", 5, ModePalette::Balises),
+            declencheur("É ,,", 5, ModePalette::Balises),
             Some((3, 5)),
             "un déclencheur après un accent reste reconnu"
         );
+    }
+
+    #[test]
+    fn une_balise_existante_se_recharge_dans_son_panneau() {
+        let source = "Avant {{c red|un mot}} après";
+        let balise = crate::langage::balise::balise_au(source, source.find("mot").unwrap())
+            .expect("la balise est sous le clic");
+        let dialogue = BaliseDialogue::depuis_balise(&balise).expect("formulaire");
+
+        assert_eq!(dialogue.tag, TagId::Couleur);
+        assert_eq!(dialogue.valeur("couleur"), "red");
+        assert_eq!(dialogue.valeur("contenu"), "un mot");
+        assert_eq!(dialogue.remplacement, Some(balise.plage));
+        assert_eq!(dialogue.texte().unwrap(), "{{c red|un mot}}");
+    }
+
+    #[test]
+    fn une_personne_existante_se_recharge_avec_sa_forme() {
+        let source = "Avant {{p augustin|Augustin}} après";
+        let balise = crate::langage::balise::balise_au(source, source.find("Augustin").unwrap())
+            .expect("la balise est sous le clic");
+        let dialogue = BaliseDialogue::depuis_balise(&balise).expect("formulaire");
+
+        assert_eq!(dialogue.tag, TagId::Personne);
+        assert_eq!(dialogue.valeur("cle"), "augustin");
+        assert_eq!(dialogue.valeur("forme"), "Augustin");
+        assert_eq!(dialogue.texte().unwrap(), "{{p augustin|Augustin}}");
+        assert_eq!(dialogue.remplacement, Some(balise.plage));
     }
 
     #[test]
@@ -2014,12 +2254,34 @@ mod tests_de_la_palette {
             CommandeId::EditeurTheme,
             CommandeId::PluginBibliographie,
             CommandeId::PluginGlossaire,
+            CommandeId::PluginPersonnes,
+            CommandeId::PersonnesFenetre,
         ] {
             assert!(
                 COMMANDES.iter().any(|commande| commande.id == id),
                 "commande absente du catalogue : {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn une_balise_specialisee_s_ouvre_en_source_complete() {
+        let source = "{{e type=note titre=\"Note\"|Le texte}}";
+        let balise = crate::langage::balise::balise_au(source, 4).expect("balise");
+        let dialogue = BaliseDialogue::depuis_balise(&balise).expect("formulaire");
+        assert_eq!(dialogue.tag, TagId::Brut);
+        assert_eq!(dialogue.texte().unwrap(), source);
+        assert_eq!(dialogue.remplacement, Some(balise.plage));
+    }
+
+    #[test]
+    fn un_titre_de_tableau_se_recharge_et_se_reecrit() {
+        let source = "{{t \"Taux de réponse\"}}";
+        let balise = crate::langage::balise::balise_au(source, 4).expect("balise");
+        let dialogue = BaliseDialogue::depuis_balise(&balise).expect("formulaire");
+        assert_eq!(dialogue.tag, TagId::Tableau);
+        assert_eq!(dialogue.valeur("titre"), "Taux de réponse");
+        assert_eq!(dialogue.texte().unwrap(), source);
     }
 
     #[test]
@@ -2052,6 +2314,7 @@ mod tests_de_la_palette {
         fonctionnalites.bibliographie = false;
         fonctionnalites.references_bibliques = false;
         fonctionnalites.glossaire = false;
+        fonctionnalites.personnes = false;
         assert!(
             !commande_active(&fonctionnalites, CommandeId::Citation),
             "la citation bibliographique disparaît"
@@ -2067,6 +2330,14 @@ mod tests_de_la_palette {
         assert!(
             !balise_active(&fonctionnalites, TagId::Glossaire),
             "la balise de glossaire disparaît"
+        );
+        assert!(
+            !balise_active(&fonctionnalites, TagId::Personne),
+            "la balise de personne disparaît"
+        );
+        assert!(
+            !commande_active(&fonctionnalites, CommandeId::PersonnesFenetre),
+            "la fenêtre des personnes disparaît"
         );
         assert!(
             balise_active(&fonctionnalites, TagId::Couleur),

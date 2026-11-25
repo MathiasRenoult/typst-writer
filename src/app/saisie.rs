@@ -68,6 +68,123 @@ fn tabulation_sur_liste(
     Some(decaler_la_liste(state, indenter))
 }
 
+/// Navigue dans un tableau et l'aligne avant de rendre la main.
+///
+/// `Tab` / `Maj+Tab` passent d'une cellule à l'autre ; `Entrée` /
+/// `Maj+Entrée` passent à la même colonne de la ligne suivante ou précédente.
+/// `Ctrl+Suppr` et `Maj+Suppr` retirent la ligne ou la colonne courante.
+/// Une fois dans la grille, la touche ne doit jamais insérer ses espaces ou un
+/// saut de ligne dans une cellule : au bord de la grille, elle ne fait rien.
+fn navigation_tableau_message(
+    state: &mut State,
+    message: &iced_code_editor::Message,
+) -> Option<Task<Message>> {
+    use crate::langage::tableau::SensNavigation;
+
+    if !state.editor.is_intermediate() || state.composeur.is_some() || super::pointeur_bloque(state)
+    {
+        return None;
+    }
+
+    let contenu = state.editor.content();
+    let offset = state.editor.cursor_offset();
+    if !crate::langage::tableau::dans_un_tableau(&contenu, offset) {
+        return None;
+    }
+
+    // `Ctrl+Suppr` supprime la rangée courante ; `Maj+Suppr` la colonne.
+    // Le widget transforme déjà ces gestes en `DeleteWord` et
+    // `DeleteSelection` : on les intercepte avant qu'il ne touche au texte.
+    if state.controle_tenu && matches!(message, iced_code_editor::Message::DeleteWord) {
+        return Some(crate::app::routeur::tableaux::traiter(
+            state,
+            Message::TableauSupprimerLigne,
+        ));
+    }
+    if state.maj_tenu && matches!(message, iced_code_editor::Message::DeleteSelection) {
+        return Some(crate::app::routeur::tableaux::traiter(
+            state,
+            Message::TableauSupprimerColonne,
+        ));
+    }
+
+    // `Ctrl+Maj+flèches` déplace la rangée ou la colonne. Le widget émet
+    // `ArrowKey` pour ces flèches : le message remplace donc la touche avant
+    // que l'éditeur ne la traite comme un simple déplacement du curseur.
+    if state.controle_tenu
+        && let iced_code_editor::Message::ArrowKey(direction, true) = message
+    {
+        use crate::langage::tableau::SensDeplacement;
+        use iced_code_editor::ArrowDirection;
+        let sens = match direction {
+            ArrowDirection::Up => SensDeplacement::Haut,
+            ArrowDirection::Down => SensDeplacement::Bas,
+            ArrowDirection::Left => SensDeplacement::Gauche,
+            ArrowDirection::Right => SensDeplacement::Droite,
+        };
+        return Some(crate::app::routeur::tableaux::traiter(
+            state,
+            Message::TableauDeplacer(sens),
+        ));
+    }
+
+    // `Ctrl+Entrée` ajoute une ligne sous la ligne courante. Le widget
+    // transforme `Entrée` en `Message::Enter` sans transporter les
+    // modificateurs ; l'application suit `Ctrl` par `ModifiersChanged`.
+    if matches!(message, iced_code_editor::Message::Enter) && state.controle_tenu {
+        // Le remplacement est synchrone dans le routeur ; le rendre au
+        // éditeur comme une tâche différée ferait attendre un tour de boucle
+        // pour une ligne qui doit apparaître sous les doigts.
+        return Some(crate::app::routeur::tableaux::traiter(
+            state,
+            Message::TableauInsererLigne,
+        ));
+    }
+
+    let sens = match message {
+        iced_code_editor::Message::Tab => SensNavigation::CelluleSuivante,
+        iced_code_editor::Message::FocusNavigationShiftTab => SensNavigation::CellulePrecedente,
+        iced_code_editor::Message::Enter => {
+            if state.maj_tenu {
+                SensNavigation::LignePrecedente
+            } else {
+                SensNavigation::LigneSuivante
+            }
+        }
+        _ => return None,
+    };
+
+    let Some(formatage) = crate::langage::tableau::naviguer_et_formater(&contenu, offset, sens)
+    else {
+        // Au dernier rang ou à la dernière colonne : on garde la touche pour
+        // elle-même, plutôt que de laisser le widget écrire un espace ou un
+        // saut de ligne qui casserait la grille.
+        return Some(Task::none());
+    };
+
+    let change = contenu[formatage.plage.clone()] != formatage.texte;
+    if change {
+        state.rafraichir_statistiques_bibliques();
+        state.mots_a_recalculer();
+    }
+    let remplacement = if change {
+        state
+            .editor
+            .replace_span(formatage.plage.start, formatage.plage.end, &formatage.texte)
+            .map(Message::Editor)
+    } else {
+        Task::none()
+    };
+
+    Some(Task::batch([
+        remplacement,
+        state
+            .editor
+            .set_cursor_offset(formatage.curseur)
+            .map(Message::Editor),
+    ]))
+}
+
 /// Applique une mise en forme à la sélection, en tenant la couleur courante
 /// et les compteurs qui dépendent du texte.
 fn appliquer_le_format(
@@ -88,6 +205,66 @@ fn appliquer_le_format(
     state.rafraichir_statistiques_bibliques();
     state.mots_a_recalculer();
     state.editor.apply_format(action).map(Message::Editor)
+}
+
+/// Ouvre, au point du clic droit, ce que la source désigne.
+///
+/// Une en-tête de colonne fait tourner son alignement ; une balise ouvre son
+/// panneau d'insertion, rempli de sa forme actuelle et prêt à la remplacer.
+/// Le reste du texte ouvre les actions ordinaires (couper, copier, coller),
+/// sans écrire dans le document.
+fn menu_contextuel(state: &mut State, point: iced::Point) -> Task<Message> {
+    let Some(offset) = state.editor.offset_at_point(point) else {
+        return Task::none();
+    };
+    let contenu = state.editor.content();
+
+    if let Some(formatage) = crate::langage::tableau::aligner_colonne(&contenu, offset) {
+        return crate::app::routeur::tableaux::appliquer_formatage(state, formatage);
+    }
+
+    if let Some(balise) = crate::langage::balise::balise_au(&contenu, offset) {
+        // La référence biblique a son panneau riche : il doit être essayé
+        // avant le formulaire de source générique.
+        if matches!(balise.nom.as_str(), "b" | "bible" | "citation" | "ref")
+            && let Some((debut, fin, references)) =
+                crate::plugins::bible::reference_au(&contenu, offset)
+        {
+            crate::app::routeur::bible::ouvrir_le_panneau_sur(state, debut..fin, references);
+            state.menu_contextuel = None;
+            return Task::none();
+        }
+
+        // La personne a un panneau avec la liste de son registre : le clic
+        // droit doit y entrer avec la clé et l'expression déjà remplies.
+        if matches!(balise.nom.as_str(), "p" | "personne" | "personnes") {
+            let reste = balise
+                .interieur
+                .split_once(|c: char| c.is_whitespace() || c == '|' || c == '=')
+                .map(|(_, reste)| reste.trim())
+                .unwrap_or("");
+            let (cle, expression) = reste.split_once('|').unwrap_or((reste, ""));
+            state.menu_contextuel = None;
+            return crate::app::routeur::personnes::ouvrir_panneau_sur(
+                state,
+                balise.plage.clone(),
+                cle.trim(),
+                expression.trim(),
+            );
+        }
+
+        if let Some(dialogue) = crate::app::palette::BaliseDialogue::depuis_balise(&balise) {
+            state.balise_dialogue = Some(dialogue);
+            state.menu_contextuel = None;
+            state.editor.editor.lose_focus();
+            return iced::widget::operation::focus(crate::app::palette::BaliseDialogue::id_champ(
+                0,
+            ));
+        }
+    }
+
+    state.menu_contextuel = Some(crate::app::state::MenuContextuel { position: point });
+    Task::none()
 }
 
 pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -204,7 +381,63 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 .insert_at_cursor(&format!("{marque} "))
                 .map(Message::Editor)
         }
+        Message::MenuContextuelExecuter(action) => {
+            state.menu_contextuel = None;
+            let message = match action {
+                crate::app::message::MenuContextuelAction::Copier => {
+                    iced_code_editor::Message::Copy
+                }
+                crate::app::message::MenuContextuelAction::Couper => iced_code_editor::Message::Cut,
+                crate::app::message::MenuContextuelAction::Coller => {
+                    iced_code_editor::Message::Paste(String::new())
+                }
+                crate::app::message::MenuContextuelAction::ToutSelectionner => {
+                    iced_code_editor::Message::SelectAll
+                }
+                crate::app::message::MenuContextuelAction::Annuler => {
+                    iced_code_editor::Message::Undo
+                }
+                crate::app::message::MenuContextuelAction::Retablir => {
+                    iced_code_editor::Message::Redo
+                }
+            };
+            state.editor.update(message).map(Message::Editor)
+        }
+        Message::MenuContextuelFermer => {
+            state.menu_contextuel = None;
+            Task::none()
+        }
+
         Message::Editor(message) => {
+            // Le clic droit appartient à l'application : le panneau d'une
+            // balise ou l'action d'une colonne se place au point visé.
+            if let iced_code_editor::Message::ContextMenuRequested(point) = &message {
+                return menu_contextuel(state, *point);
+            }
+
+            // Un ouvrant tapé sur une sélection encadre cette sélection. Sans
+            // sélection, la méthode rend `None` et la frappe garde son sens.
+            if let iced_code_editor::Message::CharacterInput(ouvrant) = &message
+                && let Some(fermant) = crate::editor::mots::fermeture_de(*ouvrant)
+                && let Some(tache) = state.editor.envelopper_selection(*ouvrant, fermant)
+            {
+                state.rafraichir_statistiques_bibliques();
+                state.mots_a_recalculer();
+                return tache.map(Message::Editor);
+            }
+
+            if state.menu_contextuel.is_some()
+                && matches!(
+                    message,
+                    iced_code_editor::Message::MouseClick(..)
+                        | iced_code_editor::Message::DoubleClick(_)
+                        | iced_code_editor::Message::TripleClick(_)
+                        | iced_code_editor::Message::MouseDrag(_)
+                )
+            {
+                state.menu_contextuel = None;
+            }
+
             // Un clic dans le texte ferme le menu contextuel et rend la main
             // à l'éditeur : la bulle ne bloque ni la lecture ni le curseur.
             if state.composeur.is_some()
@@ -219,6 +452,38 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     crate::app::composeur::fermer_composeur(state, None),
                     state.editor.update(message).map(Message::Editor),
                 ]);
+            }
+
+            // L'éditeur capte `Tab`, `Maj+Tab` et `Entrée` avant les
+            // raccourcis de l'application. Dans un tableau, ces touches
+            // circulent dans la grille — même dans une cellule qui contient
+            // une citation — : la cible est calculée sur la source, le
+            // tableau est aligné, puis le curseur y est reposé.
+            if let Some(tache) = navigation_tableau_message(state, &message) {
+                return tache;
+            }
+
+            // `Ctrl` + flèches déplace d'un mot, et `Ctrl` + Retour arrière /
+            // Suppr efface un mot. Le widget ne transmet que la direction et
+            // Maj : l'état des modificateurs est suivi par l'application.
+            if let iced_code_editor::Message::ArrowKey(direction, maj) = &message
+                && state.controle_tenu
+            {
+                let vers_la_droite = matches!(direction, iced_code_editor::ArrowDirection::Right);
+                return state
+                    .editor
+                    .deplacer_le_curseur_par_mot(vers_la_droite, *maj || state.maj_tenu)
+                    .map(Message::Editor);
+            }
+            if state.controle_tenu && matches!(message, iced_code_editor::Message::Backspace) {
+                state.rafraichir_statistiques_bibliques();
+                state.mots_a_recalculer();
+                return state.editor.supprimer_le_mot(true).map(Message::Editor);
+            }
+            if matches!(message, iced_code_editor::Message::DeleteWord) {
+                state.rafraichir_statistiques_bibliques();
+                state.mots_a_recalculer();
+                return state.editor.supprimer_le_mot(false).map(Message::Editor);
             }
 
             // `Tab` sur une citation en cours d'écriture ouvre le menu
@@ -238,6 +503,19 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             }
 
             let content_changed = crate::editor::EditorState::message_may_change_content(&message);
+            // Le curseur a-t-il bougé ? Le défilement doit le suivre, même
+            // quand la touche ou le clic a été traité ailleurs dans le widget :
+            // le curseur ne doit jamais rester collé au bord haut ou bas de la
+            // fenêtre. Un simple défilement de la molette ne change pas le
+            // curseur et ne doit donc pas le ramener.
+            let curseur_avant = state.editor.editor.cursor_position();
+            let geste_de_souris = matches!(
+                &message,
+                iced_code_editor::Message::MouseClick(..)
+                    | iced_code_editor::Message::DoubleClick(_)
+                    | iced_code_editor::Message::TripleClick(_)
+                    | iced_code_editor::Message::MouseDrag(_)
+            );
             // Le texte a peut-être changé : le compte de mots est à refaire, au
             // prochain tic, et non à chaque image.
             // Le survol des références bibliques : ce qui est sous la souris
@@ -330,8 +608,14 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 && state.layout.follow_preview;
             let citation_tapee = matches!(&message, iced_code_editor::Message::CharacterInput('@'));
             let task = state.editor.update(message).map(Message::Editor);
+            let defilement =
+                if geste_de_souris || state.editor.editor.cursor_position() != curseur_avant {
+                    state.editor.defiler_vers_curseur().map(Message::Editor)
+                } else {
+                    Task::none()
+                };
 
-            // La frappe vient peut-être de poser `..` ou `/` : la palette
+            // La frappe vient peut-être de poser `,,` ou `/` : la palette
             // s'ouvre alors sans voler le texte, et son champ prend le relais.
             let palette = if content_changed {
                 crate::app::palette::ouvrir_si_declencheur(state)
@@ -356,6 +640,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
 
             Task::batch(vec![
                 task,
+                defilement,
                 palette,
                 citation.unwrap_or_else(Task::none),
                 suivi,

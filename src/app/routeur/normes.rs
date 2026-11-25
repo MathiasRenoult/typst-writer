@@ -192,6 +192,7 @@ pub fn traiter(state: &mut State, message: Message) -> Task<Message> {
             match crate::mise_en_page::appliquer(&state.project.dir, &norme, accrocher) {
                 Ok(_) => {
                     state.reglages = norme.clone();
+                    state.norme_document = nom.clone();
                     state.configurer_les_plugins_selon_les_normes();
                     state.render.pending = true;
                     state.rafraichir_statistiques_bibliques();

@@ -140,7 +140,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
             {
                 let content = state.editor.content();
 
-                state.render.words = Some(state.content_word_count(&content));
+                state.actualiser_le_volume(&content);
                 state.render.words_pending = false;
                 state.render.words_depuis = None;
             }
@@ -194,7 +194,6 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 return Task::none();
             }
             state.render.export_tente = false;
-            let chapter_page = outcome.chapter_page;
 
             state.render.content = outcome.content;
             // Les erreurs du fichier généré parlent du document source :
@@ -258,11 +257,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                 state.render.stale.retain(|index| *index < total);
             }
 
-            state.render.chapter_page = chapter_page;
             state.render.outline = super::source_outline(state, outcome.outline);
-            // Les têtes de niveau 1 forment les chapitres ; leurs pages
-            // viennent du sommaire qui vient d'être composé.
-            state.rafraichir_chapitres();
 
             // Toutes les pages sont périmées, et pas seulement les visibles :
             // l'image d'une page hors écran appartient elle aussi à la
@@ -314,11 +309,7 @@ pub(super) fn update(state: &mut State, message: Message) -> Task<Message> {
                     taches.push(super::rasterisation::visible(state));
                 }
                 if let Some(page) = reprise {
-                    // La page convenue au moment de la bascule gagne sur le
-                    // chapitre : c'est l'endroit que l'auteur lisait.
                     taches.push(super::scroll_preview_to_page(state, page));
-                } else {
-                    taches.push(super::follow_chapter(state));
                 }
             }
 

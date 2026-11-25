@@ -1,7 +1,7 @@
 # iced-code-editor — copie vendorisée
 
 Ce dossier est une copie de `iced-code-editor` 0.5.2, dans laquelle ce projet
-apporte **dix-neuf modifications**. Le reste du fichier est la version amont.
+apporte **vingt modifications**. Le reste du fichier est la version amont.
 
 Le raccordement se fait par `[patch.crates-io]` dans le `Cargo.toml` racine :
 
@@ -18,7 +18,7 @@ de le changer, et la liste des serveurs de langage reconnus est une constante
 privée. Il n'existe donc aucune voie de configuration : modifier le code est
 la seule option.
 
-## Les dix-sept modifications
+## Les vingt modifications
 
 ### 1. Retour à la ligne aux frontières de mots
 
@@ -364,3 +364,32 @@ ainsi réellement montrée, pas seulement sélectionnée.
 
 `canvas_editor/features/search/mod.rs` (`defiler_vers_offset`,
 `defiler_vers_curseur`).
+### 20. La plage de sélection exposée à l'hôte
+
+La commande de liste de l'hôte doit connaître les lignes exactes que la
+sélection touche, sans deviner à partir du texte sélectionné : une sélection
+peut commencer ou finir au milieu d'une ligne. `CodeEditor::selected_range`
+rend la plage normalisée du curseur principal, en caractères, sans exposer
+les curseurs internes du crate.
+
+`canvas_editor/editing/selection.rs`.
+
+### 21. Métriques de vue fraîches et défilement borné
+
+Après un redimensionnement, un changement de mode ou une modification de la
+disposition, la hauteur et la largeur réelles du widget peuvent changer sans
+événement de défilement. Le viewport restait alors sur ses anciennes mesures :
+la plage peinte s'arrêtait avant le bas réel, et les dernières lignes — texte
+et numéros — n'étaient plus dessinées.
+
+Le canvas retient désormais les bornes réelles à chaque `draw()` ; l'hôte peut
+aussi appeler `set_viewport_size` (le `Sensor` de l'éditeur le fait après la
+disposition). La hauteur de canvas est calculée avec la largeur réelle, et
+`defiler_vers_offset`, `scroll_to_cursor` et `scroll_to_line` bornent leur
+décalage au contenu. Un ancien défilement restauré ne peut donc plus peindre
+une zone vide sous la dernière ligne.
+
+`canvas_editor/mod.rs` (`last_canvas_height`), `canvas_editor/metrics.rs`
+(`largeur_vue_effective`, `hauteur_vue_effective`, `set_viewport_size`),
+`canvas_editor/render/canvas.rs`, `canvas_editor/render/view.rs`,
+`canvas_editor/editing/cursor.rs`, `canvas_editor/features/search/mod.rs`.

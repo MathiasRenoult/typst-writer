@@ -17,6 +17,12 @@ impl CodeEditor {
         self.overlay_cache.clear();
     }
 
+    /// Returns the primary cursor's selection range for host-side line
+    /// formatting. The range is normalised (start before end), in characters.
+    pub fn selected_range(&self) -> Option<((usize, usize), (usize, usize))> {
+        self.get_selection_range()
+    }
+
     /// Returns the primary cursor's selected text range in normalized order (start before end).
     pub(crate) fn get_selection_range(&self) -> Option<((usize, usize), (usize, usize))> {
         self.cursors.primary().selection_range()

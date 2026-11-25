@@ -81,7 +81,7 @@ central construit l'effet au moment de l'invocation.
 L'exécuteur unique est la seule porte :
 
 ```text
-palette / toolbar / clavier / `..` / `/`
+palette / toolbar / clavier / `,,` / `/`
                  │
                  ▼
         CommandeId + Contexte
@@ -177,7 +177,7 @@ Pourquoi `{{…}}` :
 - elle distingue les directives des accolades Typst et des lignes de
   propriétés existantes.
 
-Le `..` proposé par l'auteur reste un **déclencheur d'interface**, pas la
+Le `,,` proposé par l'auteur reste un **déclencheur d'interface**, pas la
 syntaxe canonique du document. Le menu insère `{{…}}` ; l'utilisateur n'a
 jamais besoin de connaître l'enveloppe pour l'utiliser.
 
@@ -228,18 +228,32 @@ Sud,70
 {{bib}}
 {{gs}}
 {{idx}}
+{{p augustin}}
+{{p augustin|complet}}
+{{p augustin|nom+dates}}
+{{ip}}
 ```
 
 Les noms canoniques sont courts : `c` (couleur), `d` (date), `g`
 (glossaire), `b` (bible), `m` (métadonnée), `e` (encadré), `gr`
 (graphique simple), `ch` (graphique primaviz), `t` (tableau), `s`
 (sommaire), `bib` (bibliographie), `gs` (section de glossaire), `idx`
-(index biblique). Les noms longs (`couleur`, `date`, `glossaire`, `bible`,
+(index biblique), `p` (personne citée), `ip` (index des personnes). Les noms
+longs (`couleur`, `date`, `glossaire`, `bible`,
 `meta`, `encadre`, `graphique`, `tableau`, `sommaire`, `bibliographie`,
-`glossaire-section`, `index-biblique`) restent
+`glossaire-section`, `index-biblique`, `personne`, `index-personnes`,
+`index-nom`) restent
 lus comme alias, ainsi que les anciennes formes (`{couleur:…}`, `{glo:…}`,
 `{chart}`, `{callout}`, `{encadré}`, `[[TOC]]`, `{{index}}`,
 `{{Jean…}}`).
+
+Une personne ne retient que sa **clé** dans la balise. Sans expression, les
+formes de première mention et de reprise des normes s'appliquent (nom simple
+par défaut) ; `|simple`, `|complet` ou `|alias` choisissent une forme nommée ;
+une liste de champs séparés par `+` (`nom+dates`, `simple+naissance+mort`,
+`nom_complet+dates`) choisit précisément ce qui est affiché ; `|auto` écrit la
+règle des normes explicitement ; un autre texte reste une forme libre. Le
+panneau d'insertion de la palette filtre le registre et remplit la fiche.
 
 `{{m clé}}` est la balise des métadonnées du projet : elle lit la valeur
 de `metadonnees.toml` par la même voie que les quick parts de l'en-tête.
@@ -280,7 +294,7 @@ syntaxe ne doit pas réécrire silencieusement les documents de l'auteur.
 
 La palette est un composant unique avec deux entrées :
 
-- **mode balises** (`..` puis une lettre) : uniquement les balises et
+- **mode balises** (`,,` puis une lettre) : uniquement les balises et
   snippets insérables dans le contexte courant ;
 - **mode système** (`/` puis du texte, ou `Ctrl+K` partout) : toutes les
   commandes disponibles, y compris les actions qui ne sont pas des balises
@@ -292,14 +306,14 @@ défaut changent.
 
 ### 5.2 Déclencheurs
 
-- `..` ouvre le menu s'il est au début d'un mot (précédé d'un blanc ou du
+- `,,` ouvre le menu s'il est au début d'un mot (précédé d'un blanc ou du
   début de ligne), suivi d'une lettre, hors code et hors littéral.
 - `/` ouvre le menu système au début de ligne ou après un blanc, suivi d'une
   lettre. Un `/` collé à un mot (`et/ou`, URL) ne déclenche rien.
 - `Ctrl+K` ouvre le menu système partout ; c'est le chemin de secours si un
   déclencheur est ambigu.
 - `Échap` ferme le menu sans toucher au texte déjà saisi.
-- Une sélection non vide et `..` proposent d'abord les balises qui enveloppent
+- Une sélection non vide et `,,` proposent d'abord les balises qui enveloppent
   la sélection (`gras`, `couleur`, `encadré`…).
 
 Le texte reste dans l'éditeur ; le menu est un recouvrement non modal. Les
@@ -399,7 +413,7 @@ Extraire le catalogue, brancher la barre d'outils, `plan_touche` et un premier
 `/` / `Ctrl+K` sur les messages existants. Aucun changement de syntaxe. Cette
 phase rend déjà toutes les actions cherchables.
 
-**Phase 2 — Menu `..`.**
+**Phase 2 — Menu `,,`.**
 Utiliser les insertions existantes (`NoteInserer`, `ChartOuvrir`,
 `CalloutOuvrir`, `BiblePanneau`, `GlossaireInserer`…) derrière le catalogue.
 Les balises sans panneau s'insèrent directement ; les autres ouvrent leur
@@ -422,10 +436,10 @@ Commandes composées, favoris, historique, migration assistée, aide générée.
 
 1. **Snippets et macros.** Une commande peut insérer plusieurs balises et
    textes avec des variables (`titre`, `auteur`, `date`, `sélection`). Exemple :
-   `..these` insère un titre, un encadré et une bibliographie. Les snippets
-   sont stockés par projet ou globalement et apparaissent dans `..` et `/`.
+   `,,these` insère un titre, un encadré et une bibliographie. Les snippets
+   sont stockés par projet ou globalement et apparaissent dans `,,` et `/`.
 
-2. **Commandes contextuelles.** Avec une sélection, `..` propose d'abord
+2. **Commandes contextuelles.** Avec une sélection, `,,` propose d'abord
    l'enveloppement ; sans sélection, il propose l'insertion. Dans une note,
    il propose les balises compatibles avec une note. Dans un bloc de code, il
    se ferme.
@@ -475,7 +489,7 @@ Commandes composées, favoris, historique, migration assistée, aide générée.
 - Insertion par défaut : le texte produit se relit comme la même balise.
 - Formulaire : chaque champ se valide, le curseur final est correct, une
   annulation ne laisse rien.
-- Clavier : `..`, `/`, `Ctrl+K`, flèches, `Entrée`, `Tab`, `Échap`,
+- Clavier : `,,`, `/`, `Ctrl+K`, flèches, `Entrée`, `Tab`, `Échap`,
   `Ctrl+Entrée` dans un éditeur, une note et un aperçu.
 - Les balises s'imbriquent dans une note et dans une autre balise.
 - Une balise inconnue ne devient jamais une couleur ou une commande Typst.

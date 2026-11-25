@@ -60,15 +60,19 @@ impl CodeEditor {
     /// - canvas_height: The total height needed for the canvas
     fn calculate_canvas_height(&self) -> (Rc<Vec<wrapping::VisualLine>>, f32) {
         // Reuse memoized visual lines so view layout (canvas height + IME cursor rect)
-        // does not trigger repeated wrapping computation.
-        let visual_lines = self.visual_lines_cached(self.viewport_width);
+        // does not trigger repeated wrapping computation. The real canvas
+        // width is preferred over the scroll-notification width: when the
+        // editor gets narrower without scrolling, wrapping at the old width
+        // underestimates the number of visual lines and clips the bottom.
+        let visual_lines = self.visual_lines_cached(self.largeur_vue_effective());
         let total_visual_lines = visual_lines.len();
         let content_height = total_visual_lines as f32 * self.line_height;
 
-        // Use max of content height and viewport height to ensure the canvas
-        // always covers the visible area (prevents visual artifacts when
-        // content is shorter than viewport after reset/file change)
-        let canvas_height = content_height.max(self.viewport_height);
+        // Use max of content height and the real viewport height to ensure
+        // the canvas always covers the visible area (prevents visual
+        // artifacts when content is shorter than viewport after reset/file
+        // change).
+        let canvas_height = content_height.max(self.hauteur_vue_effective());
 
         (visual_lines, canvas_height)
     }
@@ -635,18 +639,25 @@ impl CodeEditor {
             self.custom_context_menu_entries().to_vec();
         let default_context_menu_enabled = self.default_context_menu_enabled();
         let translations = self.translations;
-        let editor_container = ContextMenu::new(editor_container, move || {
-            context_menu::view(
-                &custom_context_menu_entries,
-                default_context_menu_enabled,
-                action_context,
-                translations,
-            )
-        });
+        let editor_container: Element<'_, Message> = if self.host_context_menu_enabled() {
+            // L'hôte place son propre panneau au point cliqué : laisser
+            // `iced_aw` ouvrir son menu le superposerait à celui de la balise.
+            editor_container.into()
+        } else {
+            ContextMenu::new(editor_container, move || {
+                context_menu::view(
+                    &custom_context_menu_entries,
+                    default_context_menu_enabled,
+                    action_context,
+                    translations,
+                )
+            })
+            .into()
+        };
 
         // When wrap is disabled, add a horizontal scrollbar below the editor.
         let editor_body: Element<'_, Message> = if self.wrap_enabled {
-            editor_container.into()
+            editor_container
         } else {
             // Measuring the widest line scans the entire buffer. It is only
             // needed for the horizontal scrollbar, so never do that work while
@@ -658,7 +669,7 @@ impl CodeEditor {
             {
                 Column::new().push(editor_container).push(h_scrollbar).into()
             } else {
-                editor_container.into()
+                editor_container
             }
         };
 

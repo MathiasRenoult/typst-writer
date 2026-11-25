@@ -13,16 +13,26 @@ barre d'outils portent leurs combinaisons.
 | `Ctrl+O` | charger un `.typ` dans le projet |
 | `Ctrl+E` | exporter en PDF |
 | `Ctrl+P` | les normes du document |
+| `Ctrl+,` | les paramètres de l'application |
 | `Ctrl+T` / `Ctrl+Maj+T` | le titre suivant / précédent |
 | `Ctrl+1` à `Ctrl+6` | insérer un titre de niveau 1 à 6 au curseur |
 | `Ctrl+Maj+Haut` / `Bas` | le bloc entier monte ou descend |
 | `F2` | renommer le symbole sous le curseur |
 | `F12` | aller à la définition |
-| `Ctrl+I` | l'assistance à la frappe |
+| `Ctrl+B` | mettre la sélection ou le mot sous le curseur en gras |
+| `Ctrl+I` | mettre la sélection ou le mot sous le curseur en italique |
+| `Ctrl+U` | souligner la sélection ou le mot sous le curseur |
 | `Ctrl+Suppr` | supprimer le mot après le curseur |
 | `Ctrl+L` | surligner la ligne courante |
 | `Ctrl+Maj+L` | surligner la ligne suivante |
 | `Tab` / `Maj+Tab` | sur une ligne de liste : l'enfoncer / la remonter d'un niveau |
+| `Tab` / `Maj+Tab` | dans une cellule de tableau : cellule suivante / précédente |
+| `Entrée` / `Maj+Entrée` | dans un tableau : même colonne, ligne suivante / précédente |
+| `"`, `(`, `[`, `{` sur une sélection | encadrer la sélection avec la paire correspondante |
+| `Ctrl+Tab` / `Ctrl+Entrée` | dans un tableau : nouvelle colonne à droite / nouvelle ligne en dessous |
+| `Ctrl+Suppr` / `Maj+Suppr` | dans un tableau : supprimer la ligne / la colonne courante |
+| `Ctrl+Maj+flèches` | dans un tableau : déplacer la rangée ou la colonne |
+| clic droit sur un en-tête | dans un tableau : aligner la colonne à droite, au centre ou à gauche |
 | `@` | ouvrir le composeur de citation au curseur |
 | `Tab` après `@…` | ouvrir aussi le menu contextuel de citation, sans quitter le document |
 
@@ -37,7 +47,7 @@ entre guillemets ; sans guillemets, le texte reste un texte ordinaire.
 | --- | --- |
 | `Ctrl+K` | ouvrir la palette de toutes les commandes |
 | `/` dans le texte | ouvrir la palette système (après un blanc) |
-| `..` dans le texte | ouvrir les balises et snippets insérables (après un blanc) |
+| `,,` dans le texte | ouvrir les balises et snippets insérables (après un blanc) |
 | `↑` / `↓` | parcourir les résultats |
 | `Entrée` | insérer avec les valeurs par défaut |
 | `Tab` | ouvrir le formulaire de la balise sélectionnée |
@@ -55,9 +65,11 @@ Dans une balise, `Entrée` insère avec les valeurs du formulaire ; `Échap`
 annule. Les balises ont des noms courts : `c` (couleur), `g` (glossaire),
 `d` (date), `b` (bible), `m` (métadonnée), `e` (encadré), `gr` (graphique),
 `t` (tableau), `s` (sommaire), `bib` (bibliographie), `gs` (glossaire de
-section), `idx` (index biblique). Les métadonnées du projet apparaissent
-dans `..` sous « Métadonnée · clé » et s'écrivent `{{m clé}}` dans le
-document.
+section), `idx` (index biblique), `p` (personne citée) et `ip` (index des
+personnes). La balise personne ouvre un panneau : un champ filtre le
+registre, la fiche choisie remplit tous ses champs et l'insertion n'écrit
+que la clé. Les métadonnées du projet apparaissent dans `,,` sous
+« Métadonnée · clé » et s'écrivent `{{m clé}}` dans le document.
 
 ## Chercher
 
@@ -78,8 +90,7 @@ document.
 | `Ctrl+Maj+e` | basculer en mode Typst (texte généré) |
 | `Ctrl+=` / `Ctrl+-` | agrandir / réduire l'aperçu (ou Ctrl+molette) |
 | `Ctrl+0` | ajuster l'aperçu à la largeur |
-| `Ctrl+Maj+L` | l'aperçu suit le chapitre — ou ne le suit plus |
-| bouton des numéros | afficher ou masquer les numéros de ligne de l'éditeur |
+| Paramètres → Éditeur | afficher ou masquer les numéros de ligne |
 | survol | l'extrait d'une référence biblique sous la souris, après un court repos |
 
 ## L'espace de travail
@@ -89,7 +100,7 @@ document.
 | `Ctrl+Maj+N` | scinder le panneau actif verticalement |
 | `Ctrl+Maj+O` | scinder le panneau actif horizontalement |
 | glisser un onglet | déplacer, détacher ou diviser un panneau |
-| `Ctrl+Tab` / `Ctrl+Maj+Tab` | l'onglet suivant / le panneau suivant |
+| `Ctrl+Tab` / `Ctrl+Maj+Tab` | hors tableau : l'onglet suivant / le panneau suivant |
 | `Ctrl+Maj+W` | fermer l'onglet actif |
 | `Maj+clic` sur un projet | ouvrir dans un nouvel onglet |
 | clic sur un projet | remplacer l'onglet actif |

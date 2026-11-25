@@ -11,6 +11,7 @@
 pub mod glossaire;
 pub mod metadonnees;
 pub mod model;
+pub mod personnes;
 
 pub mod portable;
 
@@ -164,7 +165,6 @@ pub(super) fn creer_et_publier(
         None
     };
 
-    std::fs::create_dir(temporaire.join("chapitres"))?;
     for (nom, contenu) in [
         ("main.typ", gabarit),
         ("document.tw", ""),
@@ -804,7 +804,7 @@ fn heure_actuelle() -> u64 {
 }
 
 /// Session de travail : ce qu'il faut rouvrir au démarrage.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     /// Disposition complète ; absente dans les anciennes sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -841,6 +841,41 @@ pub struct Session {
     /// document : elle survit donc au projet et au redémarrage.
     #[serde(default)]
     pub line_numbers: bool,
+
+    /// Les boutons de mise en forme de la barre supérieure.
+    ///
+    /// Vrai par défaut : une session ancienne garde la barre qu'elle
+    /// connaissait. Qui écrit le markdown peut les masquer sans perdre les
+    /// raccourcis ni la palette de commandes.
+    #[serde(default = "actifs_par_defaut")]
+    pub outils_mise_en_page: bool,
+
+    /// Le menu d'insertion de la barre supérieure.
+    ///
+    /// Vrai par défaut, pour la même raison : un réglage absent ne doit pas
+    /// retirer un geste existant.
+    #[serde(default = "actifs_par_defaut")]
+    pub outils_insertion: bool,
+}
+
+/// Le défaut des préférences de barre : présentes.
+fn actifs_par_defaut() -> bool {
+    true
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            espace: None,
+            project: None,
+            last_document: None,
+            theme_mode: crate::base::theme::ThemeMode::System,
+            themes: crate::theming::Chosen::default(),
+            line_numbers: false,
+            outils_mise_en_page: true,
+            outils_insertion: true,
+        }
+    }
 }
 
 fn session_path() -> PathBuf {
@@ -2081,6 +2116,10 @@ pub fn migrate_flat_documents() -> Option<PathBuf> {
     adopt_stray_bibliography(&work, &dir);
 
     let chapters_dir = dir.join("chapitres");
+    // Les documents à plat sont des archives de compatibilité : la
+    // migration les range dans le dossier historique, même si un projet
+    // neuf n'en crée plus.
+    std::fs::create_dir_all(&chapters_dir).ok()?;
 
     let session = load_session();
     let mut moved_session = session.project.is_none();
@@ -3000,6 +3039,34 @@ mod tests {
             !session.line_numbers,
             "les numéros de ligne restent masqués"
         );
+        assert!(
+            session.outils_mise_en_page && session.outils_insertion,
+            "une session ancienne garde les outils de la barre"
+        );
+    }
+
+    /// Les deux réglages de la barre survivent au redémarrage — et une
+    /// session ancienne les reçoit actifs, sans jamais faire disparaître un
+    /// bouton qu'elle connaissait.
+    #[test]
+    fn les_outils_de_la_barre_survivent_a_la_session() {
+        let session = Session {
+            outils_mise_en_page: false,
+            outils_insertion: false,
+            ..Session::default()
+        };
+
+        let text = serde_json::to_string_pretty(&session).unwrap();
+        let relu: Session = serde_json::from_str(&text).unwrap();
+
+        assert!(!relu.outils_mise_en_page, "les boutons masqués le restent");
+        assert!(!relu.outils_insertion, "le menu fermé le reste");
+
+        let ancienne: Session = serde_json::from_str(r#"{"line_numbers": true}"#).unwrap();
+        assert!(
+            ancienne.outils_mise_en_page && ancienne.outils_insertion,
+            "une session sans ces champs garde les outils"
+        );
     }
 
     /// Le thème retenu survit à un redémarrage.
@@ -3019,6 +3086,8 @@ mod tests {
                 dark: "Moka sombre".to_string(),
             },
             line_numbers: true,
+            outils_mise_en_page: true,
+            outils_insertion: true,
         };
 
         let text = serde_json::to_string_pretty(&session).unwrap();
@@ -3061,6 +3130,8 @@ mod tests {
                     dark: "Mon thème".to_string(),
                 },
                 line_numbers: true,
+                outils_mise_en_page: true,
+                outils_insertion: true,
             },
         );
 
@@ -3485,6 +3556,8 @@ fn semer_normes(chemin: &std::path::Path) -> Result<(), String> {
         },
         texte: Texte {
             police: "New Computer Modern".to_string(),
+            police_hebreu: String::new(),
+            police_grecque: String::new(),
             taille: "11pt".to_string(),
             interligne: "0.65em".to_string(),
             espacement: "1.2em".to_string(),

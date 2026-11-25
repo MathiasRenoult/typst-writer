@@ -94,11 +94,6 @@ impl Project {
         }
     }
 
-    /// Les chapitres qui ne sont pas inclus dans l'assemblage.
-    pub fn orphan_chapters(&self) -> impl Iterator<Item = &Chapter> {
-        self.chapters.iter().filter(|chapter| !chapter.included)
-    }
-
     /// Ce chemin appartient-il au projet ?
     ///
     /// Un fichier extérieur au projet n'est pas un chapitre : l'afficher dans
@@ -189,7 +184,7 @@ pub fn load(dir: &Path) -> Project {
     let document_words = document
         .as_deref()
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .map(|source| count_words(&crate::langage::parse(&source).texte_nu()))
+        .map(|source| crate::langage::volume::mesurer(&crate::langage::parse(&source)).mots)
         .unwrap_or(0);
 
     let included = read_includes(&main);
@@ -1804,27 +1799,6 @@ mod tests {
             std::fs::read_to_string(path).unwrap(),
             "# Source actuelle\n"
         );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Un chapitre absent de l'assemblage doit être signalé : sans quoi il
-    /// n'atteindrait jamais le PDF, et l'oubli ne se verrait qu'à l'export.
-    #[test]
-    fn chapters_missing_from_the_assembly_are_reported() {
-        let dir = scratch("orphans");
-
-        std::fs::create_dir_all(dir.join("chapitres")).unwrap();
-        std::fs::write(dir.join("main.typ"), "#include \"chapitres/01-un.typ\"\n").unwrap();
-        std::fs::write(dir.join("chapitres/01-un.typ"), "inclus\n").unwrap();
-        std::fs::write(dir.join("chapitres/02-deux.typ"), "oublié\n").unwrap();
-
-        let orphans: Vec<String> = load(&dir)
-            .orphan_chapters()
-            .map(|chapter| chapter.title.clone())
-            .collect();
-
-        assert_eq!(orphans, vec!["deux"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

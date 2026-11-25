@@ -16,9 +16,10 @@ pub const GARDE_FILE: &str = "document.garde.typ";
 /// Assemble l'en-tête existant et le corps généré, prêt pour le compilateur.
 ///
 /// Le fichier `.tw` reste la source sur disque ; le Typst est un override en
-/// mémoire, résolu par le `World` de rendu existant. L'include se place avant
-/// la bibliographie ; si `references.bib` existe mais que l'ancien `main.typ`
-/// n'a pas de directive, celle-ci est ajoutée à l'assemblage en mémoire.
+/// mémoire, résolu par le `World` de rendu existant. La section bibliographique
+/// n'est jamais ajoutée par l'assemblage : elle doit être demandée par
+/// `{{bib}}` dans le texte. Les directives restées dans `main.typ` sont
+/// ignorées dans la variante stricte, sans modifier le fichier.
 /// Sans les diagnostics : le raccourci des tests qui n'en ont pas besoin.
 #[cfg(test)]
 pub fn compilation_unit(
@@ -36,6 +37,7 @@ pub fn compilation_unit(
 /// référence. Ce texte la voit, mais l'auteur aussi doit la **savoir** :
 /// chaque neutralisation revient ici avec sa clé, sa ligne et son fichier,
 /// pour devenir un avertissement au lieu d'un silence.
+#[allow(dead_code)] // Raccourci des épreuves : l'application passe par la variante stricte.
 pub fn compilation_unit_avec_diagnostics(
     root: &Path,
     main: &str,
@@ -46,6 +48,20 @@ pub fn compilation_unit_avec_diagnostics(
     Vec<crate::langage::diagnostics::Diagnostic>,
 ) {
     compilation_unit_document_avec_diagnostics(root, main, &parse(writing_source))
+}
+
+/// La variante stricte pour un document d'écriture : seule une balise
+/// `{{bib}}` du texte peut demander la section bibliographique.
+pub fn compilation_unit_avec_diagnostics_explicite(
+    root: &Path,
+    main: &str,
+    writing_source: &str,
+) -> (
+    String,
+    Vec<(PathBuf, String)>,
+    Vec<crate::langage::diagnostics::Diagnostic>,
+) {
+    compilation_unit_document_avec_diagnostics_explicite(root, main, &parse(writing_source))
 }
 
 /// Assemble une valeur AST déjà tenue par l'éditeur.
@@ -61,6 +77,7 @@ pub fn compilation_unit_document(
 }
 
 /// Le cœur de l'assemblage, avec la liste des citations neutralisées.
+#[allow(dead_code)] // Raccourci des épreuves : l'application passe par la variante stricte.
 pub fn compilation_unit_document_avec_diagnostics(
     root: &Path,
     main: &str,
@@ -70,11 +87,54 @@ pub fn compilation_unit_document_avec_diagnostics(
     Vec<(PathBuf, String)>,
     Vec<crate::langage::diagnostics::Diagnostic>,
 ) {
+    compilation_unit_document_interne(root, main, document, false)
+}
+
+/// La compilation d'un document `.tw` : la bibliographie n'existe que si le
+/// texte la demande explicitement par `{{bib}}` (ou `{bibliographie}`).
+///
+/// Les directives `#bibliography(…)` restées dans `main.typ` — ancien
+/// assemblage, modèle d'une version précédente — ne sont pas une demande de
+/// l'auteur dans le texte : elles sont écartées de l'assemblage compilé. Le
+/// fichier sur disque n'est jamais modifié.
+pub fn compilation_unit_document_avec_diagnostics_explicite(
+    root: &Path,
+    main: &str,
+    document: &super::Document,
+) -> (
+    String,
+    Vec<(PathBuf, String)>,
+    Vec<crate::langage::diagnostics::Diagnostic>,
+) {
+    compilation_unit_document_interne(root, main, document, true)
+}
+
+fn compilation_unit_document_interne(
+    root: &Path,
+    main: &str,
+    document: &super::Document,
+    bibliographie_explicite: bool,
+) -> (
+    String,
+    Vec<(PathBuf, String)>,
+    Vec<crate::langage::diagnostics::Diagnostic>,
+) {
     let include = format!("#include \"{GENERATED_FILE}\"");
-    let entry = if main.lines().any(|line| line.trim() == include) {
-        main.to_string()
+    let normes = crate::mise_en_page::charger(root);
+    let demande_explicite = document_demande_la_bibliographie(document);
+    let assemblee = if bibliographie_explicite {
+        if demande_explicite {
+            retirer_les_bibliographies(main)
+        } else {
+            cacher_les_bibliographies(main, root, normes.bibliographie.style.as_deref())
+        }
     } else {
-        insert_generated_include(main, &include)
+        main.to_string()
+    };
+    let entry = if assemblee.lines().any(|line| line.trim() == include) {
+        assemblee
+    } else {
+        insert_generated_include(&assemblee, &include)
     };
     // Les clés vivantes : celles des bibliographies du projet. Une
     // citation inconnue ne casse jamais le document — elle se montre
@@ -110,16 +170,31 @@ pub fn compilation_unit_document_avec_diagnostics(
 
     // La typographie et le style se lisent dans les normes du projet : c'est
     // là qu'ils se choisissent, et le générateur les applique.
-    let normes = crate::mise_en_page::charger(root);
     let entry = appliquer_le_style_du_projet(
         &entry,
         normes.bibliographie.style.as_deref(),
         &root.join("main.typ"),
         &mut rapports,
     );
-    let entry = ensure_default_bibliography(root, &entry, &normes);
+    let entry = preparer_la_bibliographie(root, &entry, &normes);
+
+    // Un assemblage sans directive n'a pas encore de notices : on les charge
+    // derrière une règle de spectacle qui ne réserve aucune place, uniquement
+    // pour les citations. La section visible, elle, reste réservée à `{{bib}}`.
+    let entry = if bibliographie_explicite
+        && !demande_explicite
+        && !entry.contains("#bibliography")
+        && let Some(cachee) = bibliographie_cachee(root, normes.bibliographie.style.as_deref())
+    {
+        format!("{cachee}\n{entry}")
+    } else {
+        entry
+    };
+
     let mut regles = normes.typographie.regles(&normes.references);
     regles.index = normes.index.clone();
+    regles.index_personnes = normes.index_personnes.clone();
+    regles.personnes = crate::project::personnes::Personnes::charger(root);
     regles.numerotation_figures = normes.numerotation_figures.clone();
     regles.legende_prefixe = if normes.legende_prefixe.trim().is_empty() {
         "Figure".to_string()
@@ -148,9 +223,29 @@ pub fn compilation_unit_document_avec_diagnostics(
         corrections.push((root.join(crate::mise_en_page::gabarit::FICHIER), gabarit));
     }
 
+    // Une page de titre sans métadonnée n'est pas une page : les anciens
+    // gabarits la composaient quand même, et la garde commençait alors par
+    // une page blanche.
+    if normes.page_de_titre
+        && !a_des_metadonnees_de_page_de_titre(root)
+        && let Some(gabarit) = gabarit_du_projet(root, &corrections)
+        && let Some(gabarit) = retirer_la_page_de_titre_vide(&gabarit)
+    {
+        corrections.push((root.join(crate::mise_en_page::gabarit::FICHIER), gabarit));
+    }
+
     // Les pages de garde sont hors du corps : elles se composent avant le
     // sommaire, sans numéro, et leurs titres ne descendent pas dans la table
     // des matières. Le gabarit les reçoit par un petit fichier Typst dédié.
+    //
+    // Un saut de page au début du corps serait doublé par celui qui termine
+    // la garde : le lecteur verrait une page blanche entre les deux. Le
+    // retrait est en mémoire, comme les corrections de gabarit.
+    let generated = if crate::langage::generer::a_des_pages_de_garde(document) {
+        sans_le_saut_de_page_initial(&generated)
+    } else {
+        generated
+    };
     let mut generated = generated;
     if crate::langage::generer::a_des_pages_de_garde(document) {
         let mut front =
@@ -234,6 +329,48 @@ fn gabarit_du_projet(root: &Path, corrections: &[(PathBuf, String)]) -> Option<S
         .or_else(|| std::fs::read_to_string(root.join(crate::mise_en_page::gabarit::FICHIER)).ok())
 }
 
+/// Les métadonnées qui donnent un contenu à la page de titre.
+fn a_des_metadonnees_de_page_de_titre(root: &Path) -> bool {
+    let entrees = crate::project::metadonnees::Metadonnees::charger(root).entrees();
+    ["titre", "matiere", "auteur", "date"].iter().any(|cle| {
+        entrees
+            .iter()
+            .any(|(nom, valeur)| nom == cle && !valeur.trim().is_empty())
+    })
+}
+
+/// Retire la page de titre vide d'un ancien gabarit.
+///
+/// Le gabarit généré avant cette version composait toujours une page, même
+/// quand le projet n'avait aucune métadonnée : elle restait blanche avant la
+/// première page de garde. Le retrait est **en mémoire** — le fichier du
+/// projet n'est pas modifié — et seulement pour les gabarits anciens : le
+/// gabarit neuf porte lui-même sa condition.
+fn retirer_la_page_de_titre_vide(gabarit: &str) -> Option<String> {
+    let marqueur = "  // La page de titre : les métadonnées du document.\n";
+    let debut = gabarit.find(marqueur)?;
+    let apres = &gabarit[debut..];
+
+    // Le gabarit neuf contient déjà un `if` : ne pas défaire sa condition.
+    if apres.contains("  if tw_titre ") {
+        return None;
+    }
+
+    let saut = apres.find("  pagebreak()\n")?;
+    let apres_saut = &apres[saut + "  pagebreak()\n".len()..];
+    let compteur = apres_saut.find("  counter(page).update(1)\n")?;
+    let fin = saut + "  pagebreak()\n".len() + compteur + "  counter(page).update(1)\n".len();
+
+    if fin > gabarit.len() - debut {
+        return None;
+    }
+
+    let mut sortie = String::with_capacity(gabarit.len() - fin);
+    sortie.push_str(&gabarit[..debut]);
+    sortie.push_str(&gabarit[debut + fin..]);
+    Some(sortie)
+}
+
 /// Retire le numéro de la page de titre des gabarits générés avant la prise
 /// en charge des pages de garde. L'opération est idempotente : un gabarit
 /// déjà corrigé ne contient plus le motif.
@@ -251,6 +388,41 @@ fn sans_numero_de_la_page_de_titre(gabarit: &str) -> Option<String> {
     let insertion = debut + saut + "  pagebreak()\n".len();
     out.insert_str(insertion, "  counter(page).update(1)\n");
     Some(out)
+}
+
+/// Retire un `#pagebreak()` au tout début du corps, après ses imports.
+///
+/// Le corps d'un document qui commence par trois lignes vides commence par un
+/// saut de page ; quand une garde le précède, ce saut s'ajoute à celui de la
+/// garde et laisse une page blanche. Le corps ne perd que ce saut **initial** :
+/// les suivants sont des choix de l'auteur.
+fn sans_le_saut_de_page_initial(generated: &str) -> String {
+    let mut prefixe = 0;
+    for ligne in generated.split_inclusive('\n') {
+        let texte = ligne.trim();
+        if texte.is_empty() || texte.starts_with("#import ") {
+            prefixe += ligne.len();
+        } else {
+            break;
+        }
+    }
+
+    let reste = &generated[prefixe..];
+    let mut sauts = 0;
+    while reste[sauts..].starts_with("#pagebreak()") {
+        let fin_ligne = reste[sauts..]
+            .find('\n')
+            .map_or(reste.len(), |i| sauts + i + 1);
+        sauts = fin_ligne;
+        while reste[sauts..].starts_with('\n') {
+            sauts += 1;
+        }
+    }
+
+    if sauts == 0 {
+        return generated.to_string();
+    }
+    format!("{}{}", &generated[..prefixe], &reste[sauts..])
 }
 
 /// Sépare les imports Typst de tête du contenu de garde.
@@ -283,7 +455,23 @@ fn separer_les_imports(front: &str) -> (String, String) {
 /// gabarit personnalisé qui ne contient ni `outline()` ni `doc` n'est pas
 /// modifié : le contenu est alors rendu au début du corps.
 fn brancher_les_pages_de_garde(gabarit: &str) -> Option<String> {
-    let mut out = format!("#import \"{GARDE_FILE}\": garde-corps\n{gabarit}");
+    let import = format!("#import \"{GARDE_FILE}\": garde-corps");
+
+    // Un gabarit peut déjà porter l'import ou l'appel : une version
+    // précédente a pu les laisser sur le disque, et le branchement doit
+    // rester idempotent. Sans ce nettoyage, chaque compilation ajoutait une
+    // garde de plus et une page blanche apparaissait avant le sommaire.
+    let mut out = String::with_capacity(gabarit.len() + import.len() + 16);
+    out.push_str(&import);
+    out.push('\n');
+    for ligne in gabarit.lines() {
+        let texte = ligne.trim();
+        if texte == import || texte == "garde-corps" {
+            continue;
+        }
+        out.push_str(ligne);
+        out.push('\n');
+    }
 
     // Chercher la ligne du sommaire, pas la chaîne exacte : un gabarit peut
     // écrire `outline(title: …)` ou `#outline()`.
@@ -327,6 +515,168 @@ fn ligne_dans_le_gabarit(gabarit: &str, debut: &str) -> Option<usize> {
         offset += ligne.len();
     }
     None
+}
+
+/// Le document demande-t-il explicitement une section bibliographique ?
+fn document_demande_la_bibliographie(document: &super::Document) -> bool {
+    fn dans_bloc(bloc: &super::schema::Bloc) -> bool {
+        match bloc {
+            super::schema::Bloc::Bibliographie => true,
+            super::schema::Bloc::Décor { bloc, .. } | super::schema::Bloc::Canonique(bloc) => {
+                dans_bloc(bloc)
+            }
+            super::schema::Bloc::Garde(contenu) => contenu.iter().any(dans_bloc),
+            _ => false,
+        }
+    }
+
+    document.blocs.iter().any(dans_bloc)
+}
+
+/// Masque les appels `#bibliography(…)` de l'assemblage sans les supprimer.
+///
+/// `#show bibliography: it => none` charge les notices et permet aux
+/// citations `@clé` de se résoudre, mais ne compose aucune section visible
+/// et ne réserve aucune place. C'est ce qu'il faut quand le texte cite des
+/// sources sans demander `{{bib}}`.
+///
+/// Seuls les chemins de bibliographie qui existent vraiment sont repris :
+/// une ancienne directive qui pointe vers un fichier disparu ne doit pas
+/// refaire naître l'erreur « label does not exist ».
+fn cacher_les_bibliographies(main: &str, root: &Path, style: Option<&str>) -> String {
+    let mut sortie = String::with_capacity(main.len());
+    let mut offset = 0;
+
+    while let Some((ouverture, fermeture)) = bibliography_call_range(&main[offset..]) {
+        let ouverture = offset + ouverture;
+        let fermeture = offset + fermeture + 1;
+
+        let debut_ligne = main[..ouverture].rfind('\n').map_or(0, |index| index + 1);
+        let fin_ligne = main[fermeture..]
+            .find('\n')
+            .map_or(main.len(), |index| fermeture + index + 1);
+        let ligne = main[debut_ligne..fin_ligne]
+            .trim_end_matches(['\n', '\r'])
+            .trim();
+
+        sortie.push_str(&main[offset..debut_ligne]);
+        if let Some(cachee) = bibliographie_cachee_depuis(root, chemins_bibliographie(ligne), style)
+        {
+            sortie.push_str(&cachee);
+        }
+        // Une directive sans chemin vivant disparaît : le repli standard
+        // ci-dessous chargera les bibliothèques présentes du projet.
+        offset = fin_ligne;
+    }
+
+    sortie.push_str(&main[offset..]);
+    sortie
+}
+
+/// Les chemins `.bib` écrits dans une directive, et qui existent sous `root`.
+fn chemins_bibliographie(ligne: &str) -> Vec<String> {
+    let mut chemins = Vec::new();
+    let mut morceaux = ligne.split('"');
+    let _ = morceaux.next();
+    while let Some(chemin) = morceaux.next() {
+        if chemin.ends_with(".bib") && !chemins.iter().any(|deja| deja == chemin) {
+            chemins.push(chemin.to_string());
+        }
+        let _ = morceaux.next();
+    }
+    chemins
+}
+
+/// Construit l'appel caché à partir de chemins déjà validés.
+fn bibliographie_cachee_depuis(
+    root: &Path,
+    chemins: Vec<String>,
+    style: Option<&str>,
+) -> Option<String> {
+    let chemins: Vec<String> = chemins
+        .into_iter()
+        .filter(|chemin| root.join(chemin).is_file())
+        .collect();
+    if chemins.is_empty() {
+        return None;
+    }
+
+    let argument = match chemins.as_slice() {
+        [seul] => format!("\"{}\"", echapper_chaine_bibliographie(seul)),
+        plusieurs => format!(
+            "({})",
+            plusieurs
+                .iter()
+                .map(|nom| format!("\"{}\"", echapper_chaine_bibliographie(nom)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let style = style
+        .filter(|style| crate::typst::styles::style_valide(style))
+        .map(|style| format!(", style: \"{}\"", echapper_chaine_bibliographie(style)))
+        .unwrap_or_default();
+
+    // `#hide` conserve la place du contenu : une bibliographie cachée y
+    // occupait une page entière et laissait une page blanche avant la garde.
+    // La règle de spectacle retire l'élément de la composition sans lui
+    // donner de place, tout en laissant Typst résoudre les citations.
+    Some(format!(
+        "#show bibliography: it => none\n#bibliography({argument}{style})\n"
+    ))
+}
+
+fn echapper_chaine_bibliographie(texte: &str) -> String {
+    texte.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Une bibliographie cachée pour les citations qui n'ont pas de directive
+/// dans `main.typ` — par exemple un assemblage neuf. Elle ne produit rien à
+/// l'écran, mais donne leurs notices aux appels `@clé`.
+fn bibliographie_cachee(root: &Path, style: Option<&str>) -> Option<String> {
+    let mut noms: Vec<String> = Vec::new();
+    for nom in ["references.bib", "references-zotero.bib"] {
+        if root.join(nom).is_file() {
+            noms.push(nom.to_string());
+        }
+    }
+    if noms.is_empty()
+        && let Some(chemin) = crate::project::find_bibliography(root)
+        && let Some(nom) = chemin.file_name().and_then(|nom| nom.to_str())
+    {
+        noms.push(nom.to_string());
+    }
+    if noms.is_empty() {
+        return None;
+    }
+
+    bibliographie_cachee_depuis(root, noms, style)
+}
+
+/// Retire les appels `#bibliography(…)` de l'assemblage.
+///
+/// La version sur disque de `main.typ` n'est pas touchée : ce retrait ne vit
+/// que dans l'entrée compilée, pour qu'une ancienne directive ne fasse pas
+/// apparaître une section que le texte n'a pas demandée.
+fn retirer_les_bibliographies(main: &str) -> String {
+    let mut sortie = String::with_capacity(main.len());
+    let mut offset = 0;
+
+    while let Some((ouverture, fermeture)) = bibliography_call_range(&main[offset..]) {
+        let ouverture = offset + ouverture;
+        let fermeture = offset + fermeture + 1;
+
+        let debut_ligne = main[..ouverture].rfind('\n').map_or(0, |index| index + 1);
+        let fin_ligne = main[fermeture..]
+            .find('\n')
+            .map_or(main.len(), |index| fermeture + index + 1);
+
+        sortie.push_str(&main[offset..debut_ligne]);
+        offset = fin_ligne;
+    }
+
+    sortie.push_str(&main[offset..]);
+    sortie
 }
 
 /// Place l'include avant la première bibliographie, ou à la fin de l'en-tête.
@@ -466,10 +816,10 @@ fn appliquer_le_style_du_projet(
     sortie
 }
 
-/// Ajoute la bibliographie conventionnelle aux anciens assemblages qui ont le
-/// fichier `.bib` sans directive explicite. La version sur disque n'est jamais
-/// modifiée.
-fn ensure_default_bibliography(
+/// Prépare l'appel bibliographique **déjà présent** : branchement des
+/// bibliothèques, style et placement. Aucun appel n'est ajouté, et le fichier
+/// sur disque n'est jamais modifié.
+fn preparer_la_bibliographie(
     root: &Path,
     main: &str,
     normes: &crate::mise_en_page::modele::MiseEnPage,
@@ -2894,6 +3244,205 @@ fn un_document_ne_compile_jamais_mal_quoi_qu_il_arrive() {
     );
 }
 
+#[test]
+fn une_bibliographie_de_main_sans_tag_reste_cachee() {
+    let root = std::env::temp_dir().join(format!(
+        "typst-writer-bibliographie-main-sans-tag-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("racine");
+    std::fs::write(
+        root.join("references.bib"),
+        "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+    )
+    .expect("bibliographie");
+
+    let document = crate::langage::parse("Voir @dupont2023.\n");
+    let (entry, corrections, _) = compilation_unit_document_avec_diagnostics_explicite(
+        &root,
+        "#set page(margin: 2cm)\n#bibliography(\"references.bib\")\n",
+        &document,
+    );
+
+    assert!(
+        !entry.contains("#hide["),
+        "la bibliographie n'est pas masquée par #hide, qui réserve une page : {entry}"
+    );
+    assert!(
+        entry.contains("#show bibliography: it => none"),
+        "la bibliographie est retirée de la composition : {entry}"
+    );
+    assert!(
+        entry.contains("#bibliography("),
+        "les notices restent chargées pour les citations : {entry}"
+    );
+    let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+    assert!(
+        outcome.errors.is_empty(),
+        "la citation se résout : {:?}",
+        outcome.errors
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn le_tag_bib_demande_la_section_bibliographique() {
+    let root = std::env::temp_dir().join(format!(
+        "typst-writer-bibliographie-tag-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("racine");
+    std::fs::write(
+        root.join("references.bib"),
+        "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+    )
+    .expect("bibliographie");
+
+    let document = crate::langage::parse("Voir @dupont2023.\n\n{{bib}}\n");
+    let (entry, corrections, _) = compilation_unit_document_avec_diagnostics_explicite(
+        &root,
+        "#set page(margin: 2cm)\n",
+        &document,
+    );
+
+    assert!(
+        corrections
+            .iter()
+            .any(|(_, contenu)| contenu.contains("#bibliography")),
+        "le tag demande la section visible : {corrections:?}"
+    );
+    assert!(
+        !entry.contains("#show bibliography: it => none"),
+        "aucune version cachée ne double la section : {entry}"
+    );
+    let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+    assert!(
+        outcome.errors.is_empty(),
+        "la section et la citation compilent : {:?}",
+        outcome.errors
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn un_projet_sans_citation_et_sans_directive_compile() {
+    let root = std::env::temp_dir().join(format!(
+        "typst-writer-bibliographie-sans-citation-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("racine");
+    std::fs::write(root.join("references.bib"), "% commentaire seulement\n")
+        .expect("bibliographie locale");
+    std::fs::write(
+        root.join("references-zotero.bib"),
+        "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+    )
+    .expect("export zotero");
+
+    let document = crate::langage::parse("Un texte sans citation.\n");
+    let (entry, corrections, _) = compilation_unit_document_avec_diagnostics_explicite(
+        &root,
+        "#set page(margin: 2cm)\n",
+        &document,
+    );
+
+    assert!(
+        !entry.contains("#hide["),
+        "aucune bibliographie visible n'est inventée : {entry}"
+    );
+    assert!(
+        entry.contains("#show bibliography: it => none"),
+        "les deux bibliothèques restent disponibles sans occuper de place : {entry}"
+    );
+    let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+    assert!(
+        outcome.errors.is_empty(),
+        "le projet sans citation compile : {:?}",
+        outcome.errors
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn un_chemin_bibliographique_mort_ne_casse_pas_les_citations() {
+    let root = std::env::temp_dir().join(format!(
+        "typst-writer-bibliographie-chemin-mort-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("racine");
+    std::fs::write(
+        root.join("references.bib"),
+        "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+    )
+    .expect("bibliographie");
+
+    let document = crate::langage::parse("Voir @dupont2023.\n");
+    let main = "#set page(margin: 2cm)\n#bibliography(\"disparue.bib\")\n";
+    let (entry, corrections, _) =
+        compilation_unit_document_avec_diagnostics_explicite(&root, main, &document);
+
+    assert!(
+        !entry.contains("disparue.bib"),
+        "le chemin mort ne reste pas dans l'entrée : {entry}"
+    );
+    assert!(
+        entry.contains("#show bibliography: it => none")
+            && entry.contains("#bibliography(\"references.bib\")"),
+        "la bibliothèque vivante prend le relais : {entry}"
+    );
+    let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+    assert!(
+        outcome.errors.is_empty(),
+        "les citations se résolvent malgré le chemin mort : {:?}",
+        outcome.errors
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn une_citation_sans_directive_ni_tag_trouve_sa_bibliographie_cachee() {
+    let root = std::env::temp_dir().join(format!(
+        "typst-writer-bibliographie-sans-directive-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("racine");
+    std::fs::write(
+        root.join("references.bib"),
+        "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+    )
+    .expect("bibliographie");
+
+    let document = crate::langage::parse("Voir @dupont2023.\n");
+    let (entry, corrections, _) = compilation_unit_document_avec_diagnostics_explicite(
+        &root,
+        "#set page(margin: 2cm)\n",
+        &document,
+    );
+
+    assert!(
+        entry.contains("#show bibliography: it => none")
+            && entry.contains("#bibliography(\"references.bib\")"),
+        "l'assemblage neuf reçoit sa bibliothèque cachée : {entry}"
+    );
+    let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+    assert!(
+        outcome.errors.is_empty(),
+        "la citation se résout sans directive dans main.typ : {:?}",
+        outcome.errors
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[cfg(test)]
 mod tests_du_pipeline_vrai {
     /// Le pipeline et le compilateur travaillent sur un projet synthétique.
@@ -4189,6 +4738,237 @@ mod pages_de_garde {
     }
 
     #[test]
+    fn une_page_de_titre_vide_ne_laisse_pas_de_page_blanche() {
+        let root = racine("titre-vide");
+        std::fs::write(
+            root.join(crate::mise_en_page::REGLAGES),
+            "page_de_titre = true\n",
+        )
+        .expect("normes");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: true,
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source = "{{garde}}\n# La page de garde\n\nTexte de garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&root, main, source);
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "la garde compile : {:?}",
+            outcome.errors
+        );
+        let document = outcome.document.expect("document");
+        assert_eq!(
+            crate::typst::render::page_count(&document),
+            2,
+            "la garde et le corps, sans page de titre vide"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn une_page_de_titre_en_blancs_ne_cree_pas_une_page_vide() {
+        let racine = racine("titre-blancs-gardes");
+        std::fs::write(
+            racine.join(crate::mise_en_page::REGLAGES),
+            "page_de_titre = true\n",
+        )
+        .expect("normes");
+        std::fs::write(
+            racine.join(crate::project::metadonnees::FICHIER),
+            "[paires]\ntitre = \"   \"\n",
+        )
+        .expect("métadonnées");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: true,
+            ..Default::default()
+        };
+        std::fs::write(
+            racine.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source = "{{garde}}\n# La page de garde\n\nTexte de garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&racine, main, source);
+        let outcome = crate::typst::render::compile(&racine, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            crate::typst::render::page_count(&outcome.document.expect("document")),
+            2,
+            "la garde et le corps, sans page de titre en blancs"
+        );
+        let _ = std::fs::remove_dir_all(&racine);
+    }
+
+    #[test]
+    fn un_saut_de_page_juste_apres_la_garde_ne_fait_pas_une_page_blanche() {
+        let racine = racine("garde-saut-apres");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            racine.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source =
+            "{{garde}}\n# La page de garde\n{{/garde}}\n\n\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&racine, main, source);
+        let outcome = crate::typst::render::compile(&racine, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            crate::typst::render::page_count(&outcome.document.expect("document")),
+            2,
+            "la garde et le corps, sans page blanche après la garde"
+        );
+        let _ = std::fs::remove_dir_all(&racine);
+    }
+
+    #[test]
+    fn une_garde_qui_commence_par_un_saut_de_page_ne_cree_pas_de_page_blanche() {
+        let racine = racine("garde-saut-initial");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            racine.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source = "{{garde}}\n\n\n# La page de garde\n\nTexte de garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&racine, main, source);
+        let outcome = crate::typst::render::compile(&racine, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            crate::typst::render::page_count(&outcome.document.expect("document")),
+            2,
+            "la garde et le corps, sans page blanche avant la garde"
+        );
+        let _ = std::fs::remove_dir_all(&racine);
+    }
+
+    #[test]
+    fn une_page_de_titre_remplie_ne_laisse_pas_de_page_blanche_avant_la_garde() {
+        let root = racine("titre-rempli-gardes");
+        std::fs::write(
+            root.join(crate::mise_en_page::REGLAGES),
+            "page_de_titre = true\n",
+        )
+        .expect("normes");
+        std::fs::write(
+            root.join(crate::project::metadonnees::FICHIER),
+            "[paires]\ntitre = \"Un titre\"\n",
+        )
+        .expect("métadonnées");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: true,
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source = "{{garde}}\n# La page de garde\n\nTexte de garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&root, main, source);
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            crate::typst::render::page_count(&outcome.document.expect("document")),
+            3,
+            "la page de titre, la garde et le corps"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn les_elements_de_garde_se_placent_par_position() {
+        let root = racine("positions");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source = "{{garde}}\n{position=haut}\n# La page de garde\n\n{position=centre}\nLe centre.\n\n{position=bas}\nLe pied.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&root, main, source);
+
+        let garde = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with(GARDE_FILE))
+            .map(|(_, contenu)| contenu)
+            .expect("fichier de garde");
+        assert!(garde.contains("#place(top + center)"), "{garde}");
+        assert!(garde.contains("#place(horizon + center)"), "{garde}");
+        assert!(garde.contains("#place(bottom + center)"), "{garde}");
+
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn un_ancien_gabarit_sans_metadonnees_ne_garde_pas_la_page_vide() {
+        let root = racine("ancien-gabarit-vide");
+        std::fs::write(
+            root.join(crate::mise_en_page::REGLAGES),
+            "page_de_titre = true\n",
+        )
+        .expect("normes");
+        let ancien = "#let mise-en-page(doc) = {\n  set page(margin: 2cm)\n  // La page de titre : les métadonnées du document.\n  page(numbering: none, header: none, footer: none)[\n    #v(1fr)\n  ]\n  pagebreak()\n  counter(page).update(1)\n  doc\n}\n";
+        std::fs::write(root.join(crate::mise_en_page::gabarit::FICHIER), ancien)
+            .expect("ancien gabarit");
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#include \"document.generated.typ\"\n";
+        let source = "{{garde}}\nLa garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let (entry, corrections) = super::compilation_unit(&root, main, source);
+        let gabarit = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with(crate::mise_en_page::gabarit::FICHIER))
+            .map(|(_, contenu)| contenu)
+            .expect("gabarit corrigé");
+        assert!(!gabarit.contains("page(numbering"), "{gabarit}");
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            crate::typst::render::page_count(&outcome.document.expect("document")),
+            2,
+            "la garde et le corps, sans page vide"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn une_ancienne_page_de_titre_vide_est_retiree() {
+        let ancien = "  // La page de titre : les métadonnées du document.\n  page(numbering: none, header: none, footer: none)[\n    Titre\n  ]\n  pagebreak()\n  counter(page).update(1)\n  doc\n";
+        let corrige =
+            super::retirer_la_page_de_titre_vide(ancien).expect("la page vide est retirée");
+        assert!(!corrige.contains("page(numbering"), "{corrige}");
+        assert!(corrige.contains("doc"), "{corrige}");
+    }
+
+    #[test]
     fn les_pages_de_garde_precedent_le_sommaire_et_restent_hors_numerotation() {
         let root = racine("avant-sommaire");
         let mut normes = crate::mise_en_page::modele::MiseEnPage {
@@ -4263,6 +5043,74 @@ mod pages_de_garde {
             texte.contains("Le corps du document."),
             "le corps suit la garde : {texte}"
         );
+    }
+
+    #[test]
+    fn brancher_les_pages_de_garde_est_idempotent() {
+        let gabarit = "#import \"document.garde.typ\": garde-corps\n#let mise-en-page(doc) = {\n  garde-corps\n  outline()\n  doc\n}\n#garde-corps\n";
+        let corrige = super::brancher_les_pages_de_garde(gabarit).expect("gabarit corrigé");
+        let import = format!("#import \"{GARDE_FILE}\": garde-corps");
+        assert_eq!(
+            corrige
+                .lines()
+                .filter(|ligne| ligne.trim() == import)
+                .count(),
+            1,
+            "un seul import : {corrige}"
+        );
+        assert_eq!(
+            corrige
+                .lines()
+                .filter(|ligne| ligne.trim() == "garde-corps")
+                .count(),
+            1,
+            "un seul appel : {corrige}"
+        );
+    }
+
+    #[test]
+    fn une_bibliographie_cachee_ne_rajoute_pas_une_page_avant_la_garde() {
+        let root = racine("bibliographie-cachee");
+        std::fs::write(
+            root.join("references.bib"),
+            "@book{dupont2023, title={T}, author={Dupont, A.}, year={2023}}\n",
+        )
+        .expect("bibliographie");
+        let normes = crate::mise_en_page::modele::MiseEnPage {
+            sommaire: false,
+            page_de_titre: false,
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join(crate::mise_en_page::gabarit::FICHIER),
+            crate::mise_en_page::gabarit::generer(&normes),
+        )
+        .expect("gabarit");
+
+        let main = "#import \"mise-en-page.typ\": mise-en-page\n#show: mise-en-page\n#set page(margin: 2cm)\n";
+        let source =
+            "{{garde}}\n# La garde\n\nTexte de garde.\n{{/garde}}\n\n# Introduction\n\nLe corps.\n";
+        let document = crate::langage::parse(source);
+        let (entry, corrections, _) =
+            super::compilation_unit_document_avec_diagnostics_explicite(&root, main, &document);
+
+        assert!(
+            entry.contains("#show bibliography: it => none"),
+            "la bibliographie reste chargée sans occupation : {entry}"
+        );
+        let outcome = crate::typst::render::compile(&root, &entry, &corrections);
+        assert!(
+            outcome.errors.is_empty(),
+            "le document compile : {:?}",
+            outcome.errors
+        );
+        let document = outcome.document.expect("document");
+        assert_eq!(
+            crate::typst::render::page_count(&document),
+            2,
+            "aucune page blanche avant la garde"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 
@@ -4345,6 +5193,11 @@ mod page_de_titre_sans_numero {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("racine");
+        std::fs::write(
+            root.join("metadonnees.toml"),
+            "[paires]\ntitre = \"Titre de l'essai\"\n",
+        )
+        .expect("métadonnées");
 
         let normes = crate::mise_en_page::modele::MiseEnPage {
             page_de_titre: true,
@@ -4383,5 +5236,93 @@ mod page_de_titre_sans_numero {
             !texte.lines().any(|ligne| ligne.trim() == "1"),
             "la page de titre ne porte pas de numéro : {texte}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_personnes_pipeline {
+    use super::*;
+
+    #[test]
+    fn une_balise_nue_suit_les_formes_du_fichier_de_normes() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-personnes-normes-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+        std::fs::write(
+            root.join(crate::project::personnes::FICHIER),
+            r#"[[entrees]]
+cle = "beale"
+nom = "G. K. Beale"
+nom_simple = "Beale"
+"#,
+        )
+        .expect("registre");
+        std::fs::write(
+            root.join("mise-en-page.toml"),
+            r#"[index_personnes]
+forme_premiere = "complet"
+forme_suivantes = "simple"
+afficher_dates = false
+"#,
+        )
+        .expect("normes");
+
+        let document =
+            crate::langage::parse::parse("{{p beale}} écrit, puis {{p beale}} encore.\n");
+        let (_, corrections) =
+            compilation_unit_document(&root, "#include \"document.generated.typ\"\n", &document);
+        let generated = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with(GENERATED_FILE))
+            .map(|(_, texte)| texte)
+            .expect("le corps généré");
+
+        assert!(generated.contains("G. K. Beale"), "{generated}");
+        assert!(
+            generated.contains("beale") && generated.contains("Beale"),
+            "{generated}"
+        );
+        assert_eq!(generated.matches("G. K. Beale").count(), 1, "{generated}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn le_registre_des_personnes_du_projet_alimente_le_texte() {
+        let root = std::env::temp_dir().join(format!(
+            "typst-writer-personnes-pipeline-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("racine");
+        std::fs::write(
+            root.join(crate::project::personnes::FICHIER),
+            r#"[[entrees]]
+cle = "augustin"
+nom = "Augustin d'Hippone"
+tri = "Augustin"
+dates = "354-430"
+"#,
+        )
+        .expect("registre");
+
+        let document = parse("{{p augustin}} a écrit.\n\n{{index-personnes}}\n");
+        let (entry, corrections) =
+            compilation_unit_document(&root, "#include \"document.generated.typ\"\n", &document);
+        assert!(entry.contains("document.generated.typ"));
+        let generated = corrections
+            .iter()
+            .find(|(chemin, _)| chemin.ends_with(GENERATED_FILE))
+            .map(|(_, texte)| texte)
+            .expect("le corps généré");
+
+        assert!(generated.contains("Augustin d'Hippone"), "{generated}");
+        assert!(generated.contains("Index des personnes"), "{generated}");
+        assert!(generated.contains("354-430"), "{generated}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

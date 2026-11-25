@@ -13,13 +13,14 @@ Chaque projet vit dans son dossier, sous `~/.typst-writer/projets/`
     ├── references.bib         la bibliographie locale
     ├── references.json        le relevé des références bibliques citées
     ├── glossaire.toml         les termes du glossaire
+    ├── personnes.toml         le registre des personnes citées
     ├── styles/                les styles CSL importés
     ├── miniatures/            la couverture choisie (couverture.png)
     ├── .miniatures/           le cache des premières pages (supprimable)
     ├── references-zotero.bib  l'export de la collection Zotero liée
     ├── zotero.json            la collection Zotero liée au projet
     ├── sauvegardes/           les versions précédentes des documents
-    └── chapitres/             les sources `.typ` héritées
+    └── chapitres/             archives `.typ` héritées (compatibilité)
 
 `document.tw` et `references.bib` sont les vôtres ; `mise-en-page.typ`
 est généré. Les fichiers `.typ` importés y restent — une migration ne

@@ -40,8 +40,15 @@ pub struct MiseEnPage {
     /// L'index des citations bibliques : pages, regroupement, forme, colonnes.
     pub index: IndexCitations,
 
+    /// L'index des personnes citées : pages, regroupement, dates.
+    pub index_personnes: IndexPersonnes,
+
     /// Le texte courant : police, corps, interligne, justification.
     pub texte: Texte,
+
+    /// Les blocs de citation (`>`) : leur police, leur taille, leur couleur
+    /// et leur retrait. Vide = les défauts de Typst.
+    pub citations: Citations,
 
     /// Les titres de chapitres.
     pub titres: Titres,
@@ -482,6 +489,143 @@ impl Default for IndexCitations {
     }
 }
 
+/// La forme d'un nom de personne dans le texte ou dans l'index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FormePersonne {
+    /// Le nom complet : « Augustin d'Hippone ».
+    #[default]
+    Complet,
+    /// Le nom simple : « Augustin ».
+    Simple,
+    /// L'alias ou le nom de plume : « Saint Augustin ».
+    Alias,
+}
+
+impl FormePersonne {
+    /// Le code écrit dans les normes.
+    pub fn code(self) -> &'static str {
+        match self {
+            FormePersonne::Complet => "complet",
+            FormePersonne::Simple => "simple",
+            FormePersonne::Alias => "alias",
+        }
+    }
+
+    /// Le libellé de la liste de choix.
+    pub fn libelle(self) -> &'static str {
+        match self {
+            FormePersonne::Complet => "Nom complet",
+            FormePersonne::Simple => "Nom simple",
+            FormePersonne::Alias => "Alias / nom de plume",
+        }
+    }
+
+    /// La forme depuis un code de norme ; une valeur inconnue revient au
+    /// nom complet plutôt que de faire disparaître la personne.
+    pub fn depuis_code(code: &str) -> Self {
+        match code.trim() {
+            "simple" => FormePersonne::Simple,
+            "alias" => FormePersonne::Alias,
+            _ => FormePersonne::Complet,
+        }
+    }
+}
+
+/// Comment les dates d'une personne sont composées.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FormeDatesPersonne {
+    /// Les deux bornes : « 354-430 ».
+    #[default]
+    NaissanceMort,
+    /// La naissance seule : « 354 ».
+    Naissance,
+    /// La mort seule : « 430 ».
+    Mort,
+    /// Le champ libre `dates` du registre.
+    Libelle,
+}
+
+impl FormeDatesPersonne {
+    /// Le code écrit dans les normes.
+    pub fn code(self) -> &'static str {
+        match self {
+            FormeDatesPersonne::NaissanceMort => "naissance_mort",
+            FormeDatesPersonne::Naissance => "naissance",
+            FormeDatesPersonne::Mort => "mort",
+            FormeDatesPersonne::Libelle => "libelle",
+        }
+    }
+
+    /// Le libellé de la liste de choix.
+    pub fn libelle(self) -> &'static str {
+        match self {
+            FormeDatesPersonne::NaissanceMort => "Naissance et mort (354-430)",
+            FormeDatesPersonne::Naissance => "Naissance seulement (354)",
+            FormeDatesPersonne::Mort => "Mort seulement (430)",
+            FormeDatesPersonne::Libelle => "Texte libre du registre",
+        }
+    }
+
+    /// La forme depuis un code de norme ; une valeur inconnue revient aux
+    /// deux bornes.
+    pub fn depuis_code(code: &str) -> Self {
+        match code.trim() {
+            "naissance" => FormeDatesPersonne::Naissance,
+            "mort" => FormeDatesPersonne::Mort,
+            "libelle" => FormeDatesPersonne::Libelle,
+            _ => FormeDatesPersonne::NaissanceMort,
+        }
+    }
+}
+
+/// Les réglages de l'index des personnes citées.
+///
+/// L'index est construit à partir des balises `{{p clé}}` et du registre
+/// `personnes.toml`. Aucun nom n'est deviné dans la prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IndexPersonnes {
+    /// Montrer les pages où chaque personne est citée.
+    pub afficher_pages: bool,
+    /// Regrouper les entrées sous leur initiale.
+    pub grouper_par_initiale: bool,
+    /// Le nombre de colonnes du rendu (1 à 4).
+    pub colonnes: usize,
+    /// Montrer les dates du registre.
+    pub afficher_dates: bool,
+    /// La forme du nom à la première mention dans le texte.
+    pub forme_premiere: FormePersonne,
+    /// La forme du nom aux mentions suivantes.
+    pub forme_suivantes: FormePersonne,
+    /// La forme du nom dans l'index.
+    pub forme_index: FormePersonne,
+    /// Comment composer les dates quand elles sont affichées.
+    pub dates_forme: FormeDatesPersonne,
+    /// N'afficher les dates qu'à la première mention du texte.
+    pub dates_premiere_seulement: bool,
+    /// Montrer la qualité ou la fonction du registre.
+    pub afficher_qualite: bool,
+}
+
+impl Default for IndexPersonnes {
+    fn default() -> Self {
+        Self {
+            afficher_pages: true,
+            grouper_par_initiale: true,
+            colonnes: 1,
+            afficher_dates: true,
+            forme_premiere: FormePersonne::Simple,
+            forme_suivantes: FormePersonne::Simple,
+            forme_index: FormePersonne::Complet,
+            dates_forme: FormeDatesPersonne::NaissanceMort,
+            dates_premiere_seulement: true,
+            afficher_qualite: false,
+        }
+    }
+}
+
 /// La syntaxe des références bibliques : comment elles s'écrivent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -548,12 +692,47 @@ pub enum Chiffres {
     Romains,
 }
 
+/// L'apparence des blocs de citation (`>`).
+///
+/// Chaque champ vide laisse le défaut de Typst : une norme ancienne garde
+/// exactement le rendu qu'elle avait. Le décalage est le retrait à gauche du
+/// bloc, pas une marge générale du document.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Citations {
+    /// La police des citations — vide : celle du texte courant.
+    pub police: String,
+
+    /// La taille des citations — vide : celle du texte courant.
+    pub taille: String,
+
+    /// La couleur des citations — vide : celle du texte courant.
+    pub couleur: String,
+
+    /// Le retrait à gauche, par exemple `1em` ou `0.8cm`.
+    pub decalage: String,
+
+    /// Les citations sont-elles en italique ?
+    pub italique: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Texte {
     /// La police, ou plusieurs séparées par des virgules — la seconde sert à
     /// ce que la première ne sait pas écrire.
     pub police: String,
+
+    /// La police prioritaire pour les caractères hébreux.
+    ///
+    /// Vide : aucun choix de script, la police de base et son repli font le
+    /// travail. Une valeur ne s'applique qu'aux caractères hébreux, jamais au
+    /// reste du texte.
+    pub police_hebreu: String,
+
+    /// La police prioritaire pour les caractères grecs. Même règle que pour
+    /// l'hébreu : elle ne s'applique qu'au script grec.
+    pub police_grecque: String,
 
     /// Le corps.
     pub taille: String,
@@ -588,6 +767,8 @@ impl Default for Texte {
     fn default() -> Self {
         Self {
             police: "New Computer Modern".to_string(),
+            police_hebreu: String::new(),
+            police_grecque: String::new(),
             taille: "11pt".to_string(),
             interligne: "0.65em".to_string(),
             espacement: "1.2em".to_string(),
@@ -665,7 +846,7 @@ pub struct Titres {
     pub espacement_5: Option<String>,
     pub espacement_6: Option<String>,
 
-    /// La numérotation des chapitres : `1.1`, `A.1`, ou vide pour aucune.
+    /// La numérotation des titres : `1.1`, `A.1`, ou vide pour aucune.
     pub numerotation: String,
 
     /// L'espace au-dessus et en dessous d'un titre.
@@ -836,6 +1017,8 @@ impl Typographie {
             dates: crate::langage::dates::Regles::default(),
             references: references.clone(),
             index: crate::mise_en_page::modele::IndexCitations::default(),
+            personnes: crate::project::personnes::Personnes::default(),
+            index_personnes: crate::mise_en_page::modele::IndexPersonnes::default(),
         }
     }
 
@@ -1233,7 +1416,14 @@ pub enum Champ {
     DatesFormat,
     DatesLangue,
     TextePolice,
+    TextePoliceHebreu,
+    TextePoliceGrecque,
     TexteTaille,
+    CitationsPolice,
+    CitationsTaille,
+    CitationsCouleur,
+    CitationsDecalage,
+    CitationsItalique,
     TexteInterligne,
     TexteEspacement,
     TexteRetrait,
@@ -1324,6 +1514,16 @@ pub enum Champ {
     IndexForme,
     IndexColonnes,
     IndexCanon,
+    IndexPersonnesAfficherPages,
+    IndexPersonnesGrouperParInitiale,
+    IndexPersonnesColonnes,
+    IndexPersonnesAfficherDates,
+    IndexPersonnesFormePremiere,
+    IndexPersonnesFormeSuivantes,
+    IndexPersonnesFormeIndex,
+    IndexPersonnesDatesForme,
+    IndexPersonnesDatesPremiereSeulement,
+    IndexPersonnesAfficherQualite,
     /// La traduction biblique consultée par défaut (`lsg`, `darby` ou une
     /// version ajoutée).
     BibliqueTraduction,
@@ -1367,6 +1567,13 @@ impl MiseEnPage {
             Champ::DatesFormat => self.dates.format.clone(),
             Champ::DatesLangue => self.dates.langue.clone(),
             Champ::TextePolice => self.texte.police.clone(),
+            Champ::CitationsPolice => self.citations.police.clone(),
+            Champ::CitationsTaille => self.citations.taille.clone(),
+            Champ::CitationsCouleur => self.citations.couleur.clone(),
+            Champ::CitationsDecalage => self.citations.decalage.clone(),
+            Champ::CitationsItalique => self.citations.italique.to_string(),
+            Champ::TextePoliceHebreu => self.texte.police_hebreu.clone(),
+            Champ::TextePoliceGrecque => self.texte.police_grecque.clone(),
             Champ::TexteTaille => self.texte.taille.clone(),
             Champ::TexteInterligne => self.texte.interligne.clone(),
             Champ::TexteEspacement => self.texte.espacement.clone(),
@@ -1548,6 +1755,26 @@ impl MiseEnPage {
             },
             Champ::IndexColonnes => self.index.colonnes.to_string(),
             Champ::IndexCanon => self.index.canon.code().to_string(),
+            Champ::IndexPersonnesAfficherPages => self.index_personnes.afficher_pages.to_string(),
+            Champ::IndexPersonnesGrouperParInitiale => {
+                self.index_personnes.grouper_par_initiale.to_string()
+            }
+            Champ::IndexPersonnesColonnes => self.index_personnes.colonnes.to_string(),
+            Champ::IndexPersonnesAfficherDates => self.index_personnes.afficher_dates.to_string(),
+            Champ::IndexPersonnesFormePremiere => {
+                self.index_personnes.forme_premiere.code().to_string()
+            }
+            Champ::IndexPersonnesFormeSuivantes => {
+                self.index_personnes.forme_suivantes.code().to_string()
+            }
+            Champ::IndexPersonnesFormeIndex => self.index_personnes.forme_index.code().to_string(),
+            Champ::IndexPersonnesDatesForme => self.index_personnes.dates_forme.code().to_string(),
+            Champ::IndexPersonnesDatesPremiereSeulement => {
+                self.index_personnes.dates_premiere_seulement.to_string()
+            }
+            Champ::IndexPersonnesAfficherQualite => {
+                self.index_personnes.afficher_qualite.to_string()
+            }
             Champ::BibliqueTraduction => self.parametres_plugins.biblique.traduction.clone(),
             Champ::BibliqueTri => self.parametres_plugins.biblique.tri.clone(),
         }
@@ -1592,6 +1819,13 @@ impl MiseEnPage {
             Champ::DatesFormat => self.dates.format = valeur,
             Champ::DatesLangue => self.dates.langue = valeur,
             Champ::TextePolice => self.texte.police = valeur,
+            Champ::CitationsPolice => self.citations.police = valeur,
+            Champ::CitationsTaille => self.citations.taille = valeur,
+            Champ::CitationsCouleur => self.citations.couleur = valeur,
+            Champ::CitationsDecalage => self.citations.decalage = valeur,
+            Champ::CitationsItalique => self.citations.italique = valeur == "true",
+            Champ::TextePoliceHebreu => self.texte.police_hebreu = valeur,
+            Champ::TextePoliceGrecque => self.texte.police_grecque = valeur,
             Champ::TexteTaille => self.texte.taille = valeur,
             Champ::TexteInterligne => self.texte.interligne = valeur,
             Champ::TexteEspacement => self.texte.espacement = valeur,
@@ -1767,6 +2001,36 @@ impl MiseEnPage {
                     _ => Canon::Tout,
                 }
             }
+            Champ::IndexPersonnesAfficherPages => {
+                self.index_personnes.afficher_pages = valeur == "true"
+            }
+            Champ::IndexPersonnesGrouperParInitiale => {
+                self.index_personnes.grouper_par_initiale = valeur == "true"
+            }
+            Champ::IndexPersonnesColonnes => {
+                self.index_personnes.colonnes = valeur.parse().unwrap_or(1).clamp(1, 4)
+            }
+            Champ::IndexPersonnesAfficherDates => {
+                self.index_personnes.afficher_dates = valeur == "true"
+            }
+            Champ::IndexPersonnesFormePremiere => {
+                self.index_personnes.forme_premiere = FormePersonne::depuis_code(&valeur)
+            }
+            Champ::IndexPersonnesFormeSuivantes => {
+                self.index_personnes.forme_suivantes = FormePersonne::depuis_code(&valeur)
+            }
+            Champ::IndexPersonnesFormeIndex => {
+                self.index_personnes.forme_index = FormePersonne::depuis_code(&valeur)
+            }
+            Champ::IndexPersonnesDatesForme => {
+                self.index_personnes.dates_forme = FormeDatesPersonne::depuis_code(&valeur)
+            }
+            Champ::IndexPersonnesDatesPremiereSeulement => {
+                self.index_personnes.dates_premiere_seulement = valeur == "true"
+            }
+            Champ::IndexPersonnesAfficherQualite => {
+                self.index_personnes.afficher_qualite = valeur == "true"
+            }
             Champ::BibliqueTraduction => self.parametres_plugins.biblique.traduction = valeur,
             Champ::BibliqueTri => self.parametres_plugins.biblique.tri = valeur,
         }
@@ -1788,6 +2052,8 @@ impl MiseEnPage {
                 | Champ::MargeGauche
                 | Champ::MargeDroite
                 | Champ::TexteTaille
+                | Champ::CitationsTaille
+                | Champ::CitationsDecalage
                 | Champ::TexteInterligne
                 | Champ::TexteEspacement
                 | Champ::TexteRetrait
@@ -2096,6 +2362,38 @@ mod tests {
     }
 
     use super::*;
+
+    /// Les formes des personnes passent par les mêmes champs nommés.
+    #[test]
+    fn les_formes_des_personnes_se_reglent() {
+        let mut mise_en_page = MiseEnPage::default();
+
+        assert_eq!(
+            mise_en_page.valeur(Champ::IndexPersonnesFormePremiere),
+            "simple"
+        );
+        assert_eq!(
+            mise_en_page.valeur(Champ::IndexPersonnesFormeSuivantes),
+            "simple"
+        );
+
+        mise_en_page.modifier(Champ::IndexPersonnesFormeSuivantes, "alias".to_string());
+        mise_en_page.modifier(Champ::IndexPersonnesDatesForme, "mort".to_string());
+        mise_en_page.modifier(
+            Champ::IndexPersonnesDatesPremiereSeulement,
+            "false".to_string(),
+        );
+
+        assert_eq!(
+            mise_en_page.index_personnes.forme_suivantes,
+            FormePersonne::Alias
+        );
+        assert_eq!(
+            mise_en_page.index_personnes.dates_forme,
+            FormeDatesPersonne::Mort
+        );
+        assert!(!mise_en_page.index_personnes.dates_premiere_seulement);
+    }
 
     /// Une mise en page se lit, se perd, se retrouve.
     #[test]
